@@ -15,7 +15,7 @@ The implementation lead owns integration; bounded store/isolation, communication
 | P01 | In progress | Node 24/TypeScript, SQLite, direct API, external state and local sandbox selected in ADR 0008/0009; Mistral model verified; production host remains open. |
 | P02 | In progress | Task, effect, memory, growth, communications, procedure and succession contracts implemented with deterministic positive/negative checks; consolidated seed evidence is being assembled. |
 | P03 | In progress | Durable tasks, cancellation, call budgets, provider adapters and recovery tests pass; live Mistral structured output and direct runtime pass; full crash/outage matrix pending. |
-| P04 | In progress | Direct/HTTP, signed Slack HTTP and Socket Mode service tests pass, including scoped status/cancel/correction and reconnect; Live bot authentication and native Socket Mode connection passed; user-initiated message/reply smoke pending. R21 direct testing added. |
+| P04 | Done at local seed scope | Direct/HTTP, signed Slack HTTP and Socket Mode checks pass, including scope, controls and reconnect. Live user mention → Mistral → Slack thread reply passed after large-history recovery was repaired. R21 direct testing supported. |
 | P05 | Done at local seed scope | Real macOS restrictions, process-bound workers, serving CLI, independent review and provider-independent mechanical recovery verified. Hard resource quotas and production-host deployment remain outside this local disposition. |
 | P06 | In progress | Scoped storage, bounded consolidation, source-version invalidation, current snapshots, actual rollback continuity and local benchmark verified. Live consolidation mechanics passed; qualitative evidence calibration failed and remains open. R22 external state enforced. |
 | P07 | Done at direct API scope | Numeric CSV aggregation, independent held-out execution, policy-bound fresh review and exact-identity reuse verified. Live Mistral publication passed after a protocol correction; two new inputs/reopen/republish used no further inference. |
@@ -72,6 +72,16 @@ Implement a bounded task loop, durable state transitions, typed tools, cancellat
 Implement shared communications contracts with direct calls, an authenticated local API, and authorized Slack ingress/egress with task/thread correlation, deduplication, continuing communication, progress, corrections, and cancellation. Prepare the egress boundary for P12's authority enforcement. Multiple active contexts do not require a new chat website.
 
 **Done when:** A05–A06 and A19 pass, running work remains addressable, repeated events do not duplicate effects, and conversations cannot acquire each other's context accidentally.
+
+### Operational defect — recovery with accumulated continuity
+
+**Status:** Fixed and verified. **Area:** P05/P14/P15. **Trigger:** The first live Slack mention was durably queued after the five-minute worker lifetime expired, but both known-good recovery attempts failed. Accumulated continuity exceeded the worker pipe’s 256 KiB input-frame bound while remaining below the custodian’s existing 1 MiB snapshot bound.
+
+**Expected behavior:** Known-good restart transfers the entire accepted snapshot and drains the queued request. Align the catch-up frame allowance with the existing snapshot limit, retain the smaller ordinary-request limit and scope/sequence validation, and preserve fail-closed bounded recovery. No state deletion or snapshot truncation. Verify a real restricted worker receiving more than 256 KiB and real generation recovery with that history; then retry the live queued mention through the operator recovery API.
+
+**Evidence:** Both new checks reproduced the former mismatch. After the fix, real restricted-worker Unicode catch-up and real stopped-worker recovery with 300 KiB growth history passed, including scope/sequence and oversized-input rejection. TypeScript and the integrated suite passed: 196 tests, one platform skip. Operator `retryRecovery()` restored the same known-good generation; restarted service completed the queued mention with one Mistral call and a completed delivered Slack effect. Current data was preserved.
+
+**Operations follow-up (P15):** Expose current execution health and a supported operator recovery command. A running listener/socket can outlive the active worker; startup connection status alone does not show execution readiness. Today recovery-required retry is a library operator API, not a CLI command.
 
 ### P05 — Establish isolation and mechanical recovery skeleton
 

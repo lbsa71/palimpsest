@@ -1,6 +1,6 @@
 # Connect the local seed to Slack
 
-Use Socket Mode so the local process connects outward to Slack without a public webhook URL. It is implemented and connected to `serve`; fixture tests, live bot authentication and a native Socket Mode connection have passed. A user-initiated mention/reply is still needed to validate message delivery. Signed HTTP ingress remains an alternative.
+Use Socket Mode so the local process connects outward to Slack without a public webhook URL. It is implemented and connected to `serve`; fixture tests, live bot authentication and a native Socket Mode connection have passed. A user-initiated mention also completed through Mistral and delivered a thread reply after fixing worker recovery with accumulated history. Signed HTTP ingress remains an alternative.
 
 1. Open [Slack app management](https://api.slack.com/apps), choose **Create New App → From a manifest**, select the workspace, and paste [the manifest](../config/slack-app-manifest.json).
 2. Install the app to the workspace. Copy the **Bot User OAuth Token** from **OAuth & Permissions** into `SLACK_BOT_TOKEN` in the private external credentials file `~/.config/palimpsest/credentials.env`.

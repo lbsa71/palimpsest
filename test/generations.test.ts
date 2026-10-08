@@ -177,3 +177,23 @@ test('actual host separates local continuity and candidate globals from other co
     assert.doesNotMatch(prompts[4]!, /ALPHA-PRIVATE|BETA-REQUEST/);
   } finally { await f.host.close(); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); }
 });
+
+
+test('known-good recovery retains continuity above 256 KiB and drains queued work', { skip: process.platform !== 'darwin' }, async () => {
+  const f = fixture();
+  try {
+    await f.host.start(f.baseline);
+    const memory = f.store.addMemory({ scope: 'local', kind: 'episodic', content: 'Current history', source: 'fixture', confidence: 1 });
+    const growth = f.store.addGrowth({ id: 'large-completed-growth', dimension: 'code_quality', question: 'Synthetic history', origin: 'fixture', budget: 1 });
+    f.store.updateGrowth(growth.id, { state: 'running' });
+    f.store.updateGrowth(growth.id, { state: 'completed', outcome: { history: 'x'.repeat(300_000) } });
+    const task = await f.host.submit({ id: 'after-worker-expiry', conversationId: 'local', source: 'direct', text: 'Queued while the worker is unavailable' });
+    await f.host.worker(f.host.custodian.inspect().active!.process).stop();
+    await f.host.tick();
+    assert.equal(f.host.custodian.inspect().phase, 'normal');
+    assert.equal(f.store.memory(memory.id, 'local')?.content, 'Current history');
+    assert.equal(JSON.stringify(f.store.growth(growth.id)?.outcome).length, 300_014);
+    assert.equal(f.store.task(task.id)?.state, 'succeeded');
+    assert.equal(f.direct.messages('local').at(-1)?.text, 'fixture reply');
+  } finally { await f.host.close(); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); }
+});

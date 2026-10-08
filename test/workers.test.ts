@@ -127,3 +127,22 @@ test('an unbound staged checkpoint never reaches a first request for another sco
     await assert.rejects(worker.catchUp({ sequence: 2, snapshot: { scope: 'staged' }, policyVersion: 'v1' }), /scope/i);
   } finally { await worker.stop(); rmSync(root, { recursive: true, force: true }); }
 });
+
+
+test('catch-up transfers the full accepted snapshot beyond the ordinary request frame limit', { skip: process.platform !== 'darwin' }, async () => {
+  const root = fixture(`export function conversationRequest(t,m,c){return {system:'fixture',prompt:JSON.stringify({request:t.input,length:c.snapshot.history.length,end:c.snapshot.history.slice(-8)}),maxOutputTokens:100}}`);
+  const worker = await AgentWorker.start({ candidateRoot: root, scope: task.conversationId });
+  try {
+    const history = 'å'.repeat(180_000) + 'END-MARK';
+    await worker.catchUp({ sequence: 9, snapshot: { scope: task.conversationId, history }, policyVersion: 'v9' });
+    const result = JSON.parse((await worker.request(task, [])).prompt);
+    assert.equal(result.length, history.length); assert.equal(result.end, 'END-MARK');
+    assert.equal(worker.sequence, 9);
+    await assert.rejects(worker.catchUp({ sequence: 10, snapshot: { scope: 'other', history }, policyVersion: 'v10' }), /scope/i);
+    await assert.rejects(worker.catchUp({ sequence: 8, snapshot: { scope: task.conversationId, history }, policyVersion: 'v8' }), /checkpoint/i);
+    await assert.rejects(worker.catchUp({ sequence: 10, snapshot: { scope: task.conversationId, history: 'x'.repeat(1_060_000) }, policyVersion: 'v10' }), /input exceeds limit/);
+    assert.equal(worker.sequence, 9, 'rejected checkpoints do not advance continuity');
+    await assert.rejects(worker.request({ ...task, input: 'x'.repeat(300_000) }, []), /input exceeds limit/);
+    assert.equal(worker.closed, false, 'oversized ordinary requests are rejected before sending');
+  } finally { await worker.stop(); rmSync(root, { recursive: true, force: true }); }
+});

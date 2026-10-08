@@ -15,8 +15,10 @@ const lines = createInterface({ input: process.stdin });
 for await (const line of lines) {
   let input;
   try {
-    if (Buffer.byteLength(line) > 262144) throw new Error('input too large');
+    const bytes = Buffer.byteLength(line);
+    if (bytes > 1048576 + 4096) throw new Error('input too large');
     input = JSON.parse(line);
+    if (input.method !== 'catchUp' && bytes > 262144) throw new Error('input too large');
     let result;
     if (input.method === 'ping') result = { alive: true };
     else if (input.method === 'catchUp') {

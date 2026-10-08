@@ -130,7 +130,10 @@ export class AgentWorker {
   #call(method: string, payload: unknown, timeoutMs = this.#options.rpcTimeoutMs ?? 3000): Promise<unknown> {
     if (this.#closed || !this.#child?.stdin?.writable) return Promise.reject(new Error('Worker is unavailable'));
     const id = randomUUID(); const line = JSON.stringify({ id, method, payload }) + '\n';
-    if (Buffer.byteLength(line) > 262_144) return Promise.reject(new Error('Worker input exceeds limit'));
+    // Custody accepts a 1 MiB snapshot; catch-up must fit that snapshot plus
+    // bounded checkpoint/RPC metadata. Ordinary requests retain their limit.
+    const inputLimit = method === 'catchUp' ? 1_048_576 + 4096 : 262_144;
+    if (Buffer.byteLength(line) > inputLimit) return Promise.reject(new Error('Worker input exceeds limit'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.#fail(), timeoutMs);
       this.#pending.set(id, { resolve, reject, timer });
