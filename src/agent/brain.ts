@@ -3,6 +3,18 @@ import type { Memory, Task } from '../store.ts';
 
 /** Cognitive policy is separate from transport, persistence, and release authority. */
 export function conversationRequest(task: Task, memories: Memory[]): CompletionRequest {
+  // Filter memories to include only those with scope matching the task's conversationId
+  const conversationMemories = memories.filter(memory => memory.scope === task.conversationId);
+
+  // Select the most recent eligible memories, up to 12
+  const selectedMemories = conversationMemories.slice(-12).map(memory => ({
+    id: memory.id,
+    kind: memory.kind,
+    content: memory.content.slice(0, 4000),
+    source: memory.source,
+    confidence: memory.confidence,
+  }));
+
   return {
     system: [
       'You are Palimpsest, a developing coding companion with continuing memory and independent judgment.',
@@ -14,8 +26,7 @@ export function conversationRequest(task: Task, memories: Memory[]): CompletionR
     ].join('\n'),
     prompt: JSON.stringify({
       request: task.input,
-      memories: memories.slice(-12).map(memory => ({ id: memory.id, kind: memory.kind,
-        content: memory.content.slice(0, 4000), source: memory.source, confidence: memory.confidence })),
+      memories: selectedMemories,
     }),
     maxOutputTokens: 2048,
   };
