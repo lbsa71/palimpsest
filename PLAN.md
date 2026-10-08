@@ -4,6 +4,8 @@ Planning baseline: **2026-10-08**. This is a repository backlog, not a schedule 
 
 ## Current state
 
+**Product audit, 2026-10-08:** The running system is a Slack conversational prototype with durable memory and a separate governed evolution service. The conversation-to-coding-to-Git-to-relaunch workflow is incomplete. Earlier “done at local seed scope” entries describe component verification, not readiness of the complete companion. See [the capability audit](docs/capability-audit-2026-10-08.md).
+
 - [x] Distill the accessible conversation and attached brief into requirements, engineering rules, architecture, ADRs, memory/growth specifications, and acceptance scenarios.
 - [ ] Resolve implementation decisions and build the seed.
 - [ ] Execute the acceptance suite and demonstrate recovery and self-directed growth.
@@ -14,17 +16,18 @@ The implementation lead owns integration; bounded store/isolation, communication
 |---|---|---|
 | P01 | In progress | Node 24/TypeScript, SQLite, direct API, external state and local sandbox selected in ADR 0008/0009; Mistral model verified; production host remains open. |
 | P02 | In progress | Task, effect, memory, growth, communications, procedure and succession contracts implemented with deterministic positive/negative checks; consolidated seed evidence is being assembled. |
-| P03 | In progress | Durable tasks, cancellation, call budgets, provider adapters and recovery tests pass; live Mistral structured output and direct runtime pass; full crash/outage matrix pending. |
-| P04 | Done at local seed scope | Direct/HTTP, signed Slack HTTP and Socket Mode checks pass, including scope, controls and reconnect. Live user mention → Mistral → Slack thread reply passed after large-history recovery was repaired. R21 direct testing supported. |
+| P03 | Infrastructure verified; coding workflow incomplete | Durable tasks/providers pass, including live Mistral. Ordinary turns have no action dispatcher or general repository/tool execution; P16 must connect these capabilities. Full crash/outage matrix remains open. |
+| P04 | Transport verified; work reporting incomplete | Direct/HTTP, signed Slack HTTP and Socket Mode checks pass, including scope, controls and reconnect. Live user mention → Mistral → Slack thread reply passed after large-history recovery was repaired. R21 direct testing supported. Periodic progress/error notifications and real conversational work integration remain open. |
 | P05 | Done at local seed scope | Real macOS restrictions, process-bound workers, serving CLI, independent review and provider-independent mechanical recovery verified. Hard resource quotas and production-host deployment remain outside this local disposition. |
 | P06 | In progress | Scoped storage, bounded consolidation, source-version invalidation, current snapshots, actual rollback continuity and local benchmark verified. Live consolidation mechanics passed; qualitative evidence calibration failed and remains open. R22 external state enforced. |
-| P07 | Done at direct API scope | Numeric CSV aggregation, independent held-out execution, policy-bound fresh review and exact-identity reuse verified. Live Mistral publication passed after a protocol correction; two new inputs/reopen/republish used no further inference. |
-| P08 | Done at local seed scope | Four-dimensional agenda, bounded experiments, priority, autonomous timer, persistent daily windows and concurrent debit verified. Serving queues proposals through governed evolution; an operator-selected live inquiry produced an admitted source improvement. |
-| P09 | Done at local seed scope | Frozen candidate checks, compile-but-wrong rejection and actual live behavior change verified. Two model proposals failed the held-out scope gate; the third passed and was pushed unchanged as 5044b57. |
+| P07 | Direct API verified; conversational use incomplete | Numeric CSV aggregation, independent held-out execution, policy-bound fresh review and exact-identity reuse verified. Live Mistral publication passed after a protocol correction; two new inputs/reopen/republish used no further inference. Ordinary Slack turns cannot invoke it yet. |
+| P08 | Scheduler verified; developmental/product acceptance open | Four-dimensional agenda, bounded experiments, priority, autonomous timer, persistent daily windows and concurrent debit verified. Serving queues proposals through governed evolution; an operator-selected live inquiry produced an admitted source improvement. Recent six automatic queue attempts yielded no promotion; conversational initiation and demonstrated useful development remain open. |
+| P09 | Candidate mechanics and targeted source demonstration verified | Frozen candidate checks, compile-but-wrong rejection and actual live behavior change verified. Two model proposals failed the held-out scope gate; the third passed and was pushed unchanged as 5044b57. |
 | P10 | Done at local seed scope | Fresh digest-bound review, strict evidence/coverage validation and fixture calibration verified; live procedure/source reviews passed. Review remains fallible. |
 | P11 | In progress | Live role-bound succession messages, acceptance and readiness passed, but the question was largely an assessment and no new challenge arose. Improve stage-specific questioning and demonstrate grounded disagreement before full A12 acceptance. |
-| P12–P14 | Done at local seed scope | Actual handoff, fencing, provider-independent failure recovery, retirement and governance boundaries verified; a live model-authored release completed cutover/probation. Full custodian replacement remains disabled. |
-| P15 | In progress | Initial runbook and local checks available; complete seed demonstration pending. |
+| P12–P14 | Mechanical release/recovery components verified | Actual handoff, fencing, provider-independent failure recovery, retirement and governance boundaries verified; a live model-authored release completed cutover/probation. These replace cognitive workers, not the outer service. Full custodian replacement remains disabled. |
+| P15 | In progress | Bootstrap/local evidence available. Complete product demonstration, operational health/recovery commands and backup/restore validation remain open. |
+| P16 | Not implemented; next priority | Ground runtime capability answers and connect Slack → authorized coding/procedure work → evaluated release → trusted Git publication → successor service. |
 
 ## Milestones
 
@@ -36,6 +39,8 @@ The implementation lead owns integration; bounded store/isolation, communication
 | M3 — Candidate evaluation | Immutable candidates, independently gathered checks, fresh review, and continuity interview | P09–P11 | A10–A12 |
 | M4 — Skin Shed | Single authority, safe transfer, probation, and provider-independent recovery | P12–P14 | A13–A17 and integrated A02, including combined failure demonstration |
 | M5 — Operable seed | Reproducible bootstrap, recovery instructions, end-to-end evidence, reconciled docs | P15 | Full seed acceptance report; no unaddressed release blockers |
+
+**Milestone disposition after audit:** M1 has verified Slack/task/provider mechanics but lacks general tool work. M2 is partial. M3/M4 have substantial tested infrastructure and one narrow live source demonstration, with meaningful-interview quality still open. M5 and complete seed acceptance are not met.
 
 M2 and parts of M3 can proceed in parallel after their dependencies. M1 alone is not the completed Palimpsest seed: growth and succession are defining requirements.
 
@@ -180,6 +185,18 @@ Test that ordinary candidates cannot rewrite their admission criteria. Specify a
 Produce reproducible bootstrap, configuration without secrets, operational and backup/restore instructions, limitations, and an evidence report. Execute integrated scenarios and outage/recovery controls; reconcile documentation and milestone status.
 
 **Done when:** A01–A17 pass at their stated seed scope, deferred capabilities remain explicit, and another operator can follow bootstrap/recovery instructions. A18 is required only if temporary mode is selected.
+
+### P16 — Connect conversation to real capabilities and governed work
+
+**Priority:** P0, next product integration work. **Dependencies:** P03–P04, P07–P14. **Requirements:** R04–R08, R10–R19, R21–R22. **Status:** Not implemented.
+
+**Problem:** Slack turns only return text and deterministic controls. They have no repository/procedure/source-evolution dispatcher or Git publisher, and receive no authoritative host capability/storage facts. A live capability answer incorrectly denied on-disk memory and omitted separate evolution machinery. Earlier component completion labels obscured this missing product path.
+
+**Expected behavior:** Capability answers reflect configured tools, persistent storage, active release and actual authority. An allowed Slack request can perform bounded authorized coding/procedure work, report actual progress/results, propose a change through the existing evaluation/succession path, and publish admitted bytes through a trusted Git operation when configured authority permits. No claim of action follows merely from generated text. Keep current memory, budgets, thread scope, uncertain-effect handling and process fencing intact. Do not expose unrestricted host control or silently widen cognitive-only admission.
+
+**Done when:** One user-requested Slack change completes end to end with independently observed source, checks, exact admitted/published identity, actual remote publication and a serving successor. Repeat with interruption/provider failure and current-memory continuity. The agent correctly describes these abilities and their limits after restart. The application must perform the wired operations; an operator manually substituting for missing steps does not satisfy this item. Prompt-only fixes or simulated tool callbacks do not close it.
+
+**Design still required:** Bounded tool/action contracts, trusted capability facts, broader coding scope if needed, publication authority and failure reconciliation. Existing source evolution performs no Git writes. This plan item records missing implementation, not additional runtime authority. See [the capability audit](docs/capability-audit-2026-10-08.md).
 
 ## Deferred and optional work
 

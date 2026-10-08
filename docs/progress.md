@@ -8,6 +8,10 @@ The first live source attempt used one growth call. Its candidate compiled and p
 
 The second attempt also used one growth call and failed the same scope check. Independent inspection confirmed that its recorded prompt contained the actual fields and prior failed-check feedback; this was a model reasoning failure, not missing input. A third bounded inquiry clarifies the semantic contract: foreign means a different conversation, independent of memory kind or provenance. No replacement code, relaxed test, or approval is supplied to the authoring model.
 
+## Product integration audit
+
+The live Slack capability reply exposed a product gap: ordinary turns have no action tools or Git publisher and receive no authoritative runtime capability/storage facts. Its claim of session-only memory was false; the active thread has persisted episodes in external SQLite. Background evolution and operator-published source changes are separate from conversational execution. Six recent automatic queue outcomes were four mandatory-check declines, one no-op rejection and one protected-path rejection, with no automatic promotion claimed. Tested component completion does not establish the full companion workflow. The plan now distinguishes verified infrastructure from product integration and tracks P16 as the next priority. See [the dated audit](capability-audit-2026-10-08.md). No behavior change or new model run was performed for this audit.
+
 ## Verified implementation
 
 | Area / plan | Executed evidence | Remaining scope or limitation |
