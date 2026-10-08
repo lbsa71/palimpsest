@@ -19,10 +19,11 @@ The implementation lead owns integration; bounded store/isolation, communication
 | P05 | Done at local seed scope | Real macOS restrictions, process-bound workers, serving CLI, independent review and provider-independent mechanical recovery verified. Hard resource quotas and production-host deployment remain outside this local disposition. |
 | P06 | In progress | Scoped storage, bounded consolidation, source-version invalidation, current snapshots, actual rollback continuity and local benchmark verified. Live consolidation mechanics passed; qualitative evidence calibration failed and remains open. R22 external state enforced. |
 | P07 | Done at direct API scope | Numeric CSV aggregation, independent held-out execution, policy-bound fresh review and exact-identity reuse verified. Live Mistral publication passed after a protocol correction; two new inputs/reopen/republish used no further inference. |
-| P08 | In progress | Four-dimensional agenda, bounded experiments, priority, autonomous timer, persistent daily windows and concurrent debit verified. Serving queues proposals through governed evolution; live source adoption pending. |
-| P09 | In progress | Frozen candidate checks and compile-but-wrong rejection verified; live model-authored behavior change and challenge gate pending. |
-| P10 | In progress | Fresh review envelope/evidence and fixture calibration verified; live review pending. |
-| P11–P14 | In progress | Mechanical handoff, real worker fencing/rollback, bounded recovery, retirement and protected governance verified; live cognitive interview and full seed demonstration pending. |
+| P08 | Done at local seed scope | Four-dimensional agenda, bounded experiments, priority, autonomous timer, persistent daily windows and concurrent debit verified. Serving queues proposals through governed evolution; an operator-selected live inquiry produced an admitted source improvement. |
+| P09 | Done at local seed scope | Frozen candidate checks, compile-but-wrong rejection and actual live behavior change verified. Two model proposals failed the held-out scope gate; the third passed and was pushed unchanged as 5044b57. |
+| P10 | Done at local seed scope | Fresh digest-bound review, strict evidence/coverage validation and fixture calibration verified; live procedure/source reviews passed. Review remains fallible. |
+| P11 | In progress | Live role-bound succession messages, acceptance and readiness passed, but the question was largely an assessment and no new challenge arose. Improve stage-specific questioning and demonstrate grounded disagreement before full A12 acceptance. |
+| P12–P14 | Done at local seed scope | Actual handoff, fencing, provider-independent failure recovery, retirement and governance boundaries verified; a live model-authored release completed cutover/probation. Full custodian replacement remains disabled. |
 | P15 | In progress | Initial runbook and local checks available; complete seed demonstration pending. |
 
 ## Milestones

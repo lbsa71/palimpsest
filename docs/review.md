@@ -134,6 +134,8 @@ readiness, exact bindings, current policy, recovery availability, and cutover.
 
 ## Verification and remaining evidence
 
+The [first live source release](self-improvement-2026-10-08.md) subsequently exercised fresh source review and all four succession-message stages. Exact bindings, acceptance and readiness passed, but the incumbent question was largely an assessment and no new successor challenge emerged. That observation leaves stage-specific questioning and grounded disagreement open; structural validity alone does not satisfy the full A12 cognitive contract.
+
 `node --test test/review.test.ts`: 12 deterministic checks pass. Tests were
 observed failing before implementation and before fixes for mismatched log
 digests, mutable snapshot context, identifier grammar and duplicate citations.

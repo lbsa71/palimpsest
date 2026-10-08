@@ -6,7 +6,7 @@ Its defining requirement is a **strong, persistent drive for self-improvement**.
 
 ## Project status
 
-**Local seed implementation in progress, 2026-10-08.** The CLI, durable tasks, scoped memory, direct/loopback communications, provider adapters, bounded growth experiments, isolated procedures and governed process succession have automated coverage. Signed Slack HTTP and Socket Mode are wired into `serve` and tested with fixtures; live Slack connectivity remains unverified. Full seed acceptance and the complete self-improvement demonstration remain separate gates; see [progress and evidence](docs/progress.md).
+**First model-authored source release completed, 2026-10-08.** Palimpsest authored, evaluated and locally promoted a conversation-memory isolation improvement; its exact source was pushed as `5044b57`. The integrated suite passes 194 tests with one platform skip. See the [release evidence](docs/self-improvement-2026-10-08.md). Full seed acceptance remains open: live Slack is unverified, and memory/interview quality has explicit follow-ups in [progress](docs/progress.md).
 
 This repository began by distilling the accessible portion of [Research Autonomous Agent Stack](https://chatgpt.com/c/6ac782af-e51c-83ed-bdc9-50060dbcfde5) and its attached colleague brief.
 

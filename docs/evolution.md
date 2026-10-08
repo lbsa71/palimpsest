@@ -1,6 +1,6 @@
 # Bounded, governed source evolution
 
-Status: integrated and fixture-verified, 2026-10-08. This module connects standing-growth proposals to frozen evaluation, fresh review, mediated succession, and actual local worker probation. Fixture tests demonstrate orchestration and serving-queue dispatch; a real model-originated release requires a separately recorded live run.
+Status: implemented local contract, 2026-10-08. This module connects standing-growth proposals to frozen evaluation, fresh review, mediated succession, and actual local worker probation. Fixture tests demonstrate orchestration and serving-queue dispatch; the first real model-originated release is recorded in [the live evidence report](self-improvement-2026-10-08.md), including failures, publication and cognitive limits.
 
 `EvolutionCoordinator.run({ id, growthId, proposal })` accepts only an exact source proposal already recorded in a completed GrowthCoordinator outcome. The caller supplies configured review/interview providers, the GenerationHost, external Store/data directory, nonsecret release configuration, and a mandatory global budget reservation hook. Neither a model claim of authorship nor an arbitrary source patch is enough.
 

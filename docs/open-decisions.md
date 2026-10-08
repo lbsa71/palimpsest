@@ -20,6 +20,7 @@ The implementation lead owns the register. D01 and D03 have an initial local dis
 - **D10:** Seed data schema fixed at version 1; ordinary candidates cannot migrate data or replace custodian/admission code. Real rollback preserves the current external store. Full custodian replacement remains disabled pending a separate rescue demonstration.
 - **D11 update:** Signed HTTP ingress and scoped status/cancel/correction commands have integration coverage. Socket Mode was selected when the user asked to supply connectivity; the app manifest and private token fields are prepared. Live installation remains unverified until supplied and connected.
 - **R21/R22 steering:** Direct communications testing and external lived state are explicit user requirements, now included in specs, acceptance and plan. Private Mistral credentials are supplied outside the repository.
+- **Live evaluation update:** A Mistral-authored behavior change passed independent checks, fresh review, the succession protocol and local probation, then was pushed unchanged. Two earlier candidates were correctly rejected. The live question was largely an assessment, so stage-specific questioning and grounded disagreement remain a P11 quality gate. See the [release evidence](self-improvement-2026-10-08.md).
 
 | ID | Decision | Evidence / resolution criterion | Gate |
 |---|---|---|---|
