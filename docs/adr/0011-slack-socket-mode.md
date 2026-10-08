@@ -12,7 +12,7 @@ The user asked how to supply Slack connectivity while the local seed was being b
 
 Add Socket Mode as the default local Slack transport. The process opens an authenticated outbound WebSocket using an app-level token, normalizes Events API payloads through the same allowlist and thread contracts, persists accepted tasks, then acknowledges envelope IDs. Reconnection must preserve durable event deduplication. The existing signed HTTP adapter remains available.
 
-Keep bot and app-level tokens in the private external credentials file. Require workspace/user allowlists and configure a dedicated channel. The initial [manifest](../../config/slack-app-manifest.json) subscribes only to mentions with `app_mentions:read` and `chat:write`; users mention the bot for each request and thread follow-up. Broader channel history, DMs, slash commands and interactive controls are not implicitly enabled.
+Keep bot and app-level tokens in the private external credentials file. Require workspace/user allowlists and configure a dedicated channel. The initial manifest used mentions with `app_mentions:read` and `chat:write`. [ADR 0013](0013-joined-slack-threads.md) supersedes its repeated-mention interaction: the current [manifest](../../config/slack-app-manifest.json) adds public/private channel message subscriptions and required history scopes, with application filtering to already-joined threads. DMs, slash commands and interactive controls remain outside this setup.
 
 ## Consequences
 

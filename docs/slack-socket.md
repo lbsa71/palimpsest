@@ -15,7 +15,7 @@ Acceptance criteria:
 - Reset the retry count only after an authenticated hello followed by 60 seconds continuously connected. Immediate opens or hello frames cannot turn repeated failures into a tight retry loop.
 - Closing cancels connection establishment, reconnect timers and acknowledgement handlers. Old sockets never acknowledge after replacement. Input, connection tickets, app tokens and callback exceptions are never logged or returned in errors.
 
-Dependencies: P03 durable ingress, the P04 shared parser, and CLI credential/configuration wiring. Non-goals: app installation, OAuth, slash-command or interactive payload execution, exactly-once external effects, public endpoints, SDK dependencies, or live Slack validation without supplied configuration. The initial app manifest subscribes to mentions only.
+Dependencies: P03 durable ingress, the P04 shared parser, and CLI credential/configuration wiring. Non-goals: app installation, OAuth, slash-command or interactive payload execution, exactly-once external effects, public endpoints, SDK dependencies, or live Slack validation without supplied configuration. The current app manifest subscribes to mentions and public/private channel messages, with joined-thread filtering described in [communications](communications.md).
 
 ## Interface and bounds
 

@@ -1,17 +1,14 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { CommunicationsError, parseSlackEvent } from './communications.ts';
-import type { InboundMessage } from './communications.ts';
+import type { InboundMessage, SlackAllowlistOptions } from './communications.ts';
 
 export interface SlackIngressApi {
   /** Resolve only after durable acceptance; execution and outbound replies are separate. */
   submit(input: InboundMessage): Promise<unknown>;
 }
-export interface SlackServerOptions {
+export interface SlackServerOptions extends SlackAllowlistOptions {
   signingSecret: string;
-  allowedTeamIds: readonly string[];
-  allowedUserIds: readonly string[];
-  allowedChannelIds?: readonly string[];
   host?: string;
   port?: number;
   ackTimeoutMs?: number;
@@ -77,7 +74,7 @@ export async function createSlackServer(api: SlackIngressApi, options: SlackServ
   if (!Number.isInteger(ackTimeoutMs) || ackTimeoutMs < 1 || ackTimeoutMs > 3000) throw new Error('Slack acknowledgement timeout must be between 1 and 3000 ms');
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid Slack ingress port');
-  const parserOptions = { signingSecret: options.signingSecret, allowedTeamIds: [...options.allowedTeamIds], allowedUserIds: [...options.allowedUserIds], ...(options.allowedChannelIds ? { allowedChannelIds: [...options.allowedChannelIds] } : {}) };
+  const parserOptions = { signingSecret: options.signingSecret, allowedTeamIds: [...options.allowedTeamIds], allowedUserIds: [...options.allowedUserIds], hasJoinedThread: options.hasJoinedThread, hasAcceptedEvent: options.hasAcceptedEvent, ...(options.allowedChannelIds ? { allowedChannelIds: [...options.allowedChannelIds] } : {}) };
   const server = createServer(async (request, response) => {
     const started = performance.now();
     try {

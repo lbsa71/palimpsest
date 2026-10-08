@@ -221,6 +221,15 @@ export class Store {
     });
   }
 
+  /** Durable participation comes only from previously accepted Slack ingress. */
+  hasSlackThread(conversationId: string): boolean {
+    return this.#db.prepare("SELECT 1 FROM tasks WHERE source = 'slack' AND conversation_id = ? LIMIT 1").get(conversationId) !== undefined;
+  }
+
+  hasSlackEvent(eventId: string): boolean {
+    return this.#db.prepare("SELECT 1 FROM tasks WHERE source = 'slack' AND event_id = ? LIMIT 1").get(eventId) !== undefined;
+  }
+
   /** Commit a response and its episode together, avoiding duplicate memory on restart. */
   finishTask(id: string, output: Json, episode: MemoryInput): Task {
     return this.#atomic(() => {

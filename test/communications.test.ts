@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
-import { DirectCommunications, createLocalServer, parseSlackEvent, SlackCommunications } from '../src/communications.ts';
+import { DirectCommunications, createLocalServer, parseSlackEvent, parseSlackPayload, SlackCommunications } from '../src/communications.ts';
 import type { InboundMessage, OutboundMessage } from '../src/communications.ts';
 
 const message: InboundMessage = { id: 'request-1', conversationId: 'alice', text: 'Hello', source: 'direct' };
@@ -101,7 +101,7 @@ test('local HTTP rejects hostile input before runtime ingress and hides internal
 
 const slackEvent = {
   type: 'event_callback', team_id: 'T1', event_id: 'Ev1',
-  event: { type: 'message', user: 'U1', channel: 'C1', text: 'Please work', ts: '123.456', thread_ts: '123.000' },
+  event: { type: 'app_mention', user: 'U1', channel: 'C1', text: 'Please work', ts: '123.456', thread_ts: '123.000' },
 };
 
 function signed(event: unknown, timestamp = '1770000000') {
@@ -115,7 +115,7 @@ function signed(event: unknown, timestamp = '1770000000') {
 test('Slack event auth preserves retry identity and isolates thread context', () => {
   const { rawBody, options } = signed(slackEvent);
   const parsed = parseSlackEvent(rawBody, options);
-  assert.deepEqual(parsed, { kind: 'message', message: { id: 'Ev1', conversationId: 'slack:T1:C1:123.000', source: 'slack', text: 'Please work', replyTo: '123.000' } });
+  assert.deepEqual(parsed, { kind: 'message', message: { id: 'slack-message:T1:C1:123.456', conversationId: 'slack:T1:C1:123.000', source: 'slack', text: 'Please work', replyTo: '123.000' } });
   assert.deepEqual(parseSlackEvent(rawBody, options), parsed, 'retries retain the same durable ingress identity');
   const other = signed({ ...slackEvent, event_id: 'Ev2', event: { ...slackEvent.event, thread_ts: '124.000' } });
   assert.notDeepEqual(parseSlackEvent(other.rawBody, other.options), parsed);
@@ -164,4 +164,29 @@ test('Slack reports API failure and uncertain external outcomes without replay',
   }
   const slack = new SlackCommunications({ token: 'test-bot-token', fetch: async () => { throw new Error('network failure with credential'); } });
   await assert.rejects(slack.send(outgoing), (error: unknown) => error instanceof Error && error.message === 'slack_delivery_uncertain');
+});
+
+
+test('ordinary Slack follow-ups require durable joined-thread membership and retain all identity gates', () => {
+  const joined = new Set(['slack:T1:C1:123.000']);
+  const options = { allowedTeamIds: ['T1'], allowedUserIds: ['U1'], allowedChannelIds: ['C1'], hasJoinedThread: (id: string) => joined.has(id) };
+  const event = { ...slackEvent, event: { ...slackEvent.event, type: 'message', channel_type: 'channel' } };
+  const accepted = parseSlackPayload(event, options);
+  assert.equal(accepted.kind, 'message');
+  assert.deepEqual(parseSlackPayload({ ...event, event: { ...event.event, channel_type: 'group' } }, options), accepted);
+  assert.deepEqual(parseSlackPayload(event, { ...options, hasJoinedThread: undefined }), { kind: 'ignored' });
+  for (const change of [
+    { team_id: 'T2' },
+    { event: { ...event.event, user: 'U2' } },
+    { event: { ...event.event, channel: 'C2' } },
+    { event: { ...event.event, thread_ts: '999.000' } },
+    { event: { ...event.event, thread_ts: undefined } },
+    { event: { ...event.event, channel_type: 'im' } },
+    { event: { ...event.event, bot_id: 'B1' } },
+    { event: { ...event.event, subtype: 'message_changed' } },
+  ]) assert.deepEqual(parseSlackPayload({ ...event, ...change }, options), { kind: 'ignored' });
+  assert.deepEqual(parseSlackPayload({ ...event, event_id: 'other-subscription', event: { ...event.event, type: 'app_mention' } }, options), accepted);
+  assert.deepEqual(parseSlackPayload({ ...event, event: { ...event.event, type: 'app_mention', channel_type: 'im' } }, options), { kind: 'ignored' });
+  const malformed = { ...event, event: { ...event.event, ts: undefined } };
+  assert.throws(() => parseSlackPayload(malformed, options), /invalid_slack_event/);
 });

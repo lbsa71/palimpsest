@@ -156,9 +156,13 @@ async function main(): Promise<void> {
     localServer = await createLocalServer({ submit, status: id => host!.runtime.status(id),
       cancel: id => host!.runtime.cancel(id), events: after => host!.runtime.events(after) }, { token: paths.apiToken, port });
     if (slack === 'http') slackServer = await createSlackServer({ submit }, { signingSecret: config.slackSigningSecret!,
+      hasJoinedThread: id => store!.hasSlackThread(id),
+      hasAcceptedEvent: id => store!.hasSlackEvent(id),
       allowedTeamIds: config.slackTeamIds, allowedUserIds: config.slackUserIds, ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
     if (slack === 'socket') {
       slackSocket = new SlackSocketClient({ submit }, { appToken: config.slackAppToken!, allowedTeamIds: config.slackTeamIds,
+        hasJoinedThread: id => store!.hasSlackThread(id),
+        hasAcceptedEvent: id => store!.hasSlackEvent(id),
         allowedUserIds: config.slackUserIds, ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
       await slackSocket.start();
     }

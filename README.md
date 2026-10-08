@@ -6,7 +6,7 @@ Its defining requirement is a **strong, persistent drive for self-improvement**.
 
 ## Project status
 
-**First model-authored source release completed, 2026-10-08.** Palimpsest authored, evaluated and locally promoted a conversation-memory isolation improvement; its exact source was pushed as `5044b57`. The integrated suite passes 196 tests with one platform skip. See the [release evidence](docs/self-improvement-2026-10-08.md). A live Slack mention received a reply after fixing recovery for accumulated history. Full seed acceptance remains open: memory/interview quality has explicit follow-ups in [progress](docs/progress.md).
+**First model-authored source release completed, 2026-10-08.** Palimpsest authored, evaluated and locally promoted a conversation-memory isolation improvement; its exact source was pushed as `5044b57`. The integrated suite passes 199 tests with one platform skip. See the [release evidence](docs/self-improvement-2026-10-08.md). Live Slack mention and subsequent unmentioned thread replies passed after fixing recovery and adding durable joined-thread handling. Full seed acceptance remains open: memory/interview quality has explicit follow-ups in [progress](docs/progress.md).
 
 This repository began by distilling the accessible portion of [Research Autonomous Agent Stack](https://chatgpt.com/c/6ac782af-e51c-83ed-bdc9-50060dbcfde5) and its attached colleague brief.
 

@@ -65,6 +65,16 @@ Implement a bounded task loop, durable state transitions, typed tools, cancellat
 
 **Done when:** A06–A07 pass, a configured real-provider smoke test records its result, and missing configuration produces an honest unavailable state. Document invocation only after verification.
 
+### Slack conversation refinement — follow-ups without repeated mentions
+
+**Status:** Implemented, installed and verified with a live unmentioned reply. **User direction:** Thread follow-ups should not require explicitly mentioning Palimpsest each time (2026-10-08). **Area:** P04/P15, R04/R21.
+
+**Expected behavior:** An allowed user starts or invites Palimpsest into a thread with a mention. Subsequent ordinary messages and controls from allowed users in that exact joined thread reach the same runtime without another mention, including after restart. Ignore unrelated top-level messages, unjoined threads, bot/subtype events, DMs and disallowed users/workspaces/channels. Broader message subscriptions must not create unrelated tasks or store unrelated content. Deduplicate a single Slack message delivered through both mention and message subscriptions and across restarts.
+
+**Implementation:** Subscribe to public/private channel message events and their required history scopes. Use durable Slack task existence to recognize joined threads, with a trusted lookup callback shared by both transports. Normalize duplicate delivery identity by workspace/channel/message timestamp. No history backfill or second task loop. Verify positive/negative cases, overlap ordering and persistent conversation membership; update the installed Slack app and reauthorize new scopes before claiming live mention-free delivery.
+
+**Evidence:** 199 tests passed with one platform skip; typecheck, 23 combined adapter checks, manifest JSON and changed local links passed. Independent review found no blocking issue. Both installed channel history scopes authenticated after reauthorization. The updated service accepted a fresh unmentioned follow-up in an existing mentioned thread, made one Mistral call and completed a delivered Slack reply. Actual exchange and integration evidence stay outside Git. The ordering and legacy-event limits in ADR 0013 remain explicit.
+
 ### P04 — Keep Slack and long-running work coherent
 
 **Priority:** P0. **Dependencies:** P03. **Requirements:** R04, R17–R19, R21.

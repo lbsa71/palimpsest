@@ -49,7 +49,7 @@ test('Socket Mode authenticates once, scopes payloads and acknowledges only dura
   assert.equal(client.status().state, 'connected');
   f.sockets[0]!.message(frame()); await until(() => received.length === 1);
   assert.deepEqual(f.sockets[0]!.sent, []);
-  assert.deepEqual(received[0], { id: 'Ev1', conversationId: 'slack:T1:C1:123.000', text: 'Hello', source: 'slack', replyTo: '123.000' });
+  assert.deepEqual(received[0], { id: 'slack-message:T1:C1:123.001', conversationId: 'slack:T1:C1:123.000', text: 'Hello', source: 'slack', replyTo: '123.000' });
   finish(); await until(() => f.sockets[0]!.sent.length === 1);
   assert.deepEqual(JSON.parse(f.sockets[0]!.sent[0]!), { envelope_id: 'Ev1' });
   for (const change of [ { team_id: 'T2' }, { event: { ...payload().event, user: 'U2' } }, { event: { ...payload().event, channel: 'C2' } }, { event: { ...payload().event, bot_id: 'B1' } } ]) {
@@ -174,4 +174,37 @@ test('disabled links stop and unsupported interaction envelopes cannot become ta
   assert.equal(submitted, 0); assert.deepEqual(f.sockets[0]!.sent, []);
   f.sockets[0]!.message({ type: 'disconnect', reason: 'link_disabled' });
   await until(() => client.status().state === 'failed'); await delay(20); assert.equal(f.sockets.length, 1);
+});
+
+
+test('joined Slack threads accept plain follow-ups across socket/store restart and overlapping subscriptions deduplicate', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'palimpsest-joined-thread-'));
+  const path = join(directory, 'state.sqlite');
+  let store = new Store(path);
+  const api = { submit: async (input: InboundMessage) => store.enqueue({ input: input.text, conversationId: input.conversationId, source: input.source, eventId: input.id }) };
+  const f = fixture({ hasJoinedThread: id => store.hasSlackThread(id), hasAcceptedEvent: id => store.hasSlackEvent(id) });
+  let client = new SlackSocketClient(api, f.options);
+  t.after(async () => { await client.close(); store.close(); await rm(directory, { recursive: true, force: true }); });
+  const ordinary = (id: string, ts: string) => ({ ...frame(id), payload: { ...payload(id), event: { ...payload(id).event, type: 'message', channel_type: 'channel', ts } } });
+  await client.start();
+  // Message subscription arrives before the initiating mention: it cannot enroll.
+  f.sockets[0]!.message(ordinary('pre-mention', '123.001'));
+  await until(() => f.sockets[0]!.sent.length === 1);
+  assert.equal(store.listTasks().length, 0);
+  f.sockets[0]!.message(frame('mention')); await until(() => f.sockets[0]!.sent.length === 2);
+  f.sockets[0]!.message(ordinary('mention-mirror', '123.001')); await until(() => f.sockets[0]!.sent.length === 3);
+  assert.equal(store.listTasks().length, 1);
+  await client.close(); store.close(); store = new Store(path);
+  client = new SlackSocketClient(api, f.options); await client.start();
+  f.sockets[1]!.message(ordinary('plain-followup', '123.002')); await until(() => f.sockets[1]!.sent.length === 1);
+  assert.equal(store.listTasks().length, 2);
+  assert.equal(store.listTasks()[1]!.conversationId, store.listTasks()[0]!.conversationId);
+  const mentionAfter = { ...frame('followup-mention'), payload: { ...payload('followup-mention'), event: { ...payload().event, ts: '123.002' } } };
+  f.sockets[1]!.message(mentionAfter); await until(() => f.sockets[1]!.sent.length === 2);
+  assert.equal(store.listTasks().length, 2, 'message-first overlapping mention has no second task');
+  store.enqueue({ source: 'direct', conversationId: 'slack:T1:C1:999.000', input: 'Synthetic direct task', eventId: 'direct' });
+  assert.equal(store.hasSlackThread('slack:T1:C1:999.000'), false);
+  store.enqueue({ source: 'slack', conversationId: 'slack:T1:C1:123.000', input: 'Hello', eventId: 'legacy-event' });
+  f.sockets[1]!.message(frame('legacy-event')); await until(() => f.sockets[1]!.sent.length === 3);
+  assert.equal(store.listTasks().length, 4, 'legacy event retry retains the previously accepted identity');
 });
