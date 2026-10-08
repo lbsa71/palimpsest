@@ -142,6 +142,8 @@ export class AgentRuntime {
         const facts = {
           ...this.#hostFacts(),
           memoryPersistence: this.#store.persistent ? 'on-disk SQLite, survives restart' : 'in-memory SQLite, does not survive restart',
+          memoryMechanics: { scopedRetrieval: true, versionedCorrections: true, logicalForgetting: true,
+            automaticPruning: false, conversationMemoryManagementTools: false },
           conversationActionTools: [], conversationDispatchToGrowth: false,
           selfModificationDispatcher: false,
           requester: { source: task.source, slackAuthor: task.slackAuthor ?? null,

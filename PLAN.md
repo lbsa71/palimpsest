@@ -90,7 +90,7 @@ Implement shared communications contracts with direct calls, an authenticated lo
 
 ### P04 refinement — conversation admission and modification authority
 
-**Status:** Immediate policy/provenance slice implemented; deterministic verification completed, live service reload pending. **Priority:** P0. **Dependencies:** Existing authenticated Slack transports and external task store. **Requirements:** R04, R23; [ADR 0014](docs/adr/0014-conversation-and-modification-authority.md).
+**Status:** Immediate policy/provenance slice implemented; deterministic verification completed and live service reloaded. A live capability-answer probe is recorded separately. **Priority:** P0. **Dependencies:** Existing authenticated Slack transports and external task store. **Requirements:** R04, R23; [ADR 0014](docs/adr/0014-conversation-and-modification-authority.md).
 
 **Problem:** The former Slack user allowlist blocked ordinary conversation as well as potential privileged requests. Removing that gate without durable per-message provenance would let a later participant, quotation, memory or growth inquiry inherit another user's apparent authority.
 

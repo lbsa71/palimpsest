@@ -125,6 +125,7 @@ async function main(): Promise<void> {
       model: config.model || null, communications, maxCallsPerTask: config.maxCallsPerTask, quiesceBackground: pauseGrowth,
       selfModificationUserIds: config.slackSelfModificationUserIds,
       hostFacts: () => ({ backgroundGrowthScheduled: growth !== undefined, backgroundEvolutionScheduled: evolution !== undefined,
+        backgroundGrowthInputs: 'Standing growth mission, admitted agent source and growth-scope observations. No conversation-to-growth feed is implemented.',
         growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay }) });
     let initial;
     if (host.custodian.inspect().phase === 'empty') {

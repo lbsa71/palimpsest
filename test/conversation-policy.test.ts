@@ -40,6 +40,7 @@ test('shared conversation retains author restrictions through memory and process
     assert.equal(store.task(outsider.id)!.slackAuthor!.userId, 'U2', 'caller cannot mutate persisted author');
     assert.equal(facts(requests[0]!).requester.selfModificationSuggestionEligible, false);
     assert.match(facts(requests[0]!).memoryPersistence, /on-disk/);
+    assert.equal(facts(requests[0]!).memoryMechanics.versionedCorrections, true);
     await host.stop(); store.close();
     store = new Store(path); host = runtime(store, ['U1'], requests);
     const owner = await host.submit(input('002', 'U1', 'Continue this discussion.'));

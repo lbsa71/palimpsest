@@ -46,3 +46,5 @@ These are planned requirements for the unfinished workflow, not available comman
 ## Subsequent policy foundation
 
 The user subsequently separated conversation access from self-modification suggestion eligibility. The host now supplies actual capability/storage and authenticated per-message/per-memory source facts, and Slack admits human conversation independently of the modification whitelist. This addresses the missing host facts identified above; the complete conversation-to-cognition/growth/action/release workflow remains unfinished under P16. See [ADR 0014](adr/0014-conversation-and-modification-authority.md). The historical Slack answer and this audit are evidence of the preceding behavior, not a claim that the new host facts have already passed a live model-quality probe.
+
+A subsequent one-call direct Mistral probe corrected the session-only memory denial and accurately reported absent conversation dispatch/Git publication, but still invented unsupported memory-versioning and growth-input claims. Host facts were expanded in response. Capability-answer quality is therefore not closed by the presence of facts alone.
