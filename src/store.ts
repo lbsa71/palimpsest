@@ -5,12 +5,14 @@ import { DatabaseSync } from 'node:sqlite';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type TaskState = 'queued' | 'running' | 'waiting_for_provider' | 'succeeded' | 'failed' | 'cancelled';
+export interface SlackAuthor { teamId: string; userId: string }
 export interface Task {
   id: string; conversationId: string; input: string; source: string; eventId?: string;
   state: TaskState; checkpoint: Json; output: Json; error: string | null;
   createdAt: string; updatedAt: string;
+  slackAuthor?: SlackAuthor;
 }
-export interface TaskInput { id?: string; conversationId: string; input: string; source: string; eventId?: string }
+export interface TaskInput { id?: string; conversationId: string; input: string; source: string; eventId?: string; slackAuthor?: SlackAuthor }
 export interface TaskPatch { state?: TaskState; checkpoint?: Json; output?: Json; error?: string | null }
 export interface JournalEvent { seq: number; type: string; taskId: string | null; payload: Json; createdAt: string }
 export interface Effect {
@@ -87,12 +89,14 @@ function decode<T>(row: unknown): T | undefined {
  * auto-recovery: only a coordinator which has stopped previous workers may recover.
  */
 export class Store {
+  readonly persistent: boolean;
   #db: DatabaseSync;
   #transaction = false;
   #closed = false;
 
   constructor(dbPath: string) {
     required(dbPath, 'Database path');
+    this.persistent = dbPath !== ':memory:';
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.#db = new DatabaseSync(dbPath);
     if (dbPath !== ':memory:') chmodSync(dbPath, 0o600);
@@ -162,10 +166,17 @@ export class Store {
     required(input.conversationId, 'Conversation ID'); required(input.input, 'Task input'); required(input.source, 'Source');
     if (input.id !== undefined) required(input.id, 'Task ID');
     if (input.eventId !== undefined) required(input.eventId, 'Event ID');
+    if (input.slackAuthor !== undefined && (input.source !== 'slack'
+      || !/^[A-Za-z0-9]+$/.test(input.slackAuthor.teamId) || !/^[A-Za-z0-9]+$/.test(input.slackAuthor.userId)
+      || !input.conversationId.startsWith(`slack:${input.slackAuthor.teamId}:`))) throw new Error('Invalid Slack author');
     return this.#atomic(() => {
       const existing = input.eventId === undefined ? undefined : decode<Task>(this.#db.prepare('SELECT record FROM tasks WHERE source = ? AND event_id = ?').get(input.source, input.eventId));
       if (existing) {
         if (existing.conversationId !== input.conversationId || existing.input !== input.input || (input.id !== undefined && input.id !== existing.id)) throw new Error('Task delivery idempotency conflict');
+        // A retry cannot replace authorship. Legacy anonymous records stay
+        // anonymous even when a newly normalized retry supplies an author.
+        if (existing.slackAuthor && (existing.slackAuthor.teamId !== input.slackAuthor?.teamId
+          || existing.slackAuthor.userId !== input.slackAuthor?.userId)) throw new Error('Task author idempotency conflict');
         return existing;
       }
       const now = new Date().toISOString();

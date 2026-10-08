@@ -67,14 +67,14 @@ export async function createSlackServer(api: SlackIngressApi, options: SlackServ
   const host = options.host ?? '127.0.0.1';
   if (!['127.0.0.1', '::1'].includes(host)) throw new Error('Slack ingress requires a literal loopback address');
   if (typeof options.signingSecret !== 'string' || !options.signingSecret.trim()) throw new Error('Slack signing secret is required');
-  for (const list of [options.allowedTeamIds, options.allowedUserIds, options.allowedChannelIds ?? []]) {
+  for (const list of [options.allowedTeamIds, options.allowedChannelIds ?? []]) {
     if (!Array.isArray(list) || list.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9]+$/.test(id))) throw new Error('Slack allowlists must contain explicit IDs');
   }
   const ackTimeoutMs = options.ackTimeoutMs ?? 2500;
   if (!Number.isInteger(ackTimeoutMs) || ackTimeoutMs < 1 || ackTimeoutMs > 3000) throw new Error('Slack acknowledgement timeout must be between 1 and 3000 ms');
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid Slack ingress port');
-  const parserOptions = { signingSecret: options.signingSecret, allowedTeamIds: [...options.allowedTeamIds], allowedUserIds: [...options.allowedUserIds], hasJoinedThread: options.hasJoinedThread, hasAcceptedEvent: options.hasAcceptedEvent, ...(options.allowedChannelIds ? { allowedChannelIds: [...options.allowedChannelIds] } : {}) };
+  const parserOptions = { signingSecret: options.signingSecret, allowedTeamIds: [...options.allowedTeamIds], hasJoinedThread: options.hasJoinedThread, hasAcceptedEvent: options.hasAcceptedEvent, ...(options.allowedChannelIds ? { allowedChannelIds: [...options.allowedChannelIds] } : {}) };
   const server = createServer(async (request, response) => {
     const started = performance.now();
     try {

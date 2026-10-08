@@ -42,3 +42,7 @@ Track [P16](../PLAN.md#p16--connect-conversation-to-real-capabilities-and-govern
 5. Execute a user-requested Slack change end to end, then repeat with worker/provider failure and current-memory continuity. Do not close the product integration item on prompt wording, schemas, fixture callbacks or the operator manually performing missing steps.
 
 These are planned requirements for the unfinished workflow, not available commands or newly granted runtime permissions. Plans must preserve the distinction between the model proposing an action and the trusted host executing it.
+
+## Subsequent policy foundation
+
+The user subsequently separated conversation access from self-modification suggestion eligibility. The host now supplies actual capability/storage and authenticated per-message/per-memory source facts, and Slack admits human conversation independently of the modification whitelist. This addresses the missing host facts identified above; the complete conversation-to-cognition/growth/action/release workflow remains unfinished under P16. See [ADR 0014](adr/0014-conversation-and-modification-authority.md). The historical Slack answer and this audit are evidence of the preceding behavior, not a claim that the new host facts have already passed a live model-quality probe.

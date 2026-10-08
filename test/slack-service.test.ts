@@ -24,10 +24,13 @@ test('signed challenges and authorized messages route through shared normalized 
   assert.equal(challenge.status, 200);
   assert.deepEqual(await challenge.json(), { challenge: 'challenge-token' });
   assert.equal((await fetch(server.url, request(envelope()))).status, 200);
-  assert.deepEqual(received, [{ id: 'slack-message:T1:C1:123.001', conversationId: 'slack:T1:C1:123.000', text: 'Hello', source: 'slack', replyTo: '123.000' }]);
+  assert.deepEqual(received, [{ id: 'slack-message:T1:C1:123.001', conversationId: 'slack:T1:C1:123.000', text: 'Hello', source: 'slack', replyTo: '123.000', slackAuthor: { teamId: 'T1', userId: 'U1' } }]);
+  const anotherUser = envelope('other-human'); anotherUser.event.user = 'U2'; anotherUser.event.ts = '123.002';
+  assert.equal((await fetch(server.url, request(anotherUser))).status, 200);
+  assert.deepEqual(received[1]!.slackAuthor, { teamId: 'T1', userId: 'U2' });
   assert.equal((await fetch(server.url, request({ ...envelope('denied'), team_id: 'T2' }))).status, 200);
   assert.equal((await fetch(server.url, request({ ...envelope('bot'), event: { ...envelope().event, bot_id: 'B1' } }))).status, 200);
-  assert.equal(received.length, 1);
+  assert.equal(received.length, 2);
 });
 
 test('Slack retries deduplicate in the shared durable store, including after listener restart', async (t) => {

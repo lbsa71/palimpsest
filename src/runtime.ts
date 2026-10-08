@@ -5,6 +5,7 @@ import { ProviderError } from './providers.ts';
 import { Store } from './store.ts';
 import type { Json, Memory, Task } from './store.ts';
 import { conversationRequest } from './agent/brain.ts';
+import { conversationPolicy, maySuggestSelfModification, sameSlackAuthor } from './conversation-policy.ts';
 
 export interface RuntimeOptions {
   store: Store;
@@ -14,6 +15,9 @@ export interface RuntimeOptions {
   requestFactory?: (task: Task, memories: Memory[]) => CompletionRequest | Promise<CompletionRequest>;
   /** Trusted receiving boundary; never a model-supplied role or epoch. */
   authorize?: (boundary: 'tool' | 'store' | 'memory' | 'message') => void;
+  selfModificationUserIds?: readonly string[];
+  /** Host-observed facts, never supplied by a cognitive worker or transport body. */
+  hostFacts?: () => Record<string, Json>;
 }
 
 function checkpoint(task: Task): Record<string, Json> {
@@ -41,6 +45,8 @@ export class AgentRuntime {
   readonly #commands = new Set<Promise<void>>();
   readonly #requestFactory: NonNullable<RuntimeOptions['requestFactory']>;
   readonly #authorize: NonNullable<RuntimeOptions['authorize']>;
+  readonly #selfModificationUserIds: readonly string[];
+  readonly #hostFacts: NonNullable<RuntimeOptions['hostFacts']>;
 
   constructor(options: RuntimeOptions) {
     this.#store = options.store;
@@ -49,6 +55,9 @@ export class AgentRuntime {
     this.#maxCalls = options.maxCallsPerTask ?? 4;
     this.#requestFactory = options.requestFactory ?? conversationRequest;
     this.#authorize = options.authorize ?? (() => {});
+    this.#selfModificationUserIds = Object.freeze([...(options.selfModificationUserIds ?? [])]);
+    if (this.#selfModificationUserIds.some(id => !/^[A-Za-z0-9]+$/.test(id))) throw new Error('Modification whitelist requires explicit user IDs');
+    this.#hostFacts = options.hostFacts ?? (() => ({}));
     if (!Number.isSafeInteger(this.#maxCalls) || this.#maxCalls < 1) throw new Error('Task call budget must be a positive integer');
   }
 
@@ -56,7 +65,8 @@ export class AgentRuntime {
     if (this.#stopped) throw new Error('Runtime is stopped');
     if (!this.#communications.has(input.source)) throw new Error('Unknown communication source');
     let task = this.#store.enqueue({ conversationId: input.conversationId, input: input.text,
-      source: input.source, eventId: input.id });
+      source: input.source, eventId: input.id,
+      ...(input.slackAuthor ? { slackAuthor: { ...input.slackAuthor } } : {}) });
     if (task.state === 'queued' && task.checkpoint === null) {
       task = this.#store.updateTask(task.id, { checkpoint: { calls: 0, replyTo: input.replyTo ?? null } });
     }
@@ -124,10 +134,29 @@ export class AgentRuntime {
         this.#store.updateTask(task.id, { checkpoint: progress });
         this.#store.appendEvent('inference.started', { provider: this.#provider.name, attempt: calls + 1 }, task.id);
         this.#authorize('memory');
-        const request = await this.#requestFactory(task, this.#store.listMemories(task.conversationId));
+        // The candidate sees exactly the bounded set whose source facts the
+        // host supplies; it cannot select an unlabeled older memory.
+        const memories = this.#store.listMemories(task.conversationId).slice(-12);
+        // Collect policy outside candidate execution. These facts guide cognition;
+        // future effect receivers must separately enforce the same eligibility.
+        const facts = {
+          ...this.#hostFacts(),
+          memoryPersistence: this.#store.persistent ? 'on-disk SQLite, survives restart' : 'in-memory SQLite, does not survive restart',
+          conversationActionTools: [], conversationDispatchToGrowth: false,
+          selfModificationDispatcher: false,
+          requester: { source: task.source, slackAuthor: task.slackAuthor ?? null,
+            selfModificationSuggestionEligible: maySuggestSelfModification(task, this.#selfModificationUserIds) },
+          memorySources: memories.map(memory => {
+            const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
+            const sameScope = origin?.conversationId === task.conversationId ? origin : undefined;
+            return { memoryId: memory.id, sourceTaskId: sameScope?.id ?? null, slackAuthor: sameScope?.slackAuthor ?? null,
+              selfModificationSuggestionEligible: sameScope ? maySuggestSelfModification(sameScope, this.#selfModificationUserIds) : false };
+          }),
+        };
+        const request = await this.#requestFactory(structuredClone(task), structuredClone(memories));
         if (signal.aborted) throw new ProviderError('cancelled', 'Task was interrupted before inference');
         this.#authorize('tool');
-        const response = await this.#provider.complete({ ...request, signal });
+        const response = await this.#provider.complete({ ...request, system: `${request.system}\n\n${conversationPolicy}\nHost facts: ${JSON.stringify(facts)}`, signal });
         this.#authorize('store');
         if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) return;
         answer = response.text;
@@ -168,7 +197,8 @@ export class AgentRuntime {
       this.#authorize('memory');
       this.#store.finishTask(task.id, answer, {
         scope: task.conversationId, kind: 'episodic', source: `task:${task.id}`, confidence: 1,
-        content: JSON.stringify({ user: task.input, response: answer, note: 'Recorded exchange; response assertions are not independently verified facts.' }),
+        content: JSON.stringify({ user: task.input, response: answer, slackAuthor: task.slackAuthor ?? null,
+          note: 'Recorded exchange; response assertions are not independently verified facts. Authorship is not execution authority.' }),
         evidence: [`task:${task.id}`],
       });
     } catch (error) {
@@ -221,9 +251,11 @@ export class AgentRuntime {
     const parsed = command(task.input)!; const target = this.#store.task(parsed.id);
     if (!target || target.conversationId !== task.conversationId || target.id === task.id) return 'Task not found in this conversation.';
     if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.`;
+    if (task.source === 'slack' && !sameSlackAuthor(task, target)) return 'Only the original Slack author can cancel or correct this task.';
     this.cancel(target.id);
     if (parsed.kind === 'cancel') return `Task ${target.id}: ${this.#store.task(target.id)!.state}.`;
-    const replacement = this.#store.enqueue({ conversationId: task.conversationId, source: task.source, input: parsed.text!, eventId: `${task.id}:replacement` });
+    const replacement = this.#store.enqueue({ conversationId: task.conversationId, source: task.source, input: parsed.text!, eventId: `${task.id}:replacement`,
+      ...(task.slackAuthor ? { slackAuthor: { ...task.slackAuthor } } : {}) });
     if (replacement.checkpoint === null) this.#store.updateTask(replacement.id, { checkpoint: { calls: 0, replyTo: checkpoint(task).replyTo ?? null } });
     this.#store.appendEvent('task.corrected', { originalId: target.id, replacementId: replacement.id }, task.id);
     return `Correction recorded. Replacement task ${replacement.id} is queued; original history is preserved.`;

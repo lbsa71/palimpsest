@@ -4,7 +4,7 @@ Status: minimal signed ingress implemented. This service connects the existing v
 
 ## Specification
 
-`createSlackServer(api, options)` exposes `POST /slack/events` on a literal loopback address, defaulting to `127.0.0.1` and an ephemeral port. The caller supplies `api.submit(InboundMessage)`, which must resolve only after durable acceptance, plus the Slack signing secret and configured team/user allowlists. A deployment may explicitly place an operator-controlled HTTPS reverse proxy in front of the loopback endpoint; public proxy deployment and Slack app installation are outside this work item.
+`createSlackServer(api, options)` exposes `POST /slack/events` on a literal loopback address, defaulting to `127.0.0.1` and an ephemeral port. The caller supplies `api.submit(InboundMessage)`, which must resolve only after durable acceptance, plus the Slack signing secret and configured workspace/channel restrictions. A deployment may explicitly place an operator-controlled HTTPS reverse proxy in front of the loopback endpoint; public proxy deployment and Slack app installation are outside this work item.
 
 Acceptance criteria:
 
@@ -18,7 +18,7 @@ Non-goals: Slack OAuth/app installation, Socket Mode, a public listener, new tas
 
 ## Operational contract
 
-Options are `signingSecret`, `allowedTeamIds`, `allowedUserIds`, optional `allowedChannelIds`, optional `host`/`port`, and `ackTimeoutMs` (default 2,500 ms, maximum 3,000 ms). Empty team/user allowlists deny messages. The result is `{server,url,close}` with `url` naming the `/slack/events` endpoint.
+Options are `signingSecret`, `allowedTeamIds`, optional `allowedChannelIds`, optional `host`/`port`, and `ackTimeoutMs` (default 2,500 ms, maximum 3,000 ms). An empty team allowlist denies messages. Human users are not filtered by the modification whitelist; authenticated author metadata accompanies accepted messages. The deprecated optional `allowedUserIds` field is ignored. See [ADR 0014](adr/0014-conversation-and-modification-authority.md). The result is `{server,url,close}` with `url` naming the `/slack/events` endpoint.
 
 The timeout bounds acknowledgement, not durable storage completion. A timed-out submission may subsequently commit; Slack may retry it. The runtime must keep stable event-ID deduplication and must not execute an acknowledged event twice. No in-memory seen-ID cache can substitute for that journal. This endpoint returns retryable HTTP 503 if the durable callback rejects or exceeds its deadline; it does not cancel or replay a possibly committing callback.
 

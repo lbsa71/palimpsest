@@ -115,7 +115,7 @@ function signed(event: unknown, timestamp = '1770000000') {
 test('Slack event auth preserves retry identity and isolates thread context', () => {
   const { rawBody, options } = signed(slackEvent);
   const parsed = parseSlackEvent(rawBody, options);
-  assert.deepEqual(parsed, { kind: 'message', message: { id: 'slack-message:T1:C1:123.456', conversationId: 'slack:T1:C1:123.000', source: 'slack', text: 'Please work', replyTo: '123.000' } });
+  assert.deepEqual(parsed, { kind: 'message', message: { id: 'slack-message:T1:C1:123.456', conversationId: 'slack:T1:C1:123.000', source: 'slack', text: 'Please work', replyTo: '123.000', slackAuthor: { teamId: 'T1', userId: 'U1' } } });
   assert.deepEqual(parseSlackEvent(rawBody, options), parsed, 'retries retain the same durable ingress identity');
   const other = signed({ ...slackEvent, event_id: 'Ev2', event: { ...slackEvent.event, thread_ts: '124.000' } });
   assert.notDeepEqual(parseSlackEvent(other.rawBody, other.options), parsed);
@@ -124,7 +124,7 @@ test('Slack event auth preserves retry identity and isolates thread context', ()
   assert.throws(() => parseSlackEvent(rawBody, { ...options, now: options.now + 301_000 }), /expired_slack_request/);
   assert.throws(() => parseSlackEvent(rawBody, { ...options, now: options.now - 301_000 }), /expired_slack_request/);
   assert.deepEqual(parseSlackEvent(rawBody, { ...options, allowedTeamIds: [] }), { kind: 'ignored' });
-  assert.deepEqual(parseSlackEvent(rawBody, { ...options, allowedUserIds: [] }), { kind: 'ignored' });
+  assert.equal(parseSlackEvent(rawBody, { ...options, allowedUserIds: [] }).kind, 'message', 'user eligibility must not block conversation');
   assert.deepEqual(parseSlackEvent(rawBody, { ...options, allowedChannelIds: [] }), { kind: 'ignored' });
 });
 
@@ -177,7 +177,6 @@ test('ordinary Slack follow-ups require durable joined-thread membership and ret
   assert.deepEqual(parseSlackPayload(event, { ...options, hasJoinedThread: undefined }), { kind: 'ignored' });
   for (const change of [
     { team_id: 'T2' },
-    { event: { ...event.event, user: 'U2' } },
     { event: { ...event.event, channel: 'C2' } },
     { event: { ...event.event, thread_ts: '999.000' } },
     { event: { ...event.event, thread_ts: undefined } },
@@ -185,6 +184,9 @@ test('ordinary Slack follow-ups require durable joined-thread membership and ret
     { event: { ...event.event, bot_id: 'B1' } },
     { event: { ...event.event, subtype: 'message_changed' } },
   ]) assert.deepEqual(parseSlackPayload({ ...event, ...change }, options), { kind: 'ignored' });
+  const anotherUser = parseSlackPayload({ ...event, event: { ...event.event, user: 'U2' } }, options);
+  assert.equal(anotherUser.kind, 'message', 'all humans may follow up in a joined thread');
+  if (anotherUser.kind === 'message') assert.deepEqual(anotherUser.message.slackAuthor, { teamId: 'T1', userId: 'U2' });
   assert.deepEqual(parseSlackPayload({ ...event, event_id: 'other-subscription', event: { ...event.event, type: 'app_mention' } }, options), accepted);
   assert.deepEqual(parseSlackPayload({ ...event, event: { ...event.event, type: 'app_mention', channel_type: 'im' } }, options), { kind: 'ignored' });
   const malformed = { ...event, event: { ...event.event, ts: undefined } };

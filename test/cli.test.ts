@@ -141,7 +141,7 @@ test('CLI signed Slack ingress shares the host without exposing keys or sending 
   const f = fixture(); let active: Awaited<ReturnType<typeof serve>> | undefined;
   try {
     f.env.SLACK_BOT_TOKEN = 'synthetic-slack-bot'; f.env.SLACK_SIGNING_SECRET = 'synthetic-signing-secret';
-    f.env.SLACK_ALLOWED_TEAM_IDS = 'T1'; f.env.SLACK_ALLOWED_USER_IDS = 'U1'; f.env.PALIMPSEST_GROWTH_CALLS_PER_DAY = '0';
+    f.env.SLACK_ALLOWED_TEAM_IDS = 'T1'; f.env.SLACK_SELF_MODIFICATION_USER_IDS = ''; f.env.PALIMPSEST_GROWTH_CALLS_PER_DAY = '0';
     active = await serve(f); assert.match(active.startup.slackUrl, /^http:\/\/127\.0\.0\.1:\d+\/slack\/events$/);
     const timestamp = String(Math.floor(Date.now() / 1000)); const body = JSON.stringify({ type: 'url_verification', challenge: 'synthetic-only' });
     const signature = `v0=${createHmac('sha256', f.env.SLACK_SIGNING_SECRET).update(`v0:${timestamp}:${body}`).digest('hex')}`;

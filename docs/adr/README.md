@@ -20,5 +20,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0012](0012-queued-background-evolution.md) | Accepted; fixture-verified | Queued background adoption, separate daily allocation and user-priority boundary |
 
 | [0013](0013-joined-slack-threads.md) | Accepted; live follow-up verified | Mention once, then converse in durable joined threads |
+| [0014](0014-conversation-and-modification-authority.md) | Accepted; immediate policy/provenance slice verified; deliberation/dispatch planned | Broad human conversation with separate self-modification suggestion authority |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

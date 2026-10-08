@@ -128,7 +128,7 @@ export class SlackSocketClient {
   constructor(api: { submit(input: InboundMessage): Promise<unknown> }, options: SlackSocketOptions) {
     if (typeof options.appToken !== 'string' || !options.appToken.startsWith('xapp-') || options.appToken.length > 4096 || /\s/.test(options.appToken)) throw new CommunicationsError('invalid_slack_app_token');
     this.#api = api;
-    this.#options = { ...options, allowedTeamIds: [...options.allowedTeamIds], allowedUserIds: [...options.allowedUserIds], ...(options.allowedChannelIds ? { allowedChannelIds: [...options.allowedChannelIds] } : {}) };
+    this.#options = { ...options, allowedTeamIds: [...options.allowedTeamIds], ...(options.allowedChannelIds ? { allowedChannelIds: [...options.allowedChannelIds] } : {}) };
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#createSocket = options.createSocket ?? (url => new WebSocket(url));
     this.#connectionTimeout = integer(options.connectionTimeoutMs, 10_000, 60_000);

@@ -49,14 +49,15 @@ test('Socket Mode authenticates once, scopes payloads and acknowledges only dura
   assert.equal(client.status().state, 'connected');
   f.sockets[0]!.message(frame()); await until(() => received.length === 1);
   assert.deepEqual(f.sockets[0]!.sent, []);
-  assert.deepEqual(received[0], { id: 'slack-message:T1:C1:123.001', conversationId: 'slack:T1:C1:123.000', text: 'Hello', source: 'slack', replyTo: '123.000' });
+  assert.deepEqual(received[0], { id: 'slack-message:T1:C1:123.001', conversationId: 'slack:T1:C1:123.000', text: 'Hello', source: 'slack', replyTo: '123.000', slackAuthor: { teamId: 'T1', userId: 'U1' } });
   finish(); await until(() => f.sockets[0]!.sent.length === 1);
   assert.deepEqual(JSON.parse(f.sockets[0]!.sent[0]!), { envelope_id: 'Ev1' });
   for (const change of [ { team_id: 'T2' }, { event: { ...payload().event, user: 'U2' } }, { event: { ...payload().event, channel: 'C2' } }, { event: { ...payload().event, bot_id: 'B1' } } ]) {
     f.sockets[0]!.message({ ...frame(), payload: { ...payload(), ...change } });
   }
   await until(() => f.sockets[0]!.sent.length === 5);
-  assert.equal(received.length, 1);
+  assert.equal(received.length, 2, 'a user outside the modification whitelist can converse');
+  assert.deepEqual(received[1]!.slackAuthor, { teamId: 'T1', userId: 'U2' });
 });
 
 test('socket reconnect and client restart preserve durable event deduplication', async (t) => {

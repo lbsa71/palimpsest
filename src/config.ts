@@ -19,7 +19,7 @@ export interface RuntimeConfig {
   slackAppToken?: string;
   slackSigningSecret?: string;
   slackTeamIds: string[];
-  slackUserIds: string[];
+  slackSelfModificationUserIds: string[];
   slackChannelIds: string[];
   describe(): Record<string, unknown>;
   toJSON(): Record<string, unknown>;
@@ -93,7 +93,7 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
     evolutionCallsPerDay: values.PALIMPSEST_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_EVOLUTION_CALLS_PER_DAY, 8, 'daily evolution calls'),
     timeoutMs: positiveInteger(values.PALIMPSEST_TIMEOUT_MS, 120_000, 'timeout'),
     slackTeamIds: (values.SLACK_ALLOWED_TEAM_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
-    slackUserIds: (values.SLACK_ALLOWED_USER_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    slackSelfModificationUserIds: (values.SLACK_SELF_MODIFICATION_USER_IDS ?? values.SLACK_ALLOWED_USER_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
     slackChannelIds: (values.SLACK_ALLOWED_CHANNEL_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
     describe() {
       return { repositoryRoot, dataDir, credentialsPath, provider, model: this.model ?? null,
@@ -101,7 +101,7 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
         maxCallsPerTask: this.maxCallsPerTask, growthCallsPerDay: this.growthCallsPerDay, evolutionCallsPerDay: this.evolutionCallsPerDay, timeoutMs: this.timeoutMs,
         slackConfigured: Boolean(this.slackBotToken && (this.slackAppToken || this.slackSigningSecret)),
         slackSocketConfigured: Boolean(this.slackBotToken && this.slackAppToken),
-        slackTeamIds: this.slackTeamIds, slackUserIds: this.slackUserIds, slackChannelIds: this.slackChannelIds };
+        slackTeamIds: this.slackTeamIds, slackSelfModificationUserIds: this.slackSelfModificationUserIds, slackChannelIds: this.slackChannelIds };
     },
     toJSON() { return this.describe(); },
   };

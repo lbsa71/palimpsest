@@ -101,8 +101,9 @@ test('command retries during delivery send once, preserve reply thread and stay 
     communications: [{ name: 'slack', send: async (output) => { sent.push(output); entered(); await pending; } }],
   });
   try {
-    const original = await runtime.submit({ id: 'slack-original', conversationId: 'slack:T1:C1:123.000', source: 'slack', text: 'Original', replyTo: '123.000' });
-    const input = { id: 'correction-event', conversationId: original.conversationId, source: 'slack', text: `correct ${original.id} Revised`, replyTo: '123.000' };
+    const slackAuthor = { teamId: 'T1', userId: 'U1' };
+    const original = await runtime.submit({ id: 'slack-original', conversationId: 'slack:T1:C1:123.000', source: 'slack', text: 'Original', replyTo: '123.000', slackAuthor });
+    const input = { id: 'correction-event', conversationId: original.conversationId, source: 'slack', text: `correct ${original.id} Revised`, replyTo: '123.000', slackAuthor };
     const first = runtime.submit(input); await begun;
     const retry = await runtime.submit(input); assert.equal(retry.state, 'running');
     const stopping = runtime.quiesce();

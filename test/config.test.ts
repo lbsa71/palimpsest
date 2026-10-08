@@ -70,6 +70,16 @@ test('a credentials file cannot be inside the repository', () => {
   } finally { f.cleanup(); }
 });
 
+test('modification whitelist has explicit empty deny and legacy user-list fallback', () => {
+  const f = fixture();
+  try {
+    const env = { PALIMPSEST_CREDENTIALS_FILE: join(f.base, 'missing'), SLACK_ALLOWED_USER_IDS: 'U1, U2' };
+    assert.deepEqual(loadConfig({ repositoryRoot: f.repo, env }).slackSelfModificationUserIds, ['U1', 'U2']);
+    assert.deepEqual(loadConfig({ repositoryRoot: f.repo, env: { ...env, SLACK_SELF_MODIFICATION_USER_IDS: 'U3' } }).slackSelfModificationUserIds, ['U3']);
+    assert.deepEqual(loadConfig({ repositoryRoot: f.repo, env: { ...env, SLACK_SELF_MODIFICATION_USER_IDS: '' } }).slackSelfModificationUserIds, []);
+  } finally { f.cleanup(); }
+});
+
 test('starting from a checkout subdirectory cannot put state elsewhere in the checkout', () => {
   const f = fixture();
   try {

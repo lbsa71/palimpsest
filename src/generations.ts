@@ -22,6 +22,8 @@ export interface GenerationOptions {
   probationChecks?: number; rpcTimeoutMs?: number; lifetimeMs?: number;
   requiredChecks?: string[];
   quiesceBackground?: () => Promise<void>;
+  selfModificationUserIds?: readonly string[];
+  hostFacts?: () => Record<string, Json>;
 }
 
 /** Actual local worker supervision. All production effects stay in this trusted process. */
@@ -76,6 +78,12 @@ export class GenerationHost {
           } };
           this.#runtime = new AgentRuntime({ store: options.store, provider, communications: options.communications,
             maxCallsPerTask: options.maxCallsPerTask,
+            selfModificationUserIds: options.selfModificationUserIds,
+            hostFacts: () => ({ ...options.hostFacts?.(),
+              activeRelease: this.custodian.inspect().active?.release.digest ?? null,
+              phase: this.custodian.inspect().phase,
+              sourceEvolutionScope: 'Only direct src/agent/*.ts, through candidate checks, review and succession; replaces cognitive workers, not the outer service.',
+              applicationGitPublication: false }),
             authorize,
             requestFactory: async (task, memories) => {
               if (task.conversationId === (options.scope ?? 'local')) return worker.request(task, memories);

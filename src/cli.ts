@@ -44,8 +44,8 @@ function configuredProvider(config: RuntimeConfig): Provider {
 function slackMode(config: RuntimeConfig): 'socket' | 'http' | undefined {
   if (!config.slackBotToken && !config.slackAppToken && !config.slackSigningSecret) return;
   if (!config.slackBotToken || (!config.slackAppToken && !config.slackSigningSecret)
-    || !config.slackTeamIds.length || !config.slackUserIds.length) {
-    throw new Error('Slack configuration requires a bot token, app token or signing secret, and explicit team/user allowlists.');
+    || !config.slackTeamIds.length) {
+    throw new Error('Slack configuration requires a bot token, app token or signing secret, and an explicit team allowlist.');
   }
   return config.slackAppToken ? 'socket' : 'http';
 }
@@ -122,7 +122,10 @@ async function main(): Promise<void> {
       evolutionCallsPerDay: config.evolutionCallsPerDay, timeoutMs: config.timeoutMs, scope: 'local' };
     const modelProfile = { provider: config.provider, model: config.model || null };
     host = new GenerationHost({ repositoryRoot: config.repositoryRoot, dataDir: config.dataDir, store, provider,
-      model: config.model || null, communications, maxCallsPerTask: config.maxCallsPerTask, quiesceBackground: pauseGrowth });
+      model: config.model || null, communications, maxCallsPerTask: config.maxCallsPerTask, quiesceBackground: pauseGrowth,
+      selfModificationUserIds: config.slackSelfModificationUserIds,
+      hostFacts: () => ({ backgroundGrowthScheduled: growth !== undefined, backgroundEvolutionScheduled: evolution !== undefined,
+        growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay }) });
     let initial;
     if (host.custodian.inspect().phase === 'empty') {
       initial = freezeBaseline({ repositoryRoot: config.repositoryRoot, dataDir: config.dataDir,
@@ -158,12 +161,12 @@ async function main(): Promise<void> {
     if (slack === 'http') slackServer = await createSlackServer({ submit }, { signingSecret: config.slackSigningSecret!,
       hasJoinedThread: id => store!.hasSlackThread(id),
       hasAcceptedEvent: id => store!.hasSlackEvent(id),
-      allowedTeamIds: config.slackTeamIds, allowedUserIds: config.slackUserIds, ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
+      allowedTeamIds: config.slackTeamIds, ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
     if (slack === 'socket') {
       slackSocket = new SlackSocketClient({ submit }, { appToken: config.slackAppToken!, allowedTeamIds: config.slackTeamIds,
         hasJoinedThread: id => store!.hasSlackThread(id),
         hasAcceptedEvent: id => store!.hasSlackEvent(id),
-        allowedUserIds: config.slackUserIds, ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
+        ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
       await slackSocket.start();
     }
     if (stopped) return;

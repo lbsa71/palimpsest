@@ -8,6 +8,8 @@ export interface InboundMessage {
   text: string;
   source: string;
   replyTo?: string;
+  /** Set only by an authenticated Slack adapter, never taken from message text. */
+  slackAuthor?: { teamId: string; userId: string };
 }
 
 export interface OutboundMessage {
@@ -211,7 +213,8 @@ export async function createLocalServer(api: LocalApi, options: LocalServerOptio
 
 export interface SlackAllowlistOptions {
   allowedTeamIds: readonly string[];
-  allowedUserIds: readonly string[];
+  /** @deprecated User IDs no longer restrict conversation; configure modification policy in the host. */
+  allowedUserIds?: readonly string[];
   allowedChannelIds?: readonly string[];
   /** Trusted durable lookup; ordinary messages cannot enroll a thread. */
   hasJoinedThread?: (conversationId: string) => boolean;
@@ -251,11 +254,11 @@ export function parseSlackPayload(body: unknown, options: SlackAllowlistOptions)
   if (!['message', 'app_mention'].includes(String(event.type)) || event.bot_id !== undefined || event.subtype !== undefined) return { kind: 'ignored' };
   if (event.channel_type !== undefined && !['channel', 'group'].includes(String(event.channel_type))) return { kind: 'ignored' };
   if (!nonempty(body.team_id) || !nonempty(event.user) || !nonempty(event.channel)
-    || !options.allowedTeamIds.includes(body.team_id) || !options.allowedUserIds.includes(event.user)
+    || !options.allowedTeamIds.includes(body.team_id)
     || (options.allowedChannelIds !== undefined && !options.allowedChannelIds.includes(event.channel))) return { kind: 'ignored' };
   const root = event.thread_ts ?? event.ts;
   if (!nonempty(body.event_id) || !nonempty(event.text, 60_000) || !nonempty(root) || !nonempty(event.ts)
-    || !/^[A-Za-z0-9]+$/.test(body.team_id) || !/^[A-Za-z0-9]+$/.test(event.channel)
+    || !/^[A-Za-z0-9]+$/.test(body.team_id) || !/^[A-Za-z0-9]+$/.test(event.channel) || !/^[A-Za-z0-9]+$/.test(event.user)
     || !/^\d+\.\d+$/.test(root) || !/^\d+\.\d+$/.test(event.ts)) throw new CommunicationsError('invalid_slack_event');
   const conversationId = `slack:${body.team_id}:${event.channel}:${root}`;
   if (event.type === 'message' && (event.thread_ts === undefined
@@ -263,7 +266,8 @@ export function parseSlackPayload(body: unknown, options: SlackAllowlistOptions)
   // Slack can deliver the same message as both app_mention and message events.
   // The individual message timestamp is stable across subscriptions and retries.
   const id = options.hasAcceptedEvent?.(body.event_id) ? body.event_id : `slack-message:${body.team_id}:${event.channel}:${event.ts}`;
-  return { kind: 'message', message: { id, source: 'slack', conversationId, text: event.text, replyTo: root } };
+  return { kind: 'message', message: { id, source: 'slack', conversationId, text: event.text, replyTo: root,
+    slackAuthor: { teamId: body.team_id, userId: event.user } } };
 }
 
 export interface SlackCommunicationsOptions {
