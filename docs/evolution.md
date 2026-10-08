@@ -54,3 +54,5 @@ flowchart LR
     I -->|Decline or exhausted budget| A
     B -->|Failure| Restore[Mechanical recovery with current history]
 ```
+
+The serving coordinator sets the continuity interview prompt ceiling to 512,000 bytes, retaining the full bound snapshot and transcript. Fresh source review retains its default 256,000-byte ceiling. Oversize prompts still decline before a provider call; larger-history summarization and a full bounded continuity projection remain future work.

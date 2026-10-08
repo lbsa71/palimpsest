@@ -127,7 +127,9 @@ export class EvolutionCoordinator {
       const questions = new Map<number, string>();
       report.interview = await interviewCandidate({ input, snapshot: { sequence: snapshot.sequence, snapshot: snapshot.snapshot, policyVersion: snapshot.policyVersion, snapshotDigest: snapshot.digest },
         incumbent: this.#loggedProvider(this.#options.incumbent, report.id, 'incumbent'), successor: this.#loggedProvider(this.#options.successor, report.id, 'successor'),
-        maxCalls: this.#maxInterviewCalls, maxRounds: 2, beforeCall, signal: request.signal,
+        // Full, bound continuity can outgrow the generic review prompt default.
+        // Keep an explicit finite ceiling; oversize snapshots still fail closed.
+        maxContextBytes: 512_000, maxCalls: this.#maxInterviewCalls, maxRounds: 2, beforeCall, signal: request.signal,
         onMessage: message => {
           if (message.stage === 'question') questions.set(message.round, host.custodian.ask(incumbent!, succession.id, String(message.payload.question)).id);
           else if (message.stage === 'answer') {

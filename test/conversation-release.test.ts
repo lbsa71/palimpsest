@@ -33,7 +33,7 @@ test('real host conversation carries Slack author through governed succession, e
     }else {
       stages.push(prompt.stage??'review');
       if(!prompt.stage)body={...prompt.bindings,status:'pass',reason:'Synthetic fresh review bound to exact source and independent checks.',coverage:prompt.requiredCheckNames,blockingFindings:[]};
-      else if(prompt.stage==='question')body={...prompt.bindings,question:'Explain current memories, commitments, competence, judgment, the proposed improvement and justified disagreement.'};
+      else if(prompt.stage==='question'){assert.ok(JSON.stringify(prompt.continuity).length>256000,'real interview must retain accumulated continuity');body={...prompt.bindings,question:'Explain current memories, commitments, competence, judgment, the proposed improvement and justified disagreement.'};}
       else if(prompt.stage==='answer')body={...prompt.bindings,answer:'Current snapshot and commitments remain authoritative; scope filtering is independently checked.',evidenceReferences:[prompt.allowedEvidenceReferences[0]],challenge:'The caller should not be the only scope guard.'};
       else if(prompt.stage==='verdict')body={...prompt.bindings,verdict:'accept',reason:'Bound source and protected checks support acceptance.',coverage:[...INTERVIEW_CRITERIA],challengeResolution:'Cross-scope check establishes the correction.'};
       else body={...prompt.bindings,ready:true,reason:'Ready for custodian-authorized catch-up.',acknowledgesTransferContract:true};
@@ -48,6 +48,7 @@ test('real host conversation carries Slack author through governed succession, e
   try {
     await host.start(baseline);
     store.addMemory({scope:'local',kind:'episodic',content:'Current history survives host installation',source:'fixture',confidence:1});
+    store.addMemory({scope:'local',kind:'episodic',content:'Accumulated history '.repeat(17000),source:'fixture-large-history',confidence:1});
     // Operator host installation is separate from the subsequent human proposal.
     writeFileSync(join(repositoryRoot,'src/operator-host.ts'),'export const hostVersion=2;');git('add','.');git('commit','-qm','reviewed host installation');git('push','origin','main');
     const installed=freezeBaseline({repositoryRoot,dataDir,configuration,modelProfile,requiredChecks:['typecheck','trusted-agent-contract','cross-scope-memory']});
