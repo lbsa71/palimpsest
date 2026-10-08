@@ -4,7 +4,7 @@ Status: local supervised seed, 2026-10-08. The commands below use external durab
 
 ## CLI integration contract (P03/P04/P08/P12)
 
-`ask` and `serve` use the supervised generation host. First startup freezes and evaluates a clean baseline using the protected type and agent contract checks. Later startups recover the retained release even when the checkout has unrelated changes. `doctor` and `help` perform no inference, bootstrap or state writes.
+`ask` and `serve` use the supervised generation host. First startup freezes and evaluates a clean baseline using the protected type and agent contract checks. Later startups recover the retained release even when the checkout has unrelated changes. Reviewed protected host changes need the separate [operator baseline installation](host-installation.md) before subsequent cognitive proposals can share the new governance baseline. `doctor` and `help` perform no inference, bootstrap or state writes.
 
 While `serve` runs, growth starts automatically within the same persisted daily allocation used by `growth tick`. Completed source proposals enter a durable queue for governed evaluation, review, interview and local promotion. User tasks take priority, provider calls do not overlap, and signals stop in-flight work before releasing the coordinator lock. The authenticated local API remains responsive while inference runs. Configured Slack ingress submits through the same host.
 

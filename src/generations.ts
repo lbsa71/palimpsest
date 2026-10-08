@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Custodian } from './custodian.ts';
 import type { Actor, Checkpoint, ProcessRef, Release } from './custodian.ts';
-import { readManifest, verifyFrozenCandidate, digestJson } from './candidates.ts';
+import { readManifest, verifyFrozenCandidate, evaluateCandidate, digestJson } from './candidates.ts';
 import type { CandidateManifest } from './candidates.ts';
 import { AgentWorker } from './workers.ts';
 import { AgentRuntime } from './runtime.ts';
@@ -124,6 +124,20 @@ export class GenerationHost {
       await this.custodian.bootstrap(releaseOf(initial));
     } else await this.custodian.recover();
     if (this.custodian.inspect().phase === 'recovery_required') throw new Error('Mechanical recovery requires operator reconciliation');
+  }
+
+  async installHostBaseline(manifest: CandidateManifest, expectedIncumbent: string): Promise<void> {
+    const previous = this.custodian.inspect().knownGood;
+    if (!previous || previous.digest !== expectedIncumbent) throw new Error('Operator baseline incumbent changed');
+    const old = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false});
+    const frozen = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:manifest.releaseDir});
+    if (frozen.id !== manifest.id || frozen.sourceDigest !== old.sourceDigest || frozen.dataSchemaVersion !== old.dataSchemaVersion)
+      throw new Error('Host installation must preserve exact admitted cognitive source and schema');
+    if(digestJson(frozen.configuration)!==digestJson(old.configuration))throw new Error('Host installation must preserve configured release policy');
+    const checked = await evaluateCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:frozen.releaseDir});
+    if (checked.status !== 'passed' || this.requiredChecks.some(name=>!checked.checks.some(check=>check.name===name && check.status==='passed')))
+      throw new Error('Host installation requires all protected checks');
+    await this.custodian.installHostBaseline(releaseOf(frozen),expectedIncumbent,checked.evidenceDigest);
   }
 
   async submit(message: InboundMessage): Promise<Task> {

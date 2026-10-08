@@ -22,5 +22,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0013](0013-joined-slack-threads.md) | Accepted; live follow-up verified | Mention once, then converse in durable joined threads |
 | [0014](0014-conversation-and-modification-authority.md) | Accepted; immediate policy/provenance slice verified; deliberation/dispatch planned | Broad human conversation with separate self-modification suggestion authority |
 | [0015](0015-conversational-self-modification.md) | Accepted bounded implementation; integrated fixture verified; live deployment and full acceptance pending | Deliberation, eligible cognitive source proposals, governed succession and configured publication |
+| [0016](0016-operator-host-baseline.md) | Accepted bounded operator procedure; local custodian/real-worker integration verified; live installation pending | Explicit host-baseline alignment with unchanged cognition, durable transfer and retained rescue |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

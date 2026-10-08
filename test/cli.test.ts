@@ -178,3 +178,19 @@ test('serving discovers a durable growth proposal, reserves release budget and r
     finally { after.close(); }
   } finally { if (active) await stop(active.child); f.cleanup(); }
 });
+
+test('operator CLI prepares exact host baseline, preserves memory and installs/restores without conversation tools', {skip:process.platform!=='darwin'},()=>{
+  const f=fixture();try {
+    writeFileSync(join(f.repo,'src/agent/brain.ts'),source.replace('memories.slice(-12)','memories.filter(m=>m.scope===task.conversationId).slice(-12)'));
+    execFileSync('/usr/bin/git',['add','.'],{cwd:f.repo});execFileSync('/usr/bin/git',['commit','-qm','scoped cognition'],{cwd:f.repo});
+    const initial=JSON.parse(run(f,'init'));const store=new Store(join(f.data,'state.sqlite'));
+    store.addMemory({scope:'local',kind:'episodic',content:'history preserved',source:'fixture',confidence:1});store.close();
+    writeFileSync(join(f.repo,'src/operator-host.ts'),'export const hostVersion=2;');
+    execFileSync('/usr/bin/git',['add','.'],{cwd:f.repo});execFileSync('/usr/bin/git',['commit','-qm','host upgrade'],{cwd:f.repo});
+    const prepared=JSON.parse(run(f,'host-baseline','prepare'));assert.equal(prepared.status,'passed');assert.equal(prepared.incumbentId,initial.generation);
+    assert.throws(()=>run(f,'host-baseline','install',prepared.candidateId,'0'.repeat(64)));
+    const installed=JSON.parse(run(f,'host-baseline','install',prepared.candidateId,prepared.incumbentId));assert.equal(installed.generation,prepared.candidateId);
+    const observed=new Store(join(f.data,'state.sqlite'));assert.equal(observed.listMemories('local')[0]?.content,'history preserved');observed.close();
+    const restored=JSON.parse(run(f,'host-baseline','restore',prepared.candidateId));assert.equal(restored.generation,initial.generation);assert.ok(restored.epoch>installed.epoch);
+  }finally{f.cleanup();}
+});

@@ -57,10 +57,13 @@ function slackMode(config: RuntimeConfig): 'socket' | 'http' | undefined {
 async function main(): Promise<void> {
   const [command = 'help', ...args] = process.argv.slice(2);
   if (command === 'help') {
-    console.log('Palimpsest: doctor | init | ask <message> | serve [port] | tasks | memory [scope] | growth [tick]');
+    console.log('Palimpsest: doctor | init | ask <message> | serve [port] | tasks | memory [scope] | growth [tick] | host-baseline prepare|install <candidate-id> <incumbent-id>|restore <installed-id>');
     return;
   }
-  if (!['doctor', 'init', 'ask', 'serve', 'tasks', 'memory', 'growth'].includes(command)) throw new Error(`Unknown command: ${command}`);
+  if (!['doctor', 'init', 'ask', 'serve', 'tasks', 'memory', 'growth', 'host-baseline'].includes(command)) throw new Error(`Unknown command: ${command}`);
+  if(command==='host-baseline' && !((args[0]==='prepare'&&args.length===1)
+    || (args[0]==='install'&&args.length===3&&args.slice(1).every(value=>/^[a-f0-9]{64}$/.test(value)))
+    || (args[0]==='restore'&&args.length===2&&/^[a-f0-9]{64}$/.test(args[1]!))))throw new Error('Invalid host-baseline command');
   if (command === 'ask' && !args.join(' ').trim()) throw new Error('ask requires a message');
   if (command === 'growth' && (args.length > 1 || (args[0] !== undefined && args[0] !== 'tick'))) throw new Error('growth accepts only the optional tick action');
   const port = command === 'serve' && args[0] !== undefined ? Number(args[0]) : 0;
@@ -140,6 +143,23 @@ async function main(): Promise<void> {
         backgroundGrowthInputs: 'Standing growth mission, admitted agent source and growth-scope observations. No conversation-to-growth feed is implemented.',
         applicationGitPublication:!!publisher, interactiveEvolutionCallsPerDay:config.interactiveEvolutionCallsPerDay,
         growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay }) });
+    if(command==='host-baseline') {
+      const previous=host.custodian.inspect().knownGood;
+      if(!previous)throw new Error('Host baseline installation requires an existing admitted release');
+      if(args[0]==='prepare') {
+        const baseline=freezeBaseline({repositoryRoot:config.repositoryRoot,dataDir:config.dataDir,configuration,modelProfile,requiredChecks:[...host.requiredChecks] as Array<'typecheck'|'trusted-agent-contract'|'cross-scope-memory'>});
+        if(baseline.sourceDigest!==readManifest(previous.artifactPath).sourceDigest)throw new Error('Host baseline must preserve admitted cognitive source');
+        const evidence=await evaluateCandidate({repositoryRoot:config.repositoryRoot,releaseDir:baseline.releaseDir});
+        console.log(JSON.stringify({candidateId:baseline.id,incumbentId:previous.digest,evidenceDigest:evidence.evidenceDigest,status:evidence.status}));
+        if(evidence.status!=='passed')process.exitCode=1;
+      }else {
+        await host.start();ready=true;
+        if(args[0]==='install')await host.installHostBaseline(readManifest(join(config.dataDir,'releases',args[1]!)),args[2]!);
+        else await host.custodian.restoreHostBaseline(args[1]!);
+        console.log(JSON.stringify({hostBaseline:args[0],generation:host.custodian.inspect().active?.release.digest,epoch:host.custodian.inspect().epoch}));
+      }
+      return;
+    }
     let initial;
     if (host.custodian.inspect().phase === 'empty') {
       initial = freezeBaseline({ repositoryRoot: config.repositoryRoot, dataDir: config.dataDir,

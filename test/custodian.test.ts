@@ -325,3 +325,74 @@ test('incumbent can abort unavailable evaluation with an unanswered mailbox with
   await c.tick();
   assert.equal(live.size, 1);
 });
+
+test('operator host baseline retains governance guard, current history, later epochs and a bound rescue',async t=>{
+  const {custodian:c,setCheckpoint,activations}=await fixture(t);
+  const incumbent=await c.bootstrap(A);const newer={...B,governanceDigest:'1'.repeat(64)};
+  await assert.rejects(c.propose(incumbent,newer),/governance_change_disabled/);
+  await assert.rejects(c.installHostBaseline(newer,'0'.repeat(64),'e'.repeat(64)),/operator_baseline_binding/);
+  setCheckpoint({sequence:9,snapshot:{memories:['current history'],tasks:['new commitment']},policyVersion:'current',unresolvedEffects:[],quiesced:true});
+  await c.installHostBaseline(newer,A.digest,'e'.repeat(64));const installed=c.inspect();
+  assert.equal(installed.knownGood?.digest,B.digest);assert.ok(installed.epoch>1);assert.equal(installed.operatorBaseline?.previous.digest,A.digest);
+  assert.deepEqual(activations.at(-1)?.checkpoint.snapshot,{memories:['current history'],tasks:['new commitment']});
+  assert.throws(()=>c.assertAuthority(incumbent,'store',installed.active!.process),/unauthorized|stale_authority/);
+  await c.restoreHostBaseline(B.digest);assert.equal(c.inspect().knownGood?.digest,A.digest);assert.ok(c.inspect().epoch>installed.epoch);
+  assert.deepEqual(activations.at(-1)?.checkpoint.snapshot,{memories:['current history'],tasks:['new commitment']});
+  await assert.rejects(c.restoreHostBaseline(B.digest),/operator_baseline_binding/);
+});
+
+test('failed host baseline activation recovers older code with current history',async t=>{
+  let failNew=true;
+  const f=await fixture(t,{activate:async(_process,_actor)=>{if(failNew&&f.custodian.inspect().active?.release.digest===B.digest)throw new Error('new installation failed');}});
+  await f.custodian.bootstrap(A);f.setCheckpoint({sequence:13,snapshot:{memories:['new memory']},policyVersion:'new',unresolvedEffects:[],quiesced:true});
+  await assert.rejects(f.custodian.installHostBaseline({...B,governanceDigest:'2'.repeat(64)},A.digest,'e'.repeat(64)),/new installation failed/);
+  assert.equal(f.custodian.inspect().knownGood?.digest,A.digest);assert.equal(f.custodian.inspect().active?.release.digest,A.digest);assert.ok(f.custodian.inspect().epoch>2);
+  assert.equal(f.custodian.inspect().operatorBaseline?.status,'prepared');failNew=false;
+});
+
+test('unfinished operator installation after process death recovers older code without resetting custody',async t=>{
+  const f=await fixture(t);await f.custodian.bootstrap(A);const oldProcess=f.custodian.inspect().active!.process;f.custodian.close();
+  const moduleUrl=new URL('../src/custodian.ts',import.meta.url).href;
+  const script=`import {Custodian} from ${JSON.stringify(moduleUrl)};
+    const c=new Custodian({storeDir:${JSON.stringify(f.storeDir)},requiredChecks:['behavior'],hooks:{
+      verifyArtifact:async()=>true,checkpoint:async()=>({sequence:22,snapshot:{memories:['latest']},policyVersion:'latest',unresolvedEffects:[],quiesced:true}),
+      launch:async(_r,_m,ctx)=>({pid:77,instanceId:ctx.launchId}),stop:async()=>{},probe:async()=>({runtime:'healthy',providerAvailable:false}),catchUp:async()=>{if(c.inspect().phase==='transfer')process.kill(process.pid,'SIGKILL');},
+      activate:async()=>{},reconcileLaunch:async()=>undefined
+    }});await c.installHostBaseline(${JSON.stringify({...B,governanceDigest:'3'.repeat(64)})},${JSON.stringify(A.digest)},'e'.repeat(64));`;
+  const child=spawn(process.execPath,['--input-type=module','-e',script],{stdio:['ignore','ignore','pipe']});let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});
+  const ended=await new Promise<{code:number|null;signal:string|null}>(resolve=>child.on('exit',(code,signal)=>resolve({code,signal})));
+  assert.equal(ended.signal,'SIGKILL',stderr);
+  const restored=new Custodian({storeDir:f.storeDir,hooks:f.hooks,requiredChecks:['behavior']});t.after(()=>restored.close());
+  const epoch=restored.inspect().epoch;assert.equal(restored.inspect().knownGood?.digest,A.digest);assert.ok(restored.inspect().pendingStops.some(p=>p.instanceId===oldProcess.instanceId));assert.equal(restored.inspect().pendingStops.length,2);await restored.recover();assert.equal(f.live.has(oldProcess.instanceId),false);
+  assert.equal(restored.inspect().active?.release.digest,A.digest);assert.ok(restored.inspect().epoch>epoch);assert.equal(restored.inspect().operatorBaseline?.status,'prepared');
+});
+
+test('unresolved effects prevent host installation and failed rescue remains bound for retry',async t=>{
+  let blocked=true;let failRescue=false;
+  const f=await fixture(t,{checkpoint:async()=>({sequence:42,snapshot:{memories:['current']},policyVersion:'current',unresolvedEffects:blocked?['uncertain-message']:[],quiesced:true}),activate:async()=>{if(failRescue&&f.custodian.inspect().active?.release.digest===A.digest)throw new Error('rescue temporarily failed');}});
+  await f.custodian.bootstrap(A).catch(()=>{});
+  // Bootstrap also refuses uncertainty; clear it and use its explicit recovery.
+  blocked=false;if(f.custodian.inspect().phase==='recovery_required')await f.custodian.retryRecovery();
+  blocked=true;await assert.rejects(f.custodian.installHostBaseline(B,A.digest,'e'.repeat(64)),/unresolved_effects/);
+  assert.equal(f.custodian.inspect().knownGood?.digest,A.digest);blocked=false;await f.custodian.retryRecovery();
+  await f.custodian.installHostBaseline(B,A.digest,'e'.repeat(64));failRescue=true;
+  await assert.rejects(f.custodian.restoreHostBaseline(B.digest),/rescue temporarily failed/);
+  assert.equal(f.custodian.inspect().knownGood?.digest,B.digest);assert.equal(f.custodian.inspect().operatorBaseline?.status,'installed');
+  failRescue=false;await f.custodian.restoreHostBaseline(B.digest);assert.equal(f.custodian.inspect().knownGood?.digest,A.digest);
+});
+
+test('killed operator rescue retains its installed binding for an explicit retry',async t=>{
+  const f=await fixture(t);await f.custodian.bootstrap(A);await f.custodian.installHostBaseline(B,A.digest,'e'.repeat(64));f.custodian.close();
+  const moduleUrl=new URL('../src/custodian.ts',import.meta.url).href;
+  const script=`import {Custodian} from ${JSON.stringify(moduleUrl)};
+    const c=new Custodian({storeDir:${JSON.stringify(f.storeDir)},requiredChecks:['behavior'],hooks:{
+      verifyArtifact:async()=>true,checkpoint:async()=>({sequence:30,snapshot:{memories:['current rescue']},policyVersion:'latest',unresolvedEffects:[],quiesced:true}),
+      launch:async(_r,_m,ctx)=>({pid:78,instanceId:ctx.launchId}),stop:async()=>{},probe:async()=>({runtime:'healthy',providerAvailable:false}),
+      catchUp:async()=>{if(c.inspect().phase==='transfer')process.kill(process.pid,'SIGKILL');},activate:async()=>{},reconcileLaunch:async()=>undefined
+    }});await c.restoreHostBaseline(${JSON.stringify(B.digest)});`;
+  const child=spawn(process.execPath,['--input-type=module','-e',script],{stdio:['ignore','ignore','pipe']});let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});
+  const ended=await new Promise<string|null>(resolve=>child.on('exit',(_code,signal)=>resolve(signal)));assert.equal(ended,'SIGKILL',stderr);
+  const recovered=new Custodian({storeDir:f.storeDir,hooks:f.hooks,requiredChecks:['behavior']});t.after(()=>recovered.close());await recovered.recover();
+  assert.equal(recovered.inspect().knownGood?.digest,B.digest);assert.equal(recovered.inspect().operatorBaseline?.status,'installed');
+  await recovered.restoreHostBaseline(B.digest);assert.equal(recovered.inspect().knownGood?.digest,A.digest);
+});

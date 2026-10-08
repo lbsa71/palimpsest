@@ -71,6 +71,8 @@ export interface CustodianState {
   pendingLaunch?: { launchId: string; release: Release; mode: 'staging' | 'production'; epoch: number };
   pendingStops: ProcessRef[];
   reason?: string;
+  operatorBaseline?: { previous: Release; candidate: Release; evidenceDigest: string; status: 'prepared' | 'installed' | 'restored' };
+  baselineRestoreIntent?: { previous: Release; candidate: Release; evidenceDigest: string };
 }
 export interface CustodianEvent { sequence: number; type: string; payload: Json; at: string }
 
@@ -238,6 +240,74 @@ export class Custodian {
       if (!actor) fail('bootstrap_failed');
       return actor;
     });
+  }
+
+  /** Trusted local installation boundary, deliberately absent from actor tools.
+   * The host checks unchanged cognition and exact mandatory evidence first. */
+  async installHostBaseline(candidate: Release, expectedIncumbent: string, evidenceDigest: string): Promise<Actor> {
+    return this.#exclusive(() => this.#installHostBaseline(candidate, expectedIncumbent, evidenceDigest));
+  }
+  async restoreHostBaseline(expectedInstalled: string): Promise<Actor> {
+    return this.#exclusive(async () => {
+      const record = this.#state.operatorBaseline;
+      if (!record || record.status !== 'installed' || record.candidate.digest !== expectedInstalled) fail('operator_baseline_binding');
+      this.#state.baselineRestoreIntent={previous:record.previous,candidate:record.candidate,evidenceDigest:record.evidenceDigest};
+      this.#save('host_baseline.restore_intent',{installed:expectedInstalled,rescue:record.previous.digest});
+      let restored: Actor;
+      try { restored = await this.#installHostBaseline(record.previous, expectedInstalled, record.evidenceDigest, true); }
+      catch(error) {
+        if(this.#state.knownGood?.digest===expectedInstalled) {
+          this.#state.operatorBaseline=record;this.#save('host_baseline.restore_failed',{digest:expectedInstalled});
+        }
+        throw error;
+      }
+      this.#state.operatorBaseline={...record,status:'restored'};delete this.#state.baselineRestoreIntent;
+      this.#save('host_baseline.restored', { digest: record.previous.digest });
+      return restored;
+    });
+  }
+  async #installHostBaseline(candidate: Release, expectedIncumbent: string, evidenceDigest: string, restoring = false): Promise<Actor> {
+    const previous = this.#state.knownGood;
+    if (this.#state.phase !== 'normal' || !previous || this.#state.active?.release.digest !== previous.digest
+      || previous.digest !== expectedIncumbent || this.#state.pendingLaunch || this.#state.pendingStops.length) fail('operator_baseline_binding');
+    const item = release(candidate);
+    if (!digest(evidenceDigest) || item.digest === previous.digest || item.dataSchemaVersion !== previous.dataSchemaVersion) fail('operator_baseline_binding');
+    await this.#verify(previous, 'recovery'); await this.#verify(item, restoring ? 'recovery' : 'admission');
+    const oldProcess = this.#state.active!.process;
+    this.#state.operatorBaseline = { previous, candidate: item, evidenceDigest, status: 'prepared' };
+    if (!this.#state.artifacts.some(value => value.digest === item.digest)) this.#state.artifacts.push(item);
+    this.#save('host_baseline.prepared', { previous: previous.digest, candidate: item.digest, evidenceDigest });
+    let staged: ProcessRef | undefined;
+    try {
+      staged = await this.#launch(item, 'staging');
+      this.#state.pendingStops.push(staged); delete this.#state.pendingLaunch;
+      this.#save('host_baseline.staged', { instanceId: staged.instanceId });
+      if ((await this.#hook(this.#hooks.probe(staged))).runtime !== 'healthy') fail('operator_baseline_unhealthy');
+      const checkpoint = await this.#checkpoint();
+      if (!checkpoint.quiesced || checkpoint.unresolvedEffects.length) fail('operator_baseline_unresolved_effects');
+      await this.#verify(item, restoring ? 'recovery' : 'admission');
+      this.#state.pendingStops.push(oldProcess);
+      delete this.#state.active; this.#state.epoch++; this.#state.phase = 'transfer';
+      this.#save('host_baseline.fenced', { epoch: this.#state.epoch });
+      await this.#hook(this.#hooks.catchUp(staged, checkpoint));
+      const actor = this.#issue(staged, item, this.#state.epoch);
+      this.#state.active = { release: item, process: staged }; this.#state.phase = 'normal';
+      this.#save('host_baseline.activated', { epoch: this.#state.epoch });
+      await this.#hook(this.#hooks.activate(staged, actor, checkpoint));
+      for (let check = 0; check < this.#probationChecks; check++)
+        if ((await this.#hook(this.#hooks.probe(staged))).runtime !== 'healthy') fail('operator_baseline_unhealthy');
+      // Until this atomic commit, restart recovers the older known-good artifact.
+      this.#state.knownGood = item; this.#state.operatorBaseline.status = 'installed';
+      this.#state.pendingStops = [oldProcess];
+      this.#save('host_baseline.installed', { digest: item.digest, epoch: this.#state.epoch });
+      await this.#stopPending();
+      return actor;
+    } catch (error) {
+      this.#save('host_baseline.failed', { candidate: item.digest });
+      // A failed retirement after the installation commit must not roll it back.
+      await this.#recover('operator_baseline_failed');
+      throw error;
+    }
   }
 
   async propose(incumbent: Actor, candidate: Release): Promise<{ id: string; successor: Actor }> {
@@ -454,6 +524,11 @@ export class Custodian {
         const restored = this.#issue(started, this.#state.knownGood, this.#state.epoch);
         this.#save('recovery.authority_granted', { epoch: this.#state.epoch, digest: this.#state.knownGood.digest });
         await this.#hook(this.#hooks.activate(started, restored, checkpoint));
+        const restoration=this.#state.baselineRestoreIntent;
+        if(restoration) {
+          this.#state.operatorBaseline={...restoration,status:this.#state.knownGood.digest===restoration.candidate.digest?'installed':'restored'};
+          delete this.#state.baselineRestoreIntent;
+        }
         delete this.#state.recoveryIncident;
         this.#save('recovery.completed', { epoch: this.#state.epoch });
         return restored;
