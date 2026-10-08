@@ -4,6 +4,8 @@ Updated 2026-10-08. The integrated local checkpoint passed **194 tests, with one
 
 This is not a claim that every full seed criterion has passed. Live Slack and the model-authored source release remain pending at this checkpoint, and the qualitative memory probe found a real quality gap.
 
+The first live source attempt used one growth call. Its candidate compiled and passed the normal behavioral contract, but failed the protected cross-conversation check by confusing foreign scope with growth-record categories. It was declined before review/interview; the incumbent and Git source remained unchanged. A subsequent bounded attempt will receive actual imported type declarations and the prior failed-check feedback, with source correction still authored by Palimpsest.
+
 ## Verified implementation
 
 | Area / plan | Executed evidence | Remaining scope or limitation |

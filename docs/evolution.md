@@ -32,6 +32,8 @@ Six queue tests cover callback separation, quiescing without deadlock, persisten
 
 ## Local execution and publication
 
+The source inquiry receives the actual imported task/memory type declarations as well as the cognitive source. A new explicitly allocated attempt also receives the most recent declined attempt's proposal and independently recorded check summaries from external state. This feedback does not change a gate, replay the failed run, or supply a human-written patch. It was added after a live candidate compiled but confused foreign conversation scope with growth-record categories and failed the held-out behavior check.
+
 `npm run self-improve -- <stable-run-id>` starts or recovers the real local generation, gives Palimpsest one bounded source inquiry, and submits its recorded proposal through the full pipeline. The initial challenge was selected from an observed implementation-review concern; the coding agent does not prewrite the proposed source. The run allocates at most nine provider calls in total: one proposal and up to eight review/interview calls. All allocations, model outputs and run reports are external. An interrupted inquiry or a declined candidate is recorded honestly; the command does not invent a patch or weaken a gate to finish.
 
 Bootstrap and new candidate freezing require a clean committed checkout. A completed run prints only its status, manifest identity and external report path. A promoted release runs from its frozen external bytes. Git remains unchanged until the operator explicitly publishes exactly the admitted cognitive files, runs the repository checks and records the candidate/run identity in the commit. Publication is authorized separately from autonomous experiment initiation.

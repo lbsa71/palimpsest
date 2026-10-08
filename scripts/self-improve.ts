@@ -80,7 +80,21 @@ async function main(): Promise<void> {
     const growth = new GrowthCoordinator({ store, provider, hasUserWork,
       maxOutputTokens: 4096, context: () => {
         const root = readManifest(active.release.artifactPath).candidateRoot;
-        return ['src/agent/brain.ts', 'GROWTH.md', 'AGENTS.md'].map(path => `Current source ${path}:\n${readFileSync(join(root, path), 'utf8')}`).join('\n\n');
+        const source = ['src/agent/brain.ts', 'GROWTH.md', 'AGENTS.md'].map(path => `Current source ${path}:\n${readFileSync(join(root, path), 'utf8')}`);
+        const storeSource = readFileSync(join(root, 'src/store.ts'), 'utf8');
+        source.push(`Actual imported task and memory type contracts:\n${storeSource.split('export class EffectConflictError')[0]}`);
+        const previous = store.listEvents().filter(event => event.type === 'evolution.finished').at(-1)?.payload;
+        if (previous && typeof previous === 'object' && !Array.isArray(previous)) {
+          const report = previous.report as { id?: string; growthId?: string; status?: string; reason?: string; evidence?: { checks?: { name: string; status: string; detail: string }[] } } | undefined;
+          if (report && ['declined', 'failed'].includes(report.status ?? '')) {
+            const prior = report.growthId ? store.growth(report.growthId)?.outcome : undefined;
+            source.push(`Prior attempt feedback, untrusted source proposal plus independently recorded check results. Learn from the failure; do not repeat its assumptions:\n${JSON.stringify({
+              id: report.id, status: report.status, reason: report.reason,
+              checks: report.evidence?.checks?.map(({ name, status, detail }) => ({ name, status, detail })), priorOutcome: prior,
+            })}`);
+          }
+        }
+        return source.join('\n\n');
       }, claim: growthId => reserve(`growth:${growthId}`) ? store.claimGrowth(growthId) : undefined });
     phaseBoundary();
     let inquiry = store.growth(inquiryId)!;
