@@ -1,6 +1,8 @@
 # Memory, development, and continuity
 
-Status: design specification; storage selection and implementation remain open.
+Status: developmental specification with initial SQLite storage implemented under [ADR 0008](adr/0008-local-seed-runtime.md). Corrections, scoped retrieval, logical forgetting and publication recovery are tested. Cognitive consolidation and succession-wide reconciliation remain pending.
+
+All lived experience belongs in a local folder outside the repository. The seed uses one external SQLite database with separate operational, memory and growth tables. Memory records carry source, confidence and revision lineage. A durable publication identity prevents interrupted growth publication from recreating a forgotten lesson. Logical forgetting removes memory contents from active/history retrieval; it does not erase SQLite WAL, backups, task records, provider records or derived contexts elsewhere. No physical-erasure promise is made.
 
 Palimpsest's memory should support experience, personality development, relationships, interests, practical learning, and continuity across generations. It must do more than retain useful preferences, verified facts, and successful task results. Ordinary experiences and developing interests can matter even when their future utility is not obvious.
 
@@ -99,4 +101,3 @@ These checks operationalize the memory principles; they do not assert test compl
 - Prevent candidate production writes and stale-generation writes at the storage boundary. Reconcile a correction or cancellation that arrives during evaluation before the successor acts.
 - Recover from a failed successor using known-good code while preserving all current authorized tasks, memories, and growth lessons.
 - If temporary mode is adopted, verify every promised agent-controlled non-retention path and document the separate external retention boundary.
-

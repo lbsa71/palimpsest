@@ -1,6 +1,8 @@
 # Palimpsest architecture
 
-Status: design baseline distilled on 2026-10-08; no runtime is implemented by this document. See [requirements](../REQUIREMENTS.md), [plan](../PLAN.md), [decision records](adr/README.md), and the [source analysis](research/source-analysis.md).
+Status: target architecture with a local implementation in progress, 2026-10-08. Component coverage and verification limits are in [progress](progress.md). See [requirements](../REQUIREMENTS.md), [plan](../PLAN.md), [decision records](adr/README.md), and the [source analysis](research/source-analysis.md).
+
+The current seed runs a trusted Node coordinator with durable SQLite tasks, memory and growth outside the checkout. Direct calls, authenticated loopback HTTP, and Slack adapters normalize the same ingress/egress contracts. Restricted procedure and candidate execution uses macOS Seatbelt. Process-bound generational authority and recovery are being integrated; the target diagrams below are not evidence that every boundary already exists. Operational APIs and restrictions are documented in [communications](communications.md), [providers](providers.md), [isolation](isolation.md), and [procedures](procedures.md).
 
 ## Direction and provenance
 
@@ -13,6 +15,7 @@ The incumbent interviewing its successor and remaining alive through a governed 
 ```mermaid
 flowchart TB
     User[User] <--> Slack[Slack interface]
+    User <--> Direct[Direct calls / authenticated loopback API]
     subgraph AgentEnv[Dedicated agent environment]
         Inc[Incumbent: conversation, planning, growth]
         Sub[Task subagents]
@@ -24,6 +27,7 @@ flowchart TB
         Next --> Adapter
     end
     Slack <--> Gateway[Message and tool boundaries]
+    Direct <--> Gateway
     Gateway <--> Inc
     Model[Configured model providers: Mistral first] <--> Inc
     Model <--> Next
@@ -40,7 +44,7 @@ flowchart TB
     Adapter --> Custodian
     Review -->|Review tied to candidate and evidence| Custodian
     Custodian -->|Current authority and permissions| Gateway
-    Gateway <--> Memory[Persistent experiences, beliefs and procedures]
+    Gateway <--> Memory[External local state: experiences, beliefs and procedures]
     Memory -->|Authorized read-only continuity snapshot| Next
     Custodian -->|Stage / promote / recover| Next
 ```

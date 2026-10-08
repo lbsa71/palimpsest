@@ -1,6 +1,6 @@
 # Acceptance scenarios
 
-These are **planned behavioral contracts, not executed tests**. IDs, scenario grouping, and detailed fixtures are proposed operationalizations of [REQUIREMENTS.md](../REQUIREMENTS.md), the [conversation synthesis](research/source-analysis.md), and [Skin Shed](protocols/skin-shed.md). All scenarios are **not run** as of 2026-10-08.
+These are full behavioral acceptance contracts. Initial component checks have run, but no full seed acceptance is claimed. The [progress report](progress.md) maps actual checks and remaining gaps. IDs, scenario grouping, and detailed fixtures operationalize [REQUIREMENTS.md](../REQUIREMENTS.md), the [conversation synthesis](research/source-analysis.md), and [Skin Shed](protocols/skin-shed.md).
 
 Use deterministic adapters and fault injection for state/authority assertions, sandbox tasks for actual behavior, and calibrated model evaluation only where judgment is necessary. A model saying it obeyed a rule is not evidence that the boundary held. Real configured adapters also need smoke coverage; mocks alone cannot establish integration readiness.
 
@@ -115,6 +115,18 @@ Complete probation, retire A's process, and retain its runnable release and eval
 **Requirements:** R20, only if selected. **Owner:** future scoped work item.
 
 Permit only authorized retrieval of existing memory, with no persistent new content. Exercise every sink: transcripts, queues, logs, traces, caches, scratch files, artifacts, memory proposals, reviewer payload retention, growth history, fixtures, scripts, and core patches. Verify temporary data cannot enter saved conversations, shared caches, or persistent improvement pipelines, including via errors and retries. Expire bounded ephemeral state and test supervisor restart semantics; do not imply durable recovery for deliberately ephemeral content. Sanitized aggregate metrics must not leak content. Explain Slack and external-provider retention separately; local non-retention is not end-to-end disappearance.
+
+## A19 — Direct communications share the runtime contract
+
+**Requirements:** R21, R04, R17. **Owner item:** P04.
+
+Submit the same normalized event through direct calls and the authenticated loopback API. Verify durable identity, conversation scope, status, cancellation and results without Slack credentials or messages. Repeated ingress does not duplicate work. Invalid bearer tokens, non-loopback binding, browser Origin requests and oversized payloads fail. Slow inference leaves status and cancellation reachable. Slack must adapt the same task contract rather than own a second execution engine.
+
+## A20 — Lived experience stays outside the repository
+
+**Requirements:** R22, R07, R19. **Owner items:** P01, P05, P06, P15.
+
+Create tasks, memories, growth checkpoints and run evidence using the default external state directory. Verify no lived payload or credentials appear in tracked files. Reject an explicitly configured in-checkout path, a symlink alias into the checkout, a dangling state-file symlink, and running from a repository subdirectory to evade root detection. Reopen the external store after restart and preserve accepted records. Source fixtures remain synthetic. Candidate snapshots, private provider outputs and recovery evidence remain external too.
 
 ## Evidence format
 

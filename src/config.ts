@@ -1,0 +1,108 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { parseEnv } from 'node:util';
+
+export interface RuntimeConfig {
+  repositoryRoot: string;
+  dataDir: string;
+  credentialsPath: string;
+  provider: 'mistral' | 'codex';
+  model?: string;
+  mistralApiKey?: string;
+  maxCallsPerTask: number;
+  timeoutMs: number;
+  describe(): Record<string, unknown>;
+  toJSON(): Record<string, unknown>;
+}
+
+/** Resolve even nonexistent descendants through their nearest real ancestor. */
+function canonicalPath(path: string): string {
+  let ancestor = resolve(path);
+  const suffix: string[] = [];
+  while (!existsSync(ancestor)) {
+    // existsSync follows links. A dangling alias must not be treated as a safe
+    // new filename: creating its target could leak state into the checkout.
+    try {
+      if (lstatSync(ancestor).isSymbolicLink()) throw new Error('Dangling symlinks cannot define storage paths');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const parent = dirname(ancestor);
+    if (parent === ancestor) throw new Error(`Cannot resolve path: ${path}`);
+    suffix.unshift(basename(ancestor));
+    ancestor = parent;
+  }
+  return join(realpathSync(ancestor), ...suffix);
+}
+
+/** Lived experience must never enter the checkout, even through a symlink. */
+export function resolveExternalPath(repositoryRoot: string, path: string): string {
+  const repo = canonicalPath(repositoryRoot);
+  const target = canonicalPath(path);
+  const rel = relative(repo, target);
+  if (rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`))) {
+    throw new Error('Palimpsest state and credentials must be outside the repository');
+  }
+  return target;
+}
+
+function positiveInteger(value: string | undefined, fallback: number, name: string): number {
+  const result = value === undefined ? fallback : Number(value);
+  if (!Number.isSafeInteger(result) || result <= 0) throw new Error(`${name} must be a positive integer`);
+  return result;
+}
+
+export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.ProcessEnv } = {}): RuntimeConfig {
+  const env = options.env ?? process.env;
+  const startingPath = canonicalPath(options.repositoryRoot ?? process.cwd());
+  let repositoryRoot = startingPath;
+  for (let directory = startingPath; ; directory = dirname(directory)) {
+    if (existsSync(join(directory, '.git'))) { repositoryRoot = directory; break; }
+    if (directory === dirname(directory)) break;
+  }
+  const credentialsPath = resolveExternalPath(repositoryRoot,
+    env.PALIMPSEST_CREDENTIALS_FILE ?? join(homedir(), '.config', 'palimpsest', 'credentials.env'));
+  let credentials: NodeJS.ProcessEnv = {};
+  if (existsSync(credentialsPath)) {
+    if ((statSync(credentialsPath).mode & 0o077) !== 0) {
+      throw new Error('Credentials file must be private (chmod 600)');
+    }
+    credentials = parseEnv(readFileSync(credentialsPath, 'utf8'));
+  }
+  const values = { ...credentials, ...env };
+  const provider = values.PALIMPSEST_PROVIDER ?? 'mistral';
+  if (provider !== 'mistral' && provider !== 'codex') throw new Error('Unknown provider; choose mistral or codex explicitly');
+  const repoId = `${basename(repositoryRoot)}-${createHash('sha256').update(repositoryRoot).digest('hex').slice(0, 12)}`;
+  const dataDir = resolveExternalPath(repositoryRoot,
+    values.PALIMPSEST_DATA_DIR ?? join(homedir(), '.local', 'share', 'palimpsest', repoId));
+  const config: RuntimeConfig = {
+    repositoryRoot, dataDir, credentialsPath, provider,
+    model: provider === 'mistral' ? values.MISTRAL_MODEL : values.CODEX_MODEL,
+    maxCallsPerTask: positiveInteger(values.PALIMPSEST_MAX_CALLS_PER_TASK, 4, 'max calls'),
+    timeoutMs: positiveInteger(values.PALIMPSEST_TIMEOUT_MS, 120_000, 'timeout'),
+    describe() {
+      return { repositoryRoot, dataDir, credentialsPath, provider, model: this.model ?? null,
+        credentialsConfigured: provider === 'mistral' ? Boolean(this.mistralApiKey) : 'CLI login required',
+        maxCallsPerTask: this.maxCallsPerTask, timeoutMs: this.timeoutMs };
+    },
+    toJSON() { return this.describe(); },
+  };
+  Object.defineProperty(config, 'mistralApiKey', { enumerable: false, value: values.MISTRAL_API_KEY || undefined });
+  return config;
+}
+
+export function prepareState(config: RuntimeConfig): { dbPath: string; tokenPath: string; apiToken: string } {
+  const dataDir = resolveExternalPath(config.repositoryRoot, config.dataDir);
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  if ((statSync(dataDir).mode & 0o077) !== 0) throw new Error('Data directory must be private (chmod 700)');
+  const dbPath = resolveExternalPath(config.repositoryRoot, join(dataDir, 'state.sqlite'));
+  const tokenPath = resolveExternalPath(config.repositoryRoot, join(dataDir, 'api-token'));
+  try { writeFileSync(tokenPath, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  if ((statSync(tokenPath).mode & 0o077) !== 0) throw new Error('API token file must be private (chmod 600)');
+  const apiToken = readFileSync(tokenPath, 'utf8').trim();
+  if (!/^[a-f0-9]{64}$/.test(apiToken)) throw new Error('Invalid API token file');
+  return { dbPath, tokenPath, apiToken };
+}

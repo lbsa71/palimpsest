@@ -8,7 +8,22 @@ Planning baseline: **2026-10-08**. This is a repository backlog, not a schedule 
 - [ ] Resolve implementation decisions and build the seed.
 - [ ] Execute the acceptance suite and demonstrate recovery and self-directed growth.
 
-All implementation items below are **not started** and **unassigned**. Each item's lead owns integration and evidence; suitable investigation, implementation, test, and independent-review workstreams should fan out under [AGENTS.md](AGENTS.md).
+The implementation lead owns integration; bounded store/isolation, communications/procedures, provider/growth, candidate, review, and custodian workstreams are delegated under [AGENTS.md](AGENTS.md). Status below is based on executed checks, not the existence of source files. Detailed results and unresolved gaps are in [progress](docs/progress.md).
+
+| Item | Status | Implemented evidence / remaining gate |
+|---|---|---|
+| P01 | In progress | Node 24/TypeScript, SQLite, direct API, external state and local sandbox selected in ADR 0008/0009; Mistral model verified; production host remains open. |
+| P02 | In progress | Task, effect, memory, growth, communications and procedure contracts implemented; succession contracts being integrated. |
+| P03 | In progress | Durable tasks, cancellation, call budgets, provider adapters and recovery tests pass; live Mistral structured output and direct runtime pass; full crash/outage matrix pending. |
+| P04 | In progress | Direct/HTTP and Slack adapter tests pass; no live Slack ingress service or smoke yet. R21 direct testing added. |
+| P05 | In progress | Real macOS filesystem/network/process restrictions verified; mechanical custodian and integrated recovery pending. |
+| P06 | In progress | Scoped storage, corrections, tombstones and interrupted publication verified; cognitive consolidation, snapshot catch-up and rollback integration pending. R22 external state enforced. |
+| P07 | In progress | Content-addressed procedures, schemas, isolated CSV checks and reuse verified; independent review publication wiring pending. |
+| P08 | In progress | Four-dimensional agenda, bounded experiments, priority checks and publication recovery verified; continuous idle scheduling and replenishment policy pending. |
+| P09 | In progress | Frozen candidate/evidence implementation underway; no release acceptance yet. |
+| P10 | In progress | Fresh review contracts and calibration work underway. |
+| P11–P14 | In progress | Mechanical succession implementation underway; no integrated cutover, probation or rollback pass claimed. |
+| P15 | In progress | Initial runbook and local checks available; complete seed demonstration pending. |
 
 ## Milestones
 
@@ -51,11 +66,11 @@ Implement a bounded task loop, durable state transitions, typed tools, cancellat
 
 ### P04 — Keep Slack and long-running work coherent
 
-**Priority:** P0. **Dependencies:** P03. **Requirements:** R04, R17–R19.
+**Priority:** P0. **Dependencies:** P03. **Requirements:** R04, R17–R19, R21.
 
-Implement authorized Slack ingress/egress with task/thread correlation, deduplication, continuing communication, progress, corrections, and cancellation. Prepare the egress boundary for P12's authority enforcement. Multiple active contexts do not require a new chat website.
+Implement shared communications contracts with direct calls, an authenticated local API, and authorized Slack ingress/egress with task/thread correlation, deduplication, continuing communication, progress, corrections, and cancellation. Prepare the egress boundary for P12's authority enforcement. Multiple active contexts do not require a new chat website.
 
-**Done when:** A05–A06 pass, running work remains addressable, repeated events do not duplicate effects, and conversations cannot acquire each other's context accidentally.
+**Done when:** A05–A06 and A19 pass, running work remains addressable, repeated events do not duplicate effects, and conversations cannot acquire each other's context accidentally.
 
 ### P05 — Establish isolation and mechanical recovery skeleton
 
@@ -67,11 +82,11 @@ Build the independent custodian skeleton, isolated jobs/candidates, scoped crede
 
 ### P06 — Implement memory and continuity
 
-**Priority:** P0. **Dependencies:** P03, P05. **Requirements:** R02, R07, R19.
+**Priority:** P0. **Dependencies:** P03, P05. **Requirements:** R02, R07, R19, R22.
 
 Implement operational history separately from episodic, semantic, procedural, and autobiographical memory; provenance, uncertainty, revision, consolidation, retrieval, and authorized read-only snapshots. Benchmark the selected backend. If separate stores are used, demonstrate retryable publication and reconciliation across them.
 
-**Done when:** A03/A08 pass, mundane experiences survive consolidation, conflicting evidence can correct beliefs, and executable rollback preserves current history. Document forgetting versus erasure and backend limits.
+**Done when:** A03/A08/A20 pass, mundane experiences survive consolidation, conflicting evidence can correct beliefs, and executable rollback preserves current history. Document forgetting versus erasure and backend limits. All lived state belongs in a local folder outside the checkout.
 
 ### P07 — Implement reusable procedures
 

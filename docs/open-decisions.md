@@ -4,7 +4,18 @@ Status: planning baseline, 2026-10-08. These are decisions to resolve with evide
 
 ## Decision register
 
-All items below are **open** and **unassigned**. Existing ADRs preserve rationale and decision status; a proposed ADR is not proof its detailed mechanics were accepted or implemented.
+The implementation lead owns the register. D01 and D03 have an initial local disposition; D02/D04/D05/D09/D11 have partial dispositions below. Other details remain open until their gates pass. A proposed ADR is not proof its mechanics were implemented.
+
+### Implementation dispositions, 2026-10-08
+
+- **D01:** TypeScript, Node 24, npm lockfile, native test runner and built-in SQLite selected; runtime and type checks exercised. See ADR 0008.
+- **D02:** Local macOS arm64 development verified. Actual Seatbelt restrictions tested, Docker daemon unavailable. Production host, hard resource quotas and outer rescue deployment remain open. See ADR 0009.
+- **D03:** One external SQLite store with separate task/event/effect/memory/growth tables; separate exclusive coordinator lock. Unknown effects require reconciliation. Durable reopen and transition tests pass.
+- **D04:** SQLite chosen for the seed; scoped literal retrieval, provenance, correction and logical forgetting tested. Cognitive consolidation, performance benchmarks and derived-copy policy remain open; Memvid not adopted.
+- **D05:** Mistral and explicit Codex adapters implemented with finite calls/time/output; live model configuration and smoke tracked in progress. Procedures use restricted Node code with schemas and content identities.
+- **D09:** Four persistent growth dimensions, debit-before-call allocation, user-work priority and interruption recovery implemented. Continuous idle windows, finite replenishment and governed adoption remain open.
+- **D11:** Shared direct/HTTP/Slack contracts implemented, with idempotent task ingress and thread scoping. Live Slack ingress, corrections and progress integration remain open.
+- **R21/R22 steering:** Direct communications testing and external lived state are explicit user requirements, now included in specs, acceptance and plan. Private Mistral credentials are supplied outside the repository.
 
 | ID | Decision | Evidence / resolution criterion | Gate |
 |---|---|---|---|

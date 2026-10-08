@@ -1,0 +1,20 @@
+{
+  "name": "palimpsest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A self-evolving coding companion with durable memory and governed succession",
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "check": "tsc --noEmit",
+    "start": "node src/cli.ts",
+    "verify": "npm run check && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "7.0.2"
+  }
+}

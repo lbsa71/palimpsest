@@ -1,6 +1,6 @@
 # Architecture decision records
 
-These records preserve the decisions and proposals recoverable from the [referenced conversation](../research/source-analysis.md). They describe design intent, not implemented behavior. They were distilled on 2026-10-08; their status labels describe the recovered evidence, not implementation progress.
+These records preserve the decisions and proposals recoverable from the [referenced conversation](../research/source-analysis.md), followed by implementation decisions discovered during development. Their status describes the decision; [progress](../progress.md) records actual runtime verification.
 
 **Accepted direction** means an explicit user mandate or the broad synthesis the user accepted. It does not convert every assistant implementation suggestion into a settled technical choice. **Proposed** means a supporting design presented by the assistant without a later explicit decision on that detail. No ADR here claims a deployed system or completed runtime validation.
 
@@ -13,5 +13,7 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0005](0005-fenced-authority-and-recovery.md) | Proposed | Single production authority, fresh epochs, and recoverable history |
 | [0006](0006-memory-and-procedures.md) | Accepted direction; mechanics open | Human-inspired memory and reusable procedures |
 | [0007](0007-custodian-api-and-mcp.md) | Proposed; responds to user question | Versioned succession API with a thin MCP adapter |
+| [0008](0008-local-seed-runtime.md) | Accepted for local seed | TypeScript/Node 24, SQLite, direct communications and external lived state |
+| [0009](0009-local-enforcement-and-recovery.md) | Accepted for local seed | Local isolation, coordinator ownership, conservative effect and growth recovery |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

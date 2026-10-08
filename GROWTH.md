@@ -1,6 +1,6 @@
 # Standing growth mission
 
-Status: design specification; no growth loop has been implemented or tested.
+Status: standing specification with a partially implemented coordinator. Four agenda dimensions, persistent call budgets, user-work priority, interrupted publication and logical-forgetting recovery have automated coverage. Continuous idle initiation, later budget windows, and governed promotion remain pending; see [progress](docs/progress.md).
 
 Palimpsest must have a **strong, persistent, self-directed drive to improve its personality and judgment, interests and curiosity, code quality, and capability and potential**. This is a foundational requirement, not an optional mode or a backlog that only runs when a human supplies tasks. Each generation should seek to leave its successor more capable while preserving the history and lessons that made growth possible.
 
@@ -78,4 +78,3 @@ These scenarios translate the conversation's mandate into reviewable behavior. T
 - A successor can correct an incumbent with evidence. Agreement alone does not satisfy growth or continuity evaluation.
 - Budget exhaustion pauses work durably. A later eligible window resumes it within the applicable limits.
 - Rollback retains current commitments, ordinary memories, growth history, and lessons from the failed release.
-

@@ -1,6 +1,6 @@
 # Requirements
 
-Status: planning baseline, **2026-10-08**. Nothing below is implemented by this document.
+Status: requirements baseline, **2026-10-08**, with implementation progress tracked in [PLAN.md](PLAN.md). A requirement's presence does not establish implementation or test completion.
 
 ## Intent and provenance
 
@@ -50,6 +50,8 @@ The user explicitly requested overlapping generations with an incumbent intervie
 | R18 | Enforce permissions and authority outside the candidate's prompts. Keep release controls and trusted checks outside its writable environment. Avoid exposing unrestricted host/deployment commands through the succession surface. | Accepted synthesis; concrete boundary pending | A11, A14, A17 |
 | R19 | Keep inspectable evidence for task transitions, releases, lineage, regressions, and learning. Record actual outcomes, failures, unresolved concerns, and current state, not just model claims. | Accepted synthesis and growth operationalization | A01, A06, A10, A16 |
 | R20 | If temporary conversation mode is selected later, enforce its declared retention policy across every local storage path and explain external Slack/provider retention separately. | Optional colleague feature, not a seed mandate | A18 |
+| R21 | Abstract communications from task execution. Provide direct callable/local API interaction for testing, with Slack using the same runtime contracts. | Explicit user implementation steering, 2026-10-08 | A19 |
+| R22 | Keep lived-experience substrate in a local folder outside the repository: memory, tasks, growth agenda, checkpoints, transcripts, lineage, and runtime records. Reject in-checkout storage, including symlink aliases. | Explicit user implementation steering, 2026-10-08 | A20 |
 
 ## Seed boundary
 
@@ -63,7 +65,7 @@ This seed does not require training model weights, local inference, a GPU, a dis
 
 Do not mistake proposed technology for settled requirements. [Open decisions](docs/open-decisions.md) tracks language/runtime, hardware, storage, transport, authority boundary, growth budgets, reviewer evaluation, retention, and future upgrade mechanisms. In particular:
 
-- TypeScript is a recapped earlier proposal; the attachment's Rust mandate is a different product choice.
-- SQLite is a proposed local operational store, not a substitute for explicit coordination of external effects.
+- TypeScript with Node 24 is selected for the first local seed in [ADR 0008](docs/adr/0008-local-seed-runtime.md); the attachment's Rust mandate is a different product choice.
+- SQLite is selected for separate operational, memory, and agenda tables in the local seed. It does not substitute for explicit coordination of external effects.
 - Memvid is a candidate memory backend; developmental memory is a process above storage.
 - A local typed custodian API can precede MCP. No MCP version or provider capability from the historical chat is asserted current here.
