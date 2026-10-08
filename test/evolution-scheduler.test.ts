@@ -109,3 +109,24 @@ test('interrupted claims without a report are not replayed; persisted probation 
     await queue.tick(); assert.equal(runs, 1); assert.equal(queue.items()[1]?.result?.status, 'promoted');
   } finally { await queue.stop(); f.close(); }
 });
+
+test('human release has separate allocation, keeps running during conversation and obeys cancellation/current policy',async()=>{
+  const f=fixture();let allowed=true;let userWork=false;let finish!:()=>void;let queue!:EvolutionScheduler;
+  const task=f.store.enqueue({source:'slack',conversationId:'slack:T1:C1:123.000',input:'Improve',slackAuthor:{teamId:'T1',userId:'U1'}});
+  f.store.recordConversationProposal(task.id,JSON.parse(JSON.stringify({result:reflection})));
+  let aborted=false;
+  queue=new EvolutionScheduler({store:f.store,callsPerDay:0,interactiveCallsPerDay:2,authorizeProposal:()=>allowed,hasUserWork:()=>userWork,phase:()=> 'normal',run:async request=>{
+    assert.equal(queue.reserveCall(`evolution:${request.id}:call:1`),true);
+    await new Promise<void>(resolve=>{finish=resolve;request.signal!.addEventListener('abort',()=>{aborted=true;resolve();},{once:true});});
+    return report(request,aborted?'declined':'promoted');
+  }});
+  try{
+    queue.reconcile();const running=queue.tick();while(!finish)await Promise.resolve();
+    userWork=true;queue.interrupt(true);assert.equal(aborted,false);
+    assert.equal(queue.cancelTask(task.id),true);await running;assert.equal(aborted,true);assert.equal(queue.items()[0]?.result?.status,'declined');
+    const next=f.store.enqueue({source:'slack',conversationId:'slack:T1:C1:123.000',input:'Improve again',slackAuthor:{teamId:'T1',userId:'U1'}});
+    f.store.recordConversationProposal(next.id,JSON.parse(JSON.stringify({result:reflection})));queue.reconcile();allowed=false;userWork=false;
+    await queue.tick();assert.equal(queue.items()[1]?.result?.status,'declined');
+    assert.equal(f.store.listEvents().filter(e=>e.type==='evolution.scheduler.call_reserved').length,1);
+  }finally{finish?.();await queue.stop();f.close();}
+});

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig, prepareState, resolveExternalPath } from './config.ts';
 import type { RuntimeConfig } from './config.ts';
 import { DirectCommunications, SlackCommunications, createLocalServer } from './communications.ts';
@@ -18,6 +20,8 @@ import { GenerationHost } from './generations.ts';
 import { EvolutionCoordinator } from './evolution.ts';
 import { EvolutionScheduler } from './evolution-scheduler.ts';
 import { evaluateCandidate, freezeBaseline, readManifest } from './candidates.ts';
+import { ConversationActions } from './conversation-actions.ts';
+import { GitPublisher } from './git-publication.ts';
 
 /** The single trusted process serializes all provider calls, including growth. */
 function configuredProvider(config: RuntimeConfig): Provider {
@@ -117,6 +121,13 @@ async function main(): Promise<void> {
       return;
     }
     const direct = new DirectCommunications();
+    const actions = new ConversationActions({ store,userIds:config.slackSelfModificationUserIds,allowDirectOperator:true,
+      sourceContext:()=>[context(),...['providers.ts','store.ts'].map(path=>`Contract src/${path}:\n${readFileSync(join(dirname(fileURLToPath(import.meta.url)),path),'utf8').slice(0,3000)}`),
+        ...(existsSync(join(config.repositoryRoot,'AGENTS.md')) ? [readFileSync(join(config.repositoryRoot,'AGENTS.md'),'utf8')] : [])].join('\n\n'),
+      cancelWork:taskId=>evolution?.cancelTask(taskId) ?? false });
+    const publisher = config.gitRemote && config.gitBranch && config.gitRemoteUrl ? new GitPublisher({repositoryRoot:config.repositoryRoot,dataDir:config.dataDir,store,
+      remote:config.gitRemote,branch:config.gitBranch,remoteUrl:config.gitRemoteUrl}) : undefined;
+    if((config.gitRemote || config.gitBranch || config.gitRemoteUrl) && !publisher)throw new Error('Git publication requires explicit remote, branch and remote URL identity');
     const communications = slack ? [direct, new SlackCommunications({ token: config.slackBotToken! })] : [direct];
     const configuration = { maxCallsPerTask: config.maxCallsPerTask, growthCallsPerDay: config.growthCallsPerDay,
       evolutionCallsPerDay: config.evolutionCallsPerDay, timeoutMs: config.timeoutMs, scope: 'local' };
@@ -124,8 +135,10 @@ async function main(): Promise<void> {
     host = new GenerationHost({ repositoryRoot: config.repositoryRoot, dataDir: config.dataDir, store, provider,
       model: config.model || null, communications, maxCallsPerTask: config.maxCallsPerTask, quiesceBackground: pauseGrowth,
       selfModificationUserIds: config.slackSelfModificationUserIds,
+      conversationActions:actions,
       hostFacts: () => ({ backgroundGrowthScheduled: growth !== undefined, backgroundEvolutionScheduled: evolution !== undefined,
         backgroundGrowthInputs: 'Standing growth mission, admitted agent source and growth-scope observations. No conversation-to-growth feed is implemented.',
+        applicationGitPublication:!!publisher, interactiveEvolutionCallsPerDay:config.interactiveEvolutionCallsPerDay,
         growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay }) });
     let initial;
     if (host.custodian.inspect().phase === 'empty') {
@@ -151,14 +164,14 @@ async function main(): Promise<void> {
     const submit = async (input: InboundMessage) => {
       if (stopped) throw new Error('Service is stopping');
       const task = await host!.submit(input);
-      evolution?.interrupt();
+      evolution?.interrupt(true);
       // Cancel idle inference immediately; serialized provider admission keeps
       // the task from overlapping a provider that is still acknowledging abort.
       void growth?.tick().catch(() => {});
       drain(); return task;
     };
-    localServer = await createLocalServer({ submit, status: id => host!.runtime.status(id),
-      cancel: id => host!.runtime.cancel(id), events: after => host!.runtime.events(after) }, { token: paths.apiToken, port });
+    localServer = await createLocalServer({ submit, status: id => {const task=host!.runtime.status(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;},
+      cancel: id => {const task=host!.runtime.cancel(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;}, events: after => host!.runtime.events(after) }, { token: paths.apiToken, port });
     if (slack === 'http') slackServer = await createSlackServer({ submit }, { signingSecret: config.slackSigningSecret!,
       hasJoinedThread: id => store!.hasSlackThread(id),
       hasAcceptedEvent: id => store!.hasSlackEvent(id),
@@ -173,8 +186,9 @@ async function main(): Promise<void> {
     if (stopped) return;
     const coordinator = new EvolutionCoordinator({ repositoryRoot: config.repositoryRoot, dataDir: config.dataDir,
       store, host, reviewer: provider, incumbent: provider, successor: provider, configuration, modelProfile,
-      reserveBudget: id => evolution!.reserveCall(id) });
+      reserveBudget: id => evolution!.reserveCall(id), authorizeProposal:growth=>actions.authorize(growth) });
     evolution = new EvolutionScheduler({ store, callsPerDay: config.evolutionCallsPerDay,
+      interactiveCallsPerDay:config.interactiveEvolutionCallsPerDay,authorizeProposal:id=>actions.authorize(store!.growth(id)!),
       hasUserWork: () => stopped || userCommitments(), phase: () => host!.custodian.inspect().phase,
       beforeRun: async () => { await hostTick; await pauseGrowth(); }, run: request => coordinator.run(request),
       attemptTimeoutMs: Math.min(2_147_483_647, config.timeoutMs * 8 + 120_000), onError: code => console.error(code) });
@@ -186,7 +200,7 @@ async function main(): Promise<void> {
     evolution.start();
     const tick = () => {
       if (hostTick || stopped || evolution?.busy) return;
-      hostTick = host!.tick().then(() => { resumeGrowth(); }).catch(() => { if (!stopped) console.error('generation_tick_failed'); })
+      hostTick = Promise.resolve().then(async()=>{await actions.reconcileResults(evolution!.items(),publisher);return host!.tick();}).then(() => { resumeGrowth(); }).catch(() => { if (!stopped) console.error('generation_tick_failed'); })
         .finally(() => { hostTick = undefined; });
     };
     tickTimer = setInterval(tick, 1000); tick();

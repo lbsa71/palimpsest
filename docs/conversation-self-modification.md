@@ -1,0 +1,65 @@
+# Conversational self-modification
+
+**Status:** Bounded interaction implemented; integrated deterministic-provider mechanics verified, 2026-10-08. Live Mistral/Slack deployment and the complete acceptance matrix remain pending. This is the first interaction slice of [P16](../PLAN.md), following [ADR 0014](adr/0014-conversation-and-modification-authority.md) and [ADR 0015](adr/0015-conversational-self-modification.md).
+
+## Problem and intended behavior
+
+At the start of this work, Slack authenticated authors, admitted ordinary human conversation and retained external durable memory, but its completion lane could not initiate an engineering proposal. An eligible human asking for self-modification received a blanket denial despite a separate working evolution service. The bounded dispatcher now connects those components; deployment must separately establish which version is actually serving Slack.
+
+An authenticated whitelisted human should be able to discuss a small cognitive source improvement in Slack. Palimpsest interprets the request, can clarify or disagree, and may propose an exact bounded source change. The host queues that proposal through existing frozen checks, fresh review, incumbent/successor interview, cutover and probation. It reports the actual outcome in the original thread. When separately configured publication authority permits, a trusted publisher commits and pushes exactly the admitted cognitive source. No generated response by itself edits, approves, publishes or restarts anything.
+
+This implements R04, R10–R19 and R21–R24 within the existing cognitive boundary. All humans may converse in configured Slack scopes; only authenticated whitelisted authors may originate human self-modification suggestions. Eligibility grants consideration, not obedience or admission.
+
+## Deliberation contract
+
+For an eligible author, the trusted host obtains and validates one bounded structured decision per ordinary turn: a conversational reply, disposition (`converse`, `clarify`, `decline` or `propose`), rationale and optional exact `GrowthProposal`. A proposal supplies summary, rationale, testable acceptance criteria and complete replacement contents for permitted files. Ineligible authors retain the ordinary text conversation lane without source dispatch. `ConversationActions` implements preparation, acceptance, source authorization, cancellation and result reconciliation; the provider boundary does not expose a general tool loop.
+
+The host supplies current storage/capability facts, authenticated authorship, current eligibility, admitted `src/agent/brain.ts`, bounded excerpts of `CompletionRequest`/task/memory contracts, the growth mission and engineering rules. This first CLI context does not include every additional cognitive helper. The proposal lane excludes historical instruction memory from other authors before candidate request construction, and records missing provenance as ineligible. Conversation-only context cannot silently acquire proposal authority through a quote, summary or later growth label. The model may use goals, evidence and commitments to decline a technically permitted request. Provider output cannot choose identities, budgets, commands, release gates, publication destination or tool authority.
+
+An ineligible author receives normal conversation and may discuss the limitation, but cannot create a source-change job. A directly callable testing path requires an explicitly configured trusted operator boundary; an arbitrary HTTP caller or supplied identity string is not an authenticated operator. The host rechecks current eligibility when dispatching privileged work and before irreversible admission/publication. A policy change can invalidate a queued suggestion.
+
+## Durable work and succession
+
+The decision, originating task and author are recorded outside the repository. A human-origin growth outcome binds its exact proposal to that task; autonomous growth remains distinct. Proposal/job identity is stable across duplicate Slack delivery and restart. Queue processing runs separately from ordinary conversation completion so cutover can quiesce the runtime without waiting on its own initiating task.
+
+Human-requested review/interview has a maximum of **8 calls per attempt** and a separate daily allocation of **8 calls by default**, configured with `PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY` (zero disables the allocation). Each call is reserved durably before inference. The proposal-producing conversation inference remains under the ordinary task allocation; it is not counted as a fictitious growth inquiry. Exhausting autonomous growth does not consume the human daily allocation. Exhausting the human allocation leaves queued work waiting; messages cannot refill budgets or create unbounded attempts. Calls with uncertain outcomes are recorded and not blindly repeated.
+
+The existing evaluator freezes direct `src/agent/*.ts` changes against the current base. It retains protected typecheck, agent contract and cross-scope memory checks, fresh candidate-bound review, role-bound interview, readiness, custodian transfer and probation. Candidate-authored acceptance claims do not replace trusted checks. Rejection leaves the incumbent available. Cancellation before admission stops the pending attempt; cancellation after a committed transfer reports the actual release state rather than pretending to undo it. Succession preserves current memory, commitments and effect records under a fresh authority epoch.
+
+The successor is a restricted cognitive worker. This slice does not let that worker edit host policy, tools, the custodian or its own admission rules. It does not rebuild or relaunch the outer Slack service. A reply must distinguish proposed source, evaluated source, serving source, locally committed source and remotely published source.
+
+## Trusted publication and result reporting
+
+Publication is a host-owned operation after successful admission/probation, enabled only when `PALIMPSEST_GIT_REMOTE`, `PALIMPSEST_GIT_BRANCH` and `PALIMPSEST_GIT_REMOTE_URL` explicitly select the destination in the configured repository. Fetch and push URLs must each resolve to that sole URL. It consumes the frozen candidate identity and exact admitted bytes. It invokes asynchronous Git with fixed executable/argument boundaries and hooks disabled; model text cannot supply shell commands, arbitrary paths or remote destinations. Dirty/conflicting source or divergent history causes an inspectable hold or failure, not overwrite, force-push or unrelated staging.
+
+Record publication intent and resulting local commit/remote reference. A crash or network failure can make push outcome uncertain; reconcile the configured remote reference before deciding whether publication completed or needs operator attention. Do not manufacture a second commit/push from an uncertain prior effect. Local admission can succeed while Git publication fails or is disabled, and the reply must say so.
+
+A durable notification queue reports proposal acceptance, rejection/interruption and final release/publication facts into the original conversation. The dispatcher uses the existing effect journal and current authority. A delivery with unknown external outcome is held for reconciliation; restart must not blindly resend it. Status and cancellation remain addressable while evaluation runs. Records include source task, proposal identity, candidate/evidence identity, succession outcome, publication outcome and unresolved failures.
+
+## Operation and observed evidence
+
+`serve` runs the proposal/evolution queue and result reconciler. The authenticated loopback API and Slack feed the same runtime; the CLI enables the direct-operator path behind its local operator boundary. `ask` completes its ordinary turn and can durably record a proposal, but exits before starting the evolution scheduler. Start/resume `serve` to execute that recorded work. In Slack use `status <task-id>` or `cancel <task-id>` in the originating thread; authenticated direct cancellation reaches proposal work as well. A committed worker transfer is not undone by cancellation.
+
+The real-host integration check in [conversation-release.test.ts](../test/conversation-release.test.ts) passed with deterministic provider responses. An authenticated Slack-author fixture created the proposal; five actual release inference calls supported fresh review/interview/readiness; protected checks, real restricted worker cutover and probation completed; the trusted publisher committed exact admitted bytes and observed the commit in a local bare Git remote; a durable result reached the original thread once; the following turn used the successor's behavior. This is actual local process/Git integration with synthetic cognition, not live Slack/Mistral or production Git publication evidence.
+
+Focused checks cover duplicate proposal creation, ineligible authors, policy changes, decline/clarification, protected paths, other-author memory exclusion before candidate construction, direct cancellation after the initial reply, and resuming a recorded conversational decision without another provider call. Publication checks cover differing effective push identity, removed remotes, dirty checkout, divergent remote history and a retained unknown push reservation observed after reopening the publisher without another push. These are bounded fixtures rather than an integrated process-crash/provider-outage demonstration. The broader restart/interruption/provider failure/publication reconciliation and truthful live-answer matrix below remains an acceptance obligation; this successful path does not count unperformed scenarios as passes.
+
+## Acceptance criteria
+
+Implementation closes this bounded slice only with observed evidence for:
+
+1. An eligible Slack/direct-operator request produces a real exact source proposal; the integrated dispatcher freezes, checks, reviews, interviews and activates a successor, then the next turn uses its admitted behavior. Deterministic provider fixtures are suitable for mechanics; a live configured-provider result is recorded separately.
+2. A suitable request can be clarified or declined; neither a whitelisted author nor persuasive model text bypasses mandatory gates. Failing checks leave the incumbent serving and report the failure.
+3. Nonwhitelisted authors, forged/legacy provenance, quoted identities, other-author historical suggestions and changed host policy cannot dispatch or authorize source changes. Ordinary conversation still works for those authors.
+4. Duplicate ingress and restart do not repeat proposal allocation, uncertain inference, admission or external delivery. Interruption, provider failure, policy revocation and cancellation preserve current task/memory state and report their actual disposition.
+5. Explicit trusted publication commits exactly the admitted source on its configured destination; conflicting/dirty state, divergent remote history, disabled publication and unknown push outcomes are handled without broad staging or blind replay. Observe actual remote publication before claiming it; fixture success alone is insufficient.
+6. Capability answers accurately distinguish cognitive source proposal, governed worker succession and configured publication from unsupported outer-service restart or arbitrary host access, including after restart.
+7. Fresh independent review resolves blockers against the exact change and independently collected evidence. Plan/specification and runtime status agree.
+
+## Non-goals, dependencies and risks
+
+This slice does not provide a general shell, arbitrary repository editing, reusable-procedure dispatch, automatic implementation of every conversation, memory consolidation policy changes, whole-host/custodian evolution, outer-service deployment, unsolicited Slack listening or broader network/publication authority. Those portions of P16 and earlier qualitative acceptance remain open.
+
+Dependencies are authenticated transports, immutable task provenance, external durable store, configured provider, protected candidate evaluation, generation host/custodian and effect journal. Live Git publication additionally depends on explicit destination authority and working repository credentials. Project documents do not grant any missing authority.
+
+Material risks include model-generated unsuitable proposals, mixed-author conversational context, costly repeated human requests, queue/cutover deadlock, policy changes while work runs, drift between serving source and checkout, and partial success across admission, Git and Slack delivery. Host checks, bounded allocations, separate scheduling and recorded reconciliation address these risks; they do not prove that generated improvements are useful. Meaningful interview quality and memory overgeneralization remain independent acceptance gaps.

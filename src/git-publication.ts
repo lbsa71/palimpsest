@@ -1,0 +1,103 @@
+import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { verifyFrozenCandidate } from './candidates.ts';
+import type { CandidateManifest } from './candidates.ts';
+import { resolveExternalPath } from './config.ts';
+import type { Json } from './store.ts';
+import { Store } from './store.ts';
+
+export interface PublicationResult { status: 'published' | 'declined' | 'uncertain'; reason: string; commit?: string }
+export interface GitPublisherOptions { repositoryRoot: string; dataDir: string; store: Store; remote: string; branch: string; remoteUrl: string }
+const object = (value: Json): Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+
+/** Fixed Git operations owned by the host. Candidate/model text cannot choose
+ * destinations or commands. Unknown pushes are observed, never blindly retried. */
+export class GitPublisher {
+  readonly #options: GitPublisherOptions;
+  constructor(options: GitPublisherOptions) {
+    if (!/^[A-Za-z0-9_.-]+$/.test(options.remote) || options.remote.startsWith('-')) throw new Error('Invalid trusted Git remote');
+    this.#options = options;
+    execFileSync('/usr/bin/git',['check-ref-format','--branch',options.branch],{cwd:options.repositoryRoot,stdio:'ignore'});
+    for(const push of [false,true]) {
+      const actual=execFileSync('/usr/bin/git',['remote','get-url',...(push?['--push']:[]),'--all',options.remote],{cwd:options.repositoryRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+      if(actual!==options.remoteUrl)throw new Error('Trusted Git remote identity mismatch');
+    }
+  }
+  #targetMatches():Promise<boolean> {
+    const {remote,remoteUrl}=this.#options;
+    return Promise.all([this.#git(['remote','get-url','--all',remote]),this.#git(['remote','get-url','--push','--all',remote])]).then(values=>values.every(value=>value===remoteUrl),()=>false);
+  }
+  #git(args: string[], input?: string, index?: string): Promise<string> {
+    const env={...process.env};
+    // Host shell Git context must not redirect the configured checkout/index.
+    for(const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES'])delete env[key];
+    return new Promise((resolve,reject)=>{
+      const child=execFile('/usr/bin/git',['-c','core.hooksPath=/dev/null',...args],{cwd:this.#options.repositoryRoot,encoding:'utf8',timeout:30000,maxBuffer:1048576,
+        env:{...env,GIT_TERMINAL_PROMPT:'0',...(index?{GIT_INDEX_FILE:index}:{}),GIT_AUTHOR_NAME:'Palimpsest',GIT_AUTHOR_EMAIL:'palimpsest@localhost',GIT_COMMITTER_NAME:'Palimpsest',GIT_COMMITTER_EMAIL:'palimpsest@localhost'}},
+        (error,stdout)=>error?reject(new Error('Bounded Git operation failed')):resolve(stdout.trim()));
+      child.stdin?.on('error',()=>{});child.stdin?.end(input??'');
+    });
+  }
+  async #remote(): Promise<string | undefined> {
+    const line=await this.#git(['ls-remote',this.#options.remote,`refs/heads/${this.#options.branch}`]);
+    return line ? line.split(/\s+/)[0] : undefined;
+  }
+  async publish(manifest: CandidateManifest): Promise<PublicationResult> {
+    const {store,repositoryRoot,dataDir,branch,remote,remoteUrl}=this.#options;
+    const events=store.listEvents().filter(event=>event.type.startsWith('git.publication.') && object(event.payload).candidateId===manifest.id);
+    const saved=events.find(event=>event.type==='git.publication.prepared');
+    const commit=object(saved?.payload ?? null).commit as string | undefined;
+    const target=createHash('sha256').update(JSON.stringify({remote,remoteUrl,branch})).digest('hex');
+    if(events.some(event=>object(event.payload).target!==target))return {status:'declined',reason:'Publication target changed; inspect original intent',commit};
+    if(!await this.#targetMatches())return {status:'declined',reason:'Trusted fetch/push remote identity changed',commit};
+    const observed=async()=>{try{return await this.#remote();}catch{return undefined;}};
+    if(commit && events.some(event=>event.type==='git.publication.push_reserved')) {
+      if(await observed()===commit)return {status:'published',reason:'Previously reserved push independently observed at the configured remote',commit};
+      return {status:'uncertain',reason:'Prior push outcome is not independently confirmed; no replay performed',commit};
+    }
+    if(events.length && !commit)return {status:'uncertain',reason:'Interrupted publication preparation requires operator reconciliation'};
+    let created=commit;
+    try {
+      const verified=verifyFrozenCandidate({repositoryRoot,releaseDir:manifest.releaseDir,requireCurrentBase:false});
+      if(verified.id!==manifest.id)throw new Error();
+      manifest=verified;
+      if(!store.listEvents().some(event=>event.type==='evolution.finished' && object(object(event.payload).report ?? null).status==='promoted'
+        && object(object(object(event.payload).report ?? null).candidate ?? null).id===manifest.id))
+        return {status:'declined',reason:'No recorded promoted release authorizes publication'};
+      if(!await this.#targetMatches())return {status:'declined',reason:'Trusted fetch/push remote identity changed'};
+      if(await this.#git(['branch','--show-current'])!==branch)return {status:'declined',reason:'Checkout branch differs from configured publication branch'};
+      if(await this.#git(['status','--porcelain','--untracked-files=all']))return {status:'declined',reason:'Checkout has local changes; no files staged or overwritten',commit};
+      const head=await this.#git(['rev-parse','HEAD']);
+      if(head!==manifest.baseCommit && head!==commit)return {status:'declined',reason:'Checkout base changed; admitted source was not rebased or republished',commit};
+      const remoteHead=await this.#remote();
+      if(remoteHead && remoteHead!==manifest.baseCommit && remoteHead!==commit)return {status:'declined',reason:'Configured remote branch diverged; no force push performed',commit};
+      if(!created) {
+        store.appendEvent('git.publication.reserved',{candidateId:manifest.id,target,baseCommit:manifest.baseCommit});
+        const directory=resolveExternalPath(repositoryRoot,join(dataDir,'publication'));mkdirSync(directory,{recursive:true,mode:0o700});
+        const index=join(directory,`${manifest.id}.index`);
+        await this.#git(['read-tree',manifest.baseCommit],undefined,index);
+        for(const file of verified.files.filter(file=>/^src\/agent\/[A-Za-z0-9_.-]+\.ts$/.test(file.path))) {
+          const content=readFileSync(join(verified.candidateRoot,file.path),'utf8');
+          const blob=await this.#git(['hash-object','-w','--stdin'],content,index);
+          await this.#git(['update-index','--add','--cacheinfo',`${file.mode},${blob},${file.path}`],undefined,index);
+        }
+        const tree=await this.#git(['write-tree'],undefined,index);
+        created=await this.#git(['commit-tree',tree,'-p',manifest.baseCommit,'-m',`Palimpsest: admitted cognitive release ${manifest.id}`]);
+        store.appendEvent('git.publication.prepared',{candidateId:manifest.id,target,commit:created,baseCommit:manifest.baseCommit});
+      }
+      if(head!==created) {
+        // A two-tree merge refuses local conflicting changes; do not use a hard
+        // reset or broad staging. CAS prevents replacing a concurrently moved ref.
+        await this.#git(['read-tree','-m','-u',manifest.baseCommit,created]);
+        await this.#git(['update-ref',`refs/heads/${branch}`,created,manifest.baseCommit]);
+      }
+      store.appendEvent('git.publication.push_reserved',{candidateId:manifest.id,target,commit:created});
+      try {await this.#git(['push','--porcelain',remote,`${created}:refs/heads/${branch}`]);}catch{/* Inspect the remote below; transport failure is not proof of rejection. */}
+      if(await observed()!==created)return {status:'uncertain',reason:'Push outcome not independently confirmed; no replay permitted',commit:created};
+      store.appendEvent('git.publication.completed',{candidateId:manifest.id,target,commit:created});
+      return {status:'published',reason:'Exact admitted source committed and observed at configured remote; checkout advanced to that commit',commit:created};
+    }catch{return {status:created?'uncertain':'declined',reason:'Bounded Git publication did not complete; inspect recorded phase before further work',commit:created};}
+  }
+}

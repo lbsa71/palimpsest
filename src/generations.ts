@@ -11,6 +11,7 @@ import type { Communications, InboundMessage } from './communications.ts';
 import { ProviderError } from './providers.ts';
 import type { Provider } from './providers.ts';
 import type { Json, Store, Task } from './store.ts';
+import type { ConversationActions } from './conversation-actions.ts';
 
 export function releaseOf(manifest: CandidateManifest): Release {
   return { digest: manifest.manifestDigest, artifactPath: manifest.releaseDir,
@@ -24,6 +25,7 @@ export interface GenerationOptions {
   quiesceBackground?: () => Promise<void>;
   selfModificationUserIds?: readonly string[];
   hostFacts?: () => Record<string, Json>;
+  conversationActions?: ConversationActions;
 }
 
 /** Actual local worker supervision. All production effects stay in this trusted process. */
@@ -79,11 +81,12 @@ export class GenerationHost {
           this.#runtime = new AgentRuntime({ store: options.store, provider, communications: options.communications,
             maxCallsPerTask: options.maxCallsPerTask,
             selfModificationUserIds: options.selfModificationUserIds,
+            conversationActions: options.conversationActions,
             hostFacts: () => ({ ...options.hostFacts?.(),
               activeRelease: this.custodian.inspect().active?.release.digest ?? null,
               phase: this.custodian.inspect().phase,
               sourceEvolutionScope: 'Only direct src/agent/*.ts, through candidate checks, review and succession; replaces cognitive workers, not the outer service.',
-              applicationGitPublication: false }),
+              applicationGitPublication: options.hostFacts?.().applicationGitPublication ?? false }),
             authorize,
             requestFactory: async (task, memories) => {
               if (task.conversationId === (options.scope ?? 'local')) return worker.request(task, memories);
@@ -125,7 +128,8 @@ export class GenerationHost {
 
   async submit(message: InboundMessage): Promise<Task> {
     if (this.#closed || !this.#options.communications.some(adapter => adapter.name === message.source)) throw new Error('Communication source unavailable');
-    const task = this.#options.store.enqueue({ conversationId: message.conversationId, input: message.text, source: message.source, eventId: message.id });
+    const task = this.#options.store.enqueue({ conversationId: message.conversationId, input: message.text, source: message.source, eventId: message.id,
+      ...(message.slackAuthor ? { slackAuthor: { ...message.slackAuthor } } : {}) });
     if (task.state === 'queued' && task.checkpoint === null) this.#options.store.updateTask(task.id, { checkpoint: { calls: 0, replyTo: message.replyTo ?? null } });
     if (this.#runtime && ['normal', 'evaluation', 'probation'].includes(this.custodian.inspect().phase)) void this.#runtime.submit(message).catch(() => {});
     return this.#options.store.task(task.id)!;

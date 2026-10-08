@@ -38,8 +38,9 @@ export interface Growth {
   id: string; dimension: GrowthDimension; question: string; origin: string; nextStep: string;
   state: GrowthState; checkpoint: Json; outcome: Json; budget: number; remainingBudget: number;
   createdAt: string; updatedAt: string;
+  sourceTaskId?: string;
 }
-export interface GrowthInput { id?: string; dimension: GrowthDimension; question: string; origin: string; nextStep?: string; budget?: number }
+export interface GrowthInput { id?: string; dimension: GrowthDimension; question: string; origin: string; nextStep?: string; budget?: number; sourceTaskId?: string }
 export interface GrowthPatch { state?: GrowthState; nextStep?: string; checkpoint?: Json; outcome?: Json; remainingBudget?: number }
 export interface GrowthWindow {
   id: string; schedulerId: string; startsAt: number; endsAt: number; maxCalls: number;
@@ -528,6 +529,36 @@ export class Store {
   }
 
   growth(id: string): Growth | undefined { return decode<Growth>(this.#db.prepare('SELECT record FROM growth WHERE id = ?').get(id)); }
+
+  /** The trusted conversation coordinator has already validated author policy
+   * and the structured decision. Commit provenance/outcome together; no inquiry
+   * call is invented or allocated for this already completed task inference. */
+  recordConversationProposal(taskId: string, outcome: Json): Growth {
+    return this.#atomic(() => {
+      const task = this.task(taskId);
+      if (!task) throw new Error('Conversation proposal requires a stored task');
+      const id = `conversation:${task.id}`;
+      const old = this.growth(id);
+      if (old) {
+        if (old.sourceTaskId !== task.id || encode(old.outcome) !== encode(outcome)) throw new Error('Conversation proposal identity conflict');
+        return old;
+      }
+      this.addGrowth({ id, dimension: 'code_quality', question: task.input,
+        origin: id, sourceTaskId: task.id, budget: 0 });
+      return this.updateGrowth(id, { state: 'completed', outcome,
+        nextStep: 'Await independently evaluated, source-authorized succession.' });
+    });
+  }
+
+  /** Host-generated replies bypass cognition but retain the ordinary durable
+   * communication/effect/reconciliation path. Never exposed in transport JSON. */
+  enqueuePreparedReply(input: TaskInput, answer: string, replyTo?: string): Task {
+    return this.#atomic(() => {
+      const task = this.enqueue(input);
+      if (task.checkpoint !== null) return task;
+      return this.updateTask(task.id, { checkpoint: { calls: 0, answer, replyTo: replyTo ?? null } });
+    });
+  }
   listGrowth(): Growth[] { return this.#db.prepare('SELECT record FROM growth ORDER BY rowid').all().map(row => decode<Growth>(row)!); }
 
   growthWindow(id: string): GrowthWindow | undefined {

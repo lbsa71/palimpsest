@@ -36,7 +36,7 @@ const agenda: { dimension: GrowthDimension; question: string }[] = [
   { dimension: 'capability_potential', question: 'Which current limitation deserves a bounded experiment, and which fresh task would demonstrate actual improvement?' },
 ];
 
-const reflectionSchema: Record<string, unknown> = {
+export const reflectionSchema: Record<string, unknown> = {
   type: 'object', additionalProperties: false,
   properties: {
     observation: { type: 'string', minLength: 1, maxLength: 12_000 },
