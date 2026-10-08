@@ -1,0 +1,13 @@
+# Reusable CSV aggregation
+
+P07/A09 requires a parameterized aggregation, beyond counting rows. `CSV_AGGREGATE_PROCEDURE` accepts `{csv, column}` and returns the selected column, row count and sum. It runs through the same isolated procedure registry and requires the same independent publication review; exporting its definition does not approve it.
+
+The contract accepts quoted fields, embedded newlines, escaped quotes, CRLF, signed decimal values and decimal exponents. Column names are exact and must be unique and nonempty. Every data row must match the header width. A missing selected column, blank or nonnumeric selected cell, nonfinite number, overflowing total or malformed CSV fails instead of producing a partial total. A header with no data rows returns count zero and sum zero. No filesystem, network or scratch-write permission is required.
+
+Before implementation, the held-out criteria are independently calculated totals for quoted/multiline records, selection of either of two numeric columns, reuse on a second input without another approval, and rejection of absent/ambiguous columns and malformed/nonfinite data. Publication fixtures are supplementary; production publication uses host-owned held-out cases through `createReviewedProcedureRegistry`.
+
+Arithmetic uses JavaScript finite numbers. This example is not a decimal accounting engine and makes no exact decimal-money promise. Inputs remain bounded by the registry's 64 KiB input limit, one-second execution deadline and output limit. Changing source, schemas, permissions or version changes the immutable procedure identity.
+
+Independent implementation review found no defect within these stated limits. The two actual-isolation tests passed after simplifying the blank-cell fixture and adding escaped-quote coverage. A one-call live Mistral publication probe on 2026-10-08 passed its independent execution cases, but the reviewer response did not supply the exact required coverage identifiers. The strict gate classified it as inconclusive and rejected publication. No retry or additional call was made. This is evidence that incomplete review fails closed, not a successful live publication/reuse claim; the complete record remains in external integration state.
+
+After the response grammar was corrected to enumerate the exact required identifiers, a separately allocated one-call live review passed. Two new-input executions, reopening the registry, and republishing identical approved code required no additional inference. The admitted procedure digest was `07aaeb4932d3f1be528d69f8eaa6c87720d4ad168c4974932cd70c9d410513e6`. Both runs remain external; the later success does not erase the earlier rejected attempt.

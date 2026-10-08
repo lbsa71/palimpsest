@@ -25,6 +25,8 @@ export interface GrowthOptions {
   /** Explicitly authorized source/observations supplied by the host coordinator. */
   context?: () => string;
   maxOutputTokens?: number;
+  /** Trusted host hook for an atomic global-budget claim; never model supplied. */
+  claim?: (growthId: string) => Growth | undefined;
 }
 
 const agenda: { dimension: GrowthDimension; question: string }[] = [
@@ -155,7 +157,7 @@ export class GrowthCoordinator {
     });
   }
 
-  async tick(options: { signal?: AbortSignal } = {}): Promise<Growth | null> {
+  async tick(options: { signal?: AbortSignal; growthId?: string } = {}): Promise<Growth | null> {
     if (this.#busy || options.signal?.aborted || this.#options.hasUserWork()) return null;
     this.#busy = true;
     const store = this.#options.store;
@@ -172,13 +174,18 @@ export class GrowthCoordinator {
         const data = event.payload;
         if (data !== null && typeof data === 'object' && !Array.isArray(data) && typeof data.growthId === 'string') latest.set(data.growthId, event.seq);
       }
-      const eligible = all.filter((item) => (item.state === 'queued' || item.state === 'paused') && item.remainingBudget >= 1)
+      const eligible = all.filter((item) => (item.state === 'queued' || item.state === 'paused')
+        && (options.growthId === undefined || item.id === options.growthId)
+        && (this.#options.claim !== undefined || item.remainingBudget >= 1))
         .sort((a, b) => (latest.get(a.id) ?? 0) - (latest.get(b.id) ?? 0));
       const context = this.#options.context?.() ?? '';
       if (typeof context !== 'string' || context.length > 100_000) throw new Error('Growth context must be a string of at most 100000 characters');
       if (this.#options.hasUserWork() || options.signal?.aborted) return null;
       let claimed: Growth | undefined;
-      for (const item of eligible) { claimed = store.claimGrowth(item.id); if (claimed) break; }
+      for (const item of eligible) {
+        claimed = this.#options.claim ? this.#options.claim(item.id) : store.claimGrowth(item.id);
+        if (claimed) break;
+      }
       if (!claimed) return null;
       const memories = store.listMemories(this.#scope).slice(-12).map(({ id, content, source, confidence }) => ({ id, content: content.slice(0, 4_000), source, confidence }));
       const previous = checkpoint(claimed);

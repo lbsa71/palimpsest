@@ -6,7 +6,7 @@ Its defining requirement is a **strong, persistent drive for self-improvement**.
 
 ## Project status
 
-**Local seed implementation in progress, 2026-10-08.** The CLI, durable tasks, scoped memory, direct/loopback communications, provider adapters, bounded growth experiments, and isolated procedures have automated coverage. Governed succession and the complete self-improvement demonstration remain in progress. Live provider and Slack readiness are separate checks; see [progress and evidence](docs/progress.md).
+**Local seed implementation in progress, 2026-10-08.** The CLI, durable tasks, scoped memory, direct/loopback communications, provider adapters, bounded growth experiments, isolated procedures and governed process succession have automated coverage. Signed Slack HTTP and Socket Mode are wired into `serve` and tested with fixtures; live Slack connectivity remains unverified. Full seed acceptance and the complete self-improvement demonstration remain separate gates; see [progress and evidence](docs/progress.md).
 
 This repository began by distilling the accessible portion of [Research Autonomous Agent Stack](https://chatgpt.com/c/6ac782af-e51c-83ed-bdc9-50060dbcfde5) and its attached colleague brief.
 
@@ -25,7 +25,7 @@ The local seed uses TypeScript, Node 24, SQLite, and macOS Seatbelt for restrict
 
 ## Local development
 
-With Node 24 and npm installed:
+With Node 24.13 or later in the Node 24 series and npm installed (macOS is required for the current restricted worker implementation):
 
 ```sh
 npm ci
@@ -33,7 +33,7 @@ npm run verify
 npm start -- doctor
 ```
 
-`doctor` reports configuration without revealing credentials or calling a provider. Put `MISTRAL_API_KEY` and a verified `MISTRAL_MODEL` in the private external file `~/.config/palimpsest/credentials.env` (mode `0600`). Then `npm start -- ask "Hello"` runs a durable direct task. `npm start -- serve` starts the bearer-authenticated loopback API; its startup record gives the URL and private token file path. See the [runbook](docs/runbook.md) for configuration, current commands, and limits.
+`doctor` reports configuration without revealing credentials or calling a provider. Put `MISTRAL_API_KEY` and a verified `MISTRAL_MODEL` in the private external file `~/.config/palimpsest/credentials.env` (mode `0600`) before the first bootstrap. Then `npm start -- ask "Hello"` runs a durable direct task; the first bootstrap requires a clean Git checkout. `npm start -- serve` starts the bearer-authenticated loopback API; its startup record gives the URL and private token file path. With complete Slack configuration it also starts the selected Slack ingress. See the [runbook](docs/runbook.md) for configuration, current commands, and limits.
 
 Lived experience is stored **outside the repository**, by default under `~/.local/share/palimpsest/<repository-id>/`. This includes tasks, memory, growth, transcripts, checkpoints, and runtime evidence. In-repository paths and symlink aliases are rejected. Git contains source, specifications, synthetic fixtures, and sanitized verification summaries.
 
@@ -48,6 +48,11 @@ Lived experience is stored **outside the repository**, by default under `~/.loca
 | [Architecture](docs/architecture.md) | Responsibilities, authority boundaries, and system diagrams |
 | [Skin Shed](docs/protocols/skin-shed.md) | Succession roles, tools, lifecycle, handoff, and recovery |
 | [Memory](docs/memory.md) | Developmental memory, provenance, correction, and continuity |
+| [Growth runtime](docs/growth-runtime.md) | Autonomous scheduling, persistent allocation and experiment delivery |
+| [Memory runtime](docs/memory-runtime.md) | Bounded consolidation, source version checks and scoped snapshots |
+| [Worker supervision](docs/worker-supervision.md) | Real process identity, confinement and effect receivers |
+| [Source evolution](docs/evolution.md) | Model-originated proposals, protected checks, interviews and local promotion |
+| [Slack setup](docs/slack-setup.md) | Minimal app manifest, Socket Mode and private credential setup |
 | [Architecture decisions](docs/adr/README.md) | Decision status, rationale, alternatives, and consequences |
 | [Acceptance scenarios](docs/acceptance.md) | Observable demonstrations and failure tests to implement |
 | [Open decisions and risks](docs/open-decisions.md) | Unresolved choices and the evidence needed to resolve them |

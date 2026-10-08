@@ -15,5 +15,8 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0007](0007-custodian-api-and-mcp.md) | Proposed; responds to user question | Versioned succession API with a thin MCP adapter |
 | [0008](0008-local-seed-runtime.md) | Accepted for local seed | TypeScript/Node 24, SQLite, direct communications and external lived state |
 | [0009](0009-local-enforcement-and-recovery.md) | Accepted for local seed | Local isolation, coordinator ownership, conservative effect and growth recovery |
+| [0010](0010-process-bound-generations.md) | Accepted for local seed | Restricted generations, receiving authority checks, scoped workers and mechanical recovery |
+| [0011](0011-slack-socket-mode.md) | Accepted; integration in progress | Outbound Socket Mode for local Slack connectivity |
+| [0012](0012-queued-background-evolution.md) | Accepted; fixture-verified | Queued background adoption, separate daily allocation and user-priority boundary |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

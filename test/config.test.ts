@@ -54,6 +54,10 @@ test('provider changes are explicit and absent configuration does not silently f
     assert.equal(config.provider, 'mistral');
     assert.equal(config.mistralApiKey, undefined);
     assert.equal(config.model, undefined);
+    assert.equal(config.evolutionCallsPerDay, 8);
+    assert.equal(loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_EVOLUTION_CALLS_PER_DAY: '0' } }).evolutionCallsPerDay, 0);
+    assert.equal(loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_EVOLUTION_CALLS_PER_DAY: '12' } }).describe().evolutionCallsPerDay, 12);
+    assert.throws(() => loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_EVOLUTION_CALLS_PER_DAY: '-1' } }), /evolution/i);
     assert.equal(loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_PROVIDER: 'codex', CODEX_MODEL: 'chosen' } }).model, 'chosen');
     assert.throws(() => loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_PROVIDER: 'unknown' } }), /provider/);
   } finally { f.cleanup(); }

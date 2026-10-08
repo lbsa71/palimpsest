@@ -13,16 +13,16 @@ The implementation lead owns integration; bounded store/isolation, communication
 | Item | Status | Implemented evidence / remaining gate |
 |---|---|---|
 | P01 | In progress | Node 24/TypeScript, SQLite, direct API, external state and local sandbox selected in ADR 0008/0009; Mistral model verified; production host remains open. |
-| P02 | In progress | Task, effect, memory, growth, communications and procedure contracts implemented; succession contracts being integrated. |
+| P02 | In progress | Task, effect, memory, growth, communications, procedure and succession contracts implemented with deterministic positive/negative checks; consolidated seed evidence is being assembled. |
 | P03 | In progress | Durable tasks, cancellation, call budgets, provider adapters and recovery tests pass; live Mistral structured output and direct runtime pass; full crash/outage matrix pending. |
-| P04 | In progress | Direct/HTTP and Slack adapter tests pass; no live Slack ingress service or smoke yet. R21 direct testing added. |
-| P05 | In progress | Real macOS filesystem/network/process restrictions verified; mechanical custodian and integrated recovery pending. |
-| P06 | In progress | Scoped storage, corrections, tombstones and interrupted publication verified; cognitive consolidation, snapshot catch-up and rollback integration pending. R22 external state enforced. |
-| P07 | In progress | Content-addressed procedures, schemas, isolated CSV checks and reuse verified; independent review publication wiring pending. |
-| P08 | In progress | Four-dimensional agenda, bounded experiments, priority checks and publication recovery verified; continuous idle scheduling and replenishment policy pending. |
-| P09 | In progress | Frozen candidate/evidence implementation underway; no release acceptance yet. |
-| P10 | In progress | Fresh review contracts and calibration work underway. |
-| P11–P14 | In progress | Mechanical succession implementation underway; no integrated cutover, probation or rollback pass claimed. |
+| P04 | In progress | Direct/HTTP, signed Slack HTTP and Socket Mode service tests pass, including scoped status/cancel/correction and reconnect; live Slack credentials/smoke pending. R21 direct testing added. |
+| P05 | Done at local seed scope | Real macOS restrictions, process-bound workers, serving CLI, independent review and provider-independent mechanical recovery verified. Hard resource quotas and production-host deployment remain outside this local disposition. |
+| P06 | In progress | Scoped storage, bounded consolidation, source-version invalidation, current snapshots, actual rollback continuity and local benchmark verified. Live consolidation mechanics passed; qualitative evidence calibration failed and remains open. R22 external state enforced. |
+| P07 | Done at direct API scope | Numeric CSV aggregation, independent held-out execution, policy-bound fresh review and exact-identity reuse verified. Live Mistral publication passed after a protocol correction; two new inputs/reopen/republish used no further inference. |
+| P08 | In progress | Four-dimensional agenda, bounded experiments, priority, autonomous timer, persistent daily windows and concurrent debit verified. Serving queues proposals through governed evolution; live source adoption pending. |
+| P09 | In progress | Frozen candidate checks and compile-but-wrong rejection verified; live model-authored behavior change and challenge gate pending. |
+| P10 | In progress | Fresh review envelope/evidence and fixture calibration verified; live review pending. |
+| P11–P14 | In progress | Mechanical handoff, real worker fencing/rollback, bounded recovery, retirement and protected governance verified; live cognitive interview and full seed demonstration pending. |
 | P15 | In progress | Initial runbook and local checks available; complete seed demonstration pending. |
 
 ## Milestones

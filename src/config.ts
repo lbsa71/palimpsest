@@ -12,7 +12,15 @@ export interface RuntimeConfig {
   model?: string;
   mistralApiKey?: string;
   maxCallsPerTask: number;
+  growthCallsPerDay: number;
+  evolutionCallsPerDay: number;
   timeoutMs: number;
+  slackBotToken?: string;
+  slackAppToken?: string;
+  slackSigningSecret?: string;
+  slackTeamIds: string[];
+  slackUserIds: string[];
+  slackChannelIds: string[];
   describe(): Record<string, unknown>;
   toJSON(): Record<string, unknown>;
 }
@@ -81,15 +89,26 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
     repositoryRoot, dataDir, credentialsPath, provider,
     model: provider === 'mistral' ? values.MISTRAL_MODEL : values.CODEX_MODEL,
     maxCallsPerTask: positiveInteger(values.PALIMPSEST_MAX_CALLS_PER_TASK, 4, 'max calls'),
+    growthCallsPerDay: values.PALIMPSEST_GROWTH_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_GROWTH_CALLS_PER_DAY, 4, 'daily growth calls'),
+    evolutionCallsPerDay: values.PALIMPSEST_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_EVOLUTION_CALLS_PER_DAY, 8, 'daily evolution calls'),
     timeoutMs: positiveInteger(values.PALIMPSEST_TIMEOUT_MS, 120_000, 'timeout'),
+    slackTeamIds: (values.SLACK_ALLOWED_TEAM_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    slackUserIds: (values.SLACK_ALLOWED_USER_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    slackChannelIds: (values.SLACK_ALLOWED_CHANNEL_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
     describe() {
       return { repositoryRoot, dataDir, credentialsPath, provider, model: this.model ?? null,
         credentialsConfigured: provider === 'mistral' ? Boolean(this.mistralApiKey) : 'CLI login required',
-        maxCallsPerTask: this.maxCallsPerTask, timeoutMs: this.timeoutMs };
+        maxCallsPerTask: this.maxCallsPerTask, growthCallsPerDay: this.growthCallsPerDay, evolutionCallsPerDay: this.evolutionCallsPerDay, timeoutMs: this.timeoutMs,
+        slackConfigured: Boolean(this.slackBotToken && (this.slackAppToken || this.slackSigningSecret)),
+        slackSocketConfigured: Boolean(this.slackBotToken && this.slackAppToken),
+        slackTeamIds: this.slackTeamIds, slackUserIds: this.slackUserIds, slackChannelIds: this.slackChannelIds };
     },
     toJSON() { return this.describe(); },
   };
   Object.defineProperty(config, 'mistralApiKey', { enumerable: false, value: values.MISTRAL_API_KEY || undefined });
+  Object.defineProperty(config, 'slackBotToken', { enumerable: false, value: values.SLACK_BOT_TOKEN || undefined });
+  Object.defineProperty(config, 'slackAppToken', { enumerable: false, value: values.SLACK_APP_TOKEN || undefined });
+  Object.defineProperty(config, 'slackSigningSecret', { enumerable: false, value: values.SLACK_SIGNING_SECRET || undefined });
   return config;
 }
 

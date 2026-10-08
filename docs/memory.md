@@ -1,6 +1,6 @@
 # Memory, development, and continuity
 
-Status: developmental specification with initial SQLite storage implemented under [ADR 0008](adr/0008-local-seed-runtime.md). Corrections, scoped retrieval, logical forgetting and publication recovery are tested. Cognitive consolidation and succession-wide reconciliation remain pending.
+Status: developmental specification with SQLite storage under [ADR 0008](adr/0008-local-seed-runtime.md). Corrections, scoped retrieval, logical forgetting, bounded consolidation, source-version publication and current succession snapshots are tested. Real generation rollback preserves current history. Qualitative development and live consolidation are separate evidence; see [memory runtime](memory-runtime.md).
 
 All lived experience belongs in a local folder outside the repository. The seed uses one external SQLite database with separate operational, memory and growth tables. Memory records carry source, confidence and revision lineage. A durable publication identity prevents interrupted growth publication from recreating a forgotten lesson. Logical forgetting removes memory contents from active/history retrieval; it does not erase SQLite WAL, backups, task records, provider records or derived contexts elsewhere. No physical-erasure promise is made.
 

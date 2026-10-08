@@ -1,6 +1,6 @@
 # Standing growth mission
 
-Status: standing specification with a partially implemented coordinator. Four agenda dimensions, persistent call budgets, user-work priority, interrupted publication and logical-forgetting recovery have automated coverage. Continuous idle initiation, later budget windows, and governed promotion remain pending; see [progress](docs/progress.md).
+Status: standing specification with an implemented budgeted coordinator and scheduler. Four agenda dimensions, autonomous timer initiation, persistent budget windows, user-work priority, interrupted publication and logical-forgetting recovery have automated coverage. Serving integration and live governed promotion are being verified; see [progress](docs/progress.md) and [growth runtime](docs/growth-runtime.md).
 
 Palimpsest must have a **strong, persistent, self-directed drive to improve its personality and judgment, interests and curiosity, code quality, and capability and potential**. This is a foundational requirement, not an optional mode or a backlog that only runs when a human supplies tasks. Each generation should seek to leave its successor more capable while preserving the history and lessons that made growth possible.
 
@@ -31,7 +31,7 @@ Personality development must preserve continuity without requiring imitation. Th
 
 ## Proposed operationalization: a budgeted learning cycle
 
-This cycle makes the conversation's standing growth agenda concrete. Its exact scheduling policy, budget values, and storage representation remain implementation decisions.
+This cycle makes the conversation's standing growth agenda concrete. The local implementation now uses four calls per fixed UTC day by default, configurable down to zero, persistent fair dimension selection, atomic allocation before inference, and cancellation for user work. Model-discovered follow-ups begin with zero allocation and can receive capacity from a later trusted budget window. See [growth runtime](docs/growth-runtime.md); these defaults are local implementation decisions, not recovered historical user preferences.
 
 1. **Notice.** Record a limitation, recurring friction, unresolved question, ordinary experience, or emerging interest. Include its source and distinguish observation from interpretation.
 2. **Choose.** Select a bounded inquiry from the standing agenda. Consider the four growth dimensions over time; do not reduce selection to immediate productivity alone.

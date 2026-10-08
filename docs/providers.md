@@ -95,5 +95,21 @@ real local subprocess timeout, cancellation, output overflow, and missing
 executable cases. The test was first observed failing without the implementation;
 additional limit checks were observed failing before their fixes. Fifteen checks
 pass on Node 24.13.0. These fixtures do not assert real account/model access or
-remote model quality. No live paid provider call was made by this work item;
-configured smoke execution remains part of integrated seed verification.
+remote model quality. The original adapter checks used no live paid calls;
+configured smoke execution is recorded separately as integrated seed evidence.
+
+During integrated memory verification on 2026-10-08, `mistral-large-2512`
+rejected a generation schema containing `uniqueItems: true` with HTTP 400,
+code 3051 (`Invalid structured output syntax`). A second diagnostic request
+with the same input and that keyword alone removed succeeded; its three lessons
+also passed the independent source/shape parser. The successful call reported
+518 input and 401 output tokens. The rejected call supplied no usage evidence.
+Requests, the redacted error and completion remain in private external state.
+
+The memory generation schema therefore omits `uniqueItems`; the host parser
+continues to require distinct source IDs before publishing any interpretation.
+A deterministic adapter/coordinator regression verifies both compatible
+generation and duplicate rejection. The [Mistral structured-output reference](https://docs.mistral.ai/studio/conversations/structured-output/custom)
+describes schema-guided generation, but host validation remains authoritative.
+Growth, review and interview schemas do not contain `uniqueItems`; this check
+alone does not establish live acceptance of every other schema or model.

@@ -1,9 +1,9 @@
 import type { Communications, InboundMessage } from './communications.ts';
 import { CommunicationsError } from './communications.ts';
-import type { Provider } from './providers.ts';
+import type { CompletionRequest, Provider } from './providers.ts';
 import { ProviderError } from './providers.ts';
 import { Store } from './store.ts';
-import type { Json, Task } from './store.ts';
+import type { Json, Memory, Task } from './store.ts';
 import { conversationRequest } from './agent/brain.ts';
 
 export interface RuntimeOptions {
@@ -11,11 +11,20 @@ export interface RuntimeOptions {
   provider: Provider;
   communications: Communications[];
   maxCallsPerTask?: number;
+  requestFactory?: (task: Task, memories: Memory[]) => CompletionRequest | Promise<CompletionRequest>;
+  /** Trusted receiving boundary; never a model-supplied role or epoch. */
+  authorize?: (boundary: 'tool' | 'store' | 'memory' | 'message') => void;
 }
 
 function checkpoint(task: Task): Record<string, Json> {
   return task.checkpoint !== null && typeof task.checkpoint === 'object' && !Array.isArray(task.checkpoint)
     ? task.checkpoint : {};
+}
+
+function command(input: string): { kind: string; id: string; text?: string } | undefined {
+  const match = /^(?:<@[A-Z0-9]+>\s*)?\/?(status|cancel|correct)\s+([A-Za-z0-9_-]+)(?:\s+([\s\S]+))?$/i.exec(input.trim());
+  if (!match || (match[1]!.toLowerCase() === 'correct' ? !match[3]?.trim() : match[3] !== undefined)) return;
+  return { kind: match[1]!.toLowerCase(), id: match[2]!, text: match[3]?.trim() };
 }
 
 /** Shared task semantics; neither Slack nor the direct API owns execution. */
@@ -28,22 +37,35 @@ export class AgentRuntime {
   #controller?: AbortController;
   #current?: string;
   #stopped = false;
+  #paused = false;
+  readonly #commands = new Set<Promise<void>>();
+  readonly #requestFactory: NonNullable<RuntimeOptions['requestFactory']>;
+  readonly #authorize: NonNullable<RuntimeOptions['authorize']>;
 
   constructor(options: RuntimeOptions) {
     this.#store = options.store;
     this.#provider = options.provider;
     this.#communications = new Map(options.communications.map(adapter => [adapter.name, adapter]));
     this.#maxCalls = options.maxCallsPerTask ?? 4;
+    this.#requestFactory = options.requestFactory ?? conversationRequest;
+    this.#authorize = options.authorize ?? (() => {});
     if (!Number.isSafeInteger(this.#maxCalls) || this.#maxCalls < 1) throw new Error('Task call budget must be a positive integer');
   }
 
   async submit(input: InboundMessage): Promise<Task> {
     if (this.#stopped) throw new Error('Runtime is stopped');
     if (!this.#communications.has(input.source)) throw new Error('Unknown communication source');
-    const task = this.#store.enqueue({ conversationId: input.conversationId, input: input.text,
+    let task = this.#store.enqueue({ conversationId: input.conversationId, input: input.text,
       source: input.source, eventId: input.id });
     if (task.state === 'queued' && task.checkpoint === null) {
-      return this.#store.updateTask(task.id, { checkpoint: { calls: 0, replyTo: input.replyTo ?? null } });
+      task = this.#store.updateTask(task.id, { checkpoint: { calls: 0, replyTo: input.replyTo ?? null } });
+    }
+    if (!this.#paused && task.state === 'queued' && command(task.input)) {
+      this.#authorize('store'); task = this.#store.updateTask(task.id, { state: 'running' });
+      // Register ownership before execution can enter a transport callback.
+      const work = Promise.resolve().then(() => this.#execute(task, new AbortController().signal)); this.#commands.add(work);
+      try { await work; } finally { this.#commands.delete(work); }
+      return this.#store.task(task.id)!;
     }
     return task;
   }
@@ -72,7 +94,8 @@ export class AgentRuntime {
   }
 
   async #drain(): Promise<void> {
-    while (!this.#stopped) {
+    while (!this.#stopped && !this.#paused) {
+      this.#authorize('store');
       const task = this.#store.claimNext();
       if (!task) return;
       this.#controller = new AbortController(); this.#current = task.id;
@@ -85,7 +108,13 @@ export class AgentRuntime {
     let progress = checkpoint(task);
     try {
       let answer = typeof progress.answer === 'string' ? progress.answer : undefined;
+      if (answer === undefined && command(task.input)) {
+        this.#authorize('store'); answer = this.#command(task);
+        progress = { ...progress, answer };
+        this.#store.updateTask(task.id, { checkpoint: progress });
+      }
       if (answer === undefined) {
+        this.#authorize('store');
         const calls = typeof progress.calls === 'number' ? progress.calls : 0;
         if (calls >= this.#maxCalls) {
           this.#store.updateTask(task.id, { state: 'failed', error: 'inference_budget_exhausted' });
@@ -94,9 +123,12 @@ export class AgentRuntime {
         progress = { ...progress, calls: calls + 1 };
         this.#store.updateTask(task.id, { checkpoint: progress });
         this.#store.appendEvent('inference.started', { provider: this.#provider.name, attempt: calls + 1 }, task.id);
-        const response = await this.#provider.complete({
-          ...conversationRequest(task, this.#store.listMemories(task.conversationId)), signal,
-        });
+        this.#authorize('memory');
+        const request = await this.#requestFactory(task, this.#store.listMemories(task.conversationId));
+        if (signal.aborted) throw new ProviderError('cancelled', 'Task was interrupted before inference');
+        this.#authorize('tool');
+        const response = await this.#provider.complete({ ...request, signal });
+        this.#authorize('store');
         if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) return;
         answer = response.text;
         progress = { ...progress, answer, provider: response.provider, model: response.model,
@@ -106,6 +138,7 @@ export class AgentRuntime {
           usage: progress.usage! }, task.id);
       }
       const effectId = `${task.id}:result`;
+      this.#authorize('store');
       const existing = this.#store.effect(effectId);
       if (existing && existing.state !== 'completed') throw new Error('effect_reconciliation_required');
       if (!existing) {
@@ -115,9 +148,12 @@ export class AgentRuntime {
           ...(typeof progress.replyTo === 'string' ? { replyTo: progress.replyTo } : {}) };
         this.#store.reserveEffect({ id: effectId, taskId: task.id, kind: 'communication', payload: { ...message } });
         try {
+          this.#authorize('message');
           await adapter.send(message);
+          this.#authorize('store');
           this.#store.completeEffect(effectId, { delivered: true });
         } catch (error) {
+          this.#authorize('store');
           if (error instanceof CommunicationsError && error.delivery === 'rejected') {
             this.#store.completeEffect(effectId, { delivered: false, rejected: true });
             throw new Error('communication_rejected');
@@ -129,12 +165,14 @@ export class AgentRuntime {
         throw new Error('communication_rejected');
       }
       if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) return;
+      this.#authorize('memory');
       this.#store.finishTask(task.id, answer, {
         scope: task.conversationId, kind: 'episodic', source: `task:${task.id}`, confidence: 1,
         content: JSON.stringify({ user: task.input, response: answer, note: 'Recorded exchange; response assertions are not independently verified facts.' }),
         evidence: [`task:${task.id}`],
       });
     } catch (error) {
+      this.#authorize('store');
       if (this.#store.task(task.id)?.state !== 'running') return;
       if (this.#store.listEffects(task.id).some(effect => effect.state !== 'completed')) {
         this.#store.updateTask(task.id, { state: 'waiting_for_provider', error: 'effect_reconciliation_required' });
@@ -157,6 +195,37 @@ export class AgentRuntime {
 
   async stop(): Promise<void> {
     this.#stopped = true; this.#controller?.abort();
-    await this.#draining;
+    await this.#settleOwnedWork();
+  }
+
+  async quiesce(): Promise<void> {
+    this.#paused = true; this.#controller?.abort();
+    await this.#settleOwnedWork();
+  }
+
+  async #settleOwnedWork(): Promise<void> {
+    // A rejected drain must not abandon a concurrent command's external effect.
+    // Paused/stopped is set first, so ingress can enqueue but cannot add execution.
+    const settled = await Promise.allSettled([...(this.#draining ? [this.#draining] : []), ...this.#commands]);
+    const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
+
+  async resume(): Promise<void> {
+    if (this.#stopped) throw new Error('Runtime is stopped');
+    this.#paused = false;
+    await this.runUntilIdle();
+  }
+
+  #command(task: Task): string {
+    const parsed = command(task.input)!; const target = this.#store.task(parsed.id);
+    if (!target || target.conversationId !== task.conversationId || target.id === task.id) return 'Task not found in this conversation.';
+    if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.`;
+    this.cancel(target.id);
+    if (parsed.kind === 'cancel') return `Task ${target.id}: ${this.#store.task(target.id)!.state}.`;
+    const replacement = this.#store.enqueue({ conversationId: task.conversationId, source: task.source, input: parsed.text!, eventId: `${task.id}:replacement` });
+    if (replacement.checkpoint === null) this.#store.updateTask(replacement.id, { checkpoint: { calls: 0, replyTo: checkpoint(task).replyTo ?? null } });
+    this.#store.appendEvent('task.corrected', { originalId: target.id, replacementId: replacement.id }, task.id);
+    return `Correction recorded. Replacement task ${replacement.id} is queued; original history is preserved.`;
   }
 }

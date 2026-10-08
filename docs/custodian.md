@@ -1,0 +1,48 @@
+# Mechanical succession custodian (P11–P14)
+
+Status: state machine implemented with deterministic hook tests and a real custodian-crash persistence check. This specification makes the proposed Skin Shed protocol concrete for the local seed. It does not claim worker-process recovery based on callback fixtures.
+
+## Contract and acceptance
+
+The custodian has a separate durable SQLite journal in external state and an OS-owned exclusive coordinator lock. It never calls a model. Trusted orchestration supplies artifact verification, checkpoint/catch-up, process launch/activation/stop, and deterministic health hooks. Those hooks receive no model-selected host commands. Launch intent is persisted with an idempotency ID before process creation.
+
+Opaque actor handles are minted by the custodian and bound to a supervisor-observed process PID and unique process-instance ID. A model role string, serialized object, or known epoch cannot mint authority. Every production boundary must invoke `assertAuthority(actor,scope,peer)` using peer metadata obtained from the actual child stream/IPC connection, not model payloads. The same custodian grants scoped interview snapshot access without granting production effects.
+
+Acceptance criteria:
+
+- A second custodian cannot acquire the same state directory while the first is alive. Reopening after interruption reconstructs journal state and revokes old in-memory actors.
+- Candidate admission binds immutable release, mandatory independent checks, fresh review, snapshot/policy version, incumbent verdict, and successor readiness. Replaced evidence clears old approvals. Failed/missing/mismatched evidence blocks transfer.
+- Mailbox roles, one outstanding question, and bounded interview rounds are enforced. Successor challenges are recorded as answer metadata. Unresolved disagreement produces a rejection/follow-up while the incumbent retains authority.
+- Final checkpoint is explicitly quiesced. Unknown external effects block activation. Latest messages, cancellations, growth, and policy changes reach the successor through authoritative catch-up; changed policy invalidates the interview snapshot and approvals.
+- Transfer fences the predecessor before activating the successor under an increasing epoch. At most one actor can pass effect checks. The predecessor has read-only observation during probation and is retired only after successful health checks.
+- Startup failure, failed/hung probation, and interrupted transfer recover known-good code under another increasing epoch without model/provider/MCP dependencies. Current application state is never restored from an old snapshot.
+- Recovery attempts are bounded and durable. Failed releases are quarantined; exhausted restoration enters `recovery_required` with no active production actor. Recovery never oscillates automatically between failed releases.
+- Ordinary succession cannot change the admission-policy identity or data-schema compatibility contract. Full custodian replacement remains disabled and requires a separately reviewed upgrade with an older rescue mechanism.
+
+Non-goals: implementing process supervision inside the state machine, accepting model-originated review attestations, arbitrary host commands, a network transport, cross-host consensus, or a permanent ancestor council. Material risks: an incorrectly implemented trusted hook or an effect boundary that omits authority validation defeats enforcement. Callback tests demonstrate transitions; actual isolated processes and resumed work are separate integrated acceptance evidence.
+
+## Durable states and crash ordering
+
+The system states are `empty`, `normal`, `evaluation`, `transfer`, `probation`, `recovering`, and `recovery_required`. Succession records additionally retain `rejected`, `retired`, and `rolled_back` outcomes. Artifact identities and lineage are retained after process retirement.
+
+Checkpoint precedes fencing and must stop new worker effects while preserving incoming durable messages. If reconciliation or gates fail, the incumbent remains authoritative and the custodian calls `activate` on that same actor/process to resume its quiesced work. Transfer then commits a null active owner and a new epoch before catch-up/activation. A crash in this gap leaves no valid production grant and triggers known-good recovery. Activation commits the successor identity before the trusted activation hook can start work. A subsequent activation failure fences it and restores known-good code; any uncertain external operations still require reconciliation.
+
+Recovery records the attempted release, incremented epoch, and launch ID before calling the launcher. On restart, the same incident's retry count persists until activation finishes successfully, including a crash after the authority grant. Hooks must reconcile launch IDs against actual child handles, stop prior instances, and never interpret an observation timeout as proof that a process exited. Missing launch reconciliation enters `recovery_required` without blindly starting a replacement. Stop intents remain durable until the hook confirms completion. Known-good artifact verification uses historical content integrity, while new admission also checks the current base. Rollback uses the current checkpoint and current access policy; it never writes application task or memory storage itself.
+
+An inconclusive health observation of a serving actor records an event and retains the same actor/epoch for later polling. Explicit `failed` or `hung` results initiate recovery. Provider unavailability alone keeps the release and pauses successful probation-count accumulation. Rejected staged successors are queued for deterministic retirement on the next tick or proposal. Probation completion requires the configured number of successful checks; provider outages do not count as success.
+
+## API and evidence
+
+Exports are `Custodian`, opaque `Actor`, release/checkpoint/evidence/hook types, and `digestCustodianValue`. The trusted coordinator owns constructor hooks and `recordEvidence`; actor-facing methods are `propose`, `status`, `snapshot`, `ask`, `answer`, `verdict`, `ready`, `requestCutover`, and `reportRegression`. `abortEvaluation(incumbent,id,reason)` lets the authenticated incumbent reject an unavailable or interrupted investigation even when a question remains unanswered or evidence is missing; it never grants acceptance. Host-only `bootstrap`, `tick`, `recover`, and explicit `retryRecovery` manage lifecycle. `inspect` and `journal` provide copied audit state. `replaceCustodian` always rejects.
+
+Constructor options include `storeDir`, `hooks`, and nonempty `requiredChecks`; defaults are three interview rounds, three successful probation checks, two recovery attempts, and a 10-second bound per hook. Configure these through `maxInterviewRounds`, `probationChecks`, `maxRecoveryAttempts`, and `hookTimeoutMs`. `checkpoint({quiesce:false})` captures the interview snapshot while the incumbent serves; `checkpoint({quiesce:true})` establishes the transfer/recovery boundary. `launch(release,mode,{launchId,epoch})` must create an identifiable instance, and `reconcileLaunch(intent)` returns that instance or verified absence. A missing/failed reconciliation is not absence.
+
+The release envelope contains `digest`, `artifactPath`, `governanceDigest`, and `dataSchemaVersion`. Candidate manifest and all-file integrity verification belongs to the trusted `verifyArtifact(release,purpose)` hook. Evidence includes exact candidate/evidence digests, named check results, and review bindings/context digest. Verdict/readiness also bind snapshot digest and policy version. Every accepted interview must include at least one completed question. An existing evidence identity cannot be reused for different envelope content.
+
+The host must not route administrative methods, opaque handles, or trusted peer metadata through unrestricted model arguments. A checks/review envelope is admitted through trusted orchestration after independent collection. Cognitive review remains a separate provider work item. The journal records references, digests, phases, reasons, and bounded interview/snapshot content in external state; it never belongs in repository fixtures.
+
+## Verification
+
+On 2026-10-08, `node --test test/custodian.test.ts` passed thirteen checks. These use synthetic releases, snapshots, process identities, and deterministic hooks to cover roles, tampering, gates, bounded disputes, interrupted evaluation rejection, policy changes, ambiguous effects, catch-up, fencing, startup failure, dead-observer/provider-outage rollback, probation, retirement, quarantine, and unchanged governance/schema contracts. One test starts a real separate custodian process, kills it with SIGKILL during activation, and verifies OS lock release, persisted incident/retry budget, and an increasing recovery epoch. Fresh review identified a failed-activation/failed-stop orphan case and inconsistent snapshot key ordering; regressions now verify retained process identity and agreement with independent cognitive digest computation. A targeted strict TypeScript check passed. An integrated worker-process demonstration remains required to substantiate A13–A16 at full seed scope.
+
+Full custodian/governor evolution is intentionally disabled. Enabling it requires a separately frozen upgrade, checks owned by the previously admitted governor, actual failure injection into the new custodian, and a demonstrated older independent rescue path. An ordinary worker candidate cannot use that future contract to replace its current admission rules.

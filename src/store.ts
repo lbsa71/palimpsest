@@ -25,6 +25,11 @@ export interface Memory {
 }
 export interface MemoryInput { scope: string; kind: MemoryKind; content: string; source: string; confidence: number; evidence?: string[] }
 export interface MemoryCorrection { content: string; source: string; confidence: number; evidence?: string[] }
+export interface MemorySourceRef { id: string; version: number }
+export interface MemoryConsolidation {
+  id: string; scope: string; state: 'ready' | 'running' | 'paused' | 'publishing' | 'completed' | 'rejected';
+  attempts: number; maxAttempts: number; checkpoint: Json; updatedAt: string;
+}
 export type GrowthDimension = 'personality_judgment' | 'interests_curiosity' | 'code_quality' | 'capability_potential';
 export type GrowthState = 'queued' | 'running' | 'paused' | 'completed';
 export interface Growth {
@@ -34,6 +39,14 @@ export interface Growth {
 }
 export interface GrowthInput { id?: string; dimension: GrowthDimension; question: string; origin: string; nextStep?: string; budget?: number }
 export interface GrowthPatch { state?: GrowthState; nextStep?: string; checkpoint?: Json; outcome?: Json; remainingBudget?: number }
+export interface GrowthWindow {
+  id: string; schedulerId: string; startsAt: number; endsAt: number; maxCalls: number;
+  usedCalls: number; createdAt: string; updatedAt: string;
+}
+export interface GrowthWindowInput { id: string; schedulerId: string; startsAt: number; endsAt: number; maxCalls: number }
+export interface GrowthProposalDelivery {
+  growthId: string; state: 'reserved' | 'delivered' | 'uncertain'; createdAt: string; updatedAt: string;
+}
 
 export class EffectConflictError extends Error {
   constructor(message: string) { super(message); this.name = 'EffectConflictError'; }
@@ -112,6 +125,24 @@ export class Store {
       );
       CREATE TABLE IF NOT EXISTS growth (
         id TEXT PRIMARY KEY, dimension TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS growth_windows (
+        id TEXT PRIMARY KEY, scheduler_id TEXT NOT NULL, starts_at INTEGER NOT NULL,
+        ends_at INTEGER NOT NULL, record TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS growth_proposal_deliveries (
+        growth_id TEXT PRIMARY KEY REFERENCES growth(id), record TEXT NOT NULL
+      );
+    `);
+    this.#db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_source_refs (
+        scope TEXT NOT NULL, memory_id TEXT NOT NULL, source_id TEXT NOT NULL, source_version INTEGER NOT NULL,
+        PRIMARY KEY(scope, memory_id, source_id)
+      );
+      CREATE INDEX IF NOT EXISTS memory_dependents ON memory_source_refs(scope, source_id);
+      CREATE TABLE IF NOT EXISTS memory_consolidations (
+        scope TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL,
+        PRIMARY KEY(scope, id)
       );
     `);
   }
@@ -316,6 +347,109 @@ export class Store {
     });
   }
 
+  /** Publish only while every model-visible source retains the same scoped
+   * version. Provenance edges support conservative recursive invalidation. */
+  publishMemoryFromSourcesOnce(input: MemoryInput & { publicationId: string; sourceRefs: MemorySourceRef[] }): { status: 'published' | 'existing' | 'forgotten'; memory?: Memory } {
+    return this.#atomic(() => {
+      if (!Array.isArray(input.sourceRefs) || !input.sourceRefs.length || new Set(input.sourceRefs.map(ref => ref.id)).size !== input.sourceRefs.length) throw new Error('Consolidation requires distinct source references');
+      for (const ref of input.sourceRefs) {
+        const source = this.memory(ref.id, input.scope);
+        if (!source || !Number.isSafeInteger(ref.version) || source.version !== ref.version) throw new Error('Consolidation source was corrected, forgotten, or outside scope');
+      }
+      const { sourceRefs, ...publication } = input;
+      const result = this.publishMemoryOnce(publication);
+      if (result.status === 'published') for (const ref of sourceRefs) {
+        this.#db.prepare('INSERT INTO memory_source_refs(scope, memory_id, source_id, source_version) VALUES (?, ?, ?, ?)').run(input.scope, result.memory!.id, ref.id, ref.version);
+      }
+      return result;
+    });
+  }
+
+  #invalidateMemoryDependents(id: string, scope: string): void {
+    const pending = [id]; const seen = new Set(pending);
+    for (const sourceId of pending) {
+      for (const row of this.#db.prepare('SELECT memory_id FROM memory_source_refs WHERE scope = ? AND source_id = ?').all(scope, sourceId)) {
+        const memoryId = String(row.memory_id);
+        if (seen.has(memoryId)) continue;
+        seen.add(memoryId); pending.push(memoryId);
+        if (this.memory(memoryId, scope)) {
+          this.#db.prepare('UPDATE memories SET forgotten = 1, record = NULL WHERE id = ? AND scope = ?').run(memoryId, scope);
+          this.appendEvent('memory.invalidated', { memoryId, sourceId });
+        }
+      }
+    }
+  }
+
+  /** One consistent read transaction; explicit growth IDs are authorization
+   * input from the caller rather than an implicit grant to the global agenda. */
+  readContinuitySnapshot(scope: string, growthIds: string[] = []): { scope: string; sequence: number; memories: Memory[]; tasks: Task[]; growth: Growth[] } {
+    required(scope, 'Snapshot scope');
+    return this.#atomic(() => {
+      const growth = [...new Set(growthIds)].map(id => { const item = this.growth(id); if (!item) throw new Error('Requested snapshot growth item not found'); return item; });
+      const sequence = Number(this.#db.prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM journal').get()!.seq);
+      return { scope, sequence, memories: this.listMemories(scope), tasks: this.listTasks({ conversationId: scope }), growth };
+    });
+  }
+
+  createMemoryConsolidation(id: string, scope: string, maxAttempts: number): MemoryConsolidation {
+    required(id, 'Consolidation ID'); required(scope, 'Consolidation scope');
+    if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 8) throw new Error('Consolidation attempt allocation must be 1 to 8');
+    return this.#atomic(() => {
+      const old = this.memoryConsolidation(id, scope);
+      if (old) { if (old.maxAttempts !== maxAttempts) throw new Error('Consolidation allocation cannot change on retry'); return old; }
+      const record: MemoryConsolidation = { id, scope, state: 'ready', attempts: 0, maxAttempts, checkpoint: null, updatedAt: new Date().toISOString() };
+      this.#db.prepare('INSERT INTO memory_consolidations(scope, id, state, record) VALUES (?, ?, ?, ?)').run(scope, id, record.state, encode(record));
+      this.appendEvent('memory.consolidation.created', { consolidationId: id }); return record;
+    });
+  }
+
+  memoryConsolidation(id: string, scope: string): MemoryConsolidation | undefined {
+    return decode<MemoryConsolidation>(this.#db.prepare('SELECT record FROM memory_consolidations WHERE scope = ? AND id = ?').get(scope, id));
+  }
+
+  claimMemoryConsolidation(id: string, scope: string): MemoryConsolidation | undefined {
+    return this.#atomic(() => {
+      const old = this.memoryConsolidation(id, scope);
+      if (!old || !['ready', 'paused'].includes(old.state) || old.attempts >= old.maxAttempts) return undefined;
+      return this.updateMemoryConsolidation(id, scope, { state: 'running' });
+    });
+  }
+
+  beginMemoryConsolidationAttempt(id: string, scope: string): MemoryConsolidation {
+    return this.#atomic(() => {
+      const old = this.memoryConsolidation(id, scope);
+      if (!old || old.state !== 'running' || old.attempts >= old.maxAttempts) throw new Error('No allocated running consolidation attempt');
+      const record = { ...old, attempts: old.attempts + 1, updatedAt: new Date().toISOString() };
+      this.#db.prepare('UPDATE memory_consolidations SET record = ? WHERE scope = ? AND id = ?').run(encode(record), scope, id);
+      this.appendEvent('memory.consolidation.attempt', { consolidationId: id, attempt: record.attempts }); return record;
+    });
+  }
+
+  updateMemoryConsolidation(id: string, scope: string, patch: { state?: MemoryConsolidation['state']; checkpoint?: Json }): MemoryConsolidation {
+    return this.#atomic(() => {
+      const old = this.memoryConsolidation(id, scope);
+      if (!old) throw new Error('Consolidation not found');
+      const transitions: Record<MemoryConsolidation['state'], MemoryConsolidation['state'][]> = { ready: ['running'], running: ['paused', 'publishing', 'completed', 'rejected'], paused: ['running'], publishing: ['completed', 'rejected'], completed: [], rejected: [] };
+      const state = patch.state ?? old.state;
+      if (state !== old.state && !transitions[old.state].includes(state)) throw new Error('Invalid consolidation transition');
+      if (['completed', 'rejected'].includes(old.state)) {
+        if (Object.entries(patch).some(([key, value]) => encode(value) !== encode(old[key as keyof MemoryConsolidation]))) throw new Error('Cannot mutate terminal consolidation');
+        return old;
+      }
+      const record = { ...old, ...patch, state, updatedAt: new Date().toISOString() };
+      this.#db.prepare('UPDATE memory_consolidations SET state = ?, record = ? WHERE scope = ? AND id = ?').run(state, encode(record), scope, id);
+      this.appendEvent('memory.consolidation.updated', { consolidationId: id, state }); return record;
+    });
+  }
+
+  /** Exclusive coordinator only, after previous inference owners are stopped. */
+  recoverMemoryConsolidations(): MemoryConsolidation[] {
+    return this.#atomic(() => this.#db.prepare("SELECT record FROM memory_consolidations WHERE state = 'running'").all().map(row => {
+      const old = decode<MemoryConsolidation>(row)!;
+      return this.updateMemoryConsolidation(old.id, old.scope, { state: 'paused', checkpoint: { reason: 'interrupted', attempts: old.attempts } });
+    }));
+  }
+
   memory(id: string, scope: string): Memory | undefined {
     return decode<Memory>(this.#db.prepare('SELECT record FROM memories WHERE id = ? AND scope = ? AND forgotten = 0 ORDER BY version DESC LIMIT 1').get(id, scope));
   }
@@ -338,6 +472,7 @@ export class Store {
     return this.#atomic(() => {
       const old = this.memory(id, scope);
       if (!old) throw new Error('Memory not found in scope');
+      this.#invalidateMemoryDependents(id, scope);
       const memory: Memory = { ...old, ...correction, evidence: correction.evidence ?? [], version: old.version + 1, updatedAt: new Date().toISOString() };
       this.#writeMemory(memory);
       this.appendEvent('memory.corrected', { memoryId: id, version: memory.version });
@@ -351,6 +486,7 @@ export class Store {
   forgetMemory(id: string, scope: string): void {
     this.#atomic(() => {
       if (!this.memory(id, scope)) throw new Error('Memory not found in scope');
+      this.#invalidateMemoryDependents(id, scope);
       this.#db.prepare('UPDATE memories SET forgotten = 1, record = NULL WHERE id = ? AND scope = ?').run(id, scope);
       this.appendEvent('memory.forgotten', { memoryId: id });
     });
@@ -373,6 +509,82 @@ export class Store {
 
   growth(id: string): Growth | undefined { return decode<Growth>(this.#db.prepare('SELECT record FROM growth WHERE id = ?').get(id)); }
   listGrowth(): Growth[] { return this.#db.prepare('SELECT record FROM growth ORDER BY rowid').all().map(row => decode<Growth>(row)!); }
+
+  growthWindow(id: string): GrowthWindow | undefined {
+    return decode<GrowthWindow>(this.#db.prepare('SELECT record FROM growth_windows WHERE id = ?').get(id));
+  }
+
+  /** Window limits are trusted policy, immutable once an allocation is opened. */
+  openGrowthWindow(input: GrowthWindowInput): GrowthWindow {
+    required(input.id, 'Growth window ID'); required(input.schedulerId, 'Growth scheduler ID');
+    budget(input.startsAt); budget(input.endsAt); budget(input.maxCalls);
+    if (input.endsAt <= input.startsAt) throw new Error('Growth window must end after it starts');
+    return this.#atomic(() => {
+      const old = this.growthWindow(input.id);
+      if (old) {
+        if (old.schedulerId !== input.schedulerId || old.startsAt !== input.startsAt || old.endsAt !== input.endsAt || old.maxCalls !== input.maxCalls) throw new Error('Growth window allocation is immutable');
+        return old;
+      }
+      if (this.#db.prepare('SELECT id FROM growth_windows WHERE scheduler_id = ? AND starts_at < ? AND ends_at > ? LIMIT 1').get(input.schedulerId, input.endsAt, input.startsAt)) throw new Error('Growth windows cannot overlap');
+      const now = new Date().toISOString();
+      const window: GrowthWindow = { ...input, usedCalls: 0, createdAt: now, updatedAt: now };
+      this.#db.prepare('INSERT INTO growth_windows(id, scheduler_id, starts_at, ends_at, record) VALUES (?, ?, ?, ?, ?)').run(window.id, window.schedulerId, window.startsAt, window.endsAt, encode(window));
+      this.appendEvent('growth.window.opened', { windowId: window.id, schedulerId: window.schedulerId, maxCalls: window.maxCalls });
+      return window;
+    });
+  }
+
+  /** Trusted continuing scheduler entrypoint. Global debit, optional per-inquiry
+   * allocation, and execution claim commit atomically before any provider call.
+   * Ordinary updateGrowth cannot invoke this replenishment policy implicitly. */
+  claimGrowthInWindow(id: string, windowId: string, atMs = Date.now()): Growth | undefined {
+    budget(atMs);
+    return this.#atomic(() => {
+      const window = this.growthWindow(windowId);
+      const old = this.growth(id);
+      if (!window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls
+        || !old || !['queued', 'paused'].includes(old.state)) return undefined;
+      const allocation = old.remainingBudget < 1 ? 1 : 0;
+      budget(old.budget + allocation);
+      const now = new Date().toISOString();
+      const growth: Growth = { ...old, budget: old.budget + allocation, remainingBudget: old.remainingBudget + allocation - 1, state: 'running', updatedAt: now };
+      const charged: GrowthWindow = { ...window, usedCalls: window.usedCalls + 1, updatedAt: now };
+      this.#db.prepare('UPDATE growth_windows SET record = ? WHERE id = ?').run(encode(charged), windowId);
+      this.#db.prepare('UPDATE growth SET state = ?, record = ? WHERE id = ?').run(growth.state, encode(growth), id);
+      this.appendEvent('growth.window.call_reserved', { windowId, schedulerId: window.schedulerId, growthId: id, dimension: growth.dimension, allocated: allocation, usedCalls: charged.usedCalls });
+      return growth;
+    });
+  }
+
+  growthProposalDelivery(growthId: string): GrowthProposalDelivery | undefined {
+    return decode<GrowthProposalDelivery>(this.#db.prepare('SELECT record FROM growth_proposal_deliveries WHERE growth_id = ?').get(growthId));
+  }
+
+  /** Reserved means delivery may happen; a crashed callback must be reconciled. */
+  reserveGrowthProposal(growthId: string): boolean {
+    return this.#atomic(() => {
+      if (this.growthProposalDelivery(growthId)) return false;
+      if (this.growth(growthId)?.state !== 'completed') throw new Error('Proposal delivery requires a completed inquiry');
+      const now = new Date().toISOString();
+      const record: GrowthProposalDelivery = { growthId, state: 'reserved', createdAt: now, updatedAt: now };
+      this.#db.prepare('INSERT INTO growth_proposal_deliveries(growth_id, record) VALUES (?, ?)').run(growthId, encode(record));
+      this.appendEvent('growth.proposal.reserved', { growthId });
+      return true;
+    });
+  }
+
+  settleGrowthProposal(growthId: string, state: 'delivered' | 'uncertain'): GrowthProposalDelivery {
+    return this.#atomic(() => {
+      const old = this.growthProposalDelivery(growthId);
+      if (!old) throw new Error('Proposal delivery has not been reserved');
+      if (old.state === state) return old;
+      if (old.state === 'delivered') throw new Error('Delivered proposal cannot become uncertain');
+      const record: GrowthProposalDelivery = { ...old, state, updatedAt: new Date().toISOString() };
+      this.#db.prepare('UPDATE growth_proposal_deliveries SET record = ? WHERE growth_id = ?').run(encode(record), growthId);
+      this.appendEvent(`growth.proposal.${state}`, { growthId });
+      return record;
+    });
+  }
 
   /** A claim consumes one inference call before it can reach a provider. */
   claimGrowth(id: string): Growth | undefined {

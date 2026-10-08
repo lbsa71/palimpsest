@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -19,6 +20,11 @@ export interface IsolationOptions {
   allowNodeChildren?: boolean;
   /** Coordinator-selected installed toolchain only; never candidate input. */
   trustedExecutables?: Array<{ path: string; sha256: string }>;
+  /** Trusted supervisor hooks only. Lifetime and aggregate output bounds remain. */
+  onSpawn?: (child: ChildProcess) => void;
+  onStdout?: (chunk: Buffer) => void;
+  onStderr?: (chunk: Buffer) => void;
+  keepStdinOpen?: boolean;
 }
 
 export interface IsolationResult {
@@ -163,6 +169,8 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
           (stderr ? errors : output).push(accepted);
           captured += accepted.length;
           if (stderr) errorBytes += accepted.length; else outputBytes += accepted.length;
+          try { (stderr ? options.onStderr : options.onStdout)?.(accepted); }
+          catch (cause) { cleanup(); kill(); reject(new IsolationError('Trusted stream observer failed', { cause })); }
         }
         if (accepted.length < chunk.length) { outputLimitExceeded = true; kill(); }
       };
@@ -176,7 +184,10 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       child.stdin.on('error', () => { /* Early exit or cancellation can close stdin before input is consumed. */ });
       options.signal?.addEventListener('abort', cancel, { once: true });
       if (options.signal?.aborted) cancel();
-      child.stdin.end(options.stdin ?? '');
+      if (options.keepStdinOpen) { if (options.stdin) child.stdin.write(options.stdin); }
+      else child.stdin.end(options.stdin ?? '');
+      try { options.onSpawn?.(child); }
+      catch (cause) { cleanup(); kill(); reject(new IsolationError('Trusted process observer failed', { cause })); }
     });
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }

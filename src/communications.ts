@@ -209,15 +209,18 @@ export async function createLocalServer(api: LocalApi, options: LocalServerOptio
   };
 }
 
-export interface SlackEventOptions {
+export interface SlackAllowlistOptions {
+  allowedTeamIds: readonly string[];
+  allowedUserIds: readonly string[];
+  allowedChannelIds?: readonly string[];
+}
+
+export interface SlackEventOptions extends SlackAllowlistOptions {
   signingSecret: string;
   signature: string;
   timestamp: string;
   /** Milliseconds since the Unix epoch; injectable for deterministic tests. */
   now?: number;
-  allowedTeamIds: readonly string[];
-  allowedUserIds: readonly string[];
-  allowedChannelIds?: readonly string[];
 }
 
 export type SlackEvent = { kind: 'message'; message: InboundMessage } | { kind: 'challenge'; challenge: string } | { kind: 'ignored' };
@@ -232,6 +235,11 @@ export function parseSlackEvent(rawBody: string, options: SlackEventOptions): Sl
   if (!equalSecret(options.signature, signature)) throw new CommunicationsError('invalid_slack_signature');
   let body: unknown;
   try { body = JSON.parse(rawBody); } catch { throw new CommunicationsError('invalid_slack_event'); }
+  return parseSlackPayload(body, options);
+}
+
+/** Normalization only. Call after HTTP HMAC verification or on an authenticated Slack socket. */
+export function parseSlackPayload(body: unknown, options: SlackAllowlistOptions): SlackEvent {
   if (!record(body)) throw new CommunicationsError('invalid_slack_event');
   if (body.type === 'url_verification' && nonempty(body.challenge, 4096)) return { kind: 'challenge', challenge: body.challenge };
   if (body.type !== 'event_callback' || !record(body.event)) return { kind: 'ignored' };
@@ -269,7 +277,7 @@ export class SlackCommunications implements Communications {
     let response: Response;
     try {
       response = await this.#fetch('https://slack.com/api/chat.postMessage', {
-        method: 'POST', headers: { authorization: `Bearer ${this.#token}`, 'content-type': 'application/json; charset=utf-8' },
+        method: 'POST', redirect: 'error', headers: { authorization: `Bearer ${this.#token}`, 'content-type': 'application/json; charset=utf-8' },
         body: JSON.stringify({ channel: context[2], thread_ts: context[3], text: message.text, mrkdwn: false, unfurl_links: false, unfurl_media: false }),
         signal: AbortSignal.timeout(10_000),
       });

@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { EvolutionScheduler } from '../src/evolution-scheduler.ts';
+import { digestJson } from '../src/candidates.ts';
+import type { EvolutionReport, EvolutionRequest } from '../src/evolution.ts';
+import type { GrowthProposal } from '../src/growth.ts';
+import { GrowthScheduler } from '../src/scheduler.ts';
+import { Store } from '../src/store.ts';
+
+const proposal: GrowthProposal = { summary: 'Synthetic improvement', rationale: 'Fixture hypothesis', acceptanceCriteria: ['Independent gates still required'], files: [{ path: 'src/agent/brain.ts', content: 'export const synthetic = true;' }] };
+const reflection = { observation: 'Synthetic observation', lesson: 'Unverified fixture lesson', nextQuestion: 'What else?', proposedChange: proposal };
+function report(request: EvolutionRequest, status: EvolutionReport['status'] = 'declined'): EvolutionReport {
+  return { id: request.id, growthId: request.growthId, proposalDigest: digestJson(request.proposal), phase: 'finished', status, reason: 'Synthetic executor outcome', calls: 0, startedAt: new Date().toISOString() };
+}
+function recorded(store: Store, id: string) {
+  const item = store.addGrowth({ id, question: 'Synthetic question', origin: 'fixture', dimension: 'code_quality' });
+  return store.updateGrowth(item.id, { state: 'completed', outcome: JSON.parse(JSON.stringify({ result: reflection })) });
+}
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'palimpsest-evolution-scheduler-')); const path = join(dir, 'state.sqlite'); const store = new Store(path);
+  return { store, path, close() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
+test('proposal callback only enqueues; release runs outside it and can quiesce growth without deadlock', async (t) => {
+  const f = fixture(); let executions = 0; let scheduler!: GrowthScheduler; let queue!: EvolutionScheduler;
+  queue = new EvolutionScheduler({ store: f.store, hasUserWork: () => false, phase: () => 'normal', run: async request => {
+    executions++; await scheduler.stop(); assert.equal(queue.reserveCall(`evolution:${request.id}:call:1`), true); return report(request);
+  } });
+  scheduler = new GrowthScheduler({ store: f.store, hasUserWork: () => false, provider: { name: 'fixture', complete: async () => ({ text: JSON.stringify(reflection), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }) },
+    onProposedChange: event => { queue.enqueue(event.growth.id, event.proposedChange); } });
+  t.after(async () => { await queue.stop(); await scheduler.stop(); f.close(); });
+  await scheduler.tick(); assert.equal(executions, 0); assert.equal(queue.items()[0]?.state, 'queued');
+  await queue.tick(); assert.equal(executions, 1); assert.equal(queue.items()[0]?.state, 'finished');
+  await queue.tick(); assert.equal(executions, 1);
+});
+
+test('claims and a separate immutable daily allocation survive restart without duplicate calls', async () => {
+  const f = fixture(); let time = 0; let calls = 0; let queue!: EvolutionScheduler;
+  const options = { store: f.store, callsPerDay: 2, hasUserWork: () => false, phase: () => 'normal' as const, now: () => time,
+    run: async (request: EvolutionRequest) => {
+      for (let ordinal = 1; ordinal <= 3; ordinal++) if (queue.reserveCall(`evolution:${request.id}:call:${ordinal}`)) calls++;
+      assert.equal(queue.reserveCall(`evolution:${request.id}:call:1`), false); return report(request);
+    } };
+  try {
+    recorded(f.store, 'one'); recorded(f.store, 'two'); queue = new EvolutionScheduler(options); queue.reconcile();
+    await Promise.all([queue.tick(), queue.tick()]); assert.equal(calls, 2); assert.equal(queue.items().filter(item => item.state === 'finished').length, 1);
+    await queue.stop(); queue = new EvolutionScheduler(options); await queue.tick(); assert.equal(calls, 2);
+    const changed = new EvolutionScheduler({ ...options, callsPerDay: 3 }); await assert.rejects(changed.tick(), /immutable/); await changed.stop();
+    time = 86_400_000; await queue.tick(); assert.equal(calls, 4); assert.equal(queue.items().every(item => item.state === 'finished'), true);
+    await queue.stop(); f.store.close();
+    const reopened = new Store(f.path); let replay = 0;
+    const restored = new EvolutionScheduler({ ...options, store: reopened, run: async request => { replay++; return report(request); } });
+    restored.reconcile(); await restored.tick(); assert.equal(replay, 0); await restored.stop(); reopened.close();
+  } finally { await queue!.stop(); f.close(); }
+});
+
+test('zero release allowance preserves exact proposals and a reserved dispatch is reconciled once', async () => {
+  const f = fixture(); recorded(f.store, 'original'); f.store.reserveGrowthProposal('original');
+  const queue = new EvolutionScheduler({ store: f.store, callsPerDay: 0, hasUserWork: () => false, phase: () => 'normal', run: async () => { assert.fail('disabled release must not run'); } });
+  try {
+    assert.throws(() => queue.enqueue('original', { ...proposal, summary: 'forged source' }), /exact recorded/);
+    queue.reconcile(); queue.reconcile(); await queue.tick(); assert.equal(queue.items().length, 1); assert.equal(queue.items()[0]?.state, 'queued');
+    assert.equal(f.store.growthProposalDelivery('original')?.state, 'delivered');
+    assert.deepEqual((f.store.growth('original')!.outcome as { result: unknown }).result, reflection);
+  } finally { await queue.stop(); f.close(); }
+});
+
+test('user work aborts before transfer, but a fenced transfer completes mechanically', async () => {
+  for (const fenced of [false, true]) {
+    const f = fixture(); recorded(f.store, 'priority'); let userWork = false; let phase: 'normal' | 'transfer' = 'normal'; let finish!: () => void; let sawAbort = false;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const queue = new EvolutionScheduler({ store: f.store, hasUserWork: () => userWork, phase: () => phase,
+      run: async request => { request.signal!.addEventListener('abort', () => { sawAbort = true; finish(); }, { once: true }); await pending; return report(request, sawAbort ? 'declined' : 'promoted'); } });
+    try {
+      queue.reconcile(); const running = queue.tick(); await Promise.resolve(); await Promise.resolve();
+      if (fenced) phase = 'transfer'; userWork = true; queue.interrupt();
+      assert.equal(sawAbort, !fenced); finish(); await running;
+      assert.equal(queue.items()[0]?.result?.status, fenced ? 'promoted' : 'declined');
+    } finally { finish(); await queue.stop(); f.close(); }
+  }
+});
+
+test('pending host maintenance settles before execution and user arrival prevents a queued claim', async () => {
+  const f = fixture(); recorded(f.store, 'held'); let finish!: () => void; let userWork = false; let executed = false;
+  const maintenance = new Promise<void>(resolve => { finish = resolve; });
+  const queue = new EvolutionScheduler({ store: f.store, hasUserWork: () => userWork, phase: () => 'normal', beforeRun: () => maintenance,
+    run: async request => { executed = true; return report(request); } });
+  try {
+    queue.reconcile(); const pending = queue.tick(); await Promise.resolve(); assert.equal(queue.busy, true); assert.equal(executed, false);
+    userWork = true; finish(); await pending; assert.equal(executed, false); assert.equal(queue.items()[0]?.state, 'queued');
+    userWork = false; await queue.tick(); assert.equal(executed, true);
+  } finally { finish(); await queue.stop(); f.close(); }
+});
+
+test('interrupted claims without a report are not replayed; persisted probation can be observed without budget', async () => {
+  const f = fixture(); recorded(f.store, 'crashed'); recorded(f.store, 'probation'); let runs = 0;
+  const setup = new EvolutionScheduler({ store: f.store, hasUserWork: () => false, phase: () => 'normal', run: async request => report(request) });
+  setup.reconcile(); const [crashed, probation] = setup.items();
+  f.store.appendEvent('evolution.queue.claimed', { id: crashed!.id });
+  f.store.appendEvent('evolution.queue.claimed', { id: probation!.id });
+  f.store.appendEvent('evolution.checkpoint', JSON.parse(JSON.stringify({ runId: probation!.id, report: { ...report({ id: probation!.id, growthId: probation!.growthId, proposal }, 'probation'), proposalDigest: probation!.proposalDigest } })));
+  await setup.stop();
+  const queue = new EvolutionScheduler({ store: f.store, callsPerDay: 0, hasUserWork: () => true, phase: () => 'probation', run: async request => { runs++; assert.equal(queue.reserveCall(`evolution:${request.id}:call:1`), false); return report(request, 'promoted'); } });
+  try {
+    await queue.tick(); assert.equal(queue.items()[0]?.result?.status, 'interrupted');
+    await queue.tick(); assert.equal(runs, 1); assert.equal(queue.items()[1]?.result?.status, 'promoted');
+  } finally { await queue.stop(); f.close(); }
+});

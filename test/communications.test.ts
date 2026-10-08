@@ -149,6 +149,7 @@ test('Slack sends to original thread and refuses ambiguous context', async () =>
   assert.equal(requests[0]?.url, 'https://slack.com/api/chat.postMessage');
   assert.deepEqual(JSON.parse(String(requests[0]?.init.body)), { channel: 'C1', thread_ts: '123.000', text: 'Done', mrkdwn: false, unfurl_links: false, unfurl_media: false });
   assert.equal(new Headers(requests[0]?.init.headers).get('authorization'), 'Bearer test-bot-token');
+  assert.equal(requests[0]?.init.redirect, 'error', 'an authenticated outgoing body must never follow a redirect');
   await assert.rejects(slack.send({ ...output, conversationId: 'slack:T1:C1:123.000', replyTo: '999.000' }), /invalid_slack_context/);
   assert.equal(requests.length, 1);
 });

@@ -93,3 +93,15 @@ test('program selection fails closed and same-Node child exception retains execu
     const body = JSON.parse(result.stdout); assert.equal(body.nodeStatus, 0); assert.equal(body.node.trim(), '42'); assert.match(String(body.shell), /^(EPERM|EACCES)$/);
   } finally { f.cleanup(); }
 });
+
+test('trusted supervisor can exchange bounded JSON lines with an isolated worker', { skip: process.platform !== 'darwin' }, async () => {
+  const f = fixture();
+  try {
+    let pid: number | undefined; const observed: string[] = [];
+    const result = await runIsolated({ program: process.execPath, args: ['-e', `const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',line=>console.log(JSON.stringify({answer:JSON.parse(line).value*2})));`], cwd: f.work, keepStdinOpen: true,
+      onSpawn: child => { pid = child.pid; child.stdin!.write('{"value":21}\n'); child.stdin!.end(); }, onStdout: chunk => observed.push(chunk.toString()), maxOutputBytes: 1024 });
+    assert.ok(pid && pid > 0); assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(JSON.parse(observed.join('')), { answer: 42 });
+    await assert.rejects(runIsolated({ program: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: f.work, onSpawn: () => { throw new Error('fixture observer failure'); } }), /observer failed/);
+  } finally { f.cleanup(); }
+});

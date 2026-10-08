@@ -29,7 +29,7 @@ The [source analysis](docs/research/source-analysis.md) identifies the underlyin
 
 ## Succession and release target
 
-The user explicitly requested overlapping generations with an incumbent interviewing the successor before transfer and retirement, then raised a dedicated custodian-mediated tool. The following requirements capture that direction and the associated **proposed** engineering contract. Exact schemas, state identifiers, thresholds, and transport are not yet accepted implementation decisions.
+The user explicitly requested overlapping generations with an incumbent interviewing the successor before transfer and retirement, then raised a dedicated custodian-mediated tool. The following requirements capture that direction and the associated engineering contract. Provenance distinguishes the original proposals; subsequent local implementation decisions are recorded in ADRs 0008–0012 and the component specifications. Their implementation status is tracked separately in PLAN.md.
 
 | ID | Requirement | Provenance | Acceptance |
 |---|---|---|---|
