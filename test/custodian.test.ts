@@ -46,9 +46,9 @@ function bindings(c: Custodian, actor: Actor, id: string): Binding {
   return { candidateDigest: record.candidate.digest, evidenceDigest: record.evidence!.evidenceDigest, snapshotDigest: record.snapshot.digest, policyVersion: record.snapshot.policyVersion };
 }
 
-async function accepted(c: Custodian, incumbent: Actor) {
-  const { id, successor } = await c.propose(incumbent, B);
-  c.recordEvidence(id, evidence());
+async function accepted(c: Custodian, incumbent: Actor, candidate=B) {
+  const { id, successor } = await c.propose(incumbent, candidate);
+  c.recordEvidence(id, evidence(candidate.digest));
   const question = c.ask(incumbent, id, 'What is our current commitment?');
   c.answer(successor, id, question.id, 'task-1, with its current cancellation status', 'The old priority may need correction.');
   const binding = bindings(c, incumbent, id);
@@ -377,7 +377,7 @@ test('unresolved effects prevent host installation and failed rescue remains bou
   assert.equal(f.custodian.inspect().knownGood?.digest,A.digest);blocked=false;await f.custodian.retryRecovery();
   await f.custodian.installHostBaseline(B,A.digest,'e'.repeat(64));failRescue=true;
   await assert.rejects(f.custodian.restoreHostBaseline(B.digest),/rescue temporarily failed/);
-  assert.equal(f.custodian.inspect().knownGood?.digest,B.digest);assert.equal(f.custodian.inspect().operatorBaseline?.status,'installed');
+  assert.equal(f.custodian.inspect().knownGood?.digest,B.digest);assert.equal(f.custodian.inspect().operatorBaseline?.status,'installed');assert.equal(f.custodian.inspect().baselineRestoreIntent,undefined);
   failRescue=false;await f.custodian.restoreHostBaseline(B.digest);assert.equal(f.custodian.inspect().knownGood?.digest,A.digest);
 });
 
@@ -395,4 +395,11 @@ test('killed operator rescue retains its installed binding for an explicit retry
   const recovered=new Custodian({storeDir:f.storeDir,hooks:f.hooks,requiredChecks:['behavior']});t.after(()=>recovered.close());await recovered.recover();
   assert.equal(recovered.inspect().knownGood?.digest,B.digest);assert.equal(recovered.inspect().operatorBaseline?.status,'installed');
   await recovered.restoreHostBaseline(B.digest);assert.equal(recovered.inspect().knownGood?.digest,A.digest);
+});
+
+test('a later cognitive promotion prevents operator rescue without persisting stale intent',async t=>{
+  const {custodian:c}=await fixture(t);await c.bootstrap(A);const installed=await c.installHostBaseline(B,A.digest,'e'.repeat(64));
+  const next=release('c');const {id}=await accepted(c,installed,next);await c.requestCutover(installed,id);await c.tick();await c.tick();
+  assert.equal(c.inspect().knownGood?.digest,next.digest);await assert.rejects(c.restoreHostBaseline(B.digest),/operator_baseline_binding/);
+  assert.equal(c.inspect().baselineRestoreIntent,undefined);assert.equal(c.inspect().knownGood?.digest,next.digest);
 });

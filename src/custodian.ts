@@ -250,14 +250,16 @@ export class Custodian {
   async restoreHostBaseline(expectedInstalled: string): Promise<Actor> {
     return this.#exclusive(async () => {
       const record = this.#state.operatorBaseline;
-      if (!record || record.status !== 'installed' || record.candidate.digest !== expectedInstalled) fail('operator_baseline_binding');
+      if (!record || record.status !== 'installed' || record.candidate.digest !== expectedInstalled
+        || this.#state.knownGood?.digest!==expectedInstalled || this.#state.active?.release.digest!==expectedInstalled) fail('operator_baseline_binding');
       this.#state.baselineRestoreIntent={previous:record.previous,candidate:record.candidate,evidenceDigest:record.evidenceDigest};
       this.#save('host_baseline.restore_intent',{installed:expectedInstalled,rescue:record.previous.digest});
       let restored: Actor;
       try { restored = await this.#installHostBaseline(record.previous, expectedInstalled, record.evidenceDigest, true); }
       catch(error) {
         if(this.#state.knownGood?.digest===expectedInstalled) {
-          this.#state.operatorBaseline=record;this.#save('host_baseline.restore_failed',{digest:expectedInstalled});
+          this.#state.operatorBaseline=record;delete this.#state.baselineRestoreIntent;
+          this.#save('host_baseline.restore_failed',{digest:expectedInstalled});
         }
         throw error;
       }
