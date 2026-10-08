@@ -1,6 +1,6 @@
 # ADR 0011: Socket Mode for local Slack connectivity
 
-- **Status:** Accepted integration choice; live connectivity awaits supplied Slack configuration.
+- **Status:** Accepted; live bot authentication and Socket Mode connection verified on 2026-10-08. Message delivery remains pending.
 - **Recorded:** 2026-10-08.
 - **Requirements:** R04, R17–R19, R21.
 

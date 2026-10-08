@@ -1,6 +1,6 @@
 # Slack Socket Mode (P04)
 
-Status: transport implemented and fixture-tested; live Slack configuration remains separate. [ADR 0011](adr/0011-slack-socket-mode.md) selects outbound Socket Mode for the local seed. The existing signed HTTP service remains available. This adapter adds no task store, execution loop, or model access.
+Status: transport implemented and fixture-tested; live authentication and native Socket Mode connection verified on 2026-10-08. Subscribed-event and reply delivery remain pending. [ADR 0011](adr/0011-slack-socket-mode.md) selects outbound Socket Mode for the local seed. The existing signed HTTP service remains available. This adapter adds no task store, execution loop, or model access.
 
 ## Testable specification
 
@@ -30,3 +30,5 @@ The transport contract follows Slack's official [Socket Mode](https://docs.slack
 ## Verification
 
 On 2026-10-08, the initial missing-module check failed, then all eight `test/slack-socket.test.ts` checks passed after implementation and reliability refinement. The new healthy-refresh and cooldown checks failed against the former lifetime budget before the fix. Node test timers exercise twelve healthy refreshes, exponential minimum waits, immediate hello/failure loops, automatic retry after cooldown and shutdown during cooldown without wall-clock sleeps. Tests use injected HTTP responses and an EventTarget WebSocket fixture, plus the real SQLite store for restart/deduplication behavior. The combined communications, signed HTTP and Socket Mode suite passed 20 checks, and `npm run check` passed. These checks do not establish live Slack connectivity or the native WebSocket network implementation. No real Slack connection or message is part of this work item.
+
+A later live setup check on 2026-10-08 authenticated the configured bot, matched the workspace allowlist, and started the CLI with its native WebSocket. Startup reported `state: "connected"` and zero reconnect attempts. This establishes live authentication and socket opening; it does not establish mention/reply delivery, sustained renewal or production operation. Credentials and workspace/member identifiers remain outside Git.
