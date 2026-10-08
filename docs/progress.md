@@ -6,6 +6,8 @@ This is not a claim that every full seed criterion has passed. Live Slack and th
 
 The first live source attempt used one growth call. Its candidate compiled and passed the normal behavioral contract, but failed the protected cross-conversation check by confusing foreign scope with growth-record categories. It was declined before review/interview; the incumbent and Git source remained unchanged. A subsequent bounded attempt will receive actual imported type declarations and the prior failed-check feedback, with source correction still authored by Palimpsest.
 
+The second attempt also used one growth call and failed the same scope check. Independent inspection confirmed that its recorded prompt contained the actual fields and prior failed-check feedback; this was a model reasoning failure, not missing input. A third bounded inquiry clarifies the semantic contract: foreign means a different conversation, independent of memory kind or provenance. No replacement code, relaxed test, or approval is supplied to the authoring model.
+
 ## Verified implementation
 
 | Area / plan | Executed evidence | Remaining scope or limitation |
