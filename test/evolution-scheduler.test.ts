@@ -19,6 +19,10 @@ function recorded(store: Store, id: string) {
   const item = store.addGrowth({ id, question: 'Synthetic question', origin: 'fixture', dimension: 'code_quality' });
   return store.updateGrowth(item.id, { state: 'completed', outcome: JSON.parse(JSON.stringify({ result: reflection })) });
 }
+function recordedPlan(store: Store, id: string) {
+  const item = store.addGrowth({ id, question: 'Selected plan work', origin: 'development-plan:fixture', dimension: 'code_quality' });
+  return store.updateGrowth(item.id, { state: 'completed', outcome: JSON.parse(JSON.stringify({ result: reflection, development: { attemptId: `attempt:${id}` } })) });
+}
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'palimpsest-evolution-scheduler-')); const path = join(dir, 'state.sqlite'); const store = new Store(path);
   return { store, path, close() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
@@ -175,4 +179,124 @@ test('an unfunded plan proposal does not starve a separately funded standing rel
     queue.reconcile();await queue.tick();assert.deepEqual(ran,['funded-standing']);
     assert.equal(queue.items().find(item=>item.growthId===plan.id)?.state,'queued');
   }finally{await queue?.stop();f.close();}
+});
+
+test('hourly plan allocation rolls over at the UTC hour and survives restart without resetting daily lanes', async () => {
+  const f = fixture(); let time = 3_599_999; let queue!: EvolutionScheduler; const ran: string[] = [];
+  const options = { store: f.store, callsPerDay: 8, planCadence: 'hourly' as const, minimumCallsPerAttempt: 8,
+    now: () => time, hasUserWork: () => false, phase: () => 'normal' as const,
+    run: async (request: EvolutionRequest) => {
+      ran.push(request.growthId);
+      for (let ordinal = 1; ordinal <= 8; ordinal++) assert.equal(queue.reserveCall(`evolution:${request.id}:call:${ordinal}`), true);
+      assert.equal(queue.reserveCall(`evolution:${request.id}:call:9`), false);
+      return { ...report(request), calls: 8 };
+    } };
+  try {
+    recordedPlan(f.store, 'hour-one'); recordedPlan(f.store, 'hour-two'); recorded(f.store, 'standing-one'); recorded(f.store, 'standing-two');
+    queue = new EvolutionScheduler(options); queue.reconcile(); await queue.tick(); await queue.tick(); await queue.tick();
+    assert.deepEqual(ran, ['hour-one', 'standing-one']);
+    await queue.stop(); queue = new EvolutionScheduler(options); queue.reconcile(); await queue.tick();
+    assert.deepEqual(ran, ['hour-one', 'standing-one']);
+    time = 3_600_000; await queue.tick(); await queue.tick();
+    assert.deepEqual(ran, ['hour-one', 'standing-one', 'hour-two']);
+    assert.equal(queue.items().find(item => item.growthId === 'standing-two')?.state, 'queued');
+    const hourly = f.store.listEvents().filter(event => event.type === 'evolution.scheduler.call_reserved' && (event.payload as Record<string, unknown>).plan === true);
+    assert.equal(hourly.length, 16);
+    assert.ok(hourly.every(event => (event.payload as Record<string, unknown>).cadence === 'hourly'));
+    assert.deepEqual(new Set(hourly.map(event => (event.payload as Record<string, unknown>).reservedAt)), new Set([3_599_999, 3_600_000]));
+    recordedPlan(f.store, 'hour-three'); queue.reconcile(); await queue.tick(); assert.equal(ran.length, 3);
+    time = 86_400_000; await queue.tick(); await queue.tick();
+    assert.deepEqual(ran, ['hour-one', 'standing-one', 'hour-two', 'hour-three', 'standing-two']);
+    await queue.stop(); recordedPlan(f.store, 'changed-hour-cap');
+    queue = new EvolutionScheduler({ ...options, planCallsPerHour: 16 }); queue.reconcile();
+    await assert.rejects(queue.tick(), /immutable/);
+  } finally { await queue?.stop(); f.close(); }
+});
+
+test('daily-to-hourly-to-daily policy changes count actual plan calls instead of refilling allowance', async () => {
+  const f = fixture(); let time = 3_600_010; let queue!: EvolutionScheduler; const ran: string[] = [];
+  const options = { store: f.store, callsPerDay: 0, planCallsPerDay: 16, minimumCallsPerAttempt: 8,
+    now: () => time, hasUserWork: () => false, phase: () => 'normal' as const,
+    run: async (request: EvolutionRequest) => {
+      ran.push(request.growthId);
+      for (let ordinal = 1; ordinal <= 8; ordinal++) assert.equal(queue.reserveCall(`evolution:${request.id}:call:${ordinal}`), true);
+      return { ...report(request), calls: 8 };
+    } };
+  try {
+    for (const id of ['daily-first', 'hourly-second', 'daily-held']) recordedPlan(f.store, id);
+    queue = new EvolutionScheduler(options); queue.reconcile(); await queue.tick(); await queue.stop();
+    queue = new EvolutionScheduler({ ...options, planCadence: 'hourly', planCallsPerHour: 8 }); queue.reconcile(); await queue.tick();
+    assert.deepEqual(ran, ['daily-first']);
+    time = 7_200_000; await queue.tick(); assert.deepEqual(ran, ['daily-first', 'hourly-second']); await queue.stop();
+    queue = new EvolutionScheduler({ ...options, planCadence: 'daily' }); queue.reconcile(); await queue.tick();
+    assert.deepEqual(ran, ['daily-first', 'hourly-second']);
+    assert.equal(queue.items().find(item => item.growthId === 'daily-held')?.state, 'queued');
+    time = 86_400_000; await queue.tick(); assert.deepEqual(ran, ['daily-first', 'hourly-second', 'daily-held']);
+  } finally { await queue?.stop(); f.close(); }
+});
+
+test('legacy plan reservations use journal timestamps when an hourly policy is selected', async () => {
+  const f = fixture(); let time = Date.now(); let queue!: EvolutionScheduler; let runs = 0;
+  try {
+    const day = Math.floor(time / 86_400_000) * 86_400_000;
+    f.store.appendEvent('evolution.scheduler.window', { startsAt: day, endsAt: day + 86_400_000, maxCalls: 8, interactive: false, plan: true });
+    for (let ordinal = 1; ordinal <= 8; ordinal++) f.store.appendEvent('evolution.scheduler.call_reserved', {
+      startsAt: day, attemptId: `legacy:${ordinal}`, runId: 'legacy-plan', ordinal, interactive: false, plan: true,
+    });
+    time = Date.parse(f.store.listEvents().at(-1)!.createdAt);
+    recordedPlan(f.store, 'legacy-held');
+    const options = { store: f.store, callsPerDay: 0, planCallsPerDay: 8, planCadence: 'hourly' as const, planCallsPerHour: 8,
+      minimumCallsPerAttempt: 8, now: () => time, hasUserWork: () => false, phase: () => 'normal' as const,
+      run: async (request: EvolutionRequest) => { runs++; return report(request); } };
+    queue = new EvolutionScheduler(options); queue.reconcile(); await queue.tick(); assert.equal(runs, 0); await queue.stop();
+    queue = new EvolutionScheduler({ ...options, planCadence: 'daily' }); queue.reconcile(); await queue.tick(); assert.equal(runs, 0); await queue.stop();
+    queue = new EvolutionScheduler(options); time = Math.floor(time / 3_600_000) * 3_600_000 + 3_600_000;
+    await queue.tick(); assert.equal(runs, 1);
+  } finally { await queue?.stop(); f.close(); }
+});
+
+test('hourly plan debits survive database reopen without replay or refill', async () => {
+  const f = fixture(); let time = 3_599_999; let queue!: EvolutionScheduler; let reopened: Store | undefined; let calls = 0;
+  const options = { callsPerDay: 0, planCadence: 'hourly' as const, minimumCallsPerAttempt: 8, now: () => time,
+    hasUserWork: () => false, phase: () => 'normal' as const, run: async (request: EvolutionRequest) => {
+      for (let ordinal = 1; ordinal <= 8; ordinal++) { assert.equal(queue.reserveCall(`evolution:${request.id}:call:${ordinal}`), true); calls++; }
+      return { ...report(request), calls: 8 };
+    } };
+  try {
+    recordedPlan(f.store, 'before-reopen'); recordedPlan(f.store, 'after-reopen');
+    queue = new EvolutionScheduler({ ...options, store: f.store }); queue.reconcile(); await queue.tick(); await queue.stop(); f.store.close();
+    reopened = new Store(f.path); queue = new EvolutionScheduler({ ...options, store: reopened }); queue.reconcile(); await queue.tick();
+    assert.equal(calls, 8); assert.equal(queue.items().find(item => item.growthId === 'after-reopen')?.state, 'queued');
+    time = 3_600_000; await queue.tick(); assert.equal(calls, 16);
+    assert.equal(reopened.listEvents().filter(event => event.type === 'evolution.scheduler.call_reserved').length, 16);
+  } finally { await queue?.stop(); reopened?.close(); f.close(); }
+});
+
+test('partial hourly plan funding preserves a queued proposal until a full new-hour allowance', async () => {
+  const f = fixture(); let time = 0; let queue!: EvolutionScheduler; let runs = 0;
+  try {
+    recordedPlan(f.store, 'partial-first'); recordedPlan(f.store, 'partial-held');
+    queue = new EvolutionScheduler({ store: f.store, callsPerDay: 0, planCadence: 'hourly', minimumCallsPerAttempt: 8,
+      now: () => time, hasUserWork: () => false, phase: () => 'normal', run: async request => {
+        runs++; for (let ordinal = 1; ordinal <= 5; ordinal++) assert.equal(queue.reserveCall(`evolution:${request.id}:call:${ordinal}`), true);
+        return { ...report(request), calls: 5 };
+      } });
+    queue.reconcile(); await queue.tick(); await queue.tick();
+    assert.equal(runs, 1); assert.equal(queue.items().find(item => item.growthId === 'partial-held')?.state, 'queued');
+    time = 3_600_000; await queue.tick(); assert.equal(runs, 2);
+    assert.equal(f.store.listEvents().filter(event => event.type === 'evolution.scheduler.call_reserved').length, 10);
+  } finally { await queue?.stop(); f.close(); }
+});
+
+test('hourly plan policy validates amounts and zero disables new plan releases', async () => {
+  const f = fixture(); let queue: EvolutionScheduler | undefined;
+  try {
+    const options = { store: f.store, hasUserWork: () => false, phase: () => 'normal' as const, run: async () => { assert.fail('disabled plan release must not execute'); } };
+    assert.throws(() => new EvolutionScheduler({ ...options, planCadence: 'weekly' as never }), /cadence/);
+    assert.throws(() => new EvolutionScheduler({ ...options, planCallsPerHour: 1.5 }), /integer/);
+    recordedPlan(f.store, 'disabled-hourly');
+    queue = new EvolutionScheduler({ ...options, callsPerDay: 0, planCadence: 'hourly', planCallsPerHour: 0, minimumCallsPerAttempt: 8 });
+    queue.reconcile(); await queue.tick(); assert.equal(queue.items()[0]?.state, 'queued');
+    assert.equal(f.store.listEvents().filter(event => event.type === 'evolution.scheduler.call_reserved').length, 0);
+  } finally { await queue?.stop(); f.close(); }
 });

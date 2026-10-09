@@ -58,8 +58,10 @@ function repositoryFixture() {
   return { directory, repositoryRoot, dataDir, remote, git, config };
 }
 
-test('trusted plan autonomously sheds two dependent P06 improvements through real workers and publication across restart', { skip: process.platform !== 'darwin' }, async () => {
+test('hourly trusted plan sheds two dependent P06 improvements through real workers, restart and an hour boundary', { skip: process.platform !== 'darwin' }, async () => {
   const { directory, repositoryRoot, dataDir, remote, git, config } = repositoryFixture();
+  config.planCadence = 'hourly';
+  let planTime = Date.UTC(2026, 9, 9, 5, 3);
   const authoring: Array<{ itemId: string; source: string; baseCommit: string }> = [];
   const coverage: string[][] = [];
   const provider: Provider = { name: 'mistral', complete: async request => {
@@ -93,14 +95,15 @@ test('trusted plan autonomously sheds two dependent P06 improvements through rea
     const coordinator = new EvolutionCoordinator({ repositoryRoot, dataDir, store, host, reviewer: provider, incumbent: provider, successor: provider, configuration, modelProfile,
       reserveBudget: id => scheduler!.reserveCall(id), checksForProposal: growth => growth.id === 'fixture:inherited-floor' ? [...EVOLUTION_CHECKS] : wiring!.checksForProposal(growth), reviewWorkContract: growth => wiring!.reviewWorkContract(growth),
       observeSource: () => observeSourceIdentity({ repositoryRoot, release: host!.custodian.inspect().active!.release }) });
-    scheduler = new EvolutionScheduler({ store, callsPerDay: 8, interactiveCallsPerDay: 0, planCallsPerDay: 16, minimumCallsPerAttempt: 5,
+    scheduler = new EvolutionScheduler({ store, callsPerDay: 8, interactiveCallsPerDay: 0, planCallsPerDay: 16,
+      planCadence:config.planCadence,planCallsPerHour:config.planEvolutionCallsPerHour,now:()=>planTime,minimumCallsPerAttempt: 8,
       hasUserWork: () => host!.runtime.hasUserWork(), phase: () => host!.custodian.inspect().phase, run: async request => {
         try { return await coordinator.run(request); }
         catch (error) { store.appendEvent('fixture.coordinator.error', { message: error instanceof Error ? error.message : 'unknown' }); throw error; }
       } });
     publication = new ReleasePublication({ store, authorize: () => true,
       publisher: new GitPublisher({ repositoryRoot, dataDir, store, remote: 'origin', branch: 'main', remoteUrl: remote }) });
-    wiring = createDevelopmentHost({ config, store, host, provider, scheduler, publication, hasUserWork: () => host!.runtime.hasUserWork() });
+    wiring = createDevelopmentHost({ config, store, host, provider, scheduler, publication, now:()=>planTime,hasUserWork: () => host!.runtime.hasUserWork() });
     wiring.executor.recoverInterrupted(); scheduler.reconcile();
   };
   const shed = async (expectedId: DevelopmentAttempt['itemId']) => {
@@ -147,11 +150,16 @@ test('trusted plan autonomously sheds two dependent P06 improvements through rea
     store = new Store(join(dataDir, 'state.sqlite')); await open();
     assert.equal(host!.custodian.inspect().active!.release.digest, first.releaseId); assert.ok(host!.custodian.inspect().epoch > first.epoch);
     assert.equal(store.listMemories('local')[0]?.version, corrected.version); assert.deepEqual(store.listMemories('local')[0]?.evidence, corrected.evidence);
+    assert.equal(await wiring!.executor.tick(), null, 'restart cannot grant another authoring call in the same hour');
+    assert.equal(authoring.length, 1);
+    assert.equal(wiring!.executor.allocation().remaining, 0);
+    planTime = Math.floor(planTime / 3_600_000) * 3_600_000 + 3_600_000;
     const second = await shed('P06-memory-context-budget'); assert.notEqual(second.releaseId, first.releaseId); assert.notEqual(second.commit, first.commit);
     assert.equal(authoring.length, 2); assert.equal(authoring[1]?.baseCommit, first.commit); assert.equal(authoring[1]?.source, provenance);
     assert.deepEqual(coverage.map(checks => checks.filter(id => id.startsWith('memory-'))), [['memory-provenance'], ['memory-provenance', 'memory-context-budget']]);
     assert.equal(wiring!.executor.attempts().filter(attempt => attempt.state === 'completed').length, 2);
-    assert.equal(wiring!.executor.allocation().used, 2);
+    assert.equal(wiring!.executor.allocation().used, 1, 'one call belongs to the current hour');
+    assert.equal(store.listEvents().filter(event => event.type === 'development.attempt.started').length, 2);
     assert.equal(store.listEvents().filter(event => event.type === 'evolution.scheduler.call_reserved' && (event.payload as any).plan === true).length, 10);
     assert.equal(await wiring!.executor.tick(), null, 'complete catalog does not manufacture further source changes');
     const task = await host!.submit({ id: 'serving-after-plan', conversationId: 'local', source: 'direct', text: 'What experience survives?' }); await host!.drain();

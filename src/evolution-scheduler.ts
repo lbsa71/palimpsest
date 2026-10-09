@@ -21,6 +21,8 @@ export interface EvolutionSchedulerOptions {
   callsPerDay?: number;
   interactiveCallsPerDay?: number;
   planCallsPerDay?: number;
+  planCadence?: 'daily' | 'hourly';
+  planCallsPerHour?: number;
   authorizeProposal?: (growthId: string) => boolean;
   /** Trusted admission keeps a new attempt from consuming a partial allocation. */
   minimumCallsPerAttempt?: number;
@@ -30,6 +32,7 @@ export interface EvolutionSchedulerOptions {
   onError?(code: 'evolution_scheduler_failed'): void;
 }
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 const plain = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
 function integer(value: number, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number {
@@ -45,6 +48,8 @@ export class EvolutionScheduler {
   readonly #calls: number;
   readonly #interactiveCalls: number;
   readonly #planCalls: number;
+  readonly #planCallsPerHour: number;
+  readonly #planCadence: 'daily' | 'hourly';
   readonly #interval: number;
   readonly #timeout: number;
   #active: Promise<EvolutionQueueItem | null> | undefined;
@@ -58,6 +63,9 @@ export class EvolutionScheduler {
     this.#calls = integer(options.callsPerDay ?? 8);
     this.#interactiveCalls = integer(options.interactiveCallsPerDay ?? 8);
     this.#planCalls = integer(options.planCallsPerDay ?? 0);
+    this.#planCallsPerHour = integer(options.planCallsPerHour ?? 8);
+    if (options.planCadence !== undefined && !['daily', 'hourly'].includes(options.planCadence)) throw new Error('Invalid plan evolution cadence');
+    this.#planCadence = options.planCadence ?? 'daily';
     this.#interval = integer(options.intervalMs ?? 1000, 1, 2_147_483_647);
     this.#timeout = integer(options.attemptTimeoutMs ?? 20 * 60_000, 1, 2_147_483_647);
   }
@@ -158,16 +166,32 @@ export class EvolutionScheduler {
     return work;
   }
 
-  #window(interactive = false, plan = false): { startsAt: number; used: number; remaining: number } {
-    const now = integer((this.#options.now ?? Date.now)()); const startsAt = Math.floor(now / DAY) * DAY;
+  #window(interactive = false, plan = false, now = integer((this.#options.now ?? Date.now)())) {
+    const cadence = plan ? this.#planCadence : 'daily';
+    const durationMs = cadence === 'hourly' ? HOUR : DAY;
+    const startsAt = Math.floor(now / durationMs) * durationMs;
     const events = this.#options.store.listEvents();
-    const maximum = interactive ? this.#interactiveCalls : plan ? this.#planCalls : this.#calls;
+    const maximum = interactive ? this.#interactiveCalls : plan ? cadence === 'hourly' ? this.#planCallsPerHour : this.#planCalls : this.#calls;
     const lane=(payload:unknown)=> (plain(payload).interactive === true) === interactive && (plain(payload).plan === true) === plan;
-    const old = events.find(event => event.type === 'evolution.scheduler.window' && plain(event.payload).startsAt === startsAt && lane(event.payload));
-    if (old && plain(old.payload).maxCalls !== maximum) throw new Error('Evolution daily allocation is immutable');
-    if (!old) this.#options.store.appendEvent('evolution.scheduler.window', { startsAt, endsAt: startsAt + DAY, maxCalls: maximum, interactive,plan });
-    const used = events.filter(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).startsAt === startsAt && lane(event.payload)).length;
-    return { startsAt, used, remaining: Math.max(0, maximum - used) };
+    // Legacy windows are daily. Hourly plan windows have a distinct identity,
+    // including at UTC midnight where the start timestamps otherwise coincide.
+    const old = events.find(event => event.type === 'evolution.scheduler.window' && plain(event.payload).startsAt === startsAt && lane(event.payload)
+      && (plain(event.payload).cadence ?? 'daily') === cadence);
+    if (old && (plain(old.payload).maxCalls !== maximum || (plain(old.payload).durationMs !== undefined && plain(old.payload).durationMs !== durationMs)))
+      throw new Error('Evolution allocation is immutable');
+    if (!old) this.#options.store.appendEvent('evolution.scheduler.window', { startsAt, endsAt: startsAt + durationMs, durationMs, cadence, maxCalls: maximum, interactive,plan });
+    const used = events.filter(event => {
+      if (event.type !== 'evolution.scheduler.call_reserved' || !lane(event.payload)) return false;
+      if (!plan) return plain(event.payload).startsAt === startsAt;
+      // Policy transitions never refill calls already spent in the actual hour
+      // or day. Before explicit timestamps existed, journal time is evidence.
+      const raw = plain(event.payload).reservedAt;
+      if (raw !== undefined && typeof raw !== 'number') throw new Error('Cannot establish plan evolution reservation timestamp');
+      const reservedAt = raw === undefined ? Date.parse(event.createdAt) : integer(raw);
+      if (!Number.isSafeInteger(reservedAt) || reservedAt < 0) throw new Error('Cannot establish plan evolution reservation timestamp');
+      return reservedAt >= startsAt && reservedAt < startsAt + durationMs;
+    }).length;
+    return { startsAt, cadence, durationMs, used, remaining: Math.max(0, maximum - used) };
   }
 
   reserveCall(attemptId: string): boolean {
@@ -176,8 +200,10 @@ export class EvolutionScheduler {
       || !['normal', 'evaluation'].includes(this.#options.phase()) || current.calls >= 8) return false;
     if (attemptId !== `evolution:${current.item.id}:call:${current.calls + 1}`) return false;
     if (this.#options.store.listEvents().some(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).attemptId === attemptId)) return false;
-    const window = this.#window(current.interactive,current.plan); if (window.remaining < 1) return false;
-    this.#options.store.appendEvent('evolution.scheduler.call_reserved', { startsAt: window.startsAt, attemptId, runId: current.item.id, ordinal: current.calls + 1, interactive: current.interactive,plan:current.plan });
+    const reservedAt = integer((this.#options.now ?? Date.now)());
+    const window = this.#window(current.interactive,current.plan,reservedAt); if (window.remaining < 1) return false;
+    this.#options.store.appendEvent('evolution.scheduler.call_reserved', { startsAt: window.startsAt, reservedAt, cadence: window.cadence,
+      attemptId, runId: current.item.id, ordinal: current.calls + 1, interactive: current.interactive,plan:current.plan });
     current.calls++; return true;
   }
 

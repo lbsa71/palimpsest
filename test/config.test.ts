@@ -70,6 +70,31 @@ test('a credentials file cannot be inside the repository', () => {
   } finally { f.cleanup(); }
 });
 
+test('hourly testing cadence is explicit, bounded and separate from daily plan limits', () => {
+  const f = fixture();
+  try {
+    const env = { PALIMPSEST_CREDENTIALS_FILE: join(f.base, 'missing'), PALIMPSEST_DATA_DIR: join(f.base, 'state') };
+    const daily = loadConfig({ repositoryRoot: f.repo, env });
+    assert.equal(daily.planCadence, 'daily');
+    assert.equal(daily.planProposalCallsPerDay, 2);
+    assert.equal(daily.planEvolutionCallsPerDay, 16);
+    const hourly = loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_PLAN_CADENCE: 'hourly' } });
+    assert.equal(hourly.planCadence, 'hourly');
+    assert.equal(hourly.planProposalCallsPerHour, 1);
+    assert.equal(hourly.planEvolutionCallsPerHour, 8);
+    assert.equal(hourly.growthCallsPerDay, daily.growthCallsPerDay);
+    assert.equal(hourly.interactiveEvolutionCallsPerDay, daily.interactiveEvolutionCallsPerDay);
+    assert.equal(hourly.describe().planCadence, 'hourly');
+    const disabled = loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_PLAN_CADENCE: 'hourly', PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_HOUR: '0', PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_HOUR: '0' } });
+    assert.equal(disabled.planProposalCallsPerHour, 0);
+    assert.equal(disabled.planEvolutionCallsPerHour, 0);
+    assert.throws(() => loadConfig({ repositoryRoot: f.repo, env: { ...env, PALIMPSEST_PLAN_CADENCE: 'frequent' } }), /cadence/i);
+    for (const field of ['PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_HOUR', 'PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_HOUR']) {
+      assert.throws(() => loadConfig({ repositoryRoot: f.repo, env: { ...env, [field]: '-1' } }), /hourly/i);
+    }
+  } finally { f.cleanup(); }
+});
+
 test('modification whitelist has explicit empty deny and legacy user-list fallback', () => {
   const f = fixture();
   try {

@@ -162,6 +162,7 @@ async function main(): Promise<void> {
         backgroundGrowthInputs: 'Standing growth uses the mission, admitted source and growth-scope observations. Eligible human conversations have a separate deliberative proposal lane with retained authorship.',
         implementationPlanExecution:development?'Two protected P06 work contracts through checked shedding; broader PLAN work remains unsupported':'Not scheduled in this process',
         planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,
+        planCadence:config.planCadence,planProposalCallsPerHour:config.planProposalCallsPerHour,planEvolutionCallsPerHour:config.planEvolutionCallsPerHour,
         applicationGitPublication:!!publisher, interactiveEvolutionCallsPerDay:config.interactiveEvolutionCallsPerDay,
         growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay }) });
     if(command==='host-baseline') {
@@ -237,11 +238,13 @@ async function main(): Promise<void> {
     evolution = new EvolutionScheduler({ store, callsPerDay: config.evolutionCallsPerDay,
       minimumCallsPerAttempt:8,
       planCallsPerDay:config.planEvolutionCallsPerDay,
+      planCadence:config.planCadence,planCallsPerHour:config.planEvolutionCallsPerHour,
       interactiveCallsPerDay:config.interactiveEvolutionCallsPerDay,authorizeProposal:id=>actions.authorize(store!.growth(id)!),
       hasUserWork: () => stopped || userCommitments() || development?.busy===true || publicationReconciler!.busy || publicationReconciler!.pending(evolution?.items()??[]), phase: () => host!.custodian.inspect().phase,
       beforeRun: async () => { await hostTick; await pauseGrowth(); }, run: request => coordinator.run(request),
       attemptTimeoutMs: Math.min(2_147_483_647, config.timeoutMs * 8 + 120_000), onError: code => console.error(code) });
-    if(config.planProposalCallsPerDay>0&&config.planEvolutionCallsPerDay>0&&publisher){
+    // Retained work still needs its trusted contracts when new calls are disabled.
+    if(publisher){
       developmentHost=createDevelopmentHost({config,store,host,provider,scheduler:evolution,publication:publicationReconciler,beforeProposal:pauseGrowth,
         hasUserWork:()=>stopped||userCommitments()||evolution!.busy||publicationReconciler!.busy||publicationReconciler!.pending(evolution!.items())||host!.custodian.inspect().phase!=='normal'});
       development=developmentHost.executor;development.recoverInterrupted();
@@ -250,6 +253,7 @@ async function main(): Promise<void> {
       provider: config.provider, model: config.model || null, generation: host.custodian.inspect().active!.release.digest,
       growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay,
       planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,
+      planCadence:config.planCadence,planProposalCallsPerHour:config.planProposalCallsPerHour,planEvolutionCallsPerHour:config.planEvolutionCallsPerHour,
       slackUrl: slackServer?.url ?? null, slackSocket: slackSocket?.status() ?? null }));
     resumeGrowth();
     evolution.start();

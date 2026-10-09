@@ -17,6 +17,9 @@ export interface RuntimeConfig {
   interactiveEvolutionCallsPerDay: number;
   planProposalCallsPerDay: number;
   planEvolutionCallsPerDay: number;
+  planCadence: 'daily' | 'hourly';
+  planProposalCallsPerHour: number;
+  planEvolutionCallsPerHour: number;
   timeoutMs: number;
   slackBotToken?: string;
   slackAppToken?: string;
@@ -88,6 +91,8 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
   const values = { ...credentials, ...env };
   const provider = values.PALIMPSEST_PROVIDER ?? 'mistral';
   if (provider !== 'mistral' && provider !== 'codex') throw new Error('Unknown provider; choose mistral or codex explicitly');
+  const planCadence = values.PALIMPSEST_PLAN_CADENCE ?? 'daily';
+  if (planCadence !== 'daily' && planCadence !== 'hourly') throw new Error('Unknown plan cadence; choose daily or hourly');
   const repoId = `${basename(repositoryRoot)}-${createHash('sha256').update(repositoryRoot).digest('hex').slice(0, 12)}`;
   const dataDir = resolveExternalPath(repositoryRoot,
     values.PALIMPSEST_DATA_DIR ?? join(homedir(), '.local', 'share', 'palimpsest', repoId));
@@ -100,6 +105,9 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
     interactiveEvolutionCallsPerDay: values.PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY, 8, 'daily interactive evolution calls'),
     planProposalCallsPerDay: values.PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY, 2, 'daily plan proposal calls'),
     planEvolutionCallsPerDay: values.PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_DAY, 16, 'daily plan evolution calls'),
+    planCadence,
+    planProposalCallsPerHour: values.PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_HOUR === '0' ? 0 : positiveInteger(values.PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_HOUR, 1, 'hourly plan proposal calls'),
+    planEvolutionCallsPerHour: values.PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_HOUR === '0' ? 0 : positiveInteger(values.PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_HOUR, 8, 'hourly plan evolution calls'),
     timeoutMs: positiveInteger(values.PALIMPSEST_TIMEOUT_MS, 120_000, 'timeout'),
     slackTeamIds: (values.SLACK_ALLOWED_TEAM_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
     slackSelfModificationUserIds: (values.SLACK_SELF_MODIFICATION_USER_IDS ?? values.SLACK_ALLOWED_USER_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
@@ -110,7 +118,8 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
       return { repositoryRoot, dataDir, credentialsPath, provider, model: this.model ?? null,
         credentialsConfigured: provider === 'mistral' ? Boolean(this.mistralApiKey) : 'CLI login required',
         maxCallsPerTask: this.maxCallsPerTask, growthCallsPerDay: this.growthCallsPerDay, evolutionCallsPerDay: this.evolutionCallsPerDay, interactiveEvolutionCallsPerDay:this.interactiveEvolutionCallsPerDay,
-        planProposalCallsPerDay:this.planProposalCallsPerDay,planEvolutionCallsPerDay:this.planEvolutionCallsPerDay,timeoutMs: this.timeoutMs,
+        planProposalCallsPerDay:this.planProposalCallsPerDay,planEvolutionCallsPerDay:this.planEvolutionCallsPerDay,
+        planCadence:this.planCadence,planProposalCallsPerHour:this.planProposalCallsPerHour,planEvolutionCallsPerHour:this.planEvolutionCallsPerHour,timeoutMs: this.timeoutMs,
         gitPublicationConfigured:Boolean(this.gitRemote && this.gitBranch && this.gitRemoteUrl), gitRemote:this.gitRemote ?? null,gitBranch:this.gitBranch ?? null,
         slackConfigured: Boolean(this.slackBotToken && (this.slackAppToken || this.slackSigningSecret)),
         slackSocketConfigured: Boolean(this.slackBotToken && this.slackAppToken),

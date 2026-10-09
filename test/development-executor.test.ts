@@ -160,3 +160,87 @@ test('temporary source-collector failure after inference pauses the attempt with
     f.advance(); assert.equal((await executor.tick())?.ordinal, 2); assert.equal(f.enqueued.length, 1);
   } finally { f.store.close(); }
 });
+
+test('hourly proposal allocation survives durable restart and unknown outcomes, then opens the actual next hour', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'palimpsest-development-hourly-')); const path = join(base, 'state.sqlite');
+  const f = fixture(new Store(path)); const hourly = { ...f.options, proposalCadence: 'hourly' as const, propose: async () => { throw new Error('Unknown inference outcome'); } };
+  let reopened: Store | undefined;
+  try {
+    f.setNow(5 * 3_600_000 + 1_000); let executor = new DevelopmentExecutor(hourly);
+    assert.equal((await executor.tick())?.state, 'paused');
+    assert.deepEqual(executor.allocation(), { cadence: 'hourly', startsAt: 18_000_000, endsAt: 21_600_000, used: 1, remaining: 0 });
+    f.store.close(); reopened = new Store(path); executor = new DevelopmentExecutor({ ...hourly, store: reopened }); executor.recoverInterrupted();
+    f.setNow(21_599_999); assert.equal(await executor.tick(), null); assert.equal(executor.attempts().length, 1);
+    assert.throws(() => new DevelopmentExecutor({ ...hourly, store: reopened!, proposalCallsPerHour: 2 }).allocation(), /immutable/);
+    f.setNow(21_600_000); assert.equal(executor.allocation().remaining, 1);
+    assert.equal((await executor.tick())?.ordinal, 2); assert.equal(executor.allocation().used, 1);
+    assert.equal(reopened.listEvents().filter(e => e.type === 'development.attempt.started').length, 2);
+  } finally { reopened?.close(); f.store.close(); rmSync(base, { recursive: true, force: true }); }
+});
+
+test('daily and hourly policy transitions count actual calls without refilling either allocation', async () => {
+  const f = fixture(); const failure = async () => { throw new Error('Unknown inference outcome'); };
+  try {
+    f.setNow(18_000_000 + 1_000); const daily = new DevelopmentExecutor({ ...f.options, propose: failure });
+    await daily.tick(); f.advance(); await daily.tick(); assert.equal(daily.allocation().used, 2);
+    const hourly = new DevelopmentExecutor({ ...f.options, proposalCadence: 'hourly', propose: failure });
+    assert.equal(hourly.allocation().used, 2, 'earlier daily calls in this hour remain spent');
+    f.advance(); assert.equal(await hourly.tick(), null);
+    f.setNow(21_600_000); await hourly.tick(); assert.equal(hourly.allocation().used, 1);
+    const resumedDaily = new DevelopmentExecutor({ ...f.options, propose: failure });
+    assert.equal(resumedDaily.allocation().used, 3, 'hourly calls consume the same actual daily history');
+    assert.equal(resumedDaily.allocation().remaining, 1);
+    assert.throws(() => new DevelopmentExecutor({ ...f.options, proposalCallsPerDay: 5 }).allocation(), /immutable/);
+  } finally { f.store.close(); }
+});
+
+test('pending completion proceeds with hourly authoring allocation exhausted and successor waits for next hour', async () => {
+  const f = fixture(); const executor = new DevelopmentExecutor({ ...f.options, proposalCadence: 'hourly' });
+  try {
+    f.setNow(18_000_000); const first = await executor.tick(); assert.equal(first?.state, 'queued');
+    assert.equal(executor.allocation().remaining, 0); const observed = f.complete(first!, 1); observed.publication.status = 'uncertain';
+    assert.equal((await executor.tick())?.state, 'queued'); observed.publication.status = 'published';
+    assert.equal((await executor.tick())?.state, 'completed'); assert.equal(await executor.tick(), null); assert.equal(f.calls(), 1);
+    f.setNow(21_600_000); assert.equal((await executor.tick())?.itemId, 'P06-memory-context-budget'); assert.equal(f.calls(), 2);
+  } finally { f.store.close(); }
+});
+
+test('hourly interrupted authoring and user priority retain the debit and discard late output', async () => {
+  const f = fixture(); let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+  const executor = new DevelopmentExecutor({ ...f.options, proposalCadence: 'hourly', propose: async () => { await blocked; return proposal(); } });
+  try {
+    f.users(true); assert.equal(await executor.tick(), null); assert.equal(executor.allocation().used, 0);
+    f.users(false); const running = executor.tick(); await new Promise(resolve => setImmediate(resolve));
+    f.users(true); assert.equal(await executor.tick(), null); release(); assert.equal((await running)?.state, 'paused');
+    f.users(false); f.advance(); assert.equal(await executor.tick(), null); assert.equal(executor.allocation().used, 1); assert.equal(f.enqueued.length, 0);
+  } finally { release(); f.store.close(); }
+});
+
+test('legacy day reservations without timestamps conservatively consume overlapping hourly slots', () => {
+  const f = fixture();
+  try {
+    f.store.appendEvent('development.attempt.started', { startsAt: 0, attempt: { catalogDigest: 'older-catalog' } });
+    f.setNow(18_000_000); const hourly = new DevelopmentExecutor({ ...f.options, proposalCadence: 'hourly' });
+    assert.equal(hourly.allocation().remaining, 0); assert.equal(new DevelopmentExecutor(f.options).allocation().used, 1);
+    f.setNow(86_400_000); assert.equal(hourly.allocation().remaining, 1);
+    assert.throws(() => new DevelopmentExecutor({ ...f.options, proposalCadence: 'weekly' as any }), /cadence/);
+    assert.throws(() => new DevelopmentExecutor({ ...f.options, proposalCallsPerHour: -1 }), /finite/);
+    assert.equal(new DevelopmentExecutor({ ...f.options, proposalCadence: 'hourly', proposalCallsPerHour: 0, now: () => 90_000_000 }).allocation().remaining, 0);
+  } finally { f.store.close(); }
+});
+
+test('host authoring gate preserves pending completion without opening or spending a new window', async () => {
+  const f = fixture(); let mayAuthor = true;
+  const executor = new DevelopmentExecutor({ ...f.options, proposalCadence: 'hourly', mayAuthor: () => mayAuthor });
+  try {
+    f.setNow(18_000_000); const first = await executor.tick(); assert.equal(first?.state, 'queued');
+    mayAuthor = false; f.setNow(21_600_000); const observed = f.complete(first!, 1); observed.publication.status = 'pending';
+    assert.equal((await executor.tick())?.state, 'queued'); observed.publication.status = 'published';
+    assert.equal((await executor.tick())?.state, 'completed');
+    const count = f.store.listEvents().length;
+    assert.equal(await executor.tick(), null); assert.equal(f.calls(), 1);
+    assert.equal(f.store.listEvents().length, count, 'disabled authoring opens no allocation window or reservation');
+    mayAuthor = true; assert.equal((await executor.tick())?.itemId, 'P06-memory-context-budget');
+    assert.equal(executor.allocation().used, 1); assert.equal(f.calls(), 2);
+  } finally { f.store.close(); }
+});

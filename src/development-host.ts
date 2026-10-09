@@ -22,6 +22,7 @@ interface DevelopmentHostOptions {
   config:RuntimeConfig;store:Store;host:GenerationHost;provider:Provider;
   scheduler:EvolutionScheduler;publication:ReleasePublication;hasUserWork:()=>boolean;
   beforeProposal?:()=>Promise<void>;
+  now?:()=>number;
 }
 /** Host contract wiring. The catalog, independent validators and release
  * collectors are never selectable by an authoring model. */
@@ -44,7 +45,9 @@ export function createDevelopmentHost(options:DevelopmentHostOptions):{
   let lastEvidence:{key:string,value:DevelopmentEvidence}|undefined;
   const evidence=(releaseId:string,sourceDigest:string,checks:DevelopmentEvidence['checks'],evidenceDigest:string):DevelopmentEvidence=>({catalogDigest:plan.digest,releaseId,sourceDigest,checks,evidenceDigest});
   let executor:DevelopmentExecutor;
-  executor=new DevelopmentExecutor({store,plan,proposalCallsPerDay:config.planProposalCallsPerDay,hasUserWork:options.hasUserWork,
+  executor=new DevelopmentExecutor({store,plan,proposalCallsPerDay:config.planProposalCallsPerDay,
+    proposalCadence:config.planCadence,proposalCallsPerHour:config.planProposalCallsPerHour,now:options.now,hasUserWork:options.hasUserWork,
+    mayAuthor:()=>config.planCadence==='hourly'?config.planEvolutionCallsPerHour>0:config.planEvolutionCallsPerDay>0,
     readSource:async()=>{
       const manifest=assertCatalog();
       const binding=observeSourceIdentity({repositoryRoot:config.repositoryRoot,release:{digest:manifest.id,artifactPath:manifest.releaseDir}});
