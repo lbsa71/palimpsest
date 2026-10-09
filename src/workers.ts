@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
-import { runIsolated } from './isolation.ts';
+import { runIsolated, runIsolatedSession } from './isolation.ts';
 import type { IsolationResult } from './isolation.ts';
 import type { CompletionRequest } from './providers.ts';
 import type { Json, Memory, Task } from './store.ts';
@@ -18,9 +18,11 @@ export interface WorkerOptions {
   /** Cold process/module initialization allowance, independent of steady RPC. */
   startupTimeoutMs?: number;
   rpcTimeoutMs?: number;
+  /** Optional finite test/owner lease; default is a supervised read-only session. */
   lifetimeMs?: number;
   /** One real conversation per process; omitted means the first request binds it. */
   scope?: string;
+  /** Synchronous trusted policy check: throw to deny; returning a thenable fails closed. */
   authorize?: (peer: WorkerPeer) => void;
 }
 interface Pending { resolve: (result: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -59,6 +61,7 @@ export class AgentWorker {
     for (const timeout of [options.startupTimeoutMs ?? 3000, options.rpcTimeoutMs ?? 3000]) {
       if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 2_147_483_647) throw new Error('Invalid worker deadline');
     }
+    if (options.lifetimeMs !== undefined && (!Number.isSafeInteger(options.lifetimeMs) || options.lifetimeMs < 1 || options.lifetimeMs > 300_000)) throw new Error('Invalid finite worker lifetime');
     this.#options = options;
     if (options.scope !== undefined) this.#scope = conversationScope(options.scope);
   }
@@ -69,19 +72,22 @@ export class AgentWorker {
     const harness = fileURLToPath(new URL('../trusted/agent-worker.mjs', import.meta.url));
     let spawned!: () => void; let failed!: (error: Error) => void;
     const available = new Promise<void>((resolve, reject) => { spawned = resolve; failed = reject; });
-    worker.#completion = runIsolated({ program: process.execPath,
+    const launch = { program: process.execPath,
       args: ['--disable-warning=ExperimentalWarning', harness, join(options.candidateRoot, 'src/agent/brain.ts'), `--palimpsest-launch-id=${instanceId}`,
         ...(worker.#scope === undefined ? [] : [`--palimpsest-scope=${JSON.stringify(worker.#scope)}`])],
       cwd: options.candidateRoot, readPaths: [harness, options.candidateRoot], denyReadPaths: options.denyReadPaths,
-      timeoutMs: options.lifetimeMs ?? 300_000, maxOutputBytes: 1_048_576, signal: worker.#controller.signal,
-      keepStdinOpen: true, onSpawn(child) {
+      maxOutputBytes: 1_048_576, signal: worker.#controller.signal,
+      onSpawn(child: ChildProcess) {
         if (!child.pid) throw new Error('Worker did not acquire an OS identity');
         worker.#child = child;
         worker.#peer = Object.freeze({ pid: child.pid, instanceId });
         child.stdin?.on('error', () => worker.#fail());
         spawned();
-      }, onStdout(chunk) { worker.#receive(chunk); },
-    }).then(result => { worker.#fail(); return result; }).catch(() => { failed(new Error('Restricted worker launch failed')); worker.#fail(); return undefined; });
+      }, onStdout(chunk: Buffer) { worker.#receive(chunk); },
+    };
+    worker.#completion = (options.lifetimeMs === undefined ? runIsolatedSession(launch)
+      : runIsolated({ ...launch, timeoutMs: options.lifetimeMs, keepStdinOpen: true }))
+      .then(result => { worker.#fail(); return result; }).catch(() => { failed(new Error('Restricted worker launch failed')); worker.#fail(); return undefined; });
     await available;
     try { const result = await worker.#call('ping', {}, options.startupTimeoutMs ?? 3000); if (!object(result) || result.alive !== true) throw new Error('Invalid worker handshake'); }
     catch (error) { await worker.stop(); throw error; }
@@ -94,7 +100,8 @@ export class AgentWorker {
   get scope(): string | undefined { return this.#scope; }
 
   async request(task: Task, memories: Memory[]): Promise<CompletionRequest> {
-    this.#options.authorize?.(this.peer);
+    task = structuredClone(task); memories = structuredClone(memories);
+    await this.#authorize();
     const scope = conversationScope(task.conversationId);
     if (this.#scope !== undefined && this.#scope !== scope) throw new Error('Worker conversation scope mismatch');
     if (!Array.isArray(memories) || memories.some(memory => memory.scope !== scope)) throw new Error('Worker memory scope mismatch');
@@ -102,8 +109,22 @@ export class AgentWorker {
     this.#scope ??= scope;
     const result = await this.#call('request', { task, memories });
     if (this.#closed) throw new Error('Worker became unavailable');
-    this.#options.authorize?.(this.peer);
+    await this.#authorize();
     try { return descriptor(result); } catch (error) { this.#fail(); throw error; }
+  }
+
+  async #authorize(): Promise<void> {
+    try {
+      const result: unknown = this.#options.authorize?.(this.peer);
+      if (result !== null && (typeof result === 'object' || typeof result === 'function') &&
+          typeof (result as { then?: unknown }).then === 'function') {
+        // void callbacks accept async functions in TypeScript. Consume a delayed
+        // denial, but never treat asynchronous policy as granted authority.
+        void Promise.resolve(result).catch(() => {});
+        throw new Error('Worker authority callback must be synchronous');
+      }
+    }
+    catch (error) { await this.stop(); throw error; }
   }
 
   async catchUp(checkpoint: WorkerCheckpoint): Promise<void> {

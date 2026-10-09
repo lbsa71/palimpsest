@@ -29,6 +29,15 @@ export interface IsolationOptions {
   keepStdinOpen?: boolean;
 }
 
+/** Read-only process lifetime is owned by a trusted supervisor. Its protocol
+ * receiver supplies framing/RPC bounds; stdout is never a retained transcript. */
+export type IsolationSessionOptions = Omit<IsolationOptions,
+  'timeoutMs' | 'stdin' | 'keepStdinOpen' | 'writePaths' | 'allowNodeChildren' | 'trustedExecutables' | 'signal' | 'onSpawn' | 'onStdout'> & {
+  signal: AbortSignal;
+  onSpawn: (child: ChildProcess) => void;
+  onStdout: (chunk: Buffer) => void;
+};
+
 export interface IsolationResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -106,7 +115,7 @@ function profile(executables: string[], reads: string[], writes: string[], denie
     (allow file-read-metadata ${ancestorMetadata(allPaths)})
     (allow file-read* (literal "/") ${readFilters})
     ${denies.length ? `(deny file-read* ${denies.map(filter).join('\n')})` : ''}
-    (allow file-write* ${writes.map(filter).join('\n')})
+    ${writes.length ? `(allow file-write* ${writes.map(filter).join('\n')})` : ''}
     (allow file-write-data (literal "/dev/null"))
   `;
 }
@@ -127,6 +136,22 @@ function boundedText(raw: Buffer, limit: number): string {
  * is deliberately no shell, inherited environment, network, or unsafe fallback.
  */
 export async function runIsolated(options: IsolationOptions): Promise<IsolationResult> {
+  return executeIsolated(options, false);
+}
+
+/** Current Node only; no lifetime timer, filesystem writes or child exception.
+ * Mandatory observers must complete synchronously, including durable PID work.
+ * Cancellation/observer faults retain ownership until actual process close. */
+export async function runIsolatedSession(options: IsolationSessionOptions): Promise<IsolationResult> {
+  if (!options || !(options.signal instanceof AbortSignal) || typeof options.onSpawn !== 'function' || typeof options.onStdout !== 'function'
+    || (options.onStderr !== undefined && typeof options.onStderr !== 'function')) throw new IsolationError('Session requires an owner signal and synchronous process/stdout observers');
+  for (const key of ['timeoutMs', 'stdin', 'keepStdinOpen', 'writePaths', 'allowNodeChildren', 'trustedExecutables']) {
+    if (key in options) throw new IsolationError(`Session cannot select ${key}`);
+  }
+  return executeIsolated(options, true);
+}
+
+async function executeIsolated(options: IsolationOptions, session: boolean): Promise<IsolationResult> {
   if (process.platform !== 'darwin' || !existsSync(sandboxExecutable)) throw new IsolationUnavailableError('Local candidate isolation requires macOS /usr/bin/sandbox-exec; no unconfined fallback is available');
   const trustedNode = canonical(process.execPath);
   const executables = [trustedNode];
@@ -151,7 +176,7 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       throw new IsolationError('Read exclusions must name regular files or directories outside required runtime paths and executables');
     }
   }
-  const timeoutMs = finiteInteger(options.timeoutMs ?? 30_000, 'Timeout', 300_000);
+  const timeoutMs = session ? undefined : finiteInteger(options.timeoutMs ?? 30_000, 'Timeout', 300_000);
   const outputLimit = finiteInteger(options.maxOutputBytes ?? 1_048_576, 'Output limit', 16_777_216);
   if (options.stdin !== undefined && (typeof options.stdin !== 'string' || Buffer.byteLength(options.stdin) > 1_048_576)) throw new IsolationError('stdin must be a string of at most 1048576 bytes');
   for (const [key, value] of Object.entries(options.env ?? {})) {
@@ -164,7 +189,7 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       PATH: dirname(trustedNode), HOME: scratch, TMPDIR: scratch, LANG: 'C', NO_COLOR: '1',
       ...options.env,
     };
-    const policy = profile(executables, reads, [...writes, scratch], denies, options.allowNodeChildren === true);
+    const policy = profile(executables, session ? [...reads, scratch] : reads, session ? [] : [...writes, scratch], denies, options.allowNodeChildren === true);
     return await new Promise<IsolationResult>((resolve, reject) => {
       const output: Buffer[] = []; const errors: Buffer[] = [];
       let outputBytes = 0; let errorBytes = 0; let captured = 0;
@@ -177,24 +202,35 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') child.kill('SIGKILL'); }
       };
       const cancel = () => { aborted = true; kill(); };
-      const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
-      const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); };
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
+      const cleanup = () => { if (timer !== undefined) clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); };
       const failObserver = (message: string, cause: unknown) => {
         observerFailure ??= new IsolationError(message, { cause });
         // Keep ownership and cancellation alive until close. Rejecting here
         // would let the caller release writable paths while the child drains.
         kill();
       };
+      const observe = <T>(observer: ((value: T) => void) | undefined, value: T, message: string) => {
+        if (!observer || observerFailure) return;
+        try {
+          const returned: unknown = observer(value);
+          if (session && returned !== null && (typeof returned === 'object' || typeof returned === 'function')
+            && typeof (returned as { then?: unknown }).then === 'function') {
+            // Catch even later rejection before failing the synchronous contract;
+            // an async PID receipt cannot authorize work while it is pending.
+            void Promise.resolve(returned).catch(() => {});
+            failObserver(message, new IsolationError('Session observer must complete synchronously'));
+          }
+        } catch (cause) { failObserver(message, cause); }
+      };
       const capture = (chunk: Buffer, stderr: boolean) => {
+        if (session && !stderr) { observe(options.onStdout, chunk, 'Trusted stream observer failed'); return; }
         const accepted = chunk.subarray(0, Math.max(0, outputLimit - captured));
         if (accepted.length) {
           (stderr ? errors : output).push(accepted);
           captured += accepted.length;
           if (stderr) errorBytes += accepted.length; else outputBytes += accepted.length;
-          if (!observerFailure) {
-            try { (stderr ? options.onStderr : options.onStdout)?.(accepted); }
-            catch (cause) { failObserver('Trusted stream observer failed', cause); }
-          }
+          observe(stderr ? options.onStderr : options.onStdout, accepted, 'Trusted stream observer failed');
         }
         if (accepted.length < chunk.length) { outputLimitExceeded = true; kill(); }
       };
@@ -212,10 +248,9 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       child.stdin.on('error', () => { /* Early exit or cancellation can close stdin before input is consumed. */ });
       options.signal?.addEventListener('abort', cancel, { once: true });
       if (options.signal?.aborted) cancel();
-      if (options.keepStdinOpen) { if (options.stdin) child.stdin.write(options.stdin); }
+      if (session || options.keepStdinOpen) { if (options.stdin) child.stdin.write(options.stdin); }
       else child.stdin.end(options.stdin ?? '');
-      try { options.onSpawn?.(child); }
-      catch (cause) { failObserver('Trusted process observer failed', cause); }
+      observe(options.onSpawn, child, 'Trusted process observer failed');
     });
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
