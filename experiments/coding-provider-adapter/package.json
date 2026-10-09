@@ -1,0 +1,6 @@
+{
+  "name":"palimpsest-coding-provider-adapter-spike","version":"0.0.0","private":true,"type":"module",
+  "engines":{"node":">=24.13.0 <25"},
+  "scripts":{"test":"node --test test/*.test.ts","check":"node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json","inventory":"node inventory.mjs"},
+  "dependencies":{"@ai-sdk/mistral":"4.0.62","@ai-sdk/provider":"4.0.26","zod":"4.6.5"}
+}
