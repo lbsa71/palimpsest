@@ -4,7 +4,7 @@
 - **Recorded:** 2026-10-08.
 - **Requirements:** R04–R07, R17–R19; P01–P06.
 
-**Subsequent scope refinement, 2026-10-09:** [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) reopens the framework-free restriction below to meet explicit basic coding and full-codebase autonomy requirements. A small replaceable/forkable model/tool library is being evaluated in P17.1; no dependency is selected by that assessment. The original minimal-runtime choice and its historical verification remain recorded here.
+**Subsequent scope refinement, 2026-10-09:** [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) replaces the framework-free restriction below to meet explicit basic coding and full-codebase autonomy requirements. P17.1 selected a pinned direct Mistral adapter behind a replaceable/forkable host facade from isolated fixture evidence; production integration remains pending. The original minimal-runtime choice and its historical verification remain recorded here.
 
 ## Context
 

@@ -31,7 +31,7 @@ The implementation lead owns integration; bounded store/isolation, communication
 | P15 | In progress | Bootstrap/local evidence available. Complete product demonstration, operational health/recovery commands and backup/restore validation remain open. |
 | P16 | Bounded interaction implemented; live direct shed/publication verified | ADR 0015 connects eligible conversation → deliberation → cognitive source proposal → governed worker succession → configured trusted publication → actual thread result. Real Mistral direct-operator release published `f3def48`. Live Slack-origin release, general coding/procedure dispatch and full product acceptance remain open. |
 | P08/P09 plan-driven refinement | Reviewed executor installed; first live item completed with publication assistance; hourly testing refinement | ADR 0017 defines two dependency-linked P06 contracts. Real-worker shedding/publication and restart passed fixtures. First live provenance shed completed; dependent byte-budget item, unassisted repeated publication and broader plan execution remain open. |
-| P17 | Specified; compatibility and implementation evidence pending | Real workspace tools and durable model/tool iteration are required seed behavior. AI SDK/direct Mistral is a provisional spike preference; no library adoption is claimed. |
+| P17 | Direct adapter boundary selected from fixture evidence; production coding integration pending | ADR 0019 selects pinned Mistral/provider packages behind a host-owned facade. Real workspace tools, durable iteration and actual-provider/serving acceptance remain required. |
 | P18 | Specified; autonomous broad release routes not implemented | Broader application/host/dependency/fork release and separate governance/custodian evolution must pass A23/A17. Existing operator bootstrap and cognitive-only sheds do not complete this item. |
 
 ## Milestones
@@ -255,7 +255,7 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 
 ### P17 — Implement the seed's iterative coding capability
 
-**Status:** Specified; implementation and compatibility evidence pending. **Priority:** P0. **Dependencies:** Existing P03–P05 task/provider/isolation components, P09 artifact identity, P16 origin policy. **Requirements:** R03, R05–R06, R14, R17–R19, R22–R26. **Specification:** [Coding autonomy](docs/coding-autonomy.md), [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md).
+**Status:** P17.1 boundary selected from isolated typed fixtures; production dependency integration, workspace tools, durable coding and live compatibility remain pending. **Priority:** P0. **Dependencies:** Existing P03–P05 task/provider/isolation components, P09 artifact identity, P16 origin policy. **Requirements:** R03, R05–R06, R14, R17–R19, R22–R26. **Specification:** [Coding autonomy](docs/coding-autonomy.md), [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md).
 
 **Problem:** A text completion proposing complete cognitive files cannot inspect and iteratively repair a repository. Basic tools and a real coding loop are missing seed behavior.
 
@@ -263,7 +263,7 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 
 | Slice | Implementation / observable gate | Owner |
 |---|---|---|
-| P17.1 — Library boundary | Evaluate exact AI SDK/direct Mistral versions first; compare Pi/custom where evidence warrants. Record licenses/dependencies and test request/tool interception, cancellation, error/usage propagation and explicit retry behavior. Select the implementation in ADR 0019 only after inspecting results. | Sol implements/tests; Astra reviews decision |
+| P17.1 — Library boundary | Direct Mistral/provider/Zod pins selected in ADR 0019 after 41 typed-facade fixtures, strict source typecheck and 19 core observations. Inventories record exact inputs/licenses and actual footprint. Carry the facade contracts into production configuration, dependency/build and serving verification; selection is not live compatibility or release acceptance. | Sol implements/tests; Astra decision review complete for initial boundary |
 | P17.2 — Workspace primitives | Real isolated workspace operations cover every tool contract, including empty files, stale edits, deletion/rename, escaping paths and bounded command output/process termination. | Sol, with disjoint tool/executor test delegation |
 | P17.3 — Durable coding loop | Persist responses/intents/results, iterate on actual test failures and resume drafts after interruption without blind effect replay or budget refunds. Admit a bounded iterative-session contract with a reservation per physical model request; pause across allocation windows without lane borrowing or resetting cumulative caps. Preserve old single-call attempt semantics. Enforce receiver authority and peer isolation through actual workers. | Sol; Astra reviews recovery/authority contracts |
 | P17.4 — Serving and artifact integration | Direct/eligible Slack and independent growth reach the same loop; freeze additions/deletions/modes from the workspace, reject stale artifacts and report observed progress. Run deterministic integration and a separately authorized finite configured Mistral coding task. | Sol implementation/evidence; fresh acceptance review |
@@ -289,7 +289,7 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 
 **Non-goals:** Unrestricted administration of unrelated host systems, replacement of the last rescue in the same transaction, rewriting current memory by code rollback, or implicit spending/publication authority. **Material risks:** Self-selected weaker checks, transitive governance changes, fork/build drift, incompatible stored state and loss of the independently runnable rescue. Each slice needs a concrete contract and fresh review before enablement.
 
-**Coordination:** Astra owns the strategy/specification worktree and cross-document changes; Sol owns isolated implementation/test worktrees, evidence and integration into the configured publication branch. Sol supplies measured feedback before final library selection. Coordinate policy-document ownership and integrate a clean strategy commit before dependent behavior changes. Existing live authoring attempts and peer failures remain evidence; neither is silently declared fixed or reset by this new plan.
+**Coordination:** Astra owns the strategy/specification worktree and cross-document changes; Sol owns isolated implementation/test worktrees, evidence and integration into the configured publication branch. Sol's measured comparison and independent strategy review support the initial adapter selection in ADR 0019; subsequent integration still needs its own evidence. Coordinate policy-document ownership and integrate a clean strategy commit before dependent behavior changes. Existing live authoring attempts and peer failures remain evidence; neither is silently declared fixed or reset by this new plan.
 
 ## Deferred and optional work
 
