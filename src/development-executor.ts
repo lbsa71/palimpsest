@@ -39,7 +39,7 @@ export interface DevelopmentExecutorOptions {
   hasUserWork(): boolean;
   readSource(): Promise<DevelopmentSource>;
   /** Independent host collector, never the authoring model or candidate. */
-  checkCurrent(source: DevelopmentSource): Promise<DevelopmentEvidence>;
+  checkCurrent(source: DevelopmentSource, signal?: AbortSignal): Promise<DevelopmentEvidence>;
   propose(input: DevelopmentAuthoringInput): Promise<GrowthProposal | null>;
   /** Local idempotent queue operation only, keyed to attempt.id/growth.id. */
   enqueue(attempt: DevelopmentAttempt, growth: Growth): Promise<void>;
@@ -148,11 +148,19 @@ export class DevelopmentExecutor {
   async #run(signal: AbortSignal): Promise<DevelopmentAttempt | null> {
     if (signal.aborted || this.#options.hasUserWork()) return null;
     const source = structuredClone(await this.#options.readSource()); sourceValid(source);
-    const current = structuredClone(await this.#options.checkCurrent(structuredClone(source)));
-    if (!this.#evidenceValid(current, source)) throw new Error('Current development evidence has invalid source/catalog bindings');
-    if (signal.aborted || this.#options.hasUserWork()) return null;
     const attempts = this.attempts();
     const pending = attempts.find(item => ['authoring', 'proposed', 'queued'].includes(item.state));
+    if (pending?.state === 'queued') {
+      // A bound failed result grants no release/completion authority. Reconcile
+      // it promptly even when unrelated current diagnostics are slow or down.
+      const observed = await this.#observe(pending, source);
+      if (observed.state === 'paused') return observed;
+    }
+    let current: DevelopmentEvidence;
+    try { current = structuredClone(await this.#options.checkCurrent(structuredClone(source), signal)); }
+    catch (error) { if (signal.aborted) return null; throw error; }
+    if (!this.#evidenceValid(current, source)) throw new Error('Current development evidence has invalid source/catalog bindings');
+    if (signal.aborted || this.#options.hasUserWork()) return null;
     if (pending?.state === 'authoring') return pending; // Another owner requires explicit recovery, never inference from age.
     if (pending?.state === 'proposed') return await this.#enqueue(pending, source, signal);
     if (pending?.state === 'queued') return await this.#observe(pending, source, current);
@@ -218,7 +226,7 @@ export class DevelopmentExecutor {
     if (this.#latest(attempt)?.state !== 'proposed') return this.#latest(attempt) ?? attempt;
     return this.#save({ ...attempt, state: 'queued' });
   }
-  async #observe(attempt: DevelopmentAttempt, source: DevelopmentSource, current: DevelopmentEvidence): Promise<DevelopmentAttempt> {
+  async #observe(attempt: DevelopmentAttempt, source: DevelopmentSource, current?: DevelopmentEvidence): Promise<DevelopmentAttempt> {
     let observed: DevelopmentReleaseObservation | undefined;
     try { observed = await this.#options.observe(structuredClone(attempt)); }
     catch { return attempt; }
@@ -231,7 +239,7 @@ export class DevelopmentExecutor {
       || !this.#evidenceValid(observed.evidence, { releaseId: observed.candidateId, sourceDigest: observed.candidateSourceDigest }))) return attempt;
     if (observed.status !== 'promoted') return this.#pause({ ...attempt, observation: structuredClone(observed) }, observed.reason, observed.evidence?.checks);
     const item = this.#options.plan.items.find(value => value.id === attempt.itemId)!;
-    if (observed.candidateId !== source.releaseId || observed.candidateSourceDigest !== source.sourceDigest || !observed.evidence
+    if (!current || observed.candidateId !== source.releaseId || observed.candidateSourceDigest !== source.sourceDigest || !observed.evidence
       || !this.#evidenceValid(observed.evidence, source) || !this.#passes(item, observed.evidence) || !this.#passes(item, current)
       || observed.publication?.status !== 'published' || observed.publication.publishedSourceDigest !== source.sourceDigest || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(observed.publication.commit ?? '')) return attempt;
     return this.#save({ ...attempt, state: 'completed', observation: structuredClone(observed), feedback: { reason: 'Exact independently checked admitted source publication observed' } });

@@ -94,12 +94,14 @@ async function main(): Promise<void> {
   let slackSocket: SlackSocketClient | undefined;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let hostTick: Promise<void> | undefined;
+  let backgroundTick: Promise<void> | undefined;
+  const collectionStop = new AbortController();
   let stopped = false;
   let ready = false;
   let resolveStop!: () => void;
   const stopRequested = new Promise<void>(resolve => { resolveStop = resolve; });
   const requestStop = () => {
-    stopped = true; resolveStop();
+    stopped = true; collectionStop.abort(); resolveStop();
     // Installed before startup/draining so a slow provider cannot swallow shutdown.
     void growth?.stop().catch(() => {});
     evolution?.interrupt();
@@ -149,7 +151,8 @@ async function main(): Promise<void> {
         ...(existsSync(join(config.repositoryRoot,'AGENTS.md')) ? [readFileSync(join(config.repositoryRoot,'AGENTS.md'),'utf8')] : [])].join('\n\n'),
       cancelWork:taskId=>evolution?.cancelTask(taskId) ?? false });
     const publisher = config.gitRemote && config.gitBranch && config.gitRemoteUrl ? new GitPublisher({repositoryRoot:config.repositoryRoot,dataDir:config.dataDir,store,
-      remote:config.gitRemote,branch:config.gitBranch,remoteUrl:config.gitRemoteUrl}) : undefined;
+      remote:config.gitRemote,branch:config.gitBranch,remoteUrl:config.gitRemoteUrl,
+      verifyCandidate: options => host!.collectCandidate({ kind: 'verify', options }, { signal: collectionStop.signal })}) : undefined;
     if((config.gitRemote || config.gitBranch || config.gitRemoteUrl) && !publisher)throw new Error('Git publication requires explicit remote, branch and remote URL identity');
     publicationReconciler=new ReleasePublication({store,publisher,authorize:growth=>actions.authorize(growth)});
     const communications = slack ? [direct, peer, new SlackCommunications({ token: config.slackBotToken! })] : [direct, peer];
@@ -246,7 +249,7 @@ async function main(): Promise<void> {
       planCadence:config.planCadence,planCallsPerHour:config.planEvolutionCallsPerHour,
       interactiveCallsPerDay:config.interactiveEvolutionCallsPerDay,authorizeProposal:id=>actions.authorize(store!.growth(id)!),
       hasUserWork: () => stopped || userCommitments() || development?.busy===true || publicationReconciler!.busy || publicationReconciler!.pending(evolution?.items()??[]), phase: () => host!.custodian.inspect().phase,
-      beforeRun: async () => { await hostTick; await pauseGrowth(); }, run: request => coordinator.run(request),
+      beforeRun: async () => { await backgroundTick; await hostTick; await pauseGrowth(); }, run: request => coordinator.run(request),
       attemptTimeoutMs: Math.min(2_147_483_647, config.timeoutMs * 8 + 120_000), onError: code => console.error(code) });
     // Retained work still needs its trusted contracts when new calls are disabled.
     if(publisher){
@@ -263,15 +266,28 @@ async function main(): Promise<void> {
     resumeGrowth();
     evolution.start();
     const tick = () => {
-      if (hostTick || stopped || evolution?.busy) return;
-      hostTick = Promise.resolve().then(async()=>{
-        await publicationReconciler!.reconcile(evolution!.items());await actions.reconcileResults(evolution!.items(),undefined,publicationReconciler);
-        await host!.tick();
-        if(development&&!userCommitments()&&!stopped&&(development.allocation().remaining>0||development.attempts().some(attempt=>['proposed','queued'].includes(attempt.state)))){
-          try{await development.tick();}catch{if(!stopped)console.error('development_tick_held');}
+      if (stopped) return;
+      // Mechanical health owns its own promise. A collector or provider call
+      // cannot suppress the next probe of the serving worker. Custody still
+      // enforces exclusive transitions; task draining owns a separate loop.
+      if (!hostTick) {
+        hostTick = Promise.resolve().then(() => host!.checkHealth())
+          .then(() => { if (!stopped) { drain(); resumeGrowth(); } })
+          .catch(() => { if (!stopped) console.error('generation_tick_failed'); })
+          .finally(() => { hostTick = undefined; });
+      }
+      if (backgroundTick || evolution?.busy) return;
+      backgroundTick = Promise.resolve().then(async () => {
+        await hostTick;
+        if (stopped || evolution?.busy) return;
+        await publicationReconciler!.reconcile(evolution!.items());
+        await actions.reconcileResults(evolution!.items(), undefined, publicationReconciler);
+        if (development && !userCommitments() && !stopped && (development.allocation().remaining > 0
+          || development.attempts().some(attempt => ['proposed', 'queued'].includes(attempt.state)))) {
+          try { await development.tick(); } catch { if (!stopped) console.error('development_tick_held'); }
         }
-      }).then(() => { resumeGrowth(); }).catch(() => { if (!stopped) console.error('generation_tick_failed'); })
-        .finally(() => { hostTick = undefined; });
+      }).then(() => { resumeGrowth(); }).catch(() => { if (!stopped) console.error('background_tick_failed'); })
+        .finally(() => { backgroundTick = undefined; });
     };
     tickTimer = setInterval(tick, 1000); tick();
     await stopRequested;
@@ -281,7 +297,7 @@ async function main(): Promise<void> {
     if (tickTimer) clearInterval(tickTimer);
     await Promise.allSettled([growth?.stop(), development?.stop(), localServer?.close(), slackServer?.close(), slackSocket?.close(), evolution?.stop()]);
     await (ready ? host?.runtime.stop().catch(() => {}) : undefined);
-    await hostTick;
+    await Promise.allSettled([hostTick, backgroundTick]);
     try { await host?.close(); } finally { try { store?.close(); } finally { lock.close(); } }
   }
 }

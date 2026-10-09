@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { freezeCandidate } from '../src/candidates.ts';
 import { GitPublisher, runGitCommand } from '../src/git-publication.ts';
+import type {GitExecutor} from '../src/git-publication.ts';
 import { Store } from '../src/store.ts';
 function fixture() {
   const dir=mkdtempSync(join(tmpdir(),'palimpsest-publication-'));const repositoryRoot=join(dir,'repo');const dataDir=join(dir,'state');const remoteUrl=join(dir,'remote.git');
@@ -30,6 +31,31 @@ function preparedCommit(f: ReturnType<typeof fixture>): string {
   git(['update-index', '--add', '--cacheinfo', `100644,${blob},src/agent/brain.ts`]);
   return git(['commit-tree', git(['write-tree']), '-p', f.candidate.baseCommit, '-m', 'prepared admitted source']);
 }
+test('withdrawal after a real index write prevents the next mutation and retains preparation without replay', async () => {
+  // This fixture supplies a synthetic promoted journal receipt to test Git
+  // mechanics. The actual promoted-release counterpart is separately retained.
+  const f = fixture(); let allowed = true; const mutations: string[] = [];
+  const before = f.git('rev-parse', 'HEAD');
+  const executeGit: GitExecutor = (file, args, options, callback) => {
+    const mutation = args.find(arg => ['read-tree', 'hash-object', 'update-index', 'write-tree', 'commit-tree', 'update-ref', 'push'].includes(arg));
+    if (mutation) mutations.push(mutation);
+    return runGitCommand(file, args, options, (error, stdout, stderr) => {
+      if (!error && mutation === 'read-tree') allowed = false;
+      callback(error, stdout, stderr);
+    });
+  };
+  try {
+    const publisher = new GitPublisher({ ...f.options, executeGit });
+    const result = await publisher.publish(f.candidate, { authorize: () => allowed });
+    assert.equal(result.status, 'uncertain'); assert.deepEqual(mutations, ['read-tree']);
+    const journal = f.store.listEvents().filter(event => event.type.startsWith('git.publication.'));
+    assert.deepEqual(journal.map(event => event.type), ['git.publication.reserved']);
+    assert.equal(f.git('rev-parse', 'HEAD'), before); assert.equal(f.git('ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], before);
+    assert.equal((await publisher.publish(f.candidate, { authorize: () => allowed })).status, 'uncertain');
+    assert.deepEqual(mutations, ['read-tree']);
+    assert.equal(f.store.listEvents().filter(event => event.type.startsWith('git.publication.')).length, journal.length);
+  } finally { f.close(); }
+});
 test('publication refuses dirty checkout, changed destination and divergent remote without changing source',async()=>{
   const f=fixture();try {
     const before=f.git('rev-parse','HEAD');writeFileSync(join(f.repositoryRoot,'local.txt'),'private local work');

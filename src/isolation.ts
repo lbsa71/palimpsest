@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { currentIsolationOwnership, type IsolationDrain, type IsolationOwnershipContext } from './isolation-ownership.ts';
+import { currentFiniteIsolationExecutor } from './isolation-executor.ts';
 
 export interface IsolationOptions {
   program: string;
@@ -131,18 +133,58 @@ function boundedText(raw: Buffer, limit: number): string {
   return text;
 }
 
+/** Only the group captured from this current detached launch is eligible.
+ * Leader close does not drain ordinary descendants with ignored stdio. Never
+ * infer absence from sending a signal, and never reconcile a persisted PID here.
+ * EPERM can occur transiently during kernel teardown; keep observing without
+ * claiming drain or signalling an uncertain group. Unresolved absence is held. */
+async function drainCurrentGroup(pid: number): Promise<void> {
+  const deadline = performance.now() + 1000;
+  let signalled = false, uncertainty: unknown;
+  for (;;) {
+    let present = false;
+    try { process.kill(-pid, 0); present = true; }
+    catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') return;
+      if (code !== 'EPERM') throw new IsolationError('Could not observe isolated process group drain', { cause });
+      uncertainty = cause;
+    }
+    if (present && !signalled) {
+      signalled = true;
+      try { process.kill(-pid, 'SIGKILL'); }
+      catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') throw new IsolationError('Could not terminate isolated process group for drain', { cause });
+      }
+      continue;
+    }
+    if (performance.now() >= deadline) throw new IsolationError('Isolated process group drain was not confirmed within its observation limit', { cause: uncertainty });
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+
 /** Execute the current trusted Node binary under a macOS deny-default profile.
  * Path grants and executable selection belong to trusted orchestration. There
  * is deliberately no shell, inherited environment, network, or unsafe fallback.
  */
-export async function runIsolated(options: IsolationOptions): Promise<IsolationResult> {
-  return executeIsolated(options, false);
+export function runIsolated(options: IsolationOptions): Promise<IsolationResult> {
+  try {
+    const executor = currentFiniteIsolationExecutor();
+    if (executor) return executor.run(options);
+    const ownership = currentIsolationOwnership();
+    ownership?.assertOpen();
+    const pending = executeIsolated(options, false, ownership);
+    ownership?.track(pending);
+    return pending;
+  } catch (error) { return Promise.reject(error); }
 }
 
 /** Current Node only; no lifetime timer, filesystem writes or child exception.
  * Mandatory observers must complete synchronously, including durable PID work.
  * Cancellation/observer faults retain ownership until actual process close. */
 export async function runIsolatedSession(options: IsolationSessionOptions): Promise<IsolationResult> {
+  if (currentFiniteIsolationExecutor()) throw new IsolationError('Persistent session cannot run inside finite executor scope');
+  if (currentIsolationOwnership()) throw new IsolationError('Persistent session cannot run inside finite isolation ownership');
   if (!options || !(options.signal instanceof AbortSignal) || typeof options.onSpawn !== 'function' || typeof options.onStdout !== 'function'
     || (options.onStderr !== undefined && typeof options.onStderr !== 'function')) throw new IsolationError('Session requires an owner signal and synchronous process/stdout observers');
   for (const key of ['timeoutMs', 'stdin', 'keepStdinOpen', 'writePaths', 'allowNodeChildren', 'trustedExecutables']) {
@@ -151,7 +193,7 @@ export async function runIsolatedSession(options: IsolationSessionOptions): Prom
   return executeIsolated(options, true);
 }
 
-async function executeIsolated(options: IsolationOptions, session: boolean): Promise<IsolationResult> {
+async function executeIsolated(options: IsolationOptions, session: boolean, ownership?: IsolationOwnershipContext): Promise<IsolationResult> {
   if (process.platform !== 'darwin' || !existsSync(sandboxExecutable)) throw new IsolationUnavailableError('Local candidate isolation requires macOS /usr/bin/sandbox-exec; no unconfined fallback is available');
   const trustedNode = canonical(process.execPath);
   const executables = [trustedNode];
@@ -163,12 +205,14 @@ async function executeIsolated(options: IsolationOptions, session: boolean): Pro
   const program = canonical(options.program);
   if (!executables.includes(program)) throw new IsolationError('Only the current trusted Node executable or hash-bound installed toolchain is permitted');
   if (!Array.isArray(options.args) || options.args.some(arg => typeof arg !== 'string' || arg.includes('\0'))) throw new IsolationError('Program arguments must be strings without NUL bytes');
+  const args = [...options.args];
   const cwd = explicitGrant(options.cwd);
   if (!statSync(cwd).isDirectory()) throw new IsolationError('Isolation working directory must be a directory');
   const reads = [...new Set([cwd, ...(options.readPaths ?? []).map(explicitGrant)])];
   const writes = [...new Set((options.writePaths ?? []).map(explicitGrant))];
   if (writes.some(path => !statSync(path).isDirectory())) throw new IsolationError('Writable scratch grants must be directories');
   const denies = [...new Set((options.denyReadPaths ?? []).map(canonical))];
+  const allowChildren = options.allowNodeChildren === true;
   const requiredReads = runtimeReadPaths(executables).map(canonical);
   for (const path of denies) {
     const stat = statSync(path);
@@ -182,28 +226,40 @@ async function executeIsolated(options: IsolationOptions, session: boolean): Pro
   for (const [key, value] of Object.entries(options.env ?? {})) {
     if (!environmentKeys.has(key) || typeof value !== 'string' || value.includes('\0')) throw new IsolationError(`Environment variable ${key} is not allowed in isolated execution`);
   }
+  const signal = ownership ? AbortSignal.any([ownership.signal, ...(options.signal ? [options.signal] : [])]) : options.signal;
+  if (ownership && signal?.aborted) throw new IsolationError('Owned isolated operation is cancelled before spawn');
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'palimpsest-job-')));
   const started = performance.now();
+  let spawnId: string | undefined, receipted = false, closed: IsolationDrain | undefined, scratchCanCleanup = true;
   try {
     const env = {
       PATH: dirname(trustedNode), HOME: scratch, TMPDIR: scratch, LANG: 'C', NO_COLOR: '1',
       ...options.env,
     };
-    const policy = profile(executables, session ? [...reads, scratch] : reads, session ? [] : [...writes, scratch], denies, options.allowNodeChildren === true);
+    const policy = profile(executables, session ? [...reads, scratch] : reads, session ? [] : [...writes, scratch], denies, allowChildren);
+    if (ownership) {
+      try { spawnId = ownership.beforeSpawn({ purpose: 'finite-isolated-process', program, args, cwd, scratch }); }
+      catch (cause) { throw new IsolationError('Trusted isolation ownership intent failed', { cause }); }
+      if (signal?.aborted) throw new IsolationError('Owned isolated operation is cancelled before spawn');
+    }
     return await new Promise<IsolationResult>((resolve, reject) => {
       const output: Buffer[] = []; const errors: Buffer[] = [];
       let outputBytes = 0; let errorBytes = 0; let captured = 0;
       let timedOut = false; let aborted = false; let outputLimitExceeded = false;
       let observerFailure: IsolationError | undefined;
-      const child = spawn(sandboxExecutable, ['-p', policy, program, ...options.args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      let child: ChildProcessWithoutNullStreams;
+      try { child = spawn(sandboxExecutable, ['-p', policy, program, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
+      catch (cause) { ownership?.fail(cause); throw cause; }
+      const currentGroup = child.pid;
+      let leaderClosed = false;
       const kill = () => {
-        if (!child.pid) return;
-        try { process.kill(-child.pid, 'SIGKILL'); }
+        if (!currentGroup || leaderClosed) return;
+        try { process.kill(-currentGroup, 'SIGKILL'); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') child.kill('SIGKILL'); }
       };
       const cancel = () => { aborted = true; kill(); };
       const timer = timeoutMs === undefined ? undefined : setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
-      const cleanup = () => { if (timer !== undefined) clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); };
+      const cleanup = () => { if (timer !== undefined) clearTimeout(timer); signal?.removeEventListener('abort', cancel); };
       const failObserver = (message: string, cause: unknown) => {
         observerFailure ??= new IsolationError(message, { cause });
         // Keep ownership and cancellation alive until close. Rejecting here
@@ -214,12 +270,12 @@ async function executeIsolated(options: IsolationOptions, session: boolean): Pro
         if (!observer || observerFailure) return;
         try {
           const returned: unknown = observer(value);
-          if (session && returned !== null && (typeof returned === 'object' || typeof returned === 'function')
+          if ((session || ownership) && returned !== null && (typeof returned === 'object' || typeof returned === 'function')
             && typeof (returned as { then?: unknown }).then === 'function') {
             // Catch even later rejection before failing the synchronous contract;
             // an async PID receipt cannot authorize work while it is pending.
             void Promise.resolve(returned).catch(() => {});
-            failObserver(message, new IsolationError('Session observer must complete synchronously'));
+            failObserver(message, new IsolationError('Trusted observer must complete synchronously'));
           }
         } catch (cause) { failObserver(message, cause); }
       };
@@ -237,20 +293,55 @@ async function executeIsolated(options: IsolationOptions, session: boolean): Pro
       child.stdout.on('data', (chunk: Buffer) => capture(chunk, false));
       child.stderr.on('data', (chunk: Buffer) => capture(chunk, true));
       child.once('error', error => {
-        if (observerFailure) return; // The original failure still waits for close.
-        cleanup(); reject(new IsolationUnavailableError('Could not launch the isolated Node process', { cause: error }));
+        // Even an error on a positively spawned process is not evidence of
+        // close. Preserve cancellation/deadline ownership until actual drain.
+        observerFailure ??= new IsolationUnavailableError('Could not launch the isolated Node process', { cause: error });
+        ownership?.fail(error);
+        kill();
       });
-      child.once('close', (exitCode, signal) => {
-        cleanup();
-        if (observerFailure) { reject(observerFailure); return; }
-        resolve({ exitCode, signal, stdout: boundedText(Buffer.concat(output), outputBytes), stderr: boundedText(Buffer.concat(errors), errorBytes), timedOut, aborted, outputLimitExceeded, durationMs: Math.ceil(performance.now() - started) });
+      child.once('close', (exitCode, closedSignal) => {
+        leaderClosed = true;
+        if (timer !== undefined) clearTimeout(timer);
+        // Keep owner cancellation observable during the bounded drain, while
+        // the guard alone controls this still-owned group's final signal.
+        void (async () => {
+          try {
+            if (!session && allowChildren && currentGroup) await drainCurrentGroup(currentGroup);
+            closed = { exitCode, signal: closedSignal };
+          } catch (cause) {
+            scratchCanCleanup = false;
+            ownership?.fail(cause);
+            observerFailure ??= cause instanceof IsolationError ? cause : new IsolationError('Isolated process group drain failed', { cause });
+          }
+          cleanup();
+          if (observerFailure) { reject(observerFailure); return; }
+          resolve({ exitCode, signal: closedSignal, stdout: boundedText(Buffer.concat(output), outputBytes), stderr: boundedText(Buffer.concat(errors), errorBytes), timedOut, aborted, outputLimitExceeded, durationMs: Math.ceil(performance.now() - started) });
+        })().catch(cause => { cleanup(); scratchCanCleanup = false; ownership?.fail(cause); reject(cause); });
       });
-      child.stdin.on('error', () => { /* Early exit or cancellation can close stdin before input is consumed. */ });
-      options.signal?.addEventListener('abort', cancel, { once: true });
-      if (options.signal?.aborted) cancel();
-      if (session || options.keepStdinOpen) { if (options.stdin) child.stdin.write(options.stdin); }
-      else child.stdin.end(options.stdin ?? '');
+      child.stdin!.on('error', () => { /* Early exit or cancellation can close stdin before input is consumed. */ });
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
+      if (ownership && spawnId && child.pid) {
+        try { ownership.spawned(spawnId, child); receipted = true; }
+        catch (cause) { failObserver('Trusted isolation ownership PID receipt failed', cause); }
+      } else if (ownership && spawnId) {
+        const error = new IsolationUnavailableError('Isolated process has no trustworthy PID receipt');
+        ownership.fail(error); failObserver('Could not launch the isolated process with a trustworthy PID receipt', error);
+      }
+      if (session || options.keepStdinOpen) { if (options.stdin) child.stdin!.write(options.stdin); }
+      else child.stdin!.end(options.stdin ?? '');
       observe(options.onSpawn, child, 'Trusted process observer failed');
     });
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally {
+    // Neither a PID nor outer promise rejection proves the scratch writer has
+    // drained. Missing/failed PID receipt or cleanup leaves the intent held.
+    if (scratchCanCleanup) {
+      try { rmSync(scratch, { recursive: true, force: true }); }
+      catch (cause) { ownership?.fail(cause); throw cause; }
+      if (ownership && spawnId && receipted && closed) {
+        try { ownership.drained(spawnId, closed); }
+        catch (cause) { throw new IsolationError('Trusted isolation ownership drain receipt failed', { cause }); }
+      }
+    }
+  }
 }

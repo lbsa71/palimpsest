@@ -1,10 +1,13 @@
 import { execFileSync } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Custodian } from './custodian.ts';
 import type { Actor, Checkpoint, ProcessRef, Release } from './custodian.ts';
-import { readManifest, verifyFrozenCandidate, evaluateCandidate, digestJson, candidateExecutionReadDenials } from './candidates.ts';
+import { readManifest, digestJson, candidateExecutionReadDenials } from './candidates.ts';
 import type { CandidateManifest } from './candidates.ts';
+import { CandidateJobs } from './candidate-jobs.ts';
+import type { CandidateJobOperation, CandidateJobValue } from './candidate-jobs.ts';
 import { AgentWorker } from './workers.ts';
 import { AgentRuntime } from './runtime.ts';
 import type { Communications, InboundMessage } from './communications.ts';
@@ -33,6 +36,7 @@ export interface GenerationOptions {
 /** Actual local worker supervision. All production effects stay in this trusted process. */
 export class GenerationHost {
   readonly custodian: Custodian;
+  readonly candidateJobs: CandidateJobs;
   readonly requiredChecks: readonly string[];
   readonly #options: GenerationOptions;
   readonly #workers = new Map<string, AgentWorker>();
@@ -41,20 +45,32 @@ export class GenerationHost {
   #runtime?: AgentRuntime;
   #providerAvailable = true;
   #closed = false;
+  #custodyTail: Promise<void> = Promise.resolve();
+  #custodyContext = new AsyncLocalStorage<{ active: boolean; validateCurrent?: () => void }>();
+  #closing?: Promise<void>;
+  #collectionStop = new AbortController();
+  #collections = new Map<Promise<unknown>, AbortController>();
 
   constructor(options: GenerationOptions) {
     this.#options = options;
+    this.candidateJobs = new CandidateJobs({ repositoryRoot: options.repositoryRoot, dataDir: options.dataDir });
     this.requiredChecks = Object.freeze(options.requiredChecks ?? ['typecheck', 'trusted-agent-contract', 'cross-scope-memory']);
     this.custodian = new Custodian({ storeDir: join(options.dataDir, 'custodian'),
       requiredChecks: [...this.requiredChecks], probationChecks: options.probationChecks ?? 3,
       hooks: {
         verifyArtifact: async (release, purpose) => {
           try {
+            const recovering = purpose === 'recovery' && this.custodian.inspect().phase === 'recovering';
+            if (recovering) await this.#interruptCollections();
             // New legacy-shaped candidates cannot nominate their own exception.
             // Recovery gets identity from the independently retained custody row.
             const retained = purpose === 'recovery' && this.custodian.inspect().artifacts.some(item => digestJson(item) === digestJson(release));
-            const manifest = verifyFrozenCandidate({ repositoryRoot: options.repositoryRoot, releaseDir: release.artifactPath, requireCurrentBase: purpose === 'admission',
-              ...(retained ? { expectedLegacyManifestDigest: release.digest } : {}) });
+            const manifest = await this.#collectCandidate({ kind: 'verify', options: { repositoryRoot: options.repositoryRoot,
+              releaseDir: release.artifactPath, requireCurrentBase: purpose === 'admission',
+              ...(retained ? { expectedLegacyManifestDigest: release.digest } : {}) } }, { deadlineMs: 9000 }, recovering ? 'recovery' : 'custody-integrity');
+            // Admission still belongs to its current origin after an async
+            // verifier returns. Recovery/cleanup must remain mechanical.
+            this.#validateCustodyConsequence();
             return manifest.manifestDigest === release.digest && manifest.governanceDigest === release.governanceDigest && manifest.dataSchemaVersion === release.dataSchemaVersion
               && manifest.modelProfile.provider === options.provider.name && manifest.modelProfile.model === options.model;
           } catch { return false; }
@@ -122,32 +138,126 @@ export class GenerationHost {
 
   get actor(): Actor { if (!this.#actor) throw new Error('No active generation'); return this.#actor; }
   get runtime(): AgentRuntime { if (!this.#runtime) throw new Error('No active runtime'); return this.#runtime; }
+  /** Trusted collector entry point. No production capability crosses into the
+   * helper, and an await cannot carry a result into another custody generation. */
+  async collectCandidate<T extends CandidateJobOperation>(operation: T, control: {
+    jobId?: string; signal?: AbortSignal; deadlineMs?: number; validateBinding?: () => void | Promise<void>;
+  } = {}): Promise<CandidateJobValue<T>> {
+    return this.#collectCandidate(operation, control);
+  }
+  async #collectCandidate<T extends CandidateJobOperation>(operation: T, control: {
+    jobId?: string; signal?: AbortSignal; deadlineMs?: number; validateBinding?: () => void | Promise<void>;
+  }, authority: 'serving' | 'custody-integrity' | 'recovery' = 'serving'): Promise<CandidateJobValue<T>> {
+    if (this.#closed) throw new Error('Generation host is closed');
+    if (authority !== 'serving' && operation.kind !== 'verify') throw new Error('Custody integrity collection is read-only verification');
+    if (authority !== 'recovery' && ['recovering', 'recovery_required'].includes(this.custodian.inspect().phase))
+      throw new Error('Mechanical recovery owns candidate collection');
+    const fence = () => {
+      const state = this.custodian.inspect();
+      return { phase: state.phase, epoch: state.epoch, active: state.active ?? null, knownGood: state.knownGood ?? null };
+    };
+    const binding = fence(); const expected = digestJson(binding);
+    const assertFence = () => {
+      if (this.#closed || digestJson(fence()) !== expected) throw new Error('Candidate collector custody binding changed');
+      // Custody's read-only integrity hook must survive a stopped predecessor.
+      // It still binds exact custody/artifact identity; an Evolution origin's
+      // post-verifier validator separately enforces current serving authority.
+      if (authority === 'serving' && binding.active) {
+        if (this.worker(binding.active.process).closed) throw new Error('Candidate collector bound worker is unavailable');
+        this.custodian.assertAuthority(this.actor, 'tool', binding.active.process);
+      }
+    };
+    assertFence();
+    const validate = control.validateBinding;
+    const stop = new AbortController();
+    const signal = AbortSignal.any([this.#collectionStop.signal, stop.signal, ...(control.signal ? [control.signal] : [])]);
+    const pending = this.candidateJobs.run(operation, { jobId: control.jobId, deadlineMs: control.deadlineMs, signal,
+      binding: JSON.parse(JSON.stringify({ ...binding, authority })) as Json,
+      validateBinding: async () => { assertFence(); await validate?.(); assertFence(); } });
+    this.#collections.set(pending, stop);
+    try { return await pending; } finally { this.#collections.delete(pending); }
+  }
+  async #interruptCollections(): Promise<void> {
+    const pending = [...this.#collections];
+    for (const [, stop] of pending) stop.abort();
+    // Settlement alone is not drain. CandidateJobs retains any unresolved
+    // ownership and refuses the following recovery verifier in that case.
+    await Promise.allSettled(pending.map(([result]) => result));
+  }
   worker(peer: ProcessRef): AgentWorker {
     const worker = this.#workers.get(peer.instanceId);
     if (!worker || worker.peer.pid !== peer.pid) throw new Error('Unknown worker instance');
     return worker;
   }
+  /** Trusted host callers only. Serialize receiver operations; independent
+   * model, collector and task waits stay outside. Receiver hooks run in-place.
+   * Callers copy payloads before enqueueing and revalidate their
+   * actual authority inside the callback; this queue grants no receiver rights.
+   * Hooks already run inside an operation and must not acquire it recursively. */
+  async custodyOperation<T>(operation: () => T | Promise<T>, validateCurrent?: () => void): Promise<T> {
+    if (this.#custodyContext.getStore()?.active) throw new Error('Recursive custody operation is forbidden');
+    if (this.#closed) throw new Error('Generation host is closed');
+    const pending = this.#custodyTail.then(async () => {
+      const context = { active: true, validateCurrent };
+      try { return await this.#custodyContext.run(context, () => {
+        this.#validateCustodyConsequence(true);
+        return operation();
+      }); }
+      finally { context.active = false; }
+    });
+    // One rejected receiver operation does not poison subsequent maintenance.
+    this.#custodyTail = pending.then(() => {}, () => {});
+    return pending;
+  }
+  #validateCustodyConsequence(entry = false): void {
+    const context = this.#custodyContext.getStore();
+    // Every supplied entry validator must veto before invoking its callback.
+    // After transfer/during rescue, internal hooks must finish mechanically;
+    // explicit mechanical operations supply no origin validator.
+    if (!context?.active || (!entry && !['normal', 'evaluation'].includes(this.custodian.inspect().phase))) return;
+    const result: unknown = context.validateCurrent?.();
+    if (result && (typeof result === 'object' || typeof result === 'function') && 'then' in result && typeof result.then === 'function') {
+      void Promise.resolve(result).catch(() => {});
+      throw new Error('Custody current validation must be synchronous');
+    }
+  }
+  async checkHealth(): Promise<void> {
+    await this.custodyOperation(() => this.custodian.tick());
+  }
   async start(initial?: CandidateManifest): Promise<void> {
-    if (this.custodian.inspect().phase === 'empty') {
-      if (!initial) throw new Error('Bootstrap requires an evaluated baseline');
-      await this.custodian.bootstrap(releaseOf(initial));
-    } else await this.custodian.recover();
-    if (this.custodian.inspect().phase === 'recovery_required') throw new Error('Mechanical recovery requires operator reconciliation');
+    const release = initial ? releaseOf(structuredClone(initial)) : undefined;
+    await this.custodyOperation(async () => {
+      if (this.custodian.inspect().phase === 'empty') {
+        if (!release) throw new Error('Bootstrap requires an evaluated baseline');
+        await this.custodian.bootstrap(release);
+      } else await this.custodian.recover();
+      if (this.custodian.inspect().phase === 'recovery_required') throw new Error('Mechanical recovery requires operator reconciliation');
+    });
   }
 
   async installHostBaseline(manifest: CandidateManifest, expectedIncumbent: string): Promise<void> {
-    const previous = this.custodian.inspect().knownGood;
+    manifest = structuredClone(manifest);
+    const state = this.custodian.inspect(); const previous = state.knownGood;
+    const actor = this.actor;
+    const expectedState = digestJson({ epoch: state.epoch, active: state.active, knownGood: state.knownGood });
     if (!previous || previous.digest !== expectedIncumbent) throw new Error('Operator baseline incumbent changed');
-    const old = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false,expectedLegacyManifestDigest:previous.digest});
-    const frozen = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:manifest.releaseDir});
+    const old = await this.collectCandidate({ kind: 'verify', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false,expectedLegacyManifestDigest:previous.digest} });
+    const frozen = await this.collectCandidate({ kind: 'verify', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:manifest.releaseDir} });
     if (frozen.id !== manifest.id || frozen.sourceDigest !== old.sourceDigest || frozen.dataSchemaVersion !== old.dataSchemaVersion)
       throw new Error('Host installation must preserve exact admitted cognitive source and schema');
     if(digestJson(frozen.configuration)!==digestJson(old.configuration))throw new Error('Host installation must preserve configured release policy');
     if(old.requiredChecks.some(name=>!frozen.requiredChecks.includes(name)))throw new Error('Host installation requires all protected checks, including previously admitted checks');
-    const checked = await evaluateCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:frozen.releaseDir});
+    const checked = await this.collectCandidate({ kind: 'evaluate', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:frozen.releaseDir} });
     if (checked.status !== 'passed' || this.requiredChecks.some(name=>!checked.checks.some(check=>check.name===name && check.status==='passed')))
       throw new Error('Host installation requires all protected checks');
-    await this.custodian.installHostBaseline(releaseOf(frozen),expectedIncumbent,checked.evidenceDigest);
+    const release = releaseOf(frozen);
+    const validateCurrent = () => {
+      const current = this.custodian.inspect();
+      if (digestJson({ epoch: current.epoch, active: current.active, knownGood: current.knownGood }) !== expectedState || !current.active || this.worker(current.active.process).closed)
+        throw new Error('Operator baseline incumbent changed');
+      this.custodian.assertAuthority(actor, 'tool', current.active.process);
+    };
+    await this.custodyOperation(() => this.custodian.installHostBaseline(release, expectedIncumbent, checked.evidenceDigest), validateCurrent);
   }
 
   async submit(message: InboundMessage): Promise<Task> {
@@ -160,7 +270,7 @@ export class GenerationHost {
     return this.#options.store.task(task.id)!;
   }
   async drain(): Promise<void> { await this.runtime.runUntilIdle(); }
-  async tick(): Promise<void> { await this.custodian.tick(); if (this.custodian.inspect().active) await this.drain(); }
+  async tick(): Promise<void> { await this.checkHealth(); if (this.custodian.inspect().active) await this.drain(); }
 
   async #checkpoint(quiesce: boolean): Promise<Checkpoint> {
     const store = this.#options.store;
@@ -194,9 +304,17 @@ export class GenerationHost {
   }
 
   async close(): Promise<void> {
-    this.#closed = true; await this.#runtime?.stop().catch(() => {});
-    await Promise.all([...this.#workers.values()].map(worker => worker.stop()));
-    this.custodian.close();
+    if (this.#custodyContext.getStore()?.active) throw new Error('Recursive custody close is forbidden');
+    if (this.#closing) return this.#closing;
+    this.#closed = true; this.#collectionStop.abort();
+    this.#closing = (async () => {
+      await this.#custodyTail;
+      await Promise.allSettled([...this.#collections.keys()]);
+      await this.#runtime?.stop().catch(() => {});
+      await Promise.all([...this.#workers.values()].map(worker => worker.stop()));
+      this.custodian.close();
+    })();
+    return this.#closing;
   }
 }
 

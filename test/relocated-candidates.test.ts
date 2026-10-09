@@ -35,7 +35,7 @@ test('immutable relocated host with linked dependencies evaluates exact Node-typ
     writeFileSync(join(repositoryRoot, 'package.json'), '{"type":"module"}');
     writeFileSync(join(repositoryRoot, 'docs/seed-contract.md'), 'Protected fixture contract');
     git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid'); git('add', '.'); git('commit', '-qm', 'Node-typed baseline');
-    for (const path of ['src/candidates.ts', 'src/config.ts', 'src/isolation.ts', 'trusted/agent-contract.test.mjs', 'trusted/development-contract.test.mjs']) {
+    for (const path of ['src/candidates.ts', 'src/config.ts', 'src/isolation.ts', 'src/isolation-ownership.ts', 'src/isolation-executor.ts', 'trusted/agent-contract.test.mjs', 'trusted/development-contract.test.mjs']) {
       mkdirSync(dirname(join(hostRoot, path)), { recursive: true, mode: 0o700 });
       writeFileSync(join(hostRoot, path), readFileSync(resolve(path)), { mode: 0o400 });
     }
