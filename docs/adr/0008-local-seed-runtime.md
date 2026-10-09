@@ -4,6 +4,8 @@
 - **Recorded:** 2026-10-08.
 - **Requirements:** R04–R07, R17–R19; P01–P06.
 
+**Subsequent scope refinement, 2026-10-09:** [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) reopens the framework-free restriction below to meet explicit basic coding and full-codebase autonomy requirements. A small replaceable/forkable model/tool library is being evaluated in P17.1; no dependency is selected by that assessment. The original minimal-runtime choice and its historical verification remain recorded here.
+
 ## Context
 
 The user requested implementation, regular pushes, and a locally executed self-improvement iteration that produces a Palimpsest-originated pushed change. The user also explicitly requested a communications-provider abstraction for direct testing and required lived-experience substrate outside the repository.

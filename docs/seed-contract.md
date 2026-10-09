@@ -2,6 +2,8 @@
 
 Status: implementation specification, 2026-10-08. Implements the first portions of P01–P06 and P08; full plan completion remains separate.
 
+This is the historical first slice. The user's explicit 2026-10-09 seed requirements additionally require [iterative coding](coding-autonomy.md), with real file/search/edit/command tools and full-codebase evolution under [ADR 0019](adr/0019-coding-autonomy-and-reusable-agent-plumbing.md). P17/P18 and A22/A23/A17 track those mandatory capabilities; this earlier slice does not establish a complete autonomous coding seed.
+
 ## Behavior
 
 1. Load explicit provider/model configuration and private credentials from an external local file. Missing configuration is an honest unavailable result, never an implicit fallback.

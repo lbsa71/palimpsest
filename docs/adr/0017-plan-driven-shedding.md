@@ -6,6 +6,8 @@
 - **Specification:** [Plan-driven shedding](../plan-driven-evolution.md).
 - **Extends:** ADRs 0012, 0015 and 0016 without relaxing cognitive-only admission or the separate host/rescue boundary.
 
+**Subsequent scope refinement, 2026-10-09:** [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) and P17/P18 make broader coding and full-codebase evolution required. The two-item protected catalog here is the implemented starting point. The autark must gain a separate evaluated route to evolve catalog/check policy for later transactions, as well as tools to implement ordinary work across the repository; neither extension is claimed by this ADR's current evidence.
+
 ## Context
 
 The user wants Palimpsest to begin reliably self-evolving according to the implementation plan through shedding iterations. Standing growth records investigations and source hypotheses, and the conversational release path can act on an eligible concrete suggestion. Neither establishes durable repository-work selection, dependency completion or independent evidence of arbitrary proposed improvements. Generic contract checks and persuasive review are insufficient to close a work item.
