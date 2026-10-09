@@ -1,6 +1,7 @@
 import { GrowthCoordinator, parseGrowthReflection, type GrowthProposal } from './growth.ts';
 import type { Provider } from './providers.ts';
 import { Store, type Growth, type GrowthDimension } from './store.ts';
+import type { SourceBinding } from './source-identity.ts';
 
 export interface GrowthSchedulerOptions {
   store: Store;
@@ -13,6 +14,7 @@ export interface GrowthSchedulerOptions {
   now?: () => number;
   memoryScope?: string;
   context?: () => string;
+  observeSource?: () => SourceBinding;
   maxOutputTokens?: number;
   proposalTimeoutMs?: number;
   onProposedChange?: (event: { proposalId: string; growth: Growth; proposedChange: GrowthProposal; signal: AbortSignal }) => void | Promise<void>;
@@ -85,7 +87,7 @@ export class GrowthScheduler {
     const window = store.openGrowthWindow({ id: `${this.#schedulerId}:${startsAt}`, schedulerId: this.#schedulerId, startsAt, endsAt, maxCalls: this.#calls });
     const coordinator = new GrowthCoordinator({
       store, provider: this.#options.provider, hasUserWork: this.#options.hasUserWork, budgetPerExperiment: 0,
-      memoryScope: this.#options.memoryScope, context: this.#options.context, maxOutputTokens: this.#options.maxOutputTokens,
+      memoryScope: this.#options.memoryScope, context: this.#options.context, observeSource: this.#options.observeSource, maxOutputTokens: this.#options.maxOutputTokens,
       claim: (id) => signal.aborted || this.#options.hasUserWork() ? undefined : store.claimGrowthInWindow(id, window.id, integer((this.#options.now ?? Date.now)(), 0)),
     });
     coordinator.seedAgenda();

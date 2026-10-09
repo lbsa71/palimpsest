@@ -20,7 +20,10 @@ export interface EvolutionSchedulerOptions {
   beforeRun?(): Promise<unknown>;
   callsPerDay?: number;
   interactiveCallsPerDay?: number;
+  planCallsPerDay?: number;
   authorizeProposal?: (growthId: string) => boolean;
+  /** Trusted admission keeps a new attempt from consuming a partial allocation. */
+  minimumCallsPerAttempt?: number;
   intervalMs?: number;
   attemptTimeoutMs?: number;
   now?: () => number;
@@ -41,11 +44,12 @@ export class EvolutionScheduler {
   readonly #options: EvolutionSchedulerOptions;
   readonly #calls: number;
   readonly #interactiveCalls: number;
+  readonly #planCalls: number;
   readonly #interval: number;
   readonly #timeout: number;
   #active: Promise<EvolutionQueueItem | null> | undefined;
   #controller: AbortController | undefined;
-  #current: { item: EvolutionQueueItem; recovery: boolean; calls: number; interactive: boolean } | undefined;
+  #current: { item: EvolutionQueueItem; recovery: boolean; calls: number; interactive: boolean; plan:boolean } | undefined;
   #timer: ReturnType<typeof setInterval> | undefined;
   #stopped = false;
 
@@ -53,6 +57,7 @@ export class EvolutionScheduler {
     this.#options = options;
     this.#calls = integer(options.callsPerDay ?? 8);
     this.#interactiveCalls = integer(options.interactiveCallsPerDay ?? 8);
+    this.#planCalls = integer(options.planCallsPerDay ?? 0);
     this.#interval = integer(options.intervalMs ?? 1000, 1, 2_147_483_647);
     this.#timeout = integer(options.attemptTimeoutMs ?? 20 * 60_000, 1, 2_147_483_647);
   }
@@ -153,14 +158,15 @@ export class EvolutionScheduler {
     return work;
   }
 
-  #window(interactive = false): { startsAt: number; used: number; remaining: number } {
+  #window(interactive = false, plan = false): { startsAt: number; used: number; remaining: number } {
     const now = integer((this.#options.now ?? Date.now)()); const startsAt = Math.floor(now / DAY) * DAY;
     const events = this.#options.store.listEvents();
-    const maximum = interactive ? this.#interactiveCalls : this.#calls;
-    const old = events.find(event => event.type === 'evolution.scheduler.window' && plain(event.payload).startsAt === startsAt && (plain(event.payload).interactive === true) === interactive);
+    const maximum = interactive ? this.#interactiveCalls : plan ? this.#planCalls : this.#calls;
+    const lane=(payload:unknown)=> (plain(payload).interactive === true) === interactive && (plain(payload).plan === true) === plan;
+    const old = events.find(event => event.type === 'evolution.scheduler.window' && plain(event.payload).startsAt === startsAt && lane(event.payload));
     if (old && plain(old.payload).maxCalls !== maximum) throw new Error('Evolution daily allocation is immutable');
-    if (!old) this.#options.store.appendEvent('evolution.scheduler.window', { startsAt, endsAt: startsAt + DAY, maxCalls: maximum, interactive });
-    const used = events.filter(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).startsAt === startsAt && (plain(event.payload).interactive === true) === interactive).length;
+    if (!old) this.#options.store.appendEvent('evolution.scheduler.window', { startsAt, endsAt: startsAt + DAY, maxCalls: maximum, interactive,plan });
+    const used = events.filter(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).startsAt === startsAt && lane(event.payload)).length;
     return { startsAt, used, remaining: Math.max(0, maximum - used) };
   }
 
@@ -170,8 +176,8 @@ export class EvolutionScheduler {
       || !['normal', 'evaluation'].includes(this.#options.phase()) || current.calls >= 8) return false;
     if (attemptId !== `evolution:${current.item.id}:call:${current.calls + 1}`) return false;
     if (this.#options.store.listEvents().some(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).attemptId === attemptId)) return false;
-    const window = this.#window(current.interactive); if (window.remaining < 1) return false;
-    this.#options.store.appendEvent('evolution.scheduler.call_reserved', { startsAt: window.startsAt, attemptId, runId: current.item.id, ordinal: current.calls + 1, interactive: current.interactive });
+    const window = this.#window(current.interactive,current.plan); if (window.remaining < 1) return false;
+    this.#options.store.appendEvent('evolution.scheduler.call_reserved', { startsAt: window.startsAt, attemptId, runId: current.item.id, ordinal: current.calls + 1, interactive: current.interactive,plan:current.plan });
     current.calls++; return true;
   }
 
@@ -188,15 +194,30 @@ export class EvolutionScheduler {
   async #run(signal: AbortSignal): Promise<EvolutionQueueItem | null> {
     const all = this.items();
     const retained = all.find(item => item.state === 'running' || item.state === 'probation');
-    let item = retained ?? all.find(item => item.state === 'queued' && this.#options.store.growth(item.growthId)?.sourceTaskId)
-      ?? all.find(item => item.state === 'queued');
+    const minimum=this.#options.minimumCallsPerAttempt??1;
+    if(!Number.isSafeInteger(minimum)||minimum<1||minimum>8)throw new Error('Invalid minimum release allocation');
+    const lane=(item:EvolutionQueueItem)=>{
+      const growth=this.#options.store.growth(item.growthId)!;
+      const interactive=!!growth.sourceTaskId;
+      return {interactive,plan:!interactive&&!!plain(plain(growth.outcome).development).attemptId};
+    };
+    const priority=(item:EvolutionQueueItem)=>{const kind=lane(item);return kind.interactive?0:kind.plan?1:2;};
+    const queued=all.filter(item=>item.state==='queued').sort((a,b)=>priority(a)-priority(b));
+    let item = retained;
+    if(!item)for(const candidate of queued){
+      const kind=lane(candidate);
+      if((kind.interactive&&!this.#options.authorizeProposal)||this.#options.authorizeProposal?.(candidate.growthId)===false)
+        return this.#finish(candidate,{status:'declined',reason:'Current source-author policy denies this proposal or it was cancelled',calls:0});
+      if(this.#window(kind.interactive,kind.plan).remaining>=minimum){item=candidate;break;}
+    }
     if (!item) return null;
     if (!retained && (signal.aborted || this.#stopped || this.#options.hasUserWork() || this.#options.phase() !== 'normal')) return null;
     const growth = this.#options.store.growth(item.growthId)!;
     const interactive = !!growth.sourceTaskId;
+    const plan = !interactive && !!plain(plain(growth.outcome).development).attemptId;
     if (!retained && ((interactive && !this.#options.authorizeProposal) || this.#options.authorizeProposal?.(item.growthId) === false))
       return this.#finish(item, { status: 'declined', reason: 'Current source-author policy denies this proposal or it was cancelled', calls: 0 });
-    if (!retained && this.#window(interactive).remaining < 1) return null;
+    if (!retained && this.#window(interactive,plan).remaining < minimum) return null;
     await this.#options.beforeRun?.();
     if (!retained && (signal.aborted || this.#stopped || this.#options.hasUserWork() || this.#options.phase() !== 'normal')) return null;
     if (retained && !this.#previous(item.id)) return this.#finish(item, { status: 'interrupted', reason: 'Claim interrupted before a recoverable evolution report; uncertain work was not replayed', calls: 0 });
@@ -204,7 +225,7 @@ export class EvolutionScheduler {
       this.#options.store.appendEvent('evolution.queue.claimed', { id: item.id });
       item = { ...item, state: 'running' };
     }
-    this.#current = { item, recovery: retained !== undefined, calls: 0, interactive };
+    this.#current = { item, recovery: retained !== undefined, calls: 0, interactive,plan };
     const timer = setTimeout(() => this.interrupt(), this.#timeout);
     try {
       const result = await this.#options.run({ id: item.id, growthId: item.growthId, proposal: this.#proposal(item.growthId), signal });

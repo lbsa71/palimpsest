@@ -15,6 +15,8 @@ export interface RuntimeConfig {
   growthCallsPerDay: number;
   evolutionCallsPerDay: number;
   interactiveEvolutionCallsPerDay: number;
+  planProposalCallsPerDay: number;
+  planEvolutionCallsPerDay: number;
   timeoutMs: number;
   slackBotToken?: string;
   slackAppToken?: string;
@@ -96,6 +98,8 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
     growthCallsPerDay: values.PALIMPSEST_GROWTH_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_GROWTH_CALLS_PER_DAY, 4, 'daily growth calls'),
     evolutionCallsPerDay: values.PALIMPSEST_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_EVOLUTION_CALLS_PER_DAY, 8, 'daily evolution calls'),
     interactiveEvolutionCallsPerDay: values.PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY, 8, 'daily interactive evolution calls'),
+    planProposalCallsPerDay: values.PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY, 2, 'daily plan proposal calls'),
+    planEvolutionCallsPerDay: values.PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_DAY === '0' ? 0 : positiveInteger(values.PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_DAY, 16, 'daily plan evolution calls'),
     timeoutMs: positiveInteger(values.PALIMPSEST_TIMEOUT_MS, 120_000, 'timeout'),
     slackTeamIds: (values.SLACK_ALLOWED_TEAM_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
     slackSelfModificationUserIds: (values.SLACK_SELF_MODIFICATION_USER_IDS ?? values.SLACK_ALLOWED_USER_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
@@ -105,7 +109,8 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
     describe() {
       return { repositoryRoot, dataDir, credentialsPath, provider, model: this.model ?? null,
         credentialsConfigured: provider === 'mistral' ? Boolean(this.mistralApiKey) : 'CLI login required',
-        maxCallsPerTask: this.maxCallsPerTask, growthCallsPerDay: this.growthCallsPerDay, evolutionCallsPerDay: this.evolutionCallsPerDay, interactiveEvolutionCallsPerDay:this.interactiveEvolutionCallsPerDay, timeoutMs: this.timeoutMs,
+        maxCallsPerTask: this.maxCallsPerTask, growthCallsPerDay: this.growthCallsPerDay, evolutionCallsPerDay: this.evolutionCallsPerDay, interactiveEvolutionCallsPerDay:this.interactiveEvolutionCallsPerDay,
+        planProposalCallsPerDay:this.planProposalCallsPerDay,planEvolutionCallsPerDay:this.planEvolutionCallsPerDay,timeoutMs: this.timeoutMs,
         gitPublicationConfigured:Boolean(this.gitRemote && this.gitBranch && this.gitRemoteUrl), gitRemote:this.gitRemote ?? null,gitBranch:this.gitBranch ?? null,
         slackConfigured: Boolean(this.slackBotToken && (this.slackAppToken || this.slackSigningSecret)),
         slackSocketConfigured: Boolean(this.slackBotToken && this.slackAppToken),

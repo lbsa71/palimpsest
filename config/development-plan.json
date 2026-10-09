@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "P06-memory-provenance",
+      "planItem": "P06",
+      "requirements": ["R03", "R07", "R19"],
+      "title": "Preserve current memory lineage in cognitive context",
+      "problem": "The cognitive request contains memory IDs, sources and confidence but drops version, evidence and update time. Corrected memories therefore lose inspectable lineage before inference.",
+      "expectedBehavior": "Serialize current same-conversation memory descriptors with their exact version, evidence references and updatedAt alongside existing grounded fields. Preserve request data, scope isolation and existing context bounds.",
+      "acceptanceCriteria": [
+        "Every included memory has the exact supplied current version, ordered evidence references and updatedAt; no invented or altered lineage fields.",
+        "Fresh corrected-memory and empty-evidence fixtures retain their actual descriptors without elevating confidence.",
+        "Mixed-scope and foreign-only inputs never expose foreign IDs, content or evidence anywhere in the completion request.",
+        "Normal request, bounded context and protected scope checks remain green."
+      ],
+      "nonGoals": ["Changing persistent memory schema, consolidation, retention or author eligibility.", "Claiming improved model recall or judgment solely from request serialization."],
+      "materialRisks": ["Evidence references can consume context capacity or contain instruction-like text; they remain untrusted prompt data.", "Source-version metadata is useful evidence, not automatic trust or permission."],
+      "dependencies": [],
+      "permittedPaths": ["src/agent/brain.ts"],
+      "authoritativeChecks": ["memory-provenance"],
+      "budget": { "proposalCalls": 1, "releaseCalls": 8, "maxAttempts": 3, "retryAfterMs": 60000 }
+    },
+    {
+      "id": "P06-memory-context-budget",
+      "planItem": "P06",
+      "requirements": ["R03", "R07", "R17", "R19"],
+      "title": "Bound memory context in UTF-8 bytes while retaining newest experiences",
+      "problem": "Twelve four-thousand-character memories do not establish a total byte bound. Unicode content and evidence references can exceed intended memory-context resources.",
+      "expectedBehavior": "Select same-conversation memories newest first, using updatedAt with deterministic original-position tie breaking. Emit at most twelve descriptors, each content a nonempty source prefix of at most four thousand characters, with the JSON-serialized memory array at most 32768 UTF-8 bytes. Preserve exact lineage for each retained descriptor.",
+      "acceptanceCriteria": [
+        "The UTF-8 byte length of JSON.stringify(prompt.memories) is at most 32768 for fresh mixed ASCII, multibyte Unicode and large-evidence inputs.",
+        "Choose eligible experiences in descending updatedAt order, resolving equal times by later input position first, and retain the newest whenever its complete descriptor can fit with a nonempty grounded content prefix.",
+        "Emit at most twelve descriptors; content remains a nonempty source prefix of at most four thousand characters and never ends with a newly isolated surrogate from truncation.",
+        "If immutable metadata cannot fit even with a minimal grounded content prefix, omit that descriptor rather than changing its evidence, version, source, confidence or update time.",
+        "Preserve P06-memory-provenance behavior, ordinary experience retention when it fits, request data and foreign-scope exclusion."
+      ],
+      "nonGoals": ["Bounding the user's request bytes or total provider prompt independently of memory context.", "Dropping or rewriting evidence to make a descriptor fit.", "Changing storage order, persistence or fairness among the standing growth dimensions."],
+      "materialRisks": ["A smaller context can omit useful older episodes; newest-first selection and exact omitted-state accounting must be stated honestly.", "Byte accounting must include JSON escaping, metadata and array delimiters, not only content characters.", "An oversized latest descriptor can be omitted; preserving exact provenance takes precedence over including it."],
+      "dependencies": ["P06-memory-provenance"],
+      "permittedPaths": ["src/agent/brain.ts"],
+      "authoritativeChecks": ["memory-provenance", "memory-context-budget"],
+      "budget": { "proposalCalls": 1, "releaseCalls": 8, "maxAttempts": 3, "retryAfterMs": 60000 }
+    }
+  ]
+}

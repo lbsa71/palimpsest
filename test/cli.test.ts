@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { Store } from '../src/store.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { observeSourceIdentity } from '../src/source-identity.ts';
 
 const cli = resolve('src/cli.ts');
 const source = `export function conversationRequest(task: any, memories: any[]) { return {
@@ -156,9 +158,14 @@ test('serving discovers a durable growth proposal, reserves release budget and r
   const f = fixture(); let active: Awaited<ReturnType<typeof serve>> | undefined;
   try {
     f.env.PALIMPSEST_GROWTH_CALLS_PER_DAY = '0'; f.env.PALIMPSEST_EVOLUTION_CALLS_PER_DAY = '8';
+    run(f,'init');
+    const custody=new DatabaseSync(join(f.data,'custodian/custodian.sqlite'),{readOnly:true});
+    const release=JSON.parse(custody.prepare('SELECT record FROM custodian_state WHERE id=1').get()!.record as string).knownGood;
+    custody.close();
+    const sourceBinding=observeSourceIdentity({repositoryRoot:f.repo,release});
     const before = new Store(join(f.data, 'state.sqlite'));
     const inquiry = before.addGrowth({ id: 'recorded-source-proposal', dimension: 'code_quality', question: 'Synthetic missing cognitive scope guard', origin: 'fixture' });
-    before.updateGrowth(inquiry.id, { state: 'completed', outcome: { result: { observation: 'Synthetic source inspection', lesson: 'Guard scope at the cognitive entrypoint', nextQuestion: 'What else needs a held-out check?', proposedChange: {
+    before.updateGrowth(inquiry.id, { state: 'completed', outcome: { sourceBinding:{...sourceBinding},result: { observation: 'Synthetic source inspection', lesson: 'Guard scope at the cognitive entrypoint', nextQuestion: 'What else needs a held-out check?', proposedChange: {
       summary: 'Synthetic scope guard', rationale: 'Exercise the protected release path', acceptanceCriteria: ['Filter memories by conversation before bounding'],
       files: [{ path: 'src/agent/brain.ts', content: source.replace('memories.slice(-12)', 'memories.filter(m => m.scope === task.conversationId).slice(-12)') }],
     } } } });

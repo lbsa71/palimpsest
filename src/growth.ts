@@ -1,5 +1,7 @@
 import { ProviderError, type Provider, type CompletionResult } from './providers.ts';
 import { Store, type Growth, type GrowthDimension, type Json } from './store.ts';
+import { parseSourceBinding } from './source-identity.ts';
+import type { SourceBinding } from './source-identity.ts';
 
 export interface GrowthProposal {
   summary: string;
@@ -24,6 +26,8 @@ export interface GrowthOptions {
   memoryScope?: string;
   /** Explicitly authorized source/observations supplied by the host coordinator. */
   context?: () => string;
+  /** Exact host-observed admitted source and checkout identity before inference. */
+  observeSource?: () => SourceBinding;
   maxOutputTokens?: number;
   /** Trusted host hook for an atomic global-budget claim; never model supplied. */
   claim?: (growthId: string) => Growth | undefined;
@@ -65,6 +69,7 @@ Distinguish observed facts from interpretation. A negative or inconclusive resul
 Use only the supplied context. If evidence is thin, explain the limitation and suggest a discriminating next inquiry.
 Return JSON with observation, lesson, nextQuestion, and proposedChange. Set proposedChange to null unless the supplied source supports a concrete change.
 A code proposal includes summary, rationale, testable acceptanceCriteria, and files with relative repository path and complete replacement content.
+Follow the supplied engineering rules: start from the observed defect and expected behavior, make the smallest readable change, preserve nearby contracts, and explain invariants or tradeoffs where they are non-obvious. Retain useful functionality within resource bounds. Never hard-code check fixtures, weaken checks, add speculative abstractions, or claim tests you did not run. Use concrete failed-check feedback to correct the cause rather than hide the symptom.
 Proposals have no authority to modify files, release code, send messages, spend more budget, or change admission rules.
 Any claimed improvement needs independent evaluation; your reflection is not proof of success.`;
 
@@ -178,6 +183,15 @@ export class GrowthCoordinator {
         && (options.growthId === undefined || item.id === options.growthId)
         && (this.#options.claim !== undefined || item.remainingBudget >= 1))
         .sort((a, b) => (latest.get(a.id) ?? 0) - (latest.get(b.id) ?? 0));
+      if (!eligible.length) return null;
+      let sourceBinding: SourceBinding | undefined;
+      if (this.#options.observeSource) {
+        try { sourceBinding = parseSourceBinding(this.#options.observeSource()); }
+        // Source/publication holds are recoverable. Do not claim an allocation
+        // or stop the standing scheduler while waiting for exact source identity.
+        catch { return null; }
+      }
+      const binding = sourceBinding ? { sourceBinding } : {};
       const context = this.#options.context?.() ?? '';
       if (typeof context !== 'string' || context.length > 100_000) throw new Error('Growth context must be a string of at most 100000 characters');
       if (this.#options.hasUserWork() || options.signal?.aborted) return null;
@@ -193,27 +207,27 @@ export class GrowthCoordinator {
         inquiry: { id: claimed.id, dimension: claimed.dimension, question: claimed.question, nextStep: claimed.nextStep },
         previousCheckpoint: previous.phase === 'awaiting_provider' && typeof previous.input === 'string'
           ? { phase: previous.phase, interruptedContext: previous.input.slice(0, 30_000) } : previous,
-        observations: memories, authorizedContext: context,
+        observations: memories, authorizedContext: context, ...binding,
         constraints: { providerCallsThisTick: 1, remainingCallsAfterThisAttempt: claimed.remainingBudget, independentEvaluationRequired: true },
       });
-      store.updateGrowth(claimed.id, { checkpoint: { phase: 'awaiting_provider', input: prompt }, nextStep: 'Await the bounded inquiry result; interruption consumes this attempt.' });
+      store.updateGrowth(claimed.id, { checkpoint: json({ phase: 'awaiting_provider', input: prompt, ...binding }), nextStep: 'Await the bounded inquiry result; interruption consumes this attempt.' });
       let completion: CompletionResult;
       try {
         completion = await this.#options.provider.complete({ system, prompt, schema: reflectionSchema, signal: options.signal, maxOutputTokens: this.#options.maxOutputTokens ?? 4096 });
       } catch (error) {
         const reason = options.signal?.aborted ? 'cancelled' : error instanceof ProviderError ? error.code : 'provider_unavailable';
-        return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: { phase: 'awaiting_provider', input: prompt, reason }, nextStep: 'Resume this inquiry only within its remaining allocation; do not refund the uncertain attempt.' });
+        return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({ phase: 'awaiting_provider', input: prompt, reason, ...binding }), nextStep: 'Resume this inquiry only within its remaining allocation; do not refund the uncertain attempt.' });
       }
       if (options.signal?.aborted) {
-        return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: { phase: 'awaiting_provider', input: prompt, reason: 'cancelled' }, nextStep: 'Late result discarded after cancellation; resume within remaining allocation.' });
+        return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({ phase: 'awaiting_provider', input: prompt, reason: 'cancelled', ...binding }), nextStep: 'Late result discarded after cancellation; resume within remaining allocation.' });
       }
       let result: GrowthReflection;
       try { result = parseGrowthReflection(completion.text); }
       catch {
-        return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: { phase: 'awaiting_provider', input: prompt, reason: 'invalid_result' }, nextStep: 'The result failed shape validation; investigate before another allocated attempt.' });
+        return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({ phase: 'awaiting_provider', input: prompt, reason: 'invalid_result', ...binding }), nextStep: 'The result failed shape validation; investigate before another allocated attempt.' });
       }
       const publishing = store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({
-        phase: 'publish_result', input: prompt, result, provider: completion.provider, model: completion.model, usage: completion.usage,
+        phase: 'publish_result', input: prompt, result, provider: completion.provider, model: completion.model, usage: completion.usage, ...binding,
       }) });
       return this.#publish(publishing);
     } finally { this.#busy = false; }
@@ -222,6 +236,8 @@ export class GrowthCoordinator {
   #publish(growth: Growth): Growth {
     const store = this.#options.store;
     const saved = checkpoint(growth);
+    const sourceBinding = this.#options.observeSource || saved.sourceBinding !== undefined ? parseSourceBinding(saved.sourceBinding) : undefined;
+    const binding = sourceBinding ? { sourceBinding } : {};
     const result = parseGrowthReflection(JSON.stringify(saved.result));
     const source = `growth:${growth.id}`;
     store.publishMemoryOnce({
@@ -234,8 +250,8 @@ export class GrowthCoordinator {
     }
     return store.updateGrowth(growth.id, {
       state: 'completed', nextStep: 'Await independent evaluation of any proposal; follow-up question retained without new allocation.',
-      checkpoint: json({ phase: 'published', followupId, input: saved.input }),
-      outcome: json({ assessment: 'unverified_reflection', result, provider: saved.provider, model: saved.model, usage: saved.usage }),
+      checkpoint: json({ phase: 'published', followupId, input: saved.input, ...binding }),
+      outcome: json({ assessment: 'unverified_reflection', result, provider: saved.provider, model: saved.model, usage: saved.usage, ...binding }),
     });
   }
 }

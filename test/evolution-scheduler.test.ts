@@ -130,3 +130,49 @@ test('human release has separate allocation, keeps running during conversation a
     assert.equal(f.store.listEvents().filter(e=>e.type==='evolution.scheduler.call_reserved').length,1);
   }finally{finish?.();await queue.stop();f.close();}
 });
+
+test('a partially funded release waits without spending or abandoning the proposal, then runs in a later window',async()=>{
+  const f=fixture();let time=0;let queue!:EvolutionScheduler;let runs=0;
+  try{
+    recorded(f.store,'first');recorded(f.store,'second');
+    queue=new EvolutionScheduler({store:f.store,callsPerDay:8,minimumCallsPerAttempt:8,now:()=>time,hasUserWork:()=>false,phase:()=> 'normal',run:async request=>{
+      runs++;for(let i=1;i<=5;i++)assert.equal(queue.reserveCall(`evolution:${request.id}:call:${i}`),true);return report(request);
+    }});
+    queue.reconcile();await queue.tick();await queue.tick();assert.equal(runs,1);assert.equal(queue.items()[1]?.state,'queued');
+    assert.equal(f.store.listEvents().filter(e=>e.type==='evolution.scheduler.call_reserved').length,5);
+    time=86400000;await queue.tick();assert.equal(runs,2);assert.equal(queue.items()[1]?.state,'finished');
+  }finally{await queue.stop();f.close();}
+});
+
+test('plan releases use a distinct immutable window and do not consume standing-growth allocation', async()=>{
+  const f=fixture();let queue!:EvolutionScheduler;const lanes:string[]=[];
+  try {
+    recorded(f.store,'standing');
+    const item=f.store.addGrowth({id:'plan:fixture',dimension:'code_quality',question:'Selected plan work',origin:'development-plan:fixture',budget:0});
+    f.store.updateGrowth(item.id,{state:'completed',outcome:JSON.parse(JSON.stringify({result:reflection,development:{attemptId:'host-attempt'}}))});
+    const options={store:f.store,callsPerDay:8,planCallsPerDay:8,minimumCallsPerAttempt:8,hasUserWork:()=>false,phase:()=> 'normal' as const,
+      run:async(request:EvolutionRequest)=>{lanes.push(request.growthId);for(let ordinal=1;ordinal<=8;ordinal++)assert.equal(queue.reserveCall(`evolution:${request.id}:call:${ordinal}`),true);return {...report(request),calls:8};}};
+    queue=new EvolutionScheduler(options);queue.reconcile();await queue.tick();await queue.tick();
+    assert.deepEqual(lanes,['plan:fixture','standing']);
+    const debits=f.store.listEvents().filter(e=>e.type==='evolution.scheduler.call_reserved');
+    assert.equal(debits.filter(e=>(e.payload as Record<string,unknown>).plan===true).length,8);
+    assert.equal(debits.filter(e=>(e.payload as Record<string,unknown>).plan!==true).length,8);
+    await queue.stop();recorded(f.store,'later-standing');
+    const changed=new EvolutionScheduler({...options,planCallsPerDay:16});
+    const plan2=f.store.addGrowth({id:'plan:next',dimension:'code_quality',question:'New selected work',origin:'development-plan:fixture',budget:0});
+    f.store.updateGrowth(plan2.id,{state:'completed',outcome:JSON.parse(JSON.stringify({result:reflection,development:{attemptId:'new-host-attempt'}}))});
+    changed.reconcile();await assert.rejects(changed.tick(),/immutable/);await changed.stop();
+  }finally{await queue?.stop();f.close();}
+});
+
+test('an unfunded plan proposal does not starve a separately funded standing release',async()=>{
+  const f=fixture();let queue!:EvolutionScheduler;const ran:string[]=[];
+  try{
+    const plan=f.store.addGrowth({id:'plan:held',dimension:'code_quality',question:'Unfunded selected work',origin:'development-plan:fixture',budget:0});
+    f.store.updateGrowth(plan.id,{state:'completed',outcome:JSON.parse(JSON.stringify({result:reflection,development:{attemptId:'host-held'}}))});
+    recorded(f.store,'funded-standing');
+    queue=new EvolutionScheduler({store:f.store,callsPerDay:8,planCallsPerDay:0,minimumCallsPerAttempt:8,hasUserWork:()=>false,phase:()=> 'normal',run:async request=>{ran.push(request.growthId);return report(request);}});
+    queue.reconcile();await queue.tick();assert.deepEqual(ran,['funded-standing']);
+    assert.equal(queue.items().find(item=>item.growthId===plan.id)?.state,'queued');
+  }finally{await queue?.stop();f.close();}
+});

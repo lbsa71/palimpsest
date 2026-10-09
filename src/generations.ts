@@ -12,6 +12,7 @@ import { ProviderError } from './providers.ts';
 import type { Provider } from './providers.ts';
 import type { Json, Store, Task } from './store.ts';
 import type { ConversationActions } from './conversation-actions.ts';
+import { readGenerationContinuity } from './continuity.ts';
 
 export function releaseOf(manifest: CandidateManifest): Release {
   return { digest: manifest.manifestDigest, artifactPath: manifest.releaseDir,
@@ -134,6 +135,7 @@ export class GenerationHost {
     if (frozen.id !== manifest.id || frozen.sourceDigest !== old.sourceDigest || frozen.dataSchemaVersion !== old.dataSchemaVersion)
       throw new Error('Host installation must preserve exact admitted cognitive source and schema');
     if(digestJson(frozen.configuration)!==digestJson(old.configuration))throw new Error('Host installation must preserve configured release policy');
+    if(old.requiredChecks.some(name=>!frozen.requiredChecks.includes(name)))throw new Error('Host installation requires all protected checks, including previously admitted checks');
     const checked = await evaluateCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:frozen.releaseDir});
     if (checked.status !== 'passed' || this.requiredChecks.some(name=>!checked.checks.some(check=>check.name===name && check.status==='passed')))
       throw new Error('Host installation requires all protected checks');
@@ -163,7 +165,7 @@ export class GenerationHost {
     const events = store.listEvents(); const tasks = store.listTasks();
     const policyVersion = digestJson({ scope, changes: events.filter(event => ['memory.corrected', 'memory.forgotten', 'access.changed'].includes(event.type)).map(event => event.seq) });
     return { sequence: events.at(-1)?.seq ?? 0, policyVersion, quiesced: quiesce,
-      snapshot: store.readContinuitySnapshot(scope, store.listGrowth().map(growth => growth.id)) as unknown as Json,
+      snapshot: readGenerationContinuity(store, scope) as unknown as Json,
       unresolvedEffects: tasks.flatMap(task => store.listEffects(task.id).filter(effect => effect.state !== 'completed').map(effect => effect.id)),
     };
   }

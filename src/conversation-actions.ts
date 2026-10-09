@@ -7,6 +7,9 @@ import { Store } from './store.ts';
 import type { EvolutionQueueItem } from './evolution-scheduler.ts';
 import type { EvolutionReport } from './evolution.ts';
 import type { GitPublisher } from './git-publication.ts';
+import type { ReleasePublication } from './release-publication.ts';
+import { parseSourceBinding } from './source-identity.ts';
+import type { SourceBinding } from './source-identity.ts';
 
 const proposalSchema = (reflectionSchema.properties as Record<string, unknown>).proposedChange;
 export const decisionSchema = {
@@ -23,6 +26,8 @@ export interface ConversationActionsOptions {
   userIds: readonly string[];
   allowDirectOperator?: boolean;
   sourceContext(): string;
+  /** Sample trusted source identity before inference, never from decision JSON. */
+  observeSource?(): SourceBinding;
   cancelWork?(taskId: string): boolean;
 }
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
@@ -47,14 +52,24 @@ export class ConversationActions {
       && !this.#options.store.listEvents().some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === task.id);
   }
   prepare(task: Task, memories: Memory[], request: CompletionRequest, hostFacts: unknown): CompletionRequest {
+    let sourceBinding: SourceBinding | undefined;
+    let sourceObservationUnavailable = false;
+    if (this.#options.observeSource) {
+      try { sourceBinding = parseSourceBinding(this.#options.observeSource()); }
+      catch { sourceObservationUnavailable = true; }
+      const saved = this.#options.store.task(task.id)?.checkpoint;
+      const progress = saved !== null && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+      this.#options.store.updateTask(task.id, { checkpoint: json({ ...progress, sourceBinding: sourceBinding ?? null, sourceObservationUnavailable }) });
+    }
     // Other-author episodes cannot become engineering instructions through a
     // whitelisted participant. Use exact recorded, same-author task episodes;
     // do not trust identity text or derived memories with erased provenance.
     const ownMemories = this.selectMemories(task,memories);
     return { ...request, schema: decisionSchema, maxOutputTokens: 8192,
-      system: `${request.system}\nInteractive host protocol: Return the required decision JSON. Answer ordinary questions with converse and proposal null. Only an actual request to change your cognitive source may produce propose. Clarify unclear requests; decline unsuitable requests even when eligible. Weigh goals, evidence, commitments and constraints. A proposal is a hypothesis, never a completed action. Changes are limited to direct src/agent/*.ts; preserve request/memory JSON contracts and cross-scope isolation. Use supplied source and types only, complete replacement files and testable acceptance criteria. Do not request host/governance changes. The host will queue proposals for separate checks, review, interview and cognitive-worker succession; configured Git publication follows promotion. Outer Slack-service rebuild/restart is unavailable. Never claim an action is completed from this inference.`,
+      system: `${request.system}\nInteractive host protocol: Return the required decision JSON. Answer ordinary questions with converse and proposal null. Only an actual request to change your cognitive source may produce propose. Clarify unclear requests; decline unsuitable requests even when eligible. Weigh goals, evidence, commitments and constraints. A proposal is a hypothesis, never a completed action. Changes are limited to direct src/agent/*.ts; preserve request/memory JSON contracts and cross-scope isolation. Use supplied source and types only, complete replacement files and testable acceptance criteria. Make the smallest readable change with descriptive names; preserve useful behavior and explain non-obvious invariants. Use actual failed-check evidence to fix causes. Never hard-code fixtures, weaken checks, add speculative dependencies or claim tests you did not run. Do not request host/governance changes. The host will queue proposals for separate checks, review, interview and cognitive-worker succession; configured Git publication follows promotion. Outer Slack-service rebuild/restart is unavailable. Never claim an action is completed from this inference.`,
       prompt: JSON.stringify({ request: task.input, sameAuthorExperiences: ownMemories.map(memory => ({ id: memory.id, content: memory.content.slice(0,4000) })),
-        sourceContext: this.#options.sourceContext(), hostFacts }),
+        sourceContext: this.#options.sourceContext(), hostFacts, ...(sourceBinding ? { sourceBinding } : {}),
+        ...(sourceObservationUnavailable ? { sourceModificationAvailability: 'Temporarily unavailable: current checkout and admitted source identity cannot be established. Continue ordinary conversation; no source proposal can be dispatched from this inference.' } : {}) }),
     };
   }
   selectMemories(task:Task,memories:Memory[]):Memory[] {
@@ -80,7 +95,14 @@ export class ConversationActions {
       if ((value.disposition === 'propose') !== !!result.proposedChange) throw new Error();
       if (result.proposedChange) {
         if (result.proposedChange.files.some(file => !/^src\/agent\/[A-Za-z0-9_.-]+\.ts$/.test(file.path))) return 'Proposal declined: this release path admits only direct src/agent/*.ts changes. No source was changed.';
-        this.#options.store.recordConversationProposal(task.id, json({ result }));
+        const saved = this.#options.store.task(task.id)?.checkpoint;
+        const recorded = saved !== null && typeof saved === 'object' && !Array.isArray(saved) ? saved.sourceBinding : undefined;
+        let sourceBinding: SourceBinding | undefined;
+        if (this.#options.observeSource || (recorded !== undefined && recorded !== null)) {
+          try { sourceBinding = parseSourceBinding(recorded); }
+          catch { return 'Source modification is temporarily unavailable: this inference has no verified source binding. No proposal was dispatched or source changed.'; }
+        }
+        this.#options.store.recordConversationProposal(task.id, json({ result, ...(sourceBinding ? { sourceBinding } : {}) }));
         return `${value.reply}\n\nProposal ${task.id} is recorded and queued for checks, fresh review, interview and worker succession. No release or push has completed yet. Use status ${task.id} or cancel ${task.id} in this thread.`;
       }
       this.#options.store.appendEvent('conversation.decision', json({ disposition: value.disposition, rationale: value.rationale }), task.id);
@@ -100,7 +122,7 @@ export class ConversationActions {
   }
   cancel(taskId: string): boolean { return this.#options.cancelWork?.(taskId) ?? false; }
 
-  async reconcileResults(items: EvolutionQueueItem[], publisher?: GitPublisher): Promise<void> {
+  async reconcileResults(items: EvolutionQueueItem[], publisher?: GitPublisher, publications?: Pick<ReleasePublication,'result'>): Promise<void> {
     for (const item of items.filter(item => item.state === 'finished')) {
       const growth=this.#options.store.growth(item.growthId);
       const task=growth?.sourceTaskId ? this.#options.store.task(growth.sourceTaskId) : undefined;
@@ -110,9 +132,10 @@ export class ConversationActions {
       const final=this.#options.store.listEvents().filter(event=>event.type==='evolution.finished' && (event.payload as Record<string,Json>)?.runId===item.id).at(-1);
       const report=(final?.payload as unknown as {report?:EvolutionReport})?.report;
       let publication='Git publication is disabled; no commit or push was performed.';
-      if(item.result.status==='promoted' && report?.candidate && publisher) {
+      if(item.result.status==='promoted' && report?.candidate && (publisher || publications)) {
         if(this.authorize(growth!)) {
-          const result=await publisher.publish(report.candidate);
+          const result=publications?.result(item.id) ?? (publisher ? await publisher.publish(report.candidate) : undefined);
+          if(!result)continue;
           publication=`Git publication: ${result.status}. ${result.reason}${result.commit ? ` Commit ${result.commit}.` : ''}`;
           this.#options.store.appendEvent('conversation.publication_result',json({runId:item.id,result}),task.id);
         }else publication='Git publication withheld by current source-author policy; the already committed worker transfer is not undone.';

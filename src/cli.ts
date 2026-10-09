@@ -22,6 +22,11 @@ import { EvolutionScheduler } from './evolution-scheduler.ts';
 import { evaluateCandidate, freezeBaseline, readManifest } from './candidates.ts';
 import { ConversationActions } from './conversation-actions.ts';
 import { GitPublisher } from './git-publication.ts';
+import { ReleasePublication } from './release-publication.ts';
+import { createDevelopmentHost } from './development-host.ts';
+import type { DevelopmentExecutor } from './development-executor.ts';
+import { observeSourceIdentity } from './source-identity.ts';
+import { EVOLUTION_CHECKS } from './evolution.ts';
 
 /** The single trusted process serializes all provider calls, including growth. */
 function configuredProvider(config: RuntimeConfig): Provider {
@@ -80,6 +85,9 @@ async function main(): Promise<void> {
   let host: GenerationHost | undefined;
   let growth: GrowthScheduler | undefined;
   let evolution: EvolutionScheduler | undefined;
+  let publicationReconciler:ReleasePublication|undefined;
+  let development:DevelopmentExecutor|undefined;
+  let developmentHost:ReturnType<typeof createDevelopmentHost>|undefined;
   let localServer: LocalServer | undefined;
   let slackServer: SlackServer | undefined;
   let slackSocket: SlackSocketClient | undefined;
@@ -94,6 +102,7 @@ async function main(): Promise<void> {
     // Installed before startup/draining so a slow provider cannot swallow shutdown.
     void growth?.stop().catch(() => {});
     evolution?.interrupt();
+    development?.interrupt();
     if (ready) void host?.runtime.stop().catch(() => {});
   };
   process.once('SIGINT', requestStop); process.once('SIGTERM', requestStop);
@@ -112,8 +121,16 @@ async function main(): Promise<void> {
     };
     const userCommitments = () => store!.listTasks({ states: ['queued', 'running'] }).length > 0
       || store!.listTasks().some(task => store!.listEffects(task.id).some(effect => effect.state !== 'completed'));
-    const hasUserWork = () => stopped || evolution?.busy === true || (host !== undefined && (!ready || !['normal', 'probation'].includes(host.custodian.inspect().phase))) || userCommitments();
+    const observeSource=()=>{
+      const release=host?.custodian.inspect().active?.release;
+      if(!release)throw new Error('No serving source is available');
+      return observeSourceIdentity({repositoryRoot:config.repositoryRoot,release});
+    };
+    const hasUserWork = () => stopped || evolution?.busy === true || development?.busy===true || publicationReconciler?.busy===true
+      || publicationReconciler?.pending(evolution?.items()??[])===true
+      || (host !== undefined && (!ready || !['normal', 'probation'].includes(host.custodian.inspect().phase))) || userCommitments();
     const newGrowth = () => new GrowthScheduler({ store: store!, provider, hasUserWork,
+      ...(host?{observeSource}:{}),
       callsPerWindow: config.growthCallsPerDay, context, onError: code => console.error(code),
       ...(evolution ? { onProposedChange: event => { evolution!.enqueue(event.growth.id, event.proposedChange); } } : {}) });
     const pauseGrowth = async () => { const previous = growth; growth = undefined; await previous?.stop(); };
@@ -125,12 +142,14 @@ async function main(): Promise<void> {
     }
     const direct = new DirectCommunications();
     const actions = new ConversationActions({ store,userIds:config.slackSelfModificationUserIds,allowDirectOperator:true,
+      observeSource,
       sourceContext:()=>[context(),...['providers.ts','store.ts'].map(path=>`Contract src/${path}:\n${readFileSync(join(dirname(fileURLToPath(import.meta.url)),path),'utf8').slice(0,3000)}`),
         ...(existsSync(join(config.repositoryRoot,'AGENTS.md')) ? [readFileSync(join(config.repositoryRoot,'AGENTS.md'),'utf8')] : [])].join('\n\n'),
       cancelWork:taskId=>evolution?.cancelTask(taskId) ?? false });
     const publisher = config.gitRemote && config.gitBranch && config.gitRemoteUrl ? new GitPublisher({repositoryRoot:config.repositoryRoot,dataDir:config.dataDir,store,
       remote:config.gitRemote,branch:config.gitBranch,remoteUrl:config.gitRemoteUrl}) : undefined;
     if((config.gitRemote || config.gitBranch || config.gitRemoteUrl) && !publisher)throw new Error('Git publication requires explicit remote, branch and remote URL identity');
+    publicationReconciler=new ReleasePublication({store,publisher,authorize:growth=>actions.authorize(growth)});
     const communications = slack ? [direct, new SlackCommunications({ token: config.slackBotToken! })] : [direct];
     const configuration = { maxCallsPerTask: config.maxCallsPerTask, growthCallsPerDay: config.growthCallsPerDay,
       evolutionCallsPerDay: config.evolutionCallsPerDay, timeoutMs: config.timeoutMs, scope: 'local' };
@@ -140,14 +159,16 @@ async function main(): Promise<void> {
       selfModificationUserIds: config.slackSelfModificationUserIds,
       conversationActions:actions,
       hostFacts: () => ({ backgroundGrowthScheduled: growth !== undefined, backgroundEvolutionScheduled: evolution !== undefined,
-        backgroundGrowthInputs: 'Standing growth mission, admitted agent source and growth-scope observations. No conversation-to-growth feed is implemented.',
+        backgroundGrowthInputs: 'Standing growth uses the mission, admitted source and growth-scope observations. Eligible human conversations have a separate deliberative proposal lane with retained authorship.',
+        implementationPlanExecution:development?'Two protected P06 work contracts through checked shedding; broader PLAN work remains unsupported':'Not scheduled in this process',
+        planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,
         applicationGitPublication:!!publisher, interactiveEvolutionCallsPerDay:config.interactiveEvolutionCallsPerDay,
         growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay }) });
     if(command==='host-baseline') {
       const previous=host.custodian.inspect().knownGood;
       if(!previous)throw new Error('Host baseline installation requires an existing admitted release');
       if(args[0]==='prepare') {
-        const baseline=freezeBaseline({repositoryRoot:config.repositoryRoot,dataDir:config.dataDir,configuration,modelProfile,requiredChecks:[...host.requiredChecks] as Array<'typecheck'|'trusted-agent-contract'|'cross-scope-memory'>});
+        const baseline=freezeBaseline({repositoryRoot:config.repositoryRoot,dataDir:config.dataDir,configuration,modelProfile,requiredChecks:[...new Set([...EVOLUTION_CHECKS,...readManifest(previous.artifactPath).requiredChecks])]});
         if(baseline.sourceDigest!==readManifest(previous.artifactPath).sourceDigest)throw new Error('Host baseline must preserve admitted cognitive source');
         const evidence=await evaluateCandidate({repositoryRoot:config.repositoryRoot,releaseDir:baseline.releaseDir});
         console.log(JSON.stringify({candidateId:baseline.id,incumbentId:previous.digest,evidenceDigest:evidence.evidenceDigest,status:evidence.status}));
@@ -185,6 +206,7 @@ async function main(): Promise<void> {
       if (stopped) throw new Error('Service is stopping');
       const task = await host!.submit(input);
       evolution?.interrupt(true);
+      development?.interrupt();
       // Cancel idle inference immediately; serialized provider admission keeps
       // the task from overlapping a provider that is still acknowledging abort.
       void growth?.tick().catch(() => {});
@@ -206,21 +228,40 @@ async function main(): Promise<void> {
     if (stopped) return;
     const coordinator = new EvolutionCoordinator({ repositoryRoot: config.repositoryRoot, dataDir: config.dataDir,
       store, host, reviewer: provider, incumbent: provider, successor: provider, configuration, modelProfile,
-      reserveBudget: id => evolution!.reserveCall(id), authorizeProposal:growth=>actions.authorize(growth) });
+      reserveBudget: id => evolution!.reserveCall(id), authorizeProposal:growth=>actions.authorize(growth),observeSource,
+      checksForProposal:growth=>{
+        if(developmentHost)return developmentHost.checksForProposal(growth);
+        if(growth.id.startsWith('plan:'))throw new Error('Plan executor is unavailable; work cannot bypass its contract');
+        return [...EVOLUTION_CHECKS];
+      },reviewWorkContract:growth=>developmentHost?.reviewWorkContract(growth)??'' });
     evolution = new EvolutionScheduler({ store, callsPerDay: config.evolutionCallsPerDay,
+      minimumCallsPerAttempt:8,
+      planCallsPerDay:config.planEvolutionCallsPerDay,
       interactiveCallsPerDay:config.interactiveEvolutionCallsPerDay,authorizeProposal:id=>actions.authorize(store!.growth(id)!),
-      hasUserWork: () => stopped || userCommitments(), phase: () => host!.custodian.inspect().phase,
+      hasUserWork: () => stopped || userCommitments() || development?.busy===true || publicationReconciler!.busy || publicationReconciler!.pending(evolution?.items()??[]), phase: () => host!.custodian.inspect().phase,
       beforeRun: async () => { await hostTick; await pauseGrowth(); }, run: request => coordinator.run(request),
       attemptTimeoutMs: Math.min(2_147_483_647, config.timeoutMs * 8 + 120_000), onError: code => console.error(code) });
+    if(config.planProposalCallsPerDay>0&&config.planEvolutionCallsPerDay>0&&publisher){
+      developmentHost=createDevelopmentHost({config,store,host,provider,scheduler:evolution,publication:publicationReconciler,beforeProposal:pauseGrowth,
+        hasUserWork:()=>stopped||userCommitments()||evolution!.busy||publicationReconciler!.busy||publicationReconciler!.pending(evolution!.items())||host!.custodian.inspect().phase!=='normal'});
+      development=developmentHost.executor;development.recoverInterrupted();
+    }
     console.log(JSON.stringify({ url: localServer.url, tokenFile: paths.tokenPath, dataDir: config.dataDir,
       provider: config.provider, model: config.model || null, generation: host.custodian.inspect().active!.release.digest,
       growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay,
+      planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,
       slackUrl: slackServer?.url ?? null, slackSocket: slackSocket?.status() ?? null }));
     resumeGrowth();
     evolution.start();
     const tick = () => {
       if (hostTick || stopped || evolution?.busy) return;
-      hostTick = Promise.resolve().then(async()=>{await actions.reconcileResults(evolution!.items(),publisher);return host!.tick();}).then(() => { resumeGrowth(); }).catch(() => { if (!stopped) console.error('generation_tick_failed'); })
+      hostTick = Promise.resolve().then(async()=>{
+        await publicationReconciler!.reconcile(evolution!.items());await actions.reconcileResults(evolution!.items(),undefined,publicationReconciler);
+        await host!.tick();
+        if(development&&!userCommitments()&&!stopped&&(development.allocation().remaining>0||development.attempts().some(attempt=>['proposed','queued'].includes(attempt.state)))){
+          try{await development.tick();}catch{if(!stopped)console.error('development_tick_held');}
+        }
+      }).then(() => { resumeGrowth(); }).catch(() => { if (!stopped) console.error('generation_tick_failed'); })
         .finally(() => { hostTick = undefined; });
     };
     tickTimer = setInterval(tick, 1000); tick();
@@ -229,7 +270,7 @@ async function main(): Promise<void> {
     stopped = true;
     process.off('SIGINT', requestStop); process.off('SIGTERM', requestStop);
     if (tickTimer) clearInterval(tickTimer);
-    await Promise.allSettled([growth?.stop(), localServer?.close(), slackServer?.close(), slackSocket?.close(), evolution?.stop()]);
+    await Promise.allSettled([growth?.stop(), development?.stop(), localServer?.close(), slackServer?.close(), slackSocket?.close(), evolution?.stop()]);
     await (ready ? host?.runtime.stop().catch(() => {}) : undefined);
     await hostTick;
     try { await host?.close(); } finally { try { store?.close(); } finally { lock.close(); } }

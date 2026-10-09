@@ -168,7 +168,12 @@ export class AgentRuntime {
           }),
         };
         let request = await this.#requestFactory(structuredClone(task), structuredClone(memories));
-        if (interactive) request = this.#actions!.prepare(task, memories, request, facts);
+        if (interactive) {
+          request = this.#actions!.prepare(task, memories, request, facts);
+          // prepare persists the host-observed source binding before inference.
+          // Keep it when adding the provider result to the durable checkpoint.
+          progress = checkpoint(this.#store.task(task.id)!);
+        }
         if (signal.aborted) throw new ProviderError('cancelled', 'Task was interrupted before inference');
         this.#authorize('tool');
         const response = await this.#provider.complete({ ...request, system: `${request.system}\n\n${conversationPolicy}\nHost facts: ${JSON.stringify(facts)}`, signal });

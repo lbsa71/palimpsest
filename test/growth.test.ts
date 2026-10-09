@@ -7,6 +7,63 @@ import { GrowthCoordinator } from '../src/growth.ts';
 import { Store } from '../src/store.ts';
 import { ProviderError, type Provider, type CompletionRequest } from '../src/providers.ts';
 
+test('growth preserves host source identity across result-publication recovery', async () => {
+  const binding = { version: 1 as const, releaseDigest: 'a'.repeat(64), sourceDigest: 'b'.repeat(64), baseCommit: 'c'.repeat(40) };
+  let observed = 0;
+  const f = fixture(async request => {
+    assert.equal(observed, 1);
+    assert.deepEqual((f.store.listGrowth().find(item => item.state === 'running')!.checkpoint as Record<string, unknown>).sourceBinding, binding);
+    assert.deepEqual(JSON.parse(request.prompt).sourceBinding, binding);
+    return { text: JSON.stringify(reflection), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
+  });
+  try {
+    const original = f.store.addGrowth.bind(f.store);
+    f.store.addGrowth = input => {
+      if (input.origin.startsWith('growth:')) throw new Error('publication interrupted');
+      return original(input);
+    };
+    const coordinator = new GrowthCoordinator({ store: f.store, provider: f.provider, hasUserWork: () => false, observeSource: () => { observed++; return binding; } });
+    await assert.rejects(coordinator.tick(), /publication interrupted/);
+    assert.deepEqual((f.store.listGrowth()[0]!.checkpoint as Record<string, unknown>).sourceBinding, binding);
+    f.store.addGrowth = original;
+    const result = await new GrowthCoordinator({ store: f.store, provider: f.provider, hasUserWork: () => false, observeSource: () => assert.fail('publication must retain original binding') }).tick();
+    assert.deepEqual((result!.outcome as Record<string, unknown>).sourceBinding, binding);
+    assert.deepEqual((result!.checkpoint as Record<string, unknown>).sourceBinding, binding);
+    assert.equal(f.requests.length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('interrupted growth call retains its source binding and a new allocated attempt observes a new base', async () => {
+  const firstBinding = { version: 1 as const, releaseDigest: 'a'.repeat(64), sourceDigest: 'b'.repeat(64), baseCommit: 'c'.repeat(40) };
+  const nextBinding = { ...firstBinding, releaseDigest: 'd'.repeat(64), sourceDigest: 'e'.repeat(64), baseCommit: 'f'.repeat(40) };
+  let calls = 0;
+  const f = fixture(async () => {
+    calls++;
+    if (calls === 1) throw new ProviderError('unavailable', 'uncertain attempt');
+    return { text: JSON.stringify(reflection), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
+  });
+  try {
+    const first = await new GrowthCoordinator({ store: f.store, provider: f.provider, hasUserWork: () => false, budgetPerExperiment: 2, observeSource: () => firstBinding }).tick();
+    assert.equal(first?.state, 'paused');
+    assert.deepEqual((first!.checkpoint as Record<string, unknown>).sourceBinding, firstBinding);
+    assert.equal(first?.remainingBudget, 1);
+    const result = await new GrowthCoordinator({ store: f.store, provider: f.provider, hasUserWork: () => false, observeSource: () => nextBinding }).tick({ growthId: first!.id });
+    assert.equal(result?.state, 'completed');
+    assert.deepEqual((result!.outcome as Record<string, unknown>).sourceBinding, nextBinding);
+    assert.equal(calls, 2);
+    assert.equal(result?.remainingBudget, 0);
+  } finally { f.cleanup(); }
+});
+
+test('unavailable source observation does not consume an inquiry allocation or call provider', async () => {
+  const f = fixture();
+  try {
+    assert.equal(await new GrowthCoordinator({ store: f.store, provider: f.provider, hasUserWork: () => false, observeSource: () => { throw new Error('source publication pending'); } }).tick(), null);
+    assert.equal(f.requests.length, 0);
+    assert.ok(f.store.listGrowth().every(item => item.remainingBudget === 1 && item.state === 'queued'));
+  } finally { f.cleanup(); }
+});
+
 const reflection = {
   observation: 'There are no observed failures to justify changing this behavior yet.',
   lesson: 'The available evidence supports preserving the behavior pending a discriminating test.',

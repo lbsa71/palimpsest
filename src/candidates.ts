@@ -11,7 +11,7 @@ import type { Json } from './store.ts';
 export interface CandidateChange { path: string; content: string }
 export interface CandidateFile { path: string; mode: '100644' | '100755'; sha256: string; size: number }
 export interface CandidateRuntime { nodeVersion: string; nodeSha256: string; compilerPath: string; compilerSha256: string; toolchainDigest: string }
-export type CandidateCheckName = 'typecheck' | 'trusted-agent-contract' | 'cross-scope-memory';
+export type CandidateCheckName = 'typecheck' | 'trusted-agent-contract' | 'cross-scope-memory' | 'memory-provenance' | 'memory-context-budget';
 interface ManifestRecord {
   version: 1; id: string; manifestDigest: string; baseCommit: string; createdAt: string;
   files: CandidateFile[]; snapshotDigest: string; sourceDigest: string; governanceDigest: string;
@@ -38,10 +38,12 @@ export interface VerifyOptions { repositoryRoot: string; releaseDir: string; exp
 
 const installedRoot = fileURLToPath(new URL('..', import.meta.url));
 const trustedCheckPath = join(installedRoot, 'trusted', 'agent-contract.test.mjs');
+const developmentCheckFile = 'trusted/development-contract.test.mjs';
+const developmentCheckPath = join(installedRoot, developmentCheckFile);
 const toolchainRoot = join(installedRoot, 'node_modules');
 const acceptancePath = 'docs/seed-contract.md';
 const writableAgentPath = /^src\/agent\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts$/;
-const availableChecks: CandidateCheckName[] = ['typecheck', 'trusted-agent-contract', 'cross-scope-memory'];
+const availableChecks: CandidateCheckName[] = ['typecheck', 'trusted-agent-contract', 'cross-scope-memory', 'memory-provenance', 'memory-context-budget'];
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
 function normalized(value: unknown): unknown {
@@ -123,7 +125,7 @@ function manifestPayload(record: ManifestRecord): Omit<ManifestRecord, 'id' | 'm
   const { id: _id, manifestDigest: _digest, ...payload } = record; return payload;
 }
 function governance(files: CandidateFile[], acceptanceContractDigest: string, trustedCheckDigest: string): string {
-  const controls = new Set(['AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'docs/seed-contract.md', 'docs/acceptance.md']);
+  const controls = new Set(['AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'docs/seed-contract.md', 'docs/acceptance.md', 'config/development-plan.json']);
   const governed = files.filter(file => controls.has(file.path) || (!writableAgentPath.test(file.path) && file.path.startsWith('src/')) || file.path.startsWith('trusted/') || file.path.startsWith('test/'));
   return digestJson({ files: governed, acceptanceContractDigest, trustedCheckDigest });
 }
@@ -222,6 +224,8 @@ export function verifyFrozenCandidate(options: VerifyOptions): CandidateManifest
   }
   if (files.some(file => !original.some(base => base.path === file.path) && !writableAgentPath.test(file.path))) throw new Error('Frozen candidate added protected source');
   if (sha256(readFileSync(join(manifest.candidateRoot, acceptancePath))) !== manifest.acceptanceContractDigest || sha256(readFileSync(trustedCheckPath)) !== manifest.trustedCheckDigest || governance(files, manifest.acceptanceContractDigest, manifest.trustedCheckDigest) !== manifest.governanceDigest) throw new Error('Frozen acceptance or trusted-check identity changed');
+  const developmentValidator = files.find(file => file.path === developmentCheckFile);
+  if (developmentValidator && developmentValidator.sha256 !== sha256(readFileSync(developmentCheckPath))) throw new Error('Frozen development validator identity changed');
   if (digestJson(currentRuntime()) !== digestJson(manifest.runtime)) throw new Error('Frozen runtime or installed toolchain identity changed');
   return manifest;
 }
@@ -232,20 +236,28 @@ function processCheck(name: string, result: IsolationResult): CandidateCheck {
     stdout: result.stdout, stderr: result.stderr, stdoutDigest: sha256(result.stdout), stderrDigest: sha256(result.stderr) };
 }
 
-async function protectedBehavior(manifest: CandidateManifest, name: 'trusted-agent-contract' | 'cross-scope-memory', timeoutMs?: number): Promise<CandidateCheck> {
+async function protectedBehavior(manifest: CandidateManifest, name: Exclude<CandidateCheckName, 'typecheck'>, timeoutMs?: number, diagnostic=false): Promise<CandidateCheck> {
   try {
+    const development = name === 'memory-provenance' || name === 'memory-context-budget';
+    if (development && !diagnostic) {
+      const bound = manifest.files.find(file => file.path === developmentCheckFile);
+      if (!bound || bound.sha256 !== sha256(readFileSync(developmentCheckPath))) throw new Error('Development validator is not bound to frozen protected governance');
+    }
     const contract = await import(pathToFileURL(trustedCheckPath).href) as {
       makeFixtures(): unknown[]; validateResponses(fixtures: unknown[], responses: unknown): unknown[];
       makeScopeIsolationFixtures(): unknown[]; validateScopeIsolationResponses(fixtures: unknown[], responses: unknown): unknown[];
     };
-    const fixtures = name === 'cross-scope-memory' ? contract.makeScopeIsolationFixtures() : contract.makeFixtures();
+    const developmentContract = development ? await import(pathToFileURL(developmentCheckPath).href) as {
+      makeDevelopmentFixtures(check:string):unknown[]; validateDevelopmentResponses(check:string,fixtures:unknown[],responses:unknown):unknown[];
+    } : undefined;
+    const fixtures = development ? developmentContract!.makeDevelopmentFixtures(name) : name === 'cross-scope-memory' ? contract.makeScopeIsolationFixtures() : contract.makeFixtures();
     const bridge = `import { readFileSync } from 'node:fs'; import { pathToFileURL } from 'node:url'; const fixtures=JSON.parse(readFileSync(0,'utf8')); const {conversationRequest}=await import(pathToFileURL(process.argv[1]).href); const responses=[]; for(const fixture of fixtures) responses.push(await conversationRequest(fixture.task,fixture.memories)); process.stdout.write(JSON.stringify({responses}));`;
     const result = await runIsolated({ program: process.execPath, args: ['--input-type=module', '-e', bridge, join(manifest.candidateRoot, 'src', 'agent', 'brain.ts')], cwd: manifest.candidateRoot, stdin: JSON.stringify(fixtures), timeoutMs: timeoutMs ?? 30_000, maxOutputBytes: 262_144 });
     const check = processCheck(name, result);
     if (check.status === 'passed') {
       try {
         const responses = JSON.parse(result.stdout).responses;
-        const assertions = name === 'cross-scope-memory' ? contract.validateScopeIsolationResponses(fixtures, responses) : contract.validateResponses(fixtures, responses);
+        const assertions = development ? developmentContract!.validateDevelopmentResponses(name, fixtures, responses) : name === 'cross-scope-memory' ? contract.validateScopeIsolationResponses(fixtures, responses) : contract.validateResponses(fixtures, responses);
         check.detail = `${assertions.length} protected behavioral fixtures passed outside candidate execution`;
       } catch (error) { check.status = 'failed'; check.detail = `Protected behavioral contract failed: ${error instanceof Error ? error.message : 'invalid candidate response'}`; }
     }
@@ -254,9 +266,9 @@ async function protectedBehavior(manifest: CandidateManifest, name: 'trusted-age
 }
 
 /** Diagnostic baseline challenge, never itself admission evidence. */
-export async function evaluateChallenge(options: VerifyOptions & { challenge: 'cross-scope-memory'; timeoutMs?: number }): Promise<CandidateCheck> {
+export async function evaluateChallenge(options: VerifyOptions & { challenge: Exclude<CandidateCheckName,'typecheck'|'trusted-agent-contract'>; timeoutMs?: number }): Promise<CandidateCheck> {
   const manifest = verifyFrozenCandidate(options);
-  const result = await protectedBehavior(manifest, options.challenge, options.timeoutMs);
+  const result = await protectedBehavior(manifest, options.challenge, options.timeoutMs, true);
   if (verifyFrozenCandidate(options).manifestDigest !== manifest.manifestDigest) throw new Error('Frozen candidate changed during challenge');
   return result;
 }
@@ -272,6 +284,8 @@ export async function evaluateCandidate(options: { repositoryRoot: string; relea
   } catch (error) { checks.push({ name: 'typecheck', status: 'failed', detail: error instanceof Error ? error.message : 'Typechecker unavailable' }); }
   checks.push(await protectedBehavior(manifest, 'trusted-agent-contract', options.timeoutMs));
   if (manifest.requiredChecks.includes('cross-scope-memory')) checks.push(await protectedBehavior(manifest, 'cross-scope-memory', options.timeoutMs));
+  for (const name of ['memory-provenance','memory-context-budget'] as const)
+    if (manifest.requiredChecks.includes(name)) checks.push(await protectedBehavior(manifest,name,options.timeoutMs));
   const after = verifyFrozenCandidate(options);
   if (after.manifestDigest !== manifest.manifestDigest) throw new Error('Frozen candidate changed during evaluation');
   const body = { version: 1 as const, candidateId: manifest.id, manifestDigest: manifest.manifestDigest, baseCommit: manifest.baseCommit, status: checks.every(check => check.status === 'passed') ? 'passed' as const : 'failed' as const, checks, createdAt: new Date().toISOString() };

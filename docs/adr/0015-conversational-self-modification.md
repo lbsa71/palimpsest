@@ -1,6 +1,6 @@
 # ADR 0015: Deliberative conversation to governed cognitive self-modification
 
-- **Status:** Accepted bounded implementation; integrated deterministic-provider mechanics verified. Live Mistral/Slack deployment and full acceptance matrix pending.
+- **Status:** Accepted bounded implementation; integrated mechanics and a live direct-operator Mistral shed with production remote publication verified. Live Slack-origin release and full acceptance matrix pending.
 - **Recorded:** 2026-10-08.
 - **Requirements:** R04, R10–R19, R21–R24.
 - **Extends:** [ADR 0014](0014-conversation-and-modification-authority.md), retaining its conversation admission and authenticated suggestion eligibility boundaries.
@@ -57,4 +57,4 @@ The user gets a real bounded self-modification interaction while Palimpsest reta
 
 The integrated real-host check passed: Slack-authored request, exact proposal, protected checks, five deterministic-provider release calls, actual restricted worker succession/probation, exact publication into a local bare remote, durable original-thread result and successor follow-up behavior. Focused checks establish author/policy filtering, protected-path rejection, other-author context exclusion, direct cancellation, recorded-decision resumption and publication holds for destination removal/mismatch, dirty checkout, divergent history and retained unknown push outcomes. See the linked specification and [integration test](../../test/conversation-release.test.ts).
 
-This evidence does not close all P16 or qualitative seed acceptance. The full restart/interruption/provider failure/publication reconciliation and truthful live-answer matrix remains required. Live Mistral/Slack deployment and production remote evidence must be recorded separately from synthetic cognition and the actual local bare remote. The accepted implementation remains a bounded interaction, not general host self-deployment.
+Live direct-operator evidence subsequently established a Mistral-authored candidate, five release calls, checked cutover/probation and application publication of exact admitted source as `f3def48`, independently observed on the configured remote. See [progress](../progress.md). This does not establish a live Slack-origin release or close all P16/qualitative acceptance. The full restart/interruption/provider failure/publication reconciliation and truthful live-answer matrix remains required. The accepted implementation remains a bounded interaction, not general host self-deployment or autonomous plan execution.

@@ -8,6 +8,53 @@ const input = (id: string, userId = 'U1') => ({ id, source: 'slack', conversatio
 const proposal = { summary: 'Concise conversation', rationale: 'Requested bounded cognitive policy change.', acceptanceCriteria: ['Preserve JSON and memory isolation contracts'], files: [{ path: 'src/agent/brain.ts', content: 'export function conversationRequest(){}' }] };
 const decision = JSON.stringify({ reply: 'I will evaluate a concise policy.', disposition: 'propose', rationale: 'A bounded proposal is appropriate.', proposal });
 
+test('source binding is persisted before conversation inference and retained through durable acceptance', async () => {
+  const store = new Store(':memory:');
+  const binding = { version: 1 as const, releaseDigest: 'a'.repeat(64), sourceDigest: 'b'.repeat(64), baseCommit: 'c'.repeat(40) };
+  let observations = 0;
+  const actions = new ConversationActions({ store, userIds: ['U1'], sourceContext: () => 'Exact source', observeSource: () => { observations++; return binding; } });
+  const runtime = new AgentRuntime({ store, conversationActions: actions, communications: [{ name: 'slack', send: async () => {} }], provider: { name: 'fixture', complete: async request => {
+    const task = store.listTasks()[0]!;
+    assert.deepEqual((task.checkpoint as Record<string, unknown>).sourceBinding, binding);
+    assert.deepEqual(JSON.parse(request.prompt).sourceBinding, binding);
+    return response(decision);
+  } } });
+  try {
+    const task = await runtime.submit(input('source-bound'));
+    await runtime.runUntilIdle();
+    assert.equal(store.task(task.id)?.state, 'succeeded');
+    assert.deepEqual((store.task(task.id)!.checkpoint as Record<string, unknown>).sourceBinding, binding);
+    assert.deepEqual((store.listGrowth()[0]!.outcome as Record<string, unknown>).sourceBinding, binding);
+    const recovered = new ConversationActions({ store, userIds: ['U1'], sourceContext: () => assert.fail('do not re-observe accepted decision'), observeSource: () => assert.fail('do not rebind') });
+    recovered.accept(store.task(task.id)!, decision);
+    assert.equal(store.listGrowth().length, 1);
+    assert.equal(observations, 1);
+    const unbound = store.enqueue({ source: 'slack', conversationId: task.conversationId, input: 'Change', slackAuthor: { teamId: 'T1', userId: 'U1' } });
+    assert.match(actions.accept(unbound, decision), /temporarily unavailable/);
+    assert.equal(store.listGrowth().length, 1);
+    assert.throws(() => actions.accept(task, JSON.stringify({ ...JSON.parse(decision), sourceBinding: binding })), /Invalid conversational decision/);
+  } finally { await runtime.stop(); store.close(); }
+});
+
+test('unavailable source keeps conversation available and cannot reuse an older binding for a proposal', async () => {
+  for (const proposed of [false, true]) {
+    const store = new Store(':memory:');
+    const actions = new ConversationActions({ store, userIds: ['U1'], sourceContext: () => 'Admitted cognitive source', observeSource: () => { throw new Error('checkout awaiting publication'); } });
+    const runtime = new AgentRuntime({ store, conversationActions: actions, communications: [{ name: 'slack', send: async () => {} }], provider: { name: 'fixture', complete: async request => {
+      assert.match(JSON.parse(request.prompt).sourceModificationAvailability, /Temporarily unavailable/);
+      assert.equal((store.listTasks()[0]!.checkpoint as Record<string, unknown>).sourceBinding, null);
+      return response(proposed ? decision : JSON.stringify({ reply: 'We can continue discussing the plan.', disposition: 'converse', rationale: 'Source is unavailable but discussion is useful.', proposal: null }));
+    } } });
+    try {
+      const task = await runtime.submit(input(`source-unavailable-${proposed}`));
+      await runtime.runUntilIdle();
+      assert.equal(store.task(task.id)?.state, 'succeeded');
+      assert.equal(store.listGrowth().length, 0);
+      assert.match(JSON.stringify(store.task(task.id)?.output), proposed ? /temporarily unavailable/ : /continue discussing/);
+    } finally { await runtime.stop(); store.close(); }
+  }
+});
+
 test('eligible conversation creates one durable human-origin proposal and explains actual queued status', async () => {
   const store = new Store(':memory:'); const sent: string[] = []; let calls=0;
   const actions = new ConversationActions({ store, userIds:['U1'], sourceContext:()=> 'Current cognitive source' });

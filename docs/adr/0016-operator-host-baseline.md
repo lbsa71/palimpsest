@@ -1,6 +1,6 @@
 # ADR 0016: Explicit operator installation of a host baseline
 
-- **Status:** Accepted bounded operator procedure implemented; local custodian/real-worker integration verified; live installation pending.
+- **Status:** Accepted bounded operator procedure implemented; local integration and live baseline installation verified.
 - **Recorded:** 2026-10-08.
 - **Requirements:** R09–R11, R14–R19, R22.
 - **Specification:** [Operator host-baseline installation](../host-installation.md).
@@ -34,4 +34,4 @@ Developer host deployments gain an explicit recoverable baseline-alignment step.
 
 Custodian fixtures passed for normal governance rejection, bound rescue, later epochs/current history, unresolved effects, failed activation and abrupt process death during installation/restoration transfer with both process identities retained. Real-worker integration passed a checked operator installation preserving memory before subsequent conversational succession; negative cases rejected changed cognitive source/configuration and missing protected checks. The CLI fixture exercises preparation, wrong-incumbent rejection, installation, memory continuity and restoration under a later epoch.
 
-The full acceptance matrix, including restoration after later promotion and broader environment compatibility, remains explicit in the specification. Local fixtures and live installation evidence are separate; this ADR does not claim successful production deployment.
+The baseline was installed live while preserving external state, and a subsequent real Mistral cognitive release completed succession and publication. An accumulated-history interview limit discovered during a declined live attempt was repaired and installed through the same operator boundary. See [progress](../progress.md). Local fixtures also reject stale restoration after a later cognitive promotion and recover interrupted restoration. Broader environment compatibility and full host/custodian evolution remain separate contracts.
