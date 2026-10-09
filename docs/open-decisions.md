@@ -6,7 +6,7 @@ Status: planning baseline, 2026-10-08. These are decisions to resolve with evide
 
 The implementation lead owns the register. D01 and D03 have an initial local disposition; D02/D04/D05/D09/D11 have partial dispositions below. Other details remain open until their gates pass. A proposed ADR is not proof its mechanics were implemented.
 
-**Explicit priority refinement, 2026-10-09:** Basic coding is required seed behavior, and full autonomy includes the entire source tree and possible dependency forks. [ADR 0019](adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) reopens the framework-free implementation choice without selecting a replacement library. D14/P17.1 own that evidence; D10/P18 own actual autonomous host/governance/custodian enablement. Current cognitive-only and operator-only limits below are implementation facts, not permanent product restrictions.
+**Explicit priority refinement, 2026-10-09:** Basic coding is required seed behavior, and full autonomy includes the entire source tree and possible dependency forks. [ADR 0019](adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) selects the pinned direct Mistral adapter boundary from P17.1 fixture evidence, replacing the framework-free restriction. D14 retains production compatibility and fork-evolution gates; D10/P18 own actual autonomous host/governance/custodian enablement. Current cognitive-only and operator-only limits below are implementation facts, not permanent product restrictions.
 
 ### Implementation dispositions, 2026-10-08
 
@@ -39,7 +39,7 @@ The implementation lead owns the register. D01 and D03 have an initial local dis
 | D11 | Slack task/conversation semantics | Define context ownership, progress, cancel/correct semantics, duplicate/reordered messages, reconnect behavior, and response targets. An optional website's FIFO/SSE rules are not automatically Slack requirements. | P04 |
 | D12 | Optional features and integrations | Decide temporary mode, website, MCP exposure, local inference, Codex review, embedding providers, and search adapter only when their value and full contract are understood. | Separate scoped work |
 | D13 | Historical source completeness | Reconcile missing earlier conversation turns and generated ZIP/addendum if they become available. Do not pretend the recovered six turns establish exact earlier decisions or file contents. | Future source update; does not block this distillation |
-| D14 | Coding library, tool protocol and fork strategy | Test a minimal replaceable library against explicit per-call/per-effect control, direct Mistral routing, cancellation, usage, retry and durable-resumption seams. Start with AI SDK core/Mistral; compare Pi/custom where warranted. Record exact versions, licenses, dependencies, discovery/network defaults and maintainability. Prove the ability to evaluate a locally modified dependency source/build. | P17.1, P18.1 |
+| D14 | Coding library, tool protocol and fork strategy | Initial boundary selected: direct Mistral 4.0.62/provider 4.0.26/Zod 4.6.5 behind a host-owned facade; exact inputs and fixture evidence are in ADR 0019. Production configuration, build/serving compatibility and durable control remain to verify. Prove the ability to evaluate and run a locally modified dependency/fork; library selection alone does not satisfy this. | P17.1–P17.4, P18.1 |
 
 ## Risk register
 

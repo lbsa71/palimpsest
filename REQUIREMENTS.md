@@ -72,7 +72,7 @@ This seed does not require training model weights, local inference, a GPU, a dis
 Do not mistake proposed technology for settled requirements. [Open decisions](docs/open-decisions.md) tracks language/runtime, hardware, storage, transport, authority boundary, growth budgets, reviewer evaluation, retention, and future upgrade mechanisms. In particular:
 
 - TypeScript with Node 24 is selected for the first local seed in [ADR 0008](docs/adr/0008-local-seed-runtime.md); the attachment's Rust mandate is a different product choice.
-- [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) reopens the blanket framework exclusion. A small replaceable/forkable library may supply model/tool protocol support; AI SDK with direct Mistral is a provisional evaluation preference, not a user-selected dependency or a verified integration.
+- [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) replaces the blanket framework exclusion with a small replaceable/forkable protocol boundary. The pinned direct Mistral adapter is selected for P17 from fixture evidence; this is an engineering choice, not a user-mandated vendor or a completed production integration.
 - SQLite is selected for separate operational, memory, and agenda tables in the local seed. It does not substitute for explicit coordination of external effects.
 - Memvid is a candidate memory backend; developmental memory is a process above storage.
 - A local typed custodian API can precede MCP. No MCP version or provider capability from the historical chat is asserted current here.
