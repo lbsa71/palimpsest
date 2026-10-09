@@ -1,6 +1,6 @@
 # Local peer conversation and adversarial testing
 
-Status: independently reviewed peer role and corrective guidance installed in host `78aed415`, 2026-10-09. Mechanical enforcement and finite canary tests pass; live conversational authority/truthfulness still fails after guidance refinement. Public-release acceptance remains open. P04/P16, R18–R19, R21, R23–R25.
+Status: independently reviewed peer role and per-turn/history facts installed in host `2b7d50dd`, with the later supervised-worker host `beecd06d` retaining those contracts, 2026-10-09. Mechanical enforcement and finite canary tests pass; the latest finite retest rejects fresh impersonation but still fails historical authority/truthfulness. Public-release acceptance remains open. P04/P16, R18–R19, R21, R23–R25.
 
 ## Problem and expected behavior
 
