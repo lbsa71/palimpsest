@@ -48,7 +48,7 @@ test('shared conversation retains author restrictions through memory and process
     const current = facts(requests[1]!);
     assert.equal(current.requester.selfModificationSuggestionEligible, true);
     assert.deepEqual(current.memorySources[0], { memoryId: store.listMemories(owner.conversationId)[0]!.id,
-      sourceTaskId: outsider.id, slackAuthor: { teamId: 'T1', userId: 'U2' }, selfModificationSuggestionEligible: false });
+      sourceTaskId: outsider.id, conversationSource: 'slack', slackAuthor: { teamId: 'T1', userId: 'U2' }, selfModificationSuggestionEligible: false, sourceProposalRecorded: false });
     assert.equal(current.selfModificationDispatcher, false);
     assert.equal(current.conversationDispatchToGrowth, false);
     assert.deepEqual(current.conversationActionTools, []);

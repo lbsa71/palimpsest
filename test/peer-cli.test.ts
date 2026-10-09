@@ -52,6 +52,8 @@ globalThis.fetch=async(url,options)=>{
     const payload=JSON.parse(readFileSync(capture,'utf8').trim().split('\n').at(-1)!);const prompt=JSON.parse(payload.messages[1].content),facts=JSON.parse(payload.messages[0].content.split('Host facts: ').at(-1)!);
     assert.equal(prompt.sameAuthorExperiences,undefined);assert.equal(prompt.sourceContext,undefined);assert.equal(prompt.hostFacts,undefined);assert.deepEqual(prompt.memories,[]);
     assert.equal(facts.requester.source,'peer');assert.equal(facts.requester.slackAuthor,null);assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,[]);assert.equal(payload.response_format,undefined);
+    assert.equal(facts.selfModificationDispatcher,false);assert.equal(facts.conversationDispatchToGrowth,false);
+    assert.deepEqual(facts.configuredConversationCapabilities,{selfModificationDispatcher:true,conversationDispatchToGrowth:true});
     assert.equal((await fetch(first.url+'/events',{headers:peerHeaders})).status,401);
     assert.equal((await fetch(first.url+'/messages',{method:'POST',headers:operatorHeaders,body:JSON.stringify({...inbound,source:'direct',conversationId:'peer:social'})})).status,400);
     const duplicate=await fetch(first.url+'/peer/messages',{method:'POST',headers:peerHeaders,body:JSON.stringify(inbound)});assert.equal((await duplicate.json() as {id:string}).id,task.id);
@@ -59,7 +61,10 @@ globalThis.fetch=async(url,options)=>{
     const persisted=await fetch(second.url+'/peer/tasks/'+task.id,{headers:peerHeaders});assert.equal(persisted.status,200);assert.equal((await persisted.json() as {state:string}).state,'succeeded');
     const followup=await fetch(second.url+'/peer/messages',{method:'POST',headers:peerHeaders,body:JSON.stringify({...inbound,id:'peer-followup',text:'What do you remember?'})});const following=await followup.json() as {id:string};
     const finished=await until(async()=>await (await fetch(second.url+'/peer/tasks/'+following.id,{headers:peerHeaders})).json() as {state:string},task=>['succeeded','failed'].includes(task.state));assert.equal(finished.state,'succeeded');
-    const retained=JSON.parse(JSON.parse(readFileSync(capture,'utf8').trim().split('\n').at(-1)!).messages[1].content).memories;assert.equal(retained.length,1);assert.ok(retained[0].content.includes(inbound.text));
+    const followupPayload=JSON.parse(readFileSync(capture,'utf8').trim().split('\n').at(-1)!);
+    const retained=JSON.parse(followupPayload.messages[1].content).memories;assert.equal(retained.length,1);assert.ok(retained[0].content.includes(inbound.text));
+    const followupFacts=JSON.parse(followupPayload.messages[0].content.split('Host facts: ').at(-1)!);
+    assert.deepEqual(followupFacts.memorySources,[{memoryId:retained[0].id,sourceTaskId:task.id,conversationSource:'peer',slackAuthor:null,selfModificationSuggestionEligible:false,sourceProposalRecorded:false}]);
     await stop();const observed=new Store(join(state,'state.sqlite'));
     try{assert.equal(observed.listGrowth().filter(growth=>growth.origin.startsWith('conversation:')).length,0);assert.equal(observed.listEvents().some(event=>event.type==='evolution.started'||event.type==='conversation.proposal'),false);assert.equal(observed.listEffects(task.id).filter(effect=>effect.kind==='communication').length,1);}
     finally{observed.close();}
