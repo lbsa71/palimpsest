@@ -1,0 +1,167 @@
+{
+  "node": "v24.13.0",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "lockSha256": "fcd77ce046d4f9d47d298dc0658b14efd1301d4a069c88d5a99bdf29e50fad26",
+  "packageCount": 12,
+  "total": {
+    "bytes": 19606831,
+    "files": 2373
+  },
+  "directAdapterClosure": {
+    "basis": "flat-lock transitive dependencies and peers; not a separate installation or bundle",
+    "packageCount": 9,
+    "bytes": 10467348,
+    "names": [
+      "@ai-sdk/mistral",
+      "@ai-sdk/provider",
+      "@ai-sdk/provider-utils",
+      "@standard-schema/spec",
+      "@workflow/serde",
+      "eventsource-parser",
+      "json-schema",
+      "undici",
+      "zod"
+    ]
+  },
+  "packages": [
+    {
+      "name": "@ai-sdk/gateway",
+      "version": "4.0.110",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "bytes": 891241,
+      "files": 65,
+      "lifecycleScripts": {},
+      "integrity": "sha512-5IwnOR6v7KC+D9eddUqsCobXl/FbLUVb2LaQc/uyuQdpP3/n9s0YLc9zl4/W3IS/R2pjHrqUfCzEAeOu7bFLoQ=="
+    },
+    {
+      "name": "@ai-sdk/mistral",
+      "version": "4.0.62",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "bytes": 368109,
+      "files": 33,
+      "lifecycleScripts": {},
+      "integrity": "sha512-I0Wm4VMBckhVG++KFFhXqX8UGzYfh4L+1obwXJ1JX2AE1NAW6DFKYebVT2slMWPt80RV3erM6scYkwwwFc2d3A=="
+    },
+    {
+      "name": "@ai-sdk/provider",
+      "version": "4.0.26",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "bytes": 721131,
+      "files": 264,
+      "lifecycleScripts": {},
+      "integrity": "sha512-BZ443uBEq6HuMA+Z4b7Hpm65GpZSo7pWqnYqpf/7tAO3C48JbtvAhOE2JnODFj+jodsZzfRHkAyQb64xuD2tZQ=="
+    },
+    {
+      "name": "@ai-sdk/provider-utils",
+      "version": "5.0.58",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "bytes": 1402875,
+      "files": 186,
+      "lifecycleScripts": {},
+      "integrity": "sha512-iXSwKR/7LpHzAlyrUl+bTinwzmZ3Nmup1viwPisM5Gn5cogRdIG4rV9w1ZDuKFcrXyu/AeVs42E1CX/0aNwrfQ=="
+    },
+    {
+      "name": "@standard-schema/spec",
+      "version": "1.1.0",
+      "license": "MIT",
+      "engines": null,
+      "bytes": 22634,
+      "files": 7,
+      "lifecycleScripts": {},
+      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
+    },
+    {
+      "name": "@vercel/oidc",
+      "version": "3.2.0",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">= 20"
+      },
+      "bytes": 104725,
+      "files": 37,
+      "lifecycleScripts": {},
+      "integrity": "sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug=="
+    },
+    {
+      "name": "@workflow/serde",
+      "version": "4.1.0",
+      "license": "Apache-2.0",
+      "engines": null,
+      "bytes": 3735,
+      "files": 7,
+      "lifecycleScripts": {},
+      "integrity": "sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ=="
+    },
+    {
+      "name": "ai",
+      "version": "7.0.136",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "bytes": 8143517,
+      "files": 698,
+      "lifecycleScripts": {},
+      "integrity": "sha512-quFXFKEw7qUZL9v2ciJ9eruQYq9KUo3F+mDhwdL/pi7ZPu0bj7UX6yv55oAUiMjbGXd8MZRzIcu0oPc4y9llQw=="
+    },
+    {
+      "name": "eventsource-parser",
+      "version": "3.1.1",
+      "license": "MIT",
+      "engines": {
+        "node": ">=18.0.0"
+      },
+      "bytes": 123553,
+      "files": 21,
+      "lifecycleScripts": {},
+      "integrity": "sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ=="
+    },
+    {
+      "name": "json-schema",
+      "version": "0.4.0",
+      "license": "(AFL-2.1 OR BSD-3-Clause)",
+      "engines": null,
+      "bytes": 26079,
+      "files": 5,
+      "lifecycleScripts": {},
+      "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="
+    },
+    {
+      "name": "undici",
+      "version": "7.30.0",
+      "license": "MIT",
+      "engines": {
+        "node": ">=20.18.1"
+      },
+      "bytes": 1658921,
+      "files": 210,
+      "lifecycleScripts": {
+        "prepare": "husky && node ./scripts/platform-shell.js"
+      },
+      "integrity": "sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ=="
+    },
+    {
+      "name": "zod",
+      "version": "4.6.5",
+      "license": "MIT",
+      "engines": null,
+      "bytes": 6140311,
+      "files": 840,
+      "lifecycleScripts": {},
+      "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="
+    }
+  ]
+}
