@@ -803,7 +803,7 @@ export class Store {
     this.#atomic(() => {
       const item = this.conversationReflection(id); const topic = item ? this.conversationTopic(item.topicId) : undefined;
       if (!item || item.state !== 'running' || !topic || topic.state !== 'active' || topic.revision !== expectedRevision
-        || topic.reflectionId !== id || !this.conversationSourcesCurrent(topic)) throw new Error('Reflection context changed before publication');
+        || now >= topic.expiresAt || topic.reflectionId !== id || !this.conversationSourcesCurrent(topic)) throw new Error('Reflection context changed or expired before publication');
       const revised = this.reviseConversationOutcome(topic.id, outcome, now, 'reflection_result');
       this.updateConversationReflection(id, { state: 'completed', checkpoint: { evidence, outcomeRevision: revised.revision } });
     });
@@ -818,6 +818,7 @@ export class Store {
     return this.#atomic(() => {
       const item = this.conversationReflection(id); const topic = item ? this.conversationTopic(item.topicId) : undefined; const window = this.growthWindow(windowId);
       if (!item || !topic || topic.state !== 'active' || topic.reflectionId !== id || !this.conversationSourcesCurrent(topic)
+        || atMs >= topic.expiresAt
         || topic.outcome.status !== 'pending'
         || this.conversationAwaitingExchange(topic.id)
         || !['waiting', 'paused'].includes(item.state) || item.attempts >= item.maxAttempts || !window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls) return;
