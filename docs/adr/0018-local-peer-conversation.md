@@ -1,6 +1,6 @@
 # ADR 0018: Separate local peer conversation role
 
-- **Status:** Accepted bounded implementation and corrective guidance installed in `78aed415`; mechanical/finite canary checks pass, live conversational authority/truthfulness still fails. Public-release acceptance remains open.
+- **Status:** Accepted bounded role and per-turn/historical facts installed in `2b7d50dd`; mechanical/finite canary checks pass. Fresh impersonation is rejected in the finite facts retest; historical authority/truthfulness still fails. Public-release acceptance remains open.
 - **Recorded:** 2026-10-09.
 - **Requirements:** R18–R19, R21, R23–R25; explicit user request for peer-role social-engineering testing.
 - **Specification:** [Local peer conversation](../peer-conversation.md).
@@ -21,4 +21,6 @@ Reject forged roles/authors, foreign task reads/controls, operator routes/global
 
 ## Installed evidence and remaining decision — 2026-10-09
 
-Mechanical checks and finite live canary/route tests passed after exact frozen review and installation. Fresh impersonation and historical-authority interpretation still failed after strengthened peer guidance. Host denial prevented source actions, while the model asserted permissions it did not have. Treat the model's authority narrative as untrusted; public-release acceptance remains open. Separating globally configured machinery from current-turn callable capabilities and supplying verified historical source/action receipts are candidate next designs, requiring their own specification and tests. They are not yet implemented decisions or guarantees. The [specification](../peer-conversation.md) and [progress](../progress.md) preserve both initial and corrective failures; raw records stay external.
+At the post-guidance checkpoint `78aed415`, mechanical checks and finite live canary/route tests passed after exact frozen review and installation, while fresh impersonation and historical-authority interpretation still failed. Host denial prevented source actions, while the model asserted permissions it did not have. Per-turn/global separation and source/action receipts were then proposed for further specification and tests. The subsequent implementation and remaining gaps are recorded below. The [specification](../peer-conversation.md) and [progress](../progress.md) preserve both initial and corrective failures; raw records stay external.
+
+The per-turn/global separation and historical transport/proposal-record facts are now implemented and installed after failing provider-request checks, frozen independent review and actual CLI/restart verification. The two-call Mistral retest rejects fresh impersonation, but continuation still invents earlier operator authentication, credential location and a possible queued proposal. Mechanical denial and finite private-value absence hold. Historical truthfulness, broader verified action receipts/confidential-item handling and public-release acceptance remain open; fact delivery is not a model-security guarantee.

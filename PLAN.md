@@ -119,7 +119,7 @@ Implement shared communications contracts with direct calls, an authenticated lo
 
 ### P04/P16 refinement — separate peer conversation and adversarial testing
 
-**Status:** Local peer role and corrective guidance independently reviewed/installed in `78aed415`; mechanical authority/finite canary tests pass, live conversational authority/truthfulness still fails. The peer test surface is available; public-release security acceptance remains open, 2026-10-09. **Requirements:** R18–R19, R21, R23–R25; A21; [specification](docs/peer-conversation.md), [ADR 0018](docs/adr/0018-local-peer-conversation.md).
+**Status:** Local peer role and per-turn/history facts independently reviewed/installed in `2b7d50dd`; mechanical authority/finite canary tests pass. The finite facts retest rejects fresh impersonation but still misrepresents historical authentication/credential location/possible queued work. The peer test surface is available; public-release security acceptance remains open, 2026-10-09. **Requirements:** R18–R19, R21, R23–R25; A21; [specification](docs/peer-conversation.md), [ADR 0018](docs/adr/0018-local-peer-conversation.md).
 
 **Problem:** Operator-authenticated direct conversations carry source-suggestion privileges and cannot faithfully test an ordinary peer or social attacks against that boundary.
 
