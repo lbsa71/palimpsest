@@ -276,10 +276,14 @@ export async function evaluateChallenge(options: VerifyOptions & { challenge: Ex
 export async function evaluateCandidate(options: { repositoryRoot: string; releaseDir: string; timeoutMs?: number }): Promise<CandidateEvidence> {
   const manifest = verifyFrozenCandidate(options); const checks: CandidateCheck[] = [];
   const compiler = manifest.runtime;
+  // Relocated immutable hosts link their already bound dependency installation.
+  // The compiler argument must match the canonical path granted by isolation;
+  // traversing the host's ungranted symlink path otherwise hides @types/node.
+  const canonicalToolchainRoot = realpathSync(toolchainRoot);
   try {
     const result = await runIsolated({ program: compiler.compilerPath, trustedExecutables: [{ path: compiler.compilerPath, sha256: compiler.compilerSha256 }],
-      args: ['--ignoreConfig', '--noEmit', '--strict', '--target', 'es2024', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--allowImportingTsExtensions', '--erasableSyntaxOnly', '--verbatimModuleSyntax', '--skipLibCheck', '--types', 'node', '--typeRoots', join(toolchainRoot, '@types'), ...manifest.files.filter(file => file.path.endsWith('.ts')).map(file => join(manifest.candidateRoot, file.path))],
-      cwd: manifest.candidateRoot, readPaths: [toolchainRoot], timeoutMs: options.timeoutMs ?? 30_000, maxOutputBytes: 262_144 });
+      args: ['--ignoreConfig', '--noEmit', '--strict', '--target', 'es2024', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--allowImportingTsExtensions', '--erasableSyntaxOnly', '--verbatimModuleSyntax', '--skipLibCheck', '--types', 'node', '--typeRoots', join(canonicalToolchainRoot, '@types'), ...manifest.files.filter(file => file.path.endsWith('.ts')).map(file => join(manifest.candidateRoot, file.path))],
+      cwd: manifest.candidateRoot, readPaths: [canonicalToolchainRoot], timeoutMs: options.timeoutMs ?? 30_000, maxOutputBytes: 262_144 });
     checks.push(processCheck('typecheck', result));
   } catch (error) { checks.push({ name: 'typecheck', status: 'failed', detail: error instanceof Error ? error.message : 'Typechecker unavailable' }); }
   checks.push(await protectedBehavior(manifest, 'trusted-agent-contract', options.timeoutMs));

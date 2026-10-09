@@ -231,6 +231,8 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 
 **Live recovery follow-up:** The first deployed executor made no authoring call because the earlier successful publication was treated as uncertain after a host commit advanced the remote branch. Resolve this with independently observed remote ancestry and exact saved-source verification, with no push replay or checkout mutation. The [publication recovery contract](docs/plan-driven-evolution.md#publication-recovery-after-later-host-commits) defines its acceptance and uncertainty limits. Live plan sheds remain pending.
 
+**Persistent-host checking follow-up:** After publication recovery, Mistral authored a minimal provenance change and all three item fixtures passed. Its baseline typecheck failed to resolve Node declarations through the copied host's dependency link. Reproduce and correct canonical toolchain resolution without widening isolation or changing the candidate; separately review/install the host fix before another allocated attempt. The original proposal call is not refunded. See [the relocated-checking contract](docs/plan-driven-evolution.md#candidate-checking-from-the-persistent-host-bundle).
+
 ## Deferred and optional work
 
 | Item | Trigger / gate |
