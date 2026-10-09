@@ -13,6 +13,9 @@ export function conversationRequest(task: Task, memories: Memory[]): CompletionR
     content: memory.content.slice(0, 4000),
     source: memory.source,
     confidence: memory.confidence,
+    version: memory.version,
+    evidence: memory.evidence,
+    updatedAt: memory.updatedAt,
   }));
 
   return {
