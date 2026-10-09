@@ -22,7 +22,9 @@ export interface OutboundMessage {
 
 export interface Communications {
   name: string;
-  send(message: OutboundMessage): Promise<void>;
+  /** Successful send can retain an externally observed receipt. Void remains
+   * compatible with transports which offer no independent message identity. */
+  send(message: OutboundMessage): Promise<void | { transport: string; messageId: string }>;
 }
 
 export class CommunicationsError extends Error {
@@ -337,7 +339,7 @@ export class SlackCommunications implements Communications {
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
-  async send(message: OutboundMessage): Promise<void> {
+  async send(message: OutboundMessage): Promise<{ transport: string; messageId: string }> {
     outbound(message);
     const context = /^slack:([A-Za-z0-9]+):([A-Za-z0-9]+):(\d+\.\d+)$/.exec(message.conversationId);
     if (!context || (message.replyTo !== undefined && message.replyTo !== context[3])) throw new CommunicationsError('invalid_slack_context', 'rejected');
@@ -355,5 +357,6 @@ export class SlackCommunications implements Communications {
     if (!record(result)) throw new CommunicationsError('slack_delivery_uncertain', 'uncertain');
     if (result.ok === false) throw new CommunicationsError('slack_api_rejected', 'rejected');
     if (result.ok !== true || result.channel !== context[2] || !nonempty(result.ts)) throw new CommunicationsError('slack_delivery_uncertain', 'uncertain');
+    return { transport: 'slack', messageId: result.ts };
   }
 }

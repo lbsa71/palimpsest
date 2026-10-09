@@ -1,6 +1,6 @@
 # ADR 0026: Conversation outcomes and scoped reflection
 
-- **Status:** Explicit user requirement; independently reviewed proposed implementation direction. The complete serving workflow is not implemented.
+- **Status:** Explicit user requirement; local runtime implementation with deterministic round-trip checks and fresh review in progress. Installation and qualitative serving acceptance remain open.
 - **Recorded:** 2026-10-09.
 - **Requirements:** R02, R04, R07, R17–R19, R22–R25; P06/P16.
 - **Specification and evidence:** [Conversation judgment](../conversation-judgment.md#follow-up-investigation-remembered-exchange-versus-owned-reflection).
@@ -40,4 +40,6 @@ This adds a lifecycle and retrieval contract that must be tested together. The m
 
 ## Acceptance and status
 
-The [round-trip acceptance cases](../conversation-judgment.md#acceptance-for-the-round-trip) require real storage/restart, finite background execution, source invalidation, interruption, truthful delivery and actual later-request retrieval. Deterministic mechanics and qualitative model judgment require separate evidence. The current red fixture proves one missing link; it does not demonstrate a fix, automatic scheduling or adequate cognition. No live change or additional provider call is implied by this ADR.
+The [round-trip acceptance cases](../conversation-judgment.md#acceptance-for-the-round-trip) require real storage/restart, finite background execution, source invalidation, interruption, truthful delivery and actual later-request retrieval. The [implementation work item](../work-items/p16-conversation-continuity.md) records the local source slice and its finite host policy. Real SQLite/runtime fixtures now cover ordinary and eligible/peer retrieval, shared window fairness, mandatory reports, tentative acknowledgment recovery, source/task correction, forgetting and cancellation races. Deterministic mechanics and qualitative model judgment remain separate evidence. Related-thread discovery/merge, live cognition and installed serving acceptance remain open; no live change or additional provider call is implied by this ADR.
+
+The concrete lifecycle retains tentative exchange intents separately from the current topic. Only confirmed acknowledgment can activate an intent; a conflicting unresolved continuation pauses older thought but preserves the previously accepted obligation. Result publication and reflection completion commit together. Each final report is tied to an outcome revision and communication effect; holding updates, rejected/unknown sends and older acknowledgments cannot clear a newer obligation. Source-linked raw episodes prevent later generated replies from laundering forgotten evidence or another author's authority.
