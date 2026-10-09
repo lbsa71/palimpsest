@@ -154,6 +154,7 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       const output: Buffer[] = []; const errors: Buffer[] = [];
       let outputBytes = 0; let errorBytes = 0; let captured = 0;
       let timedOut = false; let aborted = false; let outputLimitExceeded = false;
+      let observerFailure: IsolationError | undefined;
       const child = spawn(sandboxExecutable, ['-p', policy, program, ...options.args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const kill = () => {
         if (!child.pid) return;
@@ -163,22 +164,34 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       const cancel = () => { aborted = true; kill(); };
       const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
       const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); };
+      const failObserver = (message: string, cause: unknown) => {
+        observerFailure ??= new IsolationError(message, { cause });
+        // Keep ownership and cancellation alive until close. Rejecting here
+        // would let the caller release writable paths while the child drains.
+        kill();
+      };
       const capture = (chunk: Buffer, stderr: boolean) => {
         const accepted = chunk.subarray(0, Math.max(0, outputLimit - captured));
         if (accepted.length) {
           (stderr ? errors : output).push(accepted);
           captured += accepted.length;
           if (stderr) errorBytes += accepted.length; else outputBytes += accepted.length;
-          try { (stderr ? options.onStderr : options.onStdout)?.(accepted); }
-          catch (cause) { cleanup(); kill(); reject(new IsolationError('Trusted stream observer failed', { cause })); }
+          if (!observerFailure) {
+            try { (stderr ? options.onStderr : options.onStdout)?.(accepted); }
+            catch (cause) { failObserver('Trusted stream observer failed', cause); }
+          }
         }
         if (accepted.length < chunk.length) { outputLimitExceeded = true; kill(); }
       };
       child.stdout.on('data', (chunk: Buffer) => capture(chunk, false));
       child.stderr.on('data', (chunk: Buffer) => capture(chunk, true));
-      child.once('error', error => { cleanup(); reject(new IsolationUnavailableError('Could not launch the isolated Node process', { cause: error })); });
+      child.once('error', error => {
+        if (observerFailure) return; // The original failure still waits for close.
+        cleanup(); reject(new IsolationUnavailableError('Could not launch the isolated Node process', { cause: error }));
+      });
       child.once('close', (exitCode, signal) => {
         cleanup();
+        if (observerFailure) { reject(observerFailure); return; }
         resolve({ exitCode, signal, stdout: boundedText(Buffer.concat(output), outputBytes), stderr: boundedText(Buffer.concat(errors), errorBytes), timedOut, aborted, outputLimitExceeded, durationMs: Math.ceil(performance.now() - started) });
       });
       child.stdin.on('error', () => { /* Early exit or cancellation can close stdin before input is consumed. */ });
@@ -187,7 +200,7 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       if (options.keepStdinOpen) { if (options.stdin) child.stdin.write(options.stdin); }
       else child.stdin.end(options.stdin ?? '');
       try { options.onSpawn?.(child); }
-      catch (cause) { cleanup(); kill(); reject(new IsolationError('Trusted process observer failed', { cause })); }
+      catch (cause) { failObserver('Trusted process observer failed', cause); }
     });
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
