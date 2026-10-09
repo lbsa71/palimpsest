@@ -28,6 +28,10 @@ This deliberately consumes a versioned provider integration protocol, not the co
 
 Forked dependencies are part of the autark's evolvable source/build inputs. Record upstream identity, license, local changes, reproducible build and evaluation; upstream acceptance is not a prerequisite to using a locally admitted fork. Pin exact inputs and keep a recovery artifact independent of network availability.
 
+The first isolated file backend is recorded in [ADR 0020](0020-isolated-workspace-files-and-reconciliation.md). Stage command execution with the current trusted Node and hash-bound native TypeScript executables, initially denying child processes and network. This can support selected real edit/test/repair work; `--test-isolation=none` does not remove subprocess requirements inside tests. Broader owned toolchain, dependency and fork execution remains required work, not a permanent source restriction. The [command contract](../coding-autonomy.md#staged-command-execution-and-recovery) specifies bounded binary output, shared writer ownership and recovery evidence; command implementation and serving verification remain pending.
+
+Separate command outcome, workspace usability and engineering acceptance. Independently proven termination and a valid snapshot may release a workspace for further work without recovering a lost exit code. Preserve the unknown outcome; effect settlement must not imply a passing check, automatic replay or refunded allocation. Invalid post-command trees are held with their evidence; a separately identified restoration from the latest verified pre-command checkpoint preserves earlier draft work. Do not make uncertain local execution an indefinite autonomy dead end when an implemented, verified recovery path can safely continue. Unknown-owner gaps remain explicit until that path exists.
+
 ## Alternatives and consequences
 
 - **Keep whole-file proposals and cognitive-only admission:** Small and already demonstrated, but cannot meet the explicit seed tooling and full-codebase autonomy requirements. Retain as historical compatibility while replacing the authoring path.
@@ -36,6 +40,7 @@ Forked dependencies are part of the autark's evolvable source/build inputs. Reco
 - **Adopt a full coding agent unchanged:** Provides more ready-made workflow, but its sessions, discovery, retry behavior and permission model may conflict with durable budgets, scoped context and custody. A fork is valid if its benefits justify owning that larger surface.
 - **Replace the live installation directly:** Fails the existing exact-artifact, continuity and recoverable succession requirements. Isolated authoring followed by appropriate admission delivers autonomy without abandoning those contracts.
 - **Reserve host/custodian code for humans indefinitely:** Conflicts with the clarified main priority. Operator bootstrap remains a current implementation fact; P18 must replace that limitation with an independently evaluated autonomous route.
+- **Treat every reconciled command as success, or hold all unknown exits forever:** The former invents evidence; the latter needlessly prevents progress once termination and workspace state are independently known. Retain unknown process outcome while separately establishing usability and collecting new acceptance evidence.
 
 This adds real workspace and tool-operation state and broadens release coverage. It should reuse existing task/effect journals, snapshots and custody rather than introduce another competing operational store. A library's defaults are not proof of enforced limits. New coding authority belongs to authorized engineering tasks; peer conversations retain their existing scope and no source-dispatch privilege.
 
