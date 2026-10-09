@@ -34,7 +34,7 @@ The implementation lead owns integration; bounded store/isolation, communication
 | P17 | Adapter selected and first isolated file backend verified; production coding integration pending | ADR 0019 selects pinned Mistral/provider packages behind a host-owned facade. Host-only file tools pass real sandbox/recovery checks. Commands, durable iteration and actual-provider/serving acceptance remain required. |
 | P18 | Specified; autonomous broad release routes not implemented | Broader application/host/dependency/fork release and separate governance/custodian evolution must pass A23/A17. Existing operator bootstrap and cognitive-only sheds do not complete this item. |
 
-The separate [candidate input correction](docs/candidate-typecheck-scope.md) is staged under [ADR 0021](docs/adr/0021-bound-production-typechecking-and-runtime-exclusions.md): production inputs and immutable runtime exclusions are bound, with exact historical custody proof. Independent source/fixture review passed; frozen-artifact review and host activation remain pending. Failed P06 evidence and allocations are preserved.
+The separate [candidate input correction](docs/candidate-typecheck-scope.md) is staged under [ADR 0021](docs/adr/0021-bound-production-typechecking-and-runtime-exclusions.md): production inputs and immutable runtime exclusions are bound, with exact historical custody proof. Independent source/frozen review passed and host `a27b6e7d` is installed. Failed P06 evidence and allocations are preserved. Future evaluator/toolchain replacement requires original verifier/runtime retention under P18; that compatibility route remains open.
 
 ## Milestones
 
