@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { IsolationUnavailableError, runIsolated } from '../src/isolation.ts';
+import { IsolationError, IsolationUnavailableError, runIsolated } from '../src/isolation.ts';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'palimpsest-isolation-'));
@@ -105,3 +106,49 @@ test('trusted supervisor can exchange bounded JSON lines with an isolated worker
     await assert.rejects(runIsolated({ program: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: f.work, onSpawn: () => { throw new Error('fixture observer failure'); } }), /observer failed/);
   } finally { f.cleanup(); }
 });
+
+for (const observer of ['onSpawn', 'onStdout', 'onStderr'] as const) {
+  test(`${observer} failure drains the actual child before rejection and releases no late writer`, { skip: process.platform !== 'darwin' }, async () => {
+    const f = fixture();
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const output = join(f.scratch, `writer-${observer}-${attempt}`);
+        const script = `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(output)},'started');process.${observer === 'onStderr' ? 'stderr' : 'stdout'}.write('ready\\n');setInterval(()=>fs.appendFileSync(${JSON.stringify(output)},'tick'),1);`;
+        const cause = new Error('fixture observer failure');
+        let child: ChildProcess | undefined; let closed = false; let observations = 0;
+        let closedPromise: Promise<void> | undefined;
+        const fail = () => { observations++; throw cause; };
+        try {
+          await assert.rejects(runIsolated({
+            program: process.execPath, args: ['-e', script], cwd: f.work, writePaths: [f.scratch], timeoutMs: 3000,
+            onSpawn: spawned => {
+              child = spawned;
+              closedPromise = new Promise(resolve => spawned.once('close', () => { closed = true; resolve(); }));
+              if (observer === 'onSpawn') fail();
+            },
+            ...(observer === 'onStdout' ? { onStdout: fail } : {}),
+            ...(observer === 'onStderr' ? { onStderr: fail } : {}),
+          }), error => {
+            assert.ok(error instanceof IsolationError);
+            assert.match(error.message, /observer failed/);
+            assert.equal(error.cause, cause);
+            return true;
+          });
+          assert.equal(closed, true, 'the returned rejection must wait for actual child close');
+          assert.equal(observations, 1);
+          assert.ok(child?.pid);
+          assert.throws(() => process.kill(child!.pid!, 0), { code: 'ESRCH' }, 'the writer must be gone at settlement');
+          if (observer !== 'onSpawn') {
+            const settled = readFileSync(output, 'utf8');
+            await new Promise(resolve => setTimeout(resolve, 20));
+            assert.equal(readFileSync(output, 'utf8'), settled, 'no writes may occur after the receiver releases ownership');
+          }
+        } finally {
+          // Even the red check waits for the killed subprocess before removing
+          // its writable fixture, so test cleanup does not hide the race.
+          await closedPromise;
+        }
+      }
+    } finally { f.cleanup(); }
+  });
+}
