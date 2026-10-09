@@ -32,4 +32,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 
 | [0022](0022-staged-command-observations-and-checkpoint-recovery.md) | Staged host primitives implemented; independent primitive/receiver review passed; serving acceptance pending | Separate execution observations, usable drafts and checkpoint restoration |
 
+| [0023](0023-supervised-read-only-worker-sessions.md) | Source reviewed; broader serving/frozen/live acceptance pending | Persistent read-only descriptor workers with finite RPC supervision |
+
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

@@ -1,5 +1,11 @@
 # Implementation progress and evidence
 
+## Supervised worker reliability refinement — 2026-10-09
+
+The running cognitive worker repeatedly failed at its inherited five-minute finite-job deadline while API/Slack availability concealed the recovery churn. A separate read-only supervised session removes that routine expiry and lifetime stdout transcript ceiling while retaining startup/RPC/framing/diagnostic limits and actual abort/drain. Source/HOME/TMPDIR writes, fork and network remain denied. Trusted policy callbacks must complete synchronously; returned thenables fail closed and eventual rejections are consumed. [ADR 0023](adr/0023-supervised-read-only-worker-sessions.md) records the contract and alternatives.
+
+Actual accelerated-clock process and host fixtures preserve PID, checkpoint and epoch beyond two former expiry windows; genuine crash recovery still retains current memory/work. Root and fresh independent worker review each passed 27 checks; the isolation review passed 22 with one platform skip plus separate real sandbox probes. The broader standard full run passed 450 checks, failed one serving-policy events request with `ECONNRESET`, and skipped one platform branch. That failure reproduces independently and is being investigated before deployment. An earlier restrictive-umask run and its fixture-mode failures remain recorded. Source review is accepted within scope; no full-suite, frozen-installation or elapsed live-lifetime pass is claimed. Details and external evidence locations are in the [specification](supervised-workers.md).
+
 ## Candidate input and runtime correction installed — 2026-10-09
 
 The [typecheck boundary](candidate-typecheck-scope.md) now emits schema-2 manifests with installed evaluator identity, complete production entrypoints and explicit standalone runtime exclusions. Static imports retain compiler closure checks; experiments remain fully frozen. Default legacy verification fails without an independently retained exact identity. Actual historical recovery/service fixtures went from one of five passing to five of five, preserving current external memory and work while refusing new or recomputed legacy identities.

@@ -69,6 +69,12 @@ Define task/event identities, candidate manifest, evidence/grade envelopes, memo
 
 **Done when:** contracts have positive and negative examples, A01–A17 have planned fixtures and test ownership, and deterministic tests can drive the core without inference. Resolve D06–D10 sufficiently for the slice; model-supplied roles and grades cannot become authority.
 
+### Persistent worker reliability refinement — avoid routine five-minute recovery
+
+**Status:** Exact source slices independently reviewed; a broader serving-policy transport failure is under investigation before frozen installation/live acceptance, 2026-10-09. **Area:** P05/P10, R17–R19; [specification](docs/supervised-workers.md), [ADR 0023](docs/adr/0023-supervised-read-only-worker-sessions.md).
+
+The live cognitive worker failed every 300s because it inherited a finite-job deadline and cumulative output capture. A separate supervised read-only session preserves finite startup/RPC deadlines and actual abort/drain while retaining its process across idle/valid responses. Keep finite commands unchanged; deny persistent scratch writes and cap framing/stderr. Acceptance includes accelerated actual process/host tests, real failure recovery, frozen review and live observation beyond the previous deadline. The standard full source run currently has 450 passes, one serving-policy connection-reset failure and one platform skip; this is not a full-suite pass. Do not infer reliability from API 200 or adjust funding/replay tasks.
+
 ### P03 — Build durable task execution and provider boundaries
 
 **Priority:** P0. **Dependencies:** P02. **Requirements:** R05, R17, R19.
