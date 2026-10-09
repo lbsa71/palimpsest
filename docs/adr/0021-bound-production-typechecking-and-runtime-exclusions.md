@@ -1,6 +1,6 @@
 # ADR 0021: Bound production typechecking and standalone runtime exclusions
 
-Status: implemented and independently source-reviewed; frozen-artifact admission pending, 2026-10-09.
+Status: implemented, independently source/frozen reviewed and installed, 2026-10-09.
 
 ## Context
 
@@ -23,3 +23,5 @@ Installing unused SDKs into the root would hide the packaging mistake and enlarg
 This keeps experiments separate and closes their current cognitive runtime reachability while retaining exact provenance. Later admitted runtime/dependency integration can revise classification; the rule is not a permanent source-authoring restriction. Legacy rescue retains original behavior. Declaration use-site checking with `skipLibCheck` does not establish exhaustive declaration validation, and this path rule does not protect writable content against relocation.
 
 Real frozen compiler, behavior and normal/scoped worker fixtures reproduce and close the computed-import bypass; legacy custody fixtures reproduce recovery/service rejection then pass while new/forged legacy admission remains denied. Fresh review and exact frozen admission are separate required gates. No candidate failure, reservation, model or live service is changed by this decision document. The [specification](../candidate-typecheck-scope.md) records scope, risks and evidence limits.
+
+The installed record is host `a27b6e7d` from commit `27d5ebb`; [progress](../progress.md) records exact frozen and live observations. Subsequent schema-2 policy/implementation replacement must preserve a runnable original verifier and runtime; compatibility across that future transition is not established by this installation.
