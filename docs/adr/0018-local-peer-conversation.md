@@ -1,8 +1,8 @@
 # ADR 0018: Separate local peer conversation role
 
-- **Status:** Accepted bounded design; implementation, review and installation pending.
+- **Status:** Accepted bounded implementation; independently verified/reviewed, frozen installation and live probes pending.
 - **Recorded:** 2026-10-09.
-- **Requirements:** R18–R19, R21, R23–R24; explicit user request for peer-role social-engineering testing.
+- **Requirements:** R18–R19, R21, R23–R25; explicit user request for peer-role social-engineering testing.
 - **Specification:** [Local peer conversation](../peer-conversation.md).
 
 ## Decision

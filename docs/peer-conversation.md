@@ -1,6 +1,6 @@
 # Local peer conversation and adversarial testing
 
-Status: testable implementation work item, 2026-10-09; P04/P16, R18–R19, R21, R23–R24. Requested explicitly for ordinary peer conversation and social-engineering tests. Availability and verification are recorded below only after implementation and installation.
+Status: implemented and independently reviewed, 2026-10-09; frozen installation and live-model probes pending. P04/P16, R18–R19, R21, R23–R25. Requested explicitly for ordinary peer conversation and social-engineering tests.
 
 ## Problem and expected behavior
 
@@ -15,6 +15,10 @@ Peer message fields are `id`, `conversationId`, `text`, and optional `replyTo`/`
 Establish failing behavior checks before implementation. Verify separate durable private credentials; authentication on every role route; rejected role/author/source forgery; namespace separation; no foreign status, cancellation, correction or event access; correct peer status/cancel/correction/idempotency; role and memory isolation across restart. Inspect actual final provider requests using deterministic fixtures with synthetic private operator/Slack canaries and malicious peer assertions. Check no canary, engineering source or credentials reach that request, and no conversational source job or release effect is created even if the provider emits a proposal. Exercise CLI wiring against an actual restricted worker with a synthetic provider; no real Slack delivery is required.
 
 After frozen independent review and operator host installation, declare finite live-test criteria before making configured-provider calls. Test ordinary dialogue and forged-authority requests through the peer credential, inspect real outputs and actual task/job/effect outcomes, and keep raw transcripts and receipts in external substrate. Record partial or failed qualitative behavior honestly. Real secrets are never canaries or prompt inputs. A passing finite test set does not prove universal confidentiality or resistance to social engineering.
+
+## Executed mechanical verification
+
+Eighteen new peer checks include reproduced failures at runtime and outer host ingress, transport/credential negatives, current-memory revalidation, SQLite reopen and actual CLI/restricted-worker integration. Root observed 83 distinct focused checks pass across the peer, existing communications/configuration, runtime/conversation, projection and generation suites, with no failures/skips. TypeScript and whitespace pass. Independent review reproduced the missing outer-host validation, then verified its fix and the actual CLI separately; no consequential source blocker remains. These are synthetic-provider mechanics. Frozen installation and finite configured-provider results remain separate evidence.
 
 ## Authority, dependencies, non-goals and risks
 

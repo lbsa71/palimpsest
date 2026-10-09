@@ -93,7 +93,7 @@ Succession replaces the restricted cognitive worker. It does not rebuild or rest
 
 ## State, shutdown and interrupted work
 
-The external directory contains `state.sqlite`, `coordinator.sqlite`, `api-token`, frozen releases and custodian state. It can contain private conversation text and cognitive evidence. A checkout or Git clone is not a backup of lived experience.
+The external directory contains `state.sqlite`, `coordinator.sqlite`, `api-token`, `peer-api-token`, frozen releases and custodian state. It can contain private conversation text and cognitive evidence. A checkout or Git clone is not a backup of lived experience.
 
 Only one CLI coordinator may own the directory. Stop `serve` before using another state-owning command. `SIGINT` and `SIGTERM` close ingress, cancel provider work, stop growth and workers, then release state ownership. Handlers are installed before startup work drains. On restart, the exclusive lock establishes that the earlier coordinator no longer owns execution before interrupted records are recovered. Do not delete a lock to bypass a live owner.
 
