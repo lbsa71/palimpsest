@@ -1,0 +1,9 @@
+{
+  "name": "palimpsest-coding-provider-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.13.0 <25" },
+  "scripts": { "test": "node --test test/*.test.mjs", "inventory": "node inventory.mjs", "probe:unknown-usage": "node acceptance-probe.mjs" },
+  "dependencies": { "ai": "7.0.136", "@ai-sdk/mistral": "4.0.62", "zod": "4.6.5" }
+}
