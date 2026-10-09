@@ -4,6 +4,8 @@
 - **Recorded:** 2026-10-08.
 - **Requirements:** R09–R19, R21–R22.
 
+**Subsequent scope refinement, 2026-10-09:** [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) requires full-codebase authoring and autonomous component-specific upgrade routes. The cognitive-only permission below describes the current local implementation. P17/P18 must broaden that implementation while preserving current receiver authority, separate old-rule admission and an older rescue for governance/custodian changes.
+
 ## Context
 
 A model's role label cannot establish authority. A successor must be able to fail while both the predecessor observer and inference are unavailable. Initial isolated jobs proved filesystem restrictions, but did not establish a running generation, a responsive operator interface, or receiving-boundary checks on late results.

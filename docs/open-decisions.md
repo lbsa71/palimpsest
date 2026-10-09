@@ -6,6 +6,8 @@ Status: planning baseline, 2026-10-08. These are decisions to resolve with evide
 
 The implementation lead owns the register. D01 and D03 have an initial local disposition; D02/D04/D05/D09/D11 have partial dispositions below. Other details remain open until their gates pass. A proposed ADR is not proof its mechanics were implemented.
 
+**Explicit priority refinement, 2026-10-09:** Basic coding is required seed behavior, and full autonomy includes the entire source tree and possible dependency forks. [ADR 0019](adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) reopens the framework-free implementation choice without selecting a replacement library. D14/P17.1 own that evidence; D10/P18 own actual autonomous host/governance/custodian enablement. Current cognitive-only and operator-only limits below are implementation facts, not permanent product restrictions.
+
 ### Implementation dispositions, 2026-10-08
 
 - **D01:** TypeScript, Node 24, npm lockfile, native test runner and built-in SQLite selected; runtime and type checks exercised. See ADR 0008.
@@ -37,6 +39,7 @@ The implementation lead owns the register. D01 and D03 have an initial local dis
 | D11 | Slack task/conversation semantics | Define context ownership, progress, cancel/correct semantics, duplicate/reordered messages, reconnect behavior, and response targets. An optional website's FIFO/SSE rules are not automatically Slack requirements. | P04 |
 | D12 | Optional features and integrations | Decide temporary mode, website, MCP exposure, local inference, Codex review, embedding providers, and search adapter only when their value and full contract are understood. | Separate scoped work |
 | D13 | Historical source completeness | Reconcile missing earlier conversation turns and generated ZIP/addendum if they become available. Do not pretend the recovered six turns establish exact earlier decisions or file contents. | Future source update; does not block this distillation |
+| D14 | Coding library, tool protocol and fork strategy | Test a minimal replaceable library against explicit per-call/per-effect control, direct Mistral routing, cancellation, usage, retry and durable-resumption seams. Start with AI SDK core/Mistral; compare Pi/custom where warranted. Record exact versions, licenses, dependencies, discovery/network defaults and maintainability. Prove the ability to evaluate a locally modified dependency source/build. | P17.1, P18.1 |
 
 ## Risk register
 
@@ -53,5 +56,7 @@ The implementation lead owns the register. D01 and D03 have an initial local dis
 | K09 | Local non-retention is mistaken for end-to-end disappearance | Treat temporary mode as optional; if selected, test every storage/learning path and separately explain Slack/provider retention. | R20, A18 |
 | K10 | A complicated supervisor freezes the very intelligence meant to evolve | Keep mechanical enforcement small; let cognitive policy evolve through evaluated procedures while maintaining recovery. | R06/R09/R16, P05/P14 |
 | K11 | Historical suggestions or current-looking references become unjustified implementation facts | Preserve provenance labels; verify primary documentation and pinned integrations when choosing them; do not infer missing artifacts. | Source analysis, P01–P02 |
+| K12 | An SDK or coding tool bypasses authority, resource accounting or confidentiality | Intercept every request/effect under durable reservations and current authority; reject late predecessor effects; isolate real commands and prevent peer access to engineering workspaces/source. Exercise cancellation, replay and disclosure paths through actual workers. | R14/R17–R18/R25–R26, A21–A22, P17 |
+| K13 | Broad evolution cannot recover, or permanently stays dependent on operator patches | Implement the actual autonomous application/host/fork and separate governance routes; classify transitive changes under old controls, retain compatible current state and independently runnable older rescue. Distinguish boundary-only success and operator assistance from full autonomy. | R06/R16, A17/A23, P18 |
 
 This register does not authorize deployment, new credentials, wider permissions, or spending. It records the technical decisions required to implement the existing project direction.

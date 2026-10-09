@@ -2,6 +2,8 @@
 
 Status: target architecture with a local implementation in progress, 2026-10-08. Component coverage and verification limits are in [progress](progress.md). See [requirements](../REQUIREMENTS.md), [plan](../PLAN.md), [decision records](adr/README.md), and the [source analysis](research/source-analysis.md).
 
+The explicit 2026-10-09 direction requires basic iterative coding in the seed and autonomy over the whole codebase, potentially including library forks. [ADR 0019](adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) and the [coding contract](coding-autonomy.md) define the next implementation. Current complete-file proposals and `src/agent/` admission remain a narrow implemented slice, not the target boundary.
+
 The current seed runs a trusted Node coordinator with durable SQLite tasks, memory and growth outside the checkout. Direct calls, authenticated loopback HTTP, and Slack adapters normalize the same ingress/egress contracts. Restricted procedure and candidate execution uses macOS Seatbelt. Process-bound generational authority and recovery are being integrated; the target diagrams below are not evidence that every boundary already exists. Operational APIs and restrictions are documented in [communications](communications.md), [providers](providers.md), [isolation](isolation.md), and [procedures](procedures.md).
 
 The [local peer role](peer-conversation.md) adds a separate credential and restricted routes to that loopback surface. Trusted ingress assigns peer source and a reserved scope; task controls and memory retrieval check peer provenance before data/effects. Peer conversation uses the same configured runtime/model but cannot enter the eligible source-proposal lane. Public exposure and confidentiality of information already in scope remain separate acceptance obligations under R25/A21.
@@ -114,9 +116,19 @@ The admission proposal requires **all** mandatory checks, independent review, in
 
 Fencing limits future stale operations; it does not undo actions already accepted by external services. In-flight work needs explicit finish, stop, or reconcile handling. Unknown outcomes must not be replayed blindly. “Atomic transfer” describes one durable authority decision, not an atomic transaction across Slack, tools, processes, and storage providers.
 
+## Coding workspace and model/tool execution
+
+The required authoring path is a durable task workspace with tools for discovery, search, full/ranged reads, whole/partial updates, creation, deletion, movement, diff inspection and command execution. The model iterates against actual observations, including failed checks. The current host owns reservations, provenance, tool receivers and interruption state; a replaceable provider/tool protocol library may implement request and streaming mechanics. AI SDK with direct Mistral is the first compatibility candidate, not yet an adopted dependency.
+
+Keep mutable authoring separate from the frozen artifact and from the active release controls. The workspace may contain draft changes to every source component and locally forked dependencies. A currently admitted classifier selects the applicable release contract from the real diff and transitive dependencies. Candidate-authored checks do not become authoritative checks for that transaction.
+
+The model/tool loop journals accepted responses, intents and results, and checks current authority before requests/effects and before accepting late results. Atomic file changes can be reconciled from pre/post content identities; commands with uncertain outcomes remain pending observation. A working directory is not a sandbox: build/test processes execute candidate code under an actual resource boundary. Peer workers receive neither engineering tool authority nor implicit access to engineering source/context.
+
+The detailed acceptance, library/fork assessment and implementation ownership are in [P17/P18](../PLAN.md#p17--implement-the-seeds-iterative-coding-capability) and [A22/A23](acceptance.md#a22--iterative-coding-with-real-workspace-tools). These paragraphs describe required behavior under development, not available tool APIs.
+
 ## Scope of self-modification
 
-The long-term ambition is broad self-modification, including cognitive supervision, memory policy, tooling, and the custodian. Protection is temporal: a candidate cannot change the rules admitting itself within the same transaction. Custodian upgrades need a separate procedure while an older rescue mechanism remains available; the worker and its final recovery path must not be replaced together.
+Full autonomy over the codebase is the explicit main priority: cognition, planning, memory, tools, providers, host/service, dependencies/forks, supervision and custodian code all need autonomous evolution routes. Protection is temporal: a candidate cannot change the rules admitting itself within the same transaction. Governance/custodian upgrades use a separate evaluated procedure while an older rescue remains available; the worker and its final recovery path must not be replaced together. A rescue component may itself evolve in a later transaction with another independent rescue retained. The present operator-only host installation is a bootstrap limitation to remove through P18, not the intended permanent control model.
 
 The proposed deployment boundary gives broad administrative control inside a dedicated agent environment while host recovery authority remains outside it. Unrestricted root over the entire recovery host would defeat that separation. Container/runtime choice, privilege enforcement, host layout, and the last rescue layer are not yet specified.
 

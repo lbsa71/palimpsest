@@ -6,6 +6,8 @@
 - **Specification:** [Operator host-baseline installation](../host-installation.md).
 - **Preserves:** ADRs 0010 and 0015's cognitive-only admission boundary and separate host authority.
 
+**Subsequent scope refinement, 2026-10-09:** [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) requires autonomous evolution of host/service and governance/custodian code. This operator-only operation remains a verified bootstrap/recovery capability, not the final product boundary or proof of full autonomy. P18 must implement and test autonomous routes under older admission/rescue without weakening the current installation contract.
+
 ## Context
 
 A live conversational proposal generated its requested complete cognitive policy change and passed mandatory checks, but custodian proposal registration rejected `governance_change_disabled`. The installed trusted host code had changed while its retained incumbent artifact still carried the older frozen governance identity. This is correct enforcement: ordinary worker succession must not change the host rules admitting it.

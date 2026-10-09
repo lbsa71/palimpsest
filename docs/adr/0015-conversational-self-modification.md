@@ -6,6 +6,8 @@
 - **Extends:** [ADR 0014](0014-conversation-and-modification-authority.md), retaining its conversation admission and authenticated suggestion eligibility boundaries.
 - **Specification:** [Conversational self-modification](../conversation-self-modification.md).
 
+**Subsequent scope refinement, 2026-10-09:** The user now explicitly requires seed coding tools and full autonomy over the implementation. [ADR 0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) and P17/P18 replace indefinite deferral of general coding with required work. This ADR's complete-file/cognitive-only route remains historical and currently implemented evidence; future broader authoring and release must retain origin checks and the appropriate separate admission contracts.
+
 ## Context
 
 The user explicitly requests implementation so they can have a self-modification interaction. At the start of this work the Slack model truthfully reported no conversational dispatcher or Git publisher, even though a separate evolution coordinator could evaluate and promote cognitive source. Merely changing that answer would have claimed nonexistent action. Exposing a shell would enlarge authority and bypass the existing candidate/recovery contracts.
