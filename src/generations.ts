@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Custodian } from './custodian.ts';
 import type { Actor, Checkpoint, ProcessRef, Release } from './custodian.ts';
-import { readManifest, verifyFrozenCandidate, evaluateCandidate, digestJson } from './candidates.ts';
+import { readManifest, verifyFrozenCandidate, evaluateCandidate, digestJson, candidateExecutionReadDenials } from './candidates.ts';
 import type { CandidateManifest } from './candidates.ts';
 import { AgentWorker } from './workers.ts';
 import { AgentRuntime } from './runtime.ts';
@@ -50,7 +50,11 @@ export class GenerationHost {
       hooks: {
         verifyArtifact: async (release, purpose) => {
           try {
-            const manifest = verifyFrozenCandidate({ repositoryRoot: options.repositoryRoot, releaseDir: release.artifactPath, requireCurrentBase: purpose === 'admission' });
+            // New legacy-shaped candidates cannot nominate their own exception.
+            // Recovery gets identity from the independently retained custody row.
+            const retained = purpose === 'recovery' && this.custodian.inspect().artifacts.some(item => digestJson(item) === digestJson(release));
+            const manifest = verifyFrozenCandidate({ repositoryRoot: options.repositoryRoot, releaseDir: release.artifactPath, requireCurrentBase: purpose === 'admission',
+              ...(retained ? { expectedLegacyManifestDigest: release.digest } : {}) });
             return manifest.manifestDigest === release.digest && manifest.governanceDigest === release.governanceDigest && manifest.dataSchemaVersion === release.dataSchemaVersion
               && manifest.modelProfile.provider === options.provider.name && manifest.modelProfile.model === options.model;
           } catch { return false; }
@@ -59,6 +63,7 @@ export class GenerationHost {
         launch: async (release, _mode, context) => {
           const manifest = readManifest(release.artifactPath);
           const worker = await AgentWorker.start({ candidateRoot: manifest.candidateRoot, instanceId: context.launchId,
+            denyReadPaths: candidateExecutionReadDenials(manifest),
             rpcTimeoutMs: options.rpcTimeoutMs, lifetimeMs: options.lifetimeMs, scope: options.scope ?? 'local' });
           this.#workers.set(worker.peer.instanceId, worker);
           return { ...worker.peer };
@@ -97,6 +102,7 @@ export class GenerationHost {
               // local continuity snapshot from crossing conversation scopes.
               const manifest = readManifest(releaseOfWorker(this.custodian, peer).artifactPath);
               const scoped = await AgentWorker.start({ candidateRoot: manifest.candidateRoot, scope: task.conversationId,
+                denyReadPaths: candidateExecutionReadDenials(manifest),
                 rpcTimeoutMs: options.rpcTimeoutMs, lifetimeMs: options.lifetimeMs });
               try { return await scoped.request(task, memories); } finally { await scoped.stop(); }
             },
@@ -132,7 +138,7 @@ export class GenerationHost {
   async installHostBaseline(manifest: CandidateManifest, expectedIncumbent: string): Promise<void> {
     const previous = this.custodian.inspect().knownGood;
     if (!previous || previous.digest !== expectedIncumbent) throw new Error('Operator baseline incumbent changed');
-    const old = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false});
+    const old = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false,expectedLegacyManifestDigest:previous.digest});
     const frozen = verifyFrozenCandidate({repositoryRoot:this.#options.repositoryRoot,releaseDir:manifest.releaseDir});
     if (frozen.id !== manifest.id || frozen.sourceDigest !== old.sourceDigest || frozen.dataSchemaVersion !== old.dataSchemaVersion)
       throw new Error('Host installation must preserve exact admitted cognitive source and schema');

@@ -10,6 +10,8 @@ export interface IsolationOptions {
   args: string[];
   cwd: string;
   readPaths?: string[];
+  /** Trusted policy exclusions; override broader read/cwd grants. Never model input. */
+  denyReadPaths?: string[];
   writePaths?: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
@@ -85,11 +87,15 @@ function ancestorMetadata(paths: string[]): string {
   return [...parents].map(path => `(literal ${JSON.stringify(path)})`).join('\n');
 }
 
-function profile(executables: string[], reads: string[], writes: string[], allowChildren: boolean): string {
-  const runtimePaths = [
+function runtimeReadPaths(executables: string[]): string[] {
+  return [
     '/System/Library', '/System/Volumes/Preboot/Cryptexes/OS/System/Library', '/usr/lib',
     '/dev/null', '/dev/random', '/dev/urandom', ...executables,
   ].filter(existsSync);
+}
+
+function profile(executables: string[], reads: string[], writes: string[], denies: string[], allowChildren: boolean): string {
+  const runtimePaths = runtimeReadPaths(executables);
   const allPaths = [...new Set([...runtimePaths, ...reads, ...writes])];
   const readFilters = allPaths.map(filter).join('\n');
   return `(version 1)
@@ -99,6 +105,7 @@ function profile(executables: string[], reads: string[], writes: string[], allow
     (allow sysctl-read)
     (allow file-read-metadata ${ancestorMetadata(allPaths)})
     (allow file-read* (literal "/") ${readFilters})
+    ${denies.length ? `(deny file-read* ${denies.map(filter).join('\n')})` : ''}
     (allow file-write* ${writes.map(filter).join('\n')})
     (allow file-write-data (literal "/dev/null"))
   `;
@@ -136,6 +143,14 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
   const reads = [...new Set([cwd, ...(options.readPaths ?? []).map(explicitGrant)])];
   const writes = [...new Set((options.writePaths ?? []).map(explicitGrant))];
   if (writes.some(path => !statSync(path).isDirectory())) throw new IsolationError('Writable scratch grants must be directories');
+  const denies = [...new Set((options.denyReadPaths ?? []).map(canonical))];
+  const requiredReads = runtimeReadPaths(executables).map(canonical);
+  for (const path of denies) {
+    const stat = statSync(path);
+    if ((!stat.isFile() && !stat.isDirectory()) || requiredReads.some(required => ancestor(path, required) || ancestor(required, path))) {
+      throw new IsolationError('Read exclusions must name regular files or directories outside required runtime paths and executables');
+    }
+  }
   const timeoutMs = finiteInteger(options.timeoutMs ?? 30_000, 'Timeout', 300_000);
   const outputLimit = finiteInteger(options.maxOutputBytes ?? 1_048_576, 'Output limit', 16_777_216);
   if (options.stdin !== undefined && (typeof options.stdin !== 'string' || Buffer.byteLength(options.stdin) > 1_048_576)) throw new IsolationError('stdin must be a string of at most 1048576 bytes');
@@ -149,7 +164,7 @@ export async function runIsolated(options: IsolationOptions): Promise<IsolationR
       PATH: dirname(trustedNode), HOME: scratch, TMPDIR: scratch, LANG: 'C', NO_COLOR: '1',
       ...options.env,
     };
-    const policy = profile(executables, reads, [...writes, scratch], options.allowNodeChildren === true);
+    const policy = profile(executables, reads, [...writes, scratch], denies, options.allowNodeChildren === true);
     return await new Promise<IsolationResult>((resolve, reject) => {
       const output: Buffer[] = []; const errors: Buffer[] = [];
       let outputBytes = 0; let errorBytes = 0; let captured = 0;

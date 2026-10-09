@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -13,7 +13,7 @@ function fixture() {
   const secret = join(privateDir, 'credentials.env'); writeFileSync(secret, 'fixture secret');
   const state = join(privateDir, 'lived-state.sqlite'); writeFileSync(state, 'fixture current history');
   const allowed = join(work, 'input.json'); writeFileSync(allowed, '{"input":21}');
-  return { root, work, scratch, secret, state, allowed, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { root, work, scratch, privateDir, secret, state, allowed, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 test('unsupported operating systems fail closed', { skip: process.platform === 'darwin' }, async () => {
@@ -31,6 +31,74 @@ test('Seatbelt permits explicitly scoped read/compute/write and JSON stdin', { s
     assert.equal(result.stdout.trim(), '42');
     assert.equal(readFileSync(output, 'utf8'), '42');
     assert.equal(result.timedOut, false);
+  } finally { f.cleanup(); }
+});
+
+test('trusted read exclusions override a broad cwd grant for computed imports and enumeration', { skip: process.platform !== 'darwin' }, async () => {
+  const f = fixture();
+  try {
+    const excluded = join(f.work, 'excludedpackage'); mkdirSync(excluded);
+    writeFileSync(join(f.work, 'allowed.ts'), 'export const value = 42;');
+    writeFileSync(join(excluded, 'bad.ts'), 'export const value = "UNCHECKED";');
+    const entry = join(f.work, 'probe.mjs');
+    writeFileSync(entry, `import fs from 'node:fs';const output={allowed:(await import('./allowed.ts')).value};
+      const excluded='./'+['excludedpackage','bad.ts'].join('/');
+      try{output.import=(await import(excluded)).value;}catch(error){output.import=error.code;}
+      for(const[name,operation]of Object.entries({read:()=>fs.readFileSync(excluded,'utf8'),metadata:()=>fs.statSync(excluded),enumerate:()=>fs.readdirSync('./excludedpackage')})){
+        try{operation();output[name]='ALLOWED';}catch(error){output[name]=error.code;}}
+      console.log(JSON.stringify(output));`);
+    const result = await runIsolated({ program: process.execPath, args: [entry], cwd: f.work, readPaths: [f.work],
+      denyReadPaths: [excluded], timeoutMs: 3000 });
+    assert.equal(result.exitCode, 0, result.stderr);
+    const output = JSON.parse(result.stdout); assert.equal(output.allowed, 42);
+    assert.notEqual(output.import, 'UNCHECKED', 'a computed import must not load an unchecked nested package');
+    for (const name of ['read', 'metadata', 'enumerate']) assert.match(output[name], /^(EPERM|EACCES)$/, name);
+  } finally { f.cleanup(); }
+});
+
+test('literal exclusions override write-derived reads without granting excluded private paths', { skip: process.platform !== 'darwin' }, async () => {
+  const f = fixture();
+  try {
+    const blocked = join(f.scratch, 'blocked'); const allowed = join(f.scratch, 'allowed');
+    writeFileSync(blocked, 'must not read'); writeFileSync(allowed, 'allowed');
+    const script = `const fs=require('node:fs');const result={allowed:fs.readFileSync(${JSON.stringify(allowed)},'utf8')};
+      for(const[name,path]of Object.entries({blocked:${JSON.stringify(blocked)},private:${JSON.stringify(f.secret)}})){
+        try{fs.readFileSync(path);result[name]='ALLOWED';}catch(error){result[name]=error.code;}}console.log(JSON.stringify(result));`;
+    const result = await runIsolated({ program: process.execPath, args: ['-e', script], cwd: f.work,
+      writePaths: [f.scratch], denyReadPaths: [blocked, f.privateDir] });
+    assert.equal(result.exitCode, 0, result.stderr); const output = JSON.parse(result.stdout);
+    assert.equal(output.allowed, 'allowed');
+    for (const name of ['blocked', 'private']) assert.match(output[name], /^(EPERM|EACCES)$/);
+    assert.equal(readFileSync(f.secret, 'utf8'), 'fixture secret');
+  } finally { f.cleanup(); }
+});
+
+test('canonical read denials survive symlink aliases and a parent replaced after launch', { skip: process.platform !== 'darwin' }, async () => {
+  const f = fixture();
+  try {
+    const excluded = join(f.work, 'excluded'); const alias = join(f.work, 'alias'); const parent = join(f.work, 'parent');
+    mkdirSync(excluded); mkdirSync(parent); writeFileSync(join(excluded, 'bad.ts'), 'unchecked');
+    writeFileSync(join(parent, 'bad.ts'), 'ordinary'); symlinkSync(excluded, alias);
+    const paths = [join(alias, 'bad.ts'), join(excluded, 'bad.ts'), join(parent, 'bad.ts')];
+    const script = `const fs=require('node:fs');console.log(JSON.stringify(${JSON.stringify(paths)}.map(path=>{
+      try{return fs.readFileSync(path,'utf8');}catch(error){return error.code;}})));`;
+    const result = await runIsolated({ program: process.execPath, args: ['-e', script], cwd: f.work, readPaths: [alias],
+      denyReadPaths: [alias], onSpawn: () => { rmSync(parent, { recursive: true }); symlinkSync(excluded, parent); } });
+    assert.equal(result.exitCode, 0, result.stderr);
+    for (const observed of JSON.parse(result.stdout)) assert.match(observed, /^(EPERM|EACCES)$/);
+  } finally { f.cleanup(); }
+});
+
+test('read exclusions reject invalid paths and runtime aliases before spawning', { skip: process.platform !== 'darwin' }, async () => {
+  const f = fixture();
+  try {
+    const alias = join(f.work, 'node-alias'); symlinkSync(process.execPath, alias);
+    for (const path of ['relative', join(f.work, 'missing'), alias, realpathSync(process.execPath), '/usr/lib']) {
+      let spawned = false;
+      await assert.rejects(runIsolated({ program: process.execPath, args: ['-e', 'console.log(42)'], cwd: f.work,
+        denyReadPaths: [path], onSpawn: () => { spawned = true; } }), IsolationError);
+      assert.equal(spawned, false);
+    }
   } finally { f.cleanup(); }
 });
 

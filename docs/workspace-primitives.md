@@ -8,7 +8,7 @@ The current author cannot inspect or incrementally edit its source. An unrestric
 
 The first slice provides an externally stored, host-owned plain-copy workspace and a trusted filesystem helper running inside the existing deny-default macOS sandbox. It supplies bounded listing, text search, full/ranged reads, hash-conditioned creation/replacement/edit/deletion/move and an exact file/mode manifest. The receiver owns workspace location, task binding, epoch, helper identity and execution grants. Model input supplies only typed operations on relative paths. Drafts may cover every source component; they cannot change the installed helper or the controls admitting a release.
 
-This slice does not run candidate commands, install dependencies, call a model, alter the live service or broaden admission. Command execution and output paging remain an explicit second P17.2 slice. Durable model rounds, physical request reservations and serving wiring remain P17.3/P17.4. Filesystem fixtures alone do not satisfy A22.
+This slice does not run candidate commands, install dependencies, call a model, alter the live service or broaden admission. [Command execution and output paging](workspace-commands.md) remain an explicit second P17.2 slice. Durable model rounds, physical request reservations and serving wiring remain P17.3/P17.4. Filesystem fixtures alone do not satisfy A22.
 
 ## Ownership and confinement
 

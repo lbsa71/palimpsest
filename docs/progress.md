@@ -1,5 +1,11 @@
 # Implementation progress and evidence
 
+## Candidate input and runtime correction staged — 2026-10-09
+
+The [typecheck boundary](candidate-typecheck-scope.md) now emits schema-2 manifests with installed evaluator identity, complete production entrypoints and explicit standalone runtime exclusions. Static imports retain compiler closure checks; experiments remain fully frozen. Default legacy verification fails without an independently retained exact identity. Actual historical recovery/service fixtures went from one of five passing to five of five, preserving current external memory and work while refusing new or recomputed legacy identities.
+
+Fresh review found the first staged compiler-only exclusion allowed a computed import to execute an excluded type-defective file. That exact red artifact is preserved outside Git. Runtime read denials now cover protected checks and both serving-worker paths; computed import/direct read/createRequire fixtures and real sandbox alias/parent-swap checks pass. Root passed 102 distinct relevant checks, with one platform skip; independent corrected review passed 68, with one platform skip. TypeScript and whitespace pass. Independent alias probes denied direct/symlink reads and hardlink creation. Corrected source review is accepted; exact frozen installation remains pending; no running host, failed candidate or spent allocation has changed. [ADR 0021](adr/0021-bound-production-typechecking-and-runtime-exclusions.md) records the boundary and limitations.
+
 ## First isolated coding file backend — 2026-10-09
 
 P17.1 selected the pinned direct Mistral provider boundary after 41 typed-adapter fixtures, 19 core observations and independent source/decision review. Those experiments remain separate packages and have not installed production dependencies or changed the configured model. Native function tools and structured exact edits are the grounded initial model-facing design; no empirical optimum is claimed by the [syntax research](research/mistral-tool-syntax.md).

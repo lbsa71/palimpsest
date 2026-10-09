@@ -186,12 +186,13 @@ export class GitPublisher {
     if(events.length && !commit)return {status:'uncertain',reason:'Interrupted publication preparation requires operator reconciliation'};
     let created=commit;
     try {
-      const verified=verifyFrozenCandidate({repositoryRoot,releaseDir:manifest.releaseDir,requireCurrentBase:false});
+      const promoted=store.listEvents().find(event=>event.type==='evolution.finished' && object(object(event.payload).report ?? null).status==='promoted'
+        && object(object(object(event.payload).report ?? null).candidate ?? null).id===manifest.id);
+      if(!promoted)return {status:'declined',reason:'No recorded promoted release authorizes publication'};
+      const historicalId=object(object(object(promoted.payload).report ?? null).candidate ?? null).id as string;
+      const verified=verifyFrozenCandidate({repositoryRoot,releaseDir:manifest.releaseDir,requireCurrentBase:false,expectedLegacyManifestDigest:historicalId});
       if(verified.id!==manifest.id)throw new Error();
       manifest=verified;
-      if(!store.listEvents().some(event=>event.type==='evolution.finished' && object(object(event.payload).report ?? null).status==='promoted'
-        && object(object(object(event.payload).report ?? null).candidate ?? null).id===manifest.id))
-        return {status:'declined',reason:'No recorded promoted release authorizes publication'};
       if(!await this.#targetMatches())return {status:'declined',reason:'Trusted fetch/push remote identity changed'};
       if(await this.#git(['branch','--show-current'])!==branch)return {status:'declined',reason:'Checkout branch differs from configured publication branch'};
       if(await this.#git(['status','--porcelain','--untracked-files=all']))return {status:'declined',reason:'Checkout has local changes; no files staged or overwritten',commit};

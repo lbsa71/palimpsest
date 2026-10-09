@@ -29,6 +29,9 @@ test('immutable relocated host with linked dependencies evaluates exact Node-typ
     mkdirSync(join(repositoryRoot, 'src/agent'), { recursive: true }); mkdirSync(join(repositoryRoot, 'docs')); mkdirSync(dataDir);
     writeFileSync(join(repositoryRoot, 'src/agent/brain.ts'), source);
     writeFileSync(join(repositoryRoot, 'src/node-typed.ts'), 'import { readFileSync } from "node:fs"; export const read: typeof readFileSync = readFileSync;');
+    mkdirSync(join(repositoryRoot, 'experiments/coding-provider-adapter'), { recursive: true });
+    for (const path of ['package.json', 'package-lock.json']) writeFileSync(join(repositoryRoot, 'experiments/coding-provider-adapter', path), readFileSync(resolve('experiments/coding-provider-adapter', path)));
+    writeFileSync(join(repositoryRoot, 'experiments/coding-provider-adapter/unused.ts'), 'import { absent } from "synthetic-absent-sdk"; export const unused=absent;');
     writeFileSync(join(repositoryRoot, 'package.json'), '{"type":"module"}');
     writeFileSync(join(repositoryRoot, 'docs/seed-contract.md'), 'Protected fixture contract');
     git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid'); git('add', '.'); git('commit', '-qm', 'Node-typed baseline');
@@ -49,14 +52,20 @@ test('immutable relocated host with linked dependencies evaluates exact Node-typ
     const copied = relocated.freezeBaseline(options);
     assert.deepEqual(copied.runtime, original.runtime, 'host relocation preserves bound runtime/toolchain identity');
     assert.equal(copied.trustedCheckDigest, original.trustedCheckDigest);
+    assert.equal(copied.version, 2);
+    assert.deepEqual(copied.typecheckPolicy, original.typecheckPolicy, 'relocation preserves the exact installed policy and production inputs');
     const evidence = await relocated.evaluateCandidate({ repositoryRoot, releaseDir: copied.releaseDir });
     assert.equal(evidence.status, 'passed', details(evidence.checks));
     assert.equal(evidence.checks.find(check => check.name === 'typecheck')?.status, 'passed');
+    assert.deepEqual(evidence.typecheckPolicy, copied.typecheckPolicy);
     assert.equal(evidence.checks.find(check => check.name === 'trusted-agent-contract')?.status, 'passed');
     const wrong = relocated.freezeCandidate({ ...options, changes: [{ path: 'src/agent/brain.ts', content: `${source}\nconst invalidNodeValue: NodeJS.Process = 1;` }] });
     const denied = await relocated.evaluateCandidate({ repositoryRoot, releaseDir: wrong.releaseDir });
     assert.equal(denied.status, 'failed');
     assert.equal(denied.checks.find(check => check.name === 'typecheck')?.status, 'failed');
     assert.match(denied.checks.find(check => check.name === 'typecheck')?.stdout ?? '', /TS2322/);
+    const evaluator = join(hostRoot, 'src/candidates.ts');
+    chmodSync(evaluator, 0o600); writeFileSync(evaluator, readFileSync(evaluator, 'utf8') + '\n// Synthetic installed policy mutation.\n');
+    assert.throws(() => relocated.verifyFrozenCandidate({ repositoryRoot, releaseDir: copied.releaseDir }), /typecheck policy changed/);
   } finally { writable(directory); rmSync(directory, { recursive: true, force: true }); }
 });

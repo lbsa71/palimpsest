@@ -92,7 +92,7 @@ export class LocalService {
     } finally { database.close(); }
     const release = state.knownGood;
     if (!release || !/^[a-f0-9]{64}$/.test(release.digest)) throw new Error('An admitted known-good host is required');
-    const manifest = verifyFrozenCandidate({ repositoryRoot: this.#config.repositoryRoot, releaseDir: release.artifactPath, requireCurrentBase: false });
+    const manifest = verifyFrozenCandidate({ repositoryRoot: this.#config.repositoryRoot, releaseDir: release.artifactPath, requireCurrentBase: false, expectedLegacyManifestDigest: release.digest });
     if (manifest.manifestDigest !== release.digest || manifest.governanceDigest !== release.governanceDigest || manifest.dataSchemaVersion !== release.dataSchemaVersion)
       throw new Error('Known-good host identity does not match custody');
     if (manifest.releaseDir !== join(this.#config.dataDir, 'releases', manifest.id)) throw new Error('Known-good artifact is outside the configured release store');
@@ -135,7 +135,7 @@ export class LocalService {
       || installation.bundlePath !== join(this.#config.dataDir, 'host-installations', installation.releaseId) || installation.plistPath !== this.#plistPath
       || installation.nodePath !== realpathSync(process.execPath) || installation.releaseDir !== join(this.#config.dataDir, 'releases', installation.releaseId))
       throw new Error('Service installation identity mismatch');
-    const manifest = verifyFrozenCandidate({ repositoryRoot: this.#config.repositoryRoot, releaseDir: installation.releaseDir, requireCurrentBase: false });
+    const manifest = verifyFrozenCandidate({ repositoryRoot: this.#config.repositoryRoot, releaseDir: installation.releaseDir, requireCurrentBase: false, expectedLegacyManifestDigest: installation.releaseId });
     if (manifest.id !== installation.releaseId) throw new Error('Service installation identity mismatch');
     this.#verifyToolchain(manifest); this.#verifyBundle(manifest, installation.bundlePath);
     if (this.#knownGood().governanceDigest !== manifest.governanceDigest) throw new Error('Known-good host governance changed; stop and redeploy the host bundle');
