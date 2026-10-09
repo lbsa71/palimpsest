@@ -4,6 +4,8 @@ Planning baseline: **2026-10-08**; implementation status reconciled **2026-10-09
 
 ## Current state
 
+**Priority clarification, 2026-10-09:** The user requires basic iterative coding in the seed and full autonomy over the whole codebase, including potential library forks. The narrow cognitive-only proposal path below does not meet that requirement. [P17](#p17--implement-the-seeds-iterative-coding-capability) and [P18](#p18--enable-autonomous-evolution-of-the-whole-codebase) are P0 implementation work under [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md). Astra in “Explain code change tooling” owns strategy/contracts; Sol in “Distill autonomous agent research” owns implementation/tests. The existing peer-security failures remain tracked; broader coding authority must preserve those boundaries.
+
 **Current disposition, 2026-10-09:** A real direct-operator conversation produced a Mistral-authored cognitive change, passed checked succession/probation, and published the exact admitted source as `f3def48`. This closes the live direct interaction demonstration, not the full Slack-origin acceptance matrix or autonomous plan execution. The autark can autonomously execute two protected P06 contracts, with the first provenance item now completed through a live Mistral shed and restart. Its publication needed explicit operator reconciliation after an unconfirmed application push. Testing now selects hourly plan-authoring opportunities with a separate Codex inspection at minute 45. Both hourly byte-budget candidates were declined by mandatory checks, with the second also failing typecheck and exhibiting measured byte overflow; a separately funded final retry remains pending under the unchanged ceiling; fully unassisted repeated live sheds remain pending. The full backlog is not executable. Earlier “done at local seed scope” entries describe component verification, not readiness of the complete companion. The [2026-10-08 capability audit](docs/capability-audit-2026-10-08.md) records the earlier baseline; [progress](docs/progress.md) records subsequent changes.
 
 - [x] Distill the accessible conversation and attached brief into requirements, engineering rules, architecture, ADRs, memory/growth specifications, and acceptance scenarios.
@@ -29,16 +31,18 @@ The implementation lead owns integration; bounded store/isolation, communication
 | P15 | In progress | Bootstrap/local evidence available. Complete product demonstration, operational health/recovery commands and backup/restore validation remain open. |
 | P16 | Bounded interaction implemented; live direct shed/publication verified | ADR 0015 connects eligible conversation → deliberation → cognitive source proposal → governed worker succession → configured trusted publication → actual thread result. Real Mistral direct-operator release published `f3def48`. Live Slack-origin release, general coding/procedure dispatch and full product acceptance remain open. |
 | P08/P09 plan-driven refinement | Reviewed executor installed; first live item completed with publication assistance; hourly testing refinement | ADR 0017 defines two dependency-linked P06 contracts. Real-worker shedding/publication and restart passed fixtures. First live provenance shed completed; dependent byte-budget item, unassisted repeated publication and broader plan execution remain open. |
+| P17 | Specified; compatibility and implementation evidence pending | Real workspace tools and durable model/tool iteration are required seed behavior. AI SDK/direct Mistral is a provisional spike preference; no library adoption is claimed. |
+| P18 | Specified; autonomous broad release routes not implemented | Broader application/host/dependency/fork release and separate governance/custodian evolution must pass A23/A17. Existing operator bootstrap and cognitive-only sheds do not complete this item. |
 
 ## Milestones
 
 | Milestone | Outcome | Work items | Exit evidence |
 |---|---|---|---|
 | M0 — Contracts and choices | An implementable first slice with explicit authority and storage boundaries | P01–P02 | Resolved ADRs, versioned contracts, selected checks |
-| M1 — Working companion slice | Real provider/tool work and Slack interaction survive process interruption | P03–P05 | A05–A07; configured adapter smoke results |
+| M1 — Working companion slice | Real iterative coding and Slack interaction survive process interruption | P03–P05, P17 | A05–A07, A22; configured adapter/workspace integration results |
 | M2 — Memory and initiative | Developmental continuity, reusable procedures, and autonomous growth within budgets | P06–P08 | A01, early A02, A03, A08–A09 |
 | M3 — Candidate evaluation | Immutable candidates, independently gathered checks, fresh review, and continuity interview | P09–P11 | A10–A12 |
-| M4 — Skin Shed | Single authority, safe transfer, probation, and provider-independent recovery | P12–P14 | A13–A17 and integrated A02, including combined failure demonstration |
+| M4 — Skin Shed and full-codebase autonomy | Single authority, broad source/fork evolution, separate autonomous governance upgrades and provider-independent recovery | P12–P14, P18 | A13–A17, A23 and integrated A02, including combined failure demonstration |
 | M5 — Operable seed | Reproducible bootstrap, recovery instructions, end-to-end evidence, reconciled docs | P15 | Full seed acceptance report; no unaddressed release blockers |
 
 **Milestone disposition after audit:** M1 has verified Slack/task/provider mechanics but lacks general tool work. M2 is partial. M3/M4 have substantial tested infrastructure and one narrow live source demonstration, with meaningful-interview quality still open. M5 and complete seed acceptance are not met.
@@ -67,9 +71,9 @@ Define task/event identities, candidate manifest, evidence/grade envelopes, memo
 
 **Priority:** P0. **Dependencies:** P02. **Requirements:** R05, R17, R19.
 
-Implement a bounded task loop, durable state transitions, typed tools, cancellation/checkpoints, provider abstraction, deterministic test adapter, and real Mistral path. Separate provider unavailability from application failure; alternatives require configuration and disclosure permission.
+Implement a bounded task loop, durable state transitions, typed model/tool messages, cancellation/checkpoints, provider abstraction, deterministic test adapter, and real Mistral path. [P17](#p17--implement-the-seeds-iterative-coding-capability) specifies required workspace tools and inspect/edit/test/repair execution. Separate provider unavailability from application failure; alternatives require configuration and disclosure permission.
 
-**Done when:** A06–A07 pass, a configured real-provider smoke test records its result, and missing configuration produces an honest unavailable state. Document invocation only after verification.
+**Done when:** A06–A07 and the integrated A22 task/tool contract pass, a configured real-provider coding run records its result, and missing configuration produces an honest unavailable state. Document invocation only after verification. A text-only completion path does not close general task execution.
 
 ### Slack conversation refinement — follow-ups without repeated mentions
 
@@ -159,6 +163,8 @@ Implement [GROWTH.md](GROWTH.md): all four dimensions, bounded idle/scheduled in
 
 Create isolated candidates, immutable manifests, independent behavioral/held-out checks, artifact identity, stale-base rejection, and evidence storage. Build with isolation and no deployment credentials. Include an actual assistant-source behavior change and a compiling but behaviorally incorrect counterexample.
 
+P17.4/P18 extend freezing to the actual authored workspace, with creations, deletions, modes, dependency/fork inputs and the current component-specific admission contract. Candidate-authored tests remain distinct from authoritative checks. Preserve exact source/evidence identity when moving from narrow cognitive replacement to broader application releases.
+
 **Done when:** A10–A11's deterministic gates pass, changing any frozen release input invalidates its evaluation, and only the evaluated artifact is eligible for promotion. Reviewer-specific assertions complete in P10.
 
 ### P10 — Add fresh independent review
@@ -195,19 +201,19 @@ Implement bounded probation, event-triggered predecessor observation, regression
 
 ### P14 — Establish separate governance and custodian evolution
 
-**Priority:** P0 for the boundary; full replacement may be staged. **Dependencies:** P13. **Requirements:** R06, R16, R18.
+**Priority:** P0, including actual autonomous replacement through staged implementation. **Dependencies:** P13; full routes integrate P18. **Requirements:** R06, R16, R18.
 
-Test that ordinary candidates cannot rewrite their admission criteria. Specify a separately evaluated custodian/governor upgrade contract retaining an older rescue path. Enable actual custodian replacement only after its dedicated failure tests pass.
+Test that ordinary candidates cannot rewrite the active rules admitting them. Permit isolated draft changes across the source tree. Implement a separately evaluated autonomous custodian/governor upgrade contract retaining an older rescue path. P18 supplies the full route; enable it after its dedicated failure tests pass.
 
-**Done when:** A17's seed admission-boundary assertions pass and the separate upgrade/rescue contract is reviewed. Autonomous custodian replacement remains explicitly disabled/unimplemented until its own recovery demonstration passes.
+**Done when:** Both A17's initial boundary and actual autonomous enablement gates pass. Existing boundary verification and a reviewed contract are intermediate evidence; documenting disabled replacement does not complete P14 or full-codebase autonomy. The current runtime remains limited until P18's implementation/recovery evidence exists.
 
 ### P15 — Bootstrap, runbook, and seed demonstration
 
-**Priority:** P0. **Dependencies:** P04, P06–P08, P10–P14. **Requirements:** R01–R19.
+**Priority:** P0. **Dependencies:** P04, P06–P08, P10–P14, P17–P18. **Requirements:** R01–R19, R21–R26.
 
 Produce reproducible bootstrap, configuration without secrets, operational and backup/restore instructions, limitations, and an evidence report. Execute integrated scenarios and outage/recovery controls; reconcile documentation and milestone status.
 
-**Done when:** A01–A17 pass at their stated seed scope, deferred capabilities remain explicit, and another operator can follow bootstrap/recovery instructions. A18 is required only if temporary mode is selected.
+**Done when:** A01–A17, A19–A20 and A22–A23 pass their required gates, deferred capabilities remain explicit, and another operator can follow bootstrap/recovery instructions. A18 is required only if temporary mode is selected. A21/R25 remain an additional public-exposure gate; basic local coding work must preserve the existing peer boundaries while that broader acceptance is unfinished.
 
 ### P16 — Connect conversation to real capabilities and governed work
 
@@ -224,6 +230,8 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 **Slice limits and remaining checks:** Candidate source remains direct `src/agent/*.ts`; CLI context supplies admitted `brain.ts` plus contracts/rules rather than every helper. Succession replaces the cognitive worker, not the outer Slack service. Interactive release calls default to 8/day with a maximum of 8/attempt, separate from autonomous allocation. `ask` can record a proposal; `serve` runs the queue. Focused author/policy, protected-path, context filtering, direct cancellation and effective Git destination negatives pass. The full restart/interruption/provider failure/publication reconciliation and truthful live-answer matrix remains open; do not count it as established by the successful integration path.
 
 **Still open beyond this slice:** General coding/procedure dispatch, source-aware memory consolidation, broader source scope and host/custodian evolution, full product continuity and qualitative acceptance. A trusted decision must distinguish independent observations from acting on restricted human instructions; assigning an autonomous-growth label is not authorization. The specification grants no additional runtime or publication authority. See [the capability audit](docs/capability-audit-2026-10-08.md) and [ADR 0014](docs/adr/0014-conversation-and-modification-authority.md).
+
+**Required next integration:** P17/P18 now own general coding and full-codebase evolution as P0 work. P16 must connect eligible conversations and independent standing growth to those real operations; cognitive-only admission is the present implementation, not the target product boundary.
 
 ### P08/P09 refinement — autonomous implementation-plan shedding
 
@@ -245,6 +253,44 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 
 **Reliability and calibration follow-up:** [Bounded publication diagnostics and active resource facts](docs/publication-diagnostics.md) passed focused checks and fresh review and are installed in frozen host `c287e026`. A prior unconfirmed push discarded command failure details and its observation delay started before completion; historical diagnosis remains unavailable. A live informational probe mixed active/alternate allocations, overstated recency and did not finish its answer. Preserve unknown effects and spent calls; instruction changes alone do not establish improved calibration. The [P06 provider-request integration gate](docs/publication-diagnostics.md#p06-provider-request-integration-gate) Stage 1 is also installed: exact authorized candidate descriptors reach final interactive requests once, with real-worker profile checks and current author/provenance validation. The pending frozen function contract remains unchanged. Broader bounded retrieval, actual byte-budget admission and the second unassisted live shed remain open.
 
+### P17 — Implement the seed's iterative coding capability
+
+**Status:** Specified; implementation and compatibility evidence pending. **Priority:** P0. **Dependencies:** Existing P03–P05 task/provider/isolation components, P09 artifact identity, P16 origin policy. **Requirements:** R03, R05–R06, R14, R17–R19, R22–R26. **Specification:** [Coding autonomy](docs/coding-autonomy.md), [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md).
+
+**Problem:** A text completion proposing complete cognitive files cannot inspect and iteratively repair a repository. Basic tools and a real coding loop are missing seed behavior.
+
+**Expected behavior:** Search/list and read full/partial files; create/replace/patch/delete/move files; inspect diffs; run development checks, observe failures and revise in a durable isolated workspace. Preserve provenance, draft state, user responsiveness and allocations across interruption. Submit the actual finished workspace for immutable evaluation. Authoring can cover the full repository while release follows the appropriate component contract.
+
+| Slice | Implementation / observable gate | Owner |
+|---|---|---|
+| P17.1 — Library boundary | Evaluate exact AI SDK/direct Mistral versions first; compare Pi/custom where evidence warrants. Record licenses/dependencies and test request/tool interception, cancellation, error/usage propagation and explicit retry behavior. Select the implementation in ADR 0019 only after inspecting results. | Sol implements/tests; Astra reviews decision |
+| P17.2 — Workspace primitives | Real isolated workspace operations cover every tool contract, including empty files, stale edits, deletion/rename, escaping paths and bounded command output/process termination. | Sol, with disjoint tool/executor test delegation |
+| P17.3 — Durable coding loop | Persist responses/intents/results, iterate on actual test failures and resume drafts after interruption without blind effect replay or budget refunds. Enforce receiver authority and peer isolation through actual workers. | Sol; Astra reviews recovery/authority contracts |
+| P17.4 — Serving and artifact integration | Direct/eligible Slack and independent growth reach the same loop; freeze additions/deletions/modes from the workspace, reject stale artifacts and report observed progress. Run deterministic integration and a separately authorized finite configured Mistral coding task. | Sol implementation/evidence; fresh acceptance review |
+
+**Done when:** A22 and relevant A06/A07/A10/A14/A19/A20 negatives pass with actual filesystem/process and serving evidence. A model must repair from real feedback, not receive a human-prewritten solution. Broader live activation proceeds through P18; tools alone do not establish full-codebase autonomy.
+
+**Non-goals:** New UI, distributed platform, compulsory heavyweight framework, automatic upstream submissions or public peer exposure. **Material risks:** Conflicting workspaces, stale edits, hidden SDK requests/retries, code execution escaping the workspace, uncertain commands, private-source disclosure and misleading success claims. Acceptance and failure semantics are in the specification.
+
+### P18 — Enable autonomous evolution of the whole codebase
+
+**Status:** Specified; broader autonomous routes unimplemented. **Priority:** P0. **Dependencies:** P17.4, existing P09–P13; integrates P14 and R25 authority boundaries. **Requirements:** R03, R06, R09–R19, R22–R26.
+
+**Problem:** Current releases replace restricted cognitive modules; outer-host installation needs an operator and full governance/custodian replacement is disabled. This does not satisfy the user's main priority of full-codebase autonomy.
+
+**Expected behavior:** Let the autark author and admit broader application, host, tooling, dependency/fork and separately staged governance changes. Classify actual changes and transitive dependencies under the currently admitted rules. Preserve a recoverable older layer for each transaction and continue current memory/tasks after activation or rollback. New admission rules govern later transactions only.
+
+| Slice | Implementation / observable gate | Owner |
+|---|---|---|
+| P18.1 — Application, host and dependency releases | Broaden artifact admission and automatic host handoff; prove a useful change outside `src/agent/`, a local fork reaching the built runtime, exact publication where configured, restart continuity and recovery with network/provider unavailable. | Sol implementation/tests; Astra architecture review |
+| P18.2 — Governance and custodian evolution | Replace the current governance/custodian through a distinct automatically evaluated route using old controls and older rescue. Test before/after-activation failure with observers/inference unavailable. Include catalog/check-policy evolution and transitive classification. | Sol implementation/tests; fresh frozen-artifact review |
+
+**Done when:** A23 and both A17 gates pass, including actual autonomous submission/activation and the recovery demonstration. Operator-assisted bootstrap or a permanent deny rule is recorded as intermediate evidence. A required human code patch, routine approval or manual replacement of a missing step cannot count as autonomous completion.
+
+**Non-goals:** Unrestricted administration of unrelated host systems, replacement of the last rescue in the same transaction, rewriting current memory by code rollback, or implicit spending/publication authority. **Material risks:** Self-selected weaker checks, transitive governance changes, fork/build drift, incompatible stored state and loss of the independently runnable rescue. Each slice needs a concrete contract and fresh review before enablement.
+
+**Coordination:** Astra owns the strategy/specification worktree and cross-document changes; Sol owns isolated implementation/test worktrees, evidence and integration into the configured publication branch. Sol supplies measured feedback before final library selection. Coordinate policy-document ownership and integrate a clean strategy commit before dependent behavior changes. Existing live authoring attempts and peer failures remain evidence; neither is silently declared fixed or reset by this new plan.
+
 ## Deferred and optional work
 
 | Item | Trigger / gate |
@@ -254,7 +300,7 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 | Website or another conversation UI | Demonstrated need; preserve Slack direction |
 | Memory/personality/model succession | Tailored acceptance and rollback contracts |
 | Additional/local providers | Explicit configuration, capability evaluation, cost/data policy; no silent fallback |
-| Full custodian/environment replacement | Separate rescue path and demonstrated upgrade-failure recovery |
+| Broader environment replacement beyond the codebase | Configured host authority, separate rescue path and demonstrated failure recovery; codebase/custodian evolution itself is required P18 work |
 
 ## Completion record
 
