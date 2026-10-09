@@ -1,6 +1,6 @@
 # Publication diagnostics and honest cadence facts
 
-Status: testable follow-up specification, 2026-10-09. Prepare in an isolated worktree; leave the installed hourly host and clean publication checkout unchanged until the pending live slot is observed. Changes require fresh review and a separate frozen host installation. This extends P08/P09, R03/R17/R19 and ADRs 0015–0017; it grants no additional publication or model-call authority.
+Status: implemented and independently verified follow-up contract, 2026-10-09. Reviewed frozen host `c287e026` is installed with unchanged cognition and retained allocations. Historical push diagnosis, future unassisted publication and improved live model judgment remain separate evidence obligations. Preparation used an isolated worktree and the separate frozen host installation after the hourly candidate was observed. This extends P08/P09, R03/R17/R19 and ADRs 0015–0017; it grants no additional publication or model-call authority.
 
 ## Publication failure evidence
 

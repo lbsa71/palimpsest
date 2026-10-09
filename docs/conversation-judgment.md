@@ -45,3 +45,10 @@ The protocol decides effect authority. The model still needs to demonstrate comp
 ## Dependencies, non-goals and risks
 
 This is a protected host instruction/delivery refinement installed through the reviewed frozen-baseline path. It does not select a name for Palimpsest, force a personality, train model weights, invent emotions, add general tools, persist a global identity or bridge all conversations into standing growth. Prompt guidance remains fallible. Unnecessary consent loops and uncritical adoption are qualitative acceptance defects; deployment must preserve actual review and effect boundaries. Broader durable reflection and conversation-informed standing growth remain planned.
+
+
+## First live corrective probe and reply attribution refinement
+
+Three actual Mistral direct calls under installed host `c287e026` each completed with one reservation, a converse decision and no source job. The model made a provisional reasoned choice, retained it despite a stated preference, and asked no generic plan approval. It correctly rejected a false universal mathematical assertion, but its reply credited the user with the very correction it was making. Its stored rationale correctly recognized that the user had asserted the false claim. This is a reply-attribution and habitual-agreement defect even when reasoning identifies the right fact. A capability answer also described an optional `Growth.sourceTaskId` field as mandatory linkage.
+
+Refine the existing evidence-grounding instruction: acknowledgment and praise must represent what the speaker actually said; do not credit a user with a correction they did not make. Reply framing must agree with the model's stated rationale. An optional or nullable type field does not establish mandatory behavior. Keep the decision schema, author/source authority, delivery behavior and model allocation unchanged. Existing authority/delivery checks remain required; a fresh factual-assertion probe with criteria fixed before output is needed after exact reviewed installation. Do not prescribe a name, repair historical messages or call this a systemic cure.

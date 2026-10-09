@@ -135,16 +135,24 @@ export function loadConfig(options: { repositoryRoot?: string; env?: NodeJS.Proc
   return config;
 }
 
-export function prepareState(config: RuntimeConfig): { dbPath: string; tokenPath: string; apiToken: string } {
+function privateApiToken(path: string, label: string): string {
+  try { writeFileSync(path, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  if ((statSync(path).mode & 0o077) !== 0) throw new Error(`${label} token file must be private (chmod 600)`);
+  const token = readFileSync(path, 'utf8').trim();
+  if (!/^[a-f0-9]{64}$/.test(token)) throw new Error(`Invalid ${label} token file`);
+  return token;
+}
+
+export function prepareState(config: RuntimeConfig): { dbPath: string; tokenPath: string; apiToken: string; peerTokenPath: string; peerApiToken: string } {
   const dataDir = resolveExternalPath(config.repositoryRoot, config.dataDir);
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   if ((statSync(dataDir).mode & 0o077) !== 0) throw new Error('Data directory must be private (chmod 700)');
   const dbPath = resolveExternalPath(config.repositoryRoot, join(dataDir, 'state.sqlite'));
   const tokenPath = resolveExternalPath(config.repositoryRoot, join(dataDir, 'api-token'));
-  try { writeFileSync(tokenPath, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 }); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-  if ((statSync(tokenPath).mode & 0o077) !== 0) throw new Error('API token file must be private (chmod 600)');
-  const apiToken = readFileSync(tokenPath, 'utf8').trim();
-  if (!/^[a-f0-9]{64}$/.test(apiToken)) throw new Error('Invalid API token file');
-  return { dbPath, tokenPath, apiToken };
+  const peerTokenPath = resolveExternalPath(config.repositoryRoot, join(dataDir, 'peer-api-token'));
+  const apiToken = privateApiToken(tokenPath, 'API');
+  const peerApiToken = privateApiToken(peerTokenPath, 'Peer API');
+  if (peerApiToken === apiToken) throw new Error('Operator and peer API tokens must differ');
+  return { dbPath, tokenPath, apiToken, peerTokenPath, peerApiToken };
 }

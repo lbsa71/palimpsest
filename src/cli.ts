@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, prepareState, resolveExternalPath } from './config.ts';
 import type { RuntimeConfig } from './config.ts';
-import { DirectCommunications, SlackCommunications, createLocalServer } from './communications.ts';
+import { DirectCommunications, PeerCommunications, SlackCommunications, createLocalServer } from './communications.ts';
 import type { InboundMessage, LocalServer } from './communications.ts';
 import { createSlackServer } from './slack-service.ts';
 import type { SlackServer } from './slack-service.ts';
@@ -142,6 +142,7 @@ async function main(): Promise<void> {
       return;
     }
     const direct = new DirectCommunications();
+    const peer = new PeerCommunications();
     const actions = new ConversationActions({ store,userIds:config.slackSelfModificationUserIds,allowDirectOperator:true,
       observeSource,
       sourceContext:()=>[context(),...['providers.ts','store.ts'].map(path=>`Contract src/${path}:\n${readFileSync(join(dirname(fileURLToPath(import.meta.url)),path),'utf8').slice(0,3000)}`),
@@ -151,7 +152,7 @@ async function main(): Promise<void> {
       remote:config.gitRemote,branch:config.gitBranch,remoteUrl:config.gitRemoteUrl}) : undefined;
     if((config.gitRemote || config.gitBranch || config.gitRemoteUrl) && !publisher)throw new Error('Git publication requires explicit remote, branch and remote URL identity');
     publicationReconciler=new ReleasePublication({store,publisher,authorize:growth=>actions.authorize(growth)});
-    const communications = slack ? [direct, new SlackCommunications({ token: config.slackBotToken! })] : [direct];
+    const communications = slack ? [direct, peer, new SlackCommunications({ token: config.slackBotToken! })] : [direct, peer];
     const configuration = { maxCallsPerTask: config.maxCallsPerTask, growthCallsPerDay: config.growthCallsPerDay,
       evolutionCallsPerDay: config.evolutionCallsPerDay, timeoutMs: config.timeoutMs, scope: 'local' };
     const modelProfile = { provider: config.provider, model: config.model || null };
@@ -218,7 +219,7 @@ async function main(): Promise<void> {
       drain(); return task;
     };
     localServer = await createLocalServer({ submit, status: id => {const task=host!.runtime.status(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;},
-      cancel: id => {const task=host!.runtime.cancel(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;}, events: after => host!.runtime.events(after) }, { token: paths.apiToken, port });
+      cancel: id => {const task=host!.runtime.cancel(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;}, events: after => host!.runtime.events(after) }, { token: paths.apiToken, peerToken: paths.peerApiToken, port });
     if (slack === 'http') slackServer = await createSlackServer({ submit }, { signingSecret: config.slackSigningSecret!,
       hasJoinedThread: id => store!.hasSlackThread(id),
       hasAcceptedEvent: id => store!.hasSlackEvent(id),
@@ -253,7 +254,7 @@ async function main(): Promise<void> {
         hasUserWork:()=>stopped||userCommitments()||evolution!.busy||publicationReconciler!.busy||publicationReconciler!.pending(evolution!.items())||host!.custodian.inspect().phase!=='normal'});
       development=developmentHost.executor;development.recoverInterrupted();
     }
-    console.log(JSON.stringify({ url: localServer.url, tokenFile: paths.tokenPath, dataDir: config.dataDir,
+    console.log(JSON.stringify({ url: localServer.url, tokenFile: paths.tokenPath, peerTokenFile: paths.peerTokenPath, dataDir: config.dataDir,
       provider: config.provider, model: config.model || null, generation: host.custodian.inspect().active!.release.digest,
       growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay,
       planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,

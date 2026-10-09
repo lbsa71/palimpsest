@@ -39,6 +39,8 @@ npm start -- doctor
 
 Lived experience is stored **outside the repository**, by default under `~/.local/share/palimpsest/<repository-id>/`. This includes tasks, memory, growth, transcripts, checkpoints, and runtime evidence. In-repository paths and symlink aliases are rejected. Git contains source, specifications, synthetic fixtures, and sanitized verification summaries.
 
+Ordinary local peer testing uses a separate private credential and `/peer/messages` on the same running model/runtime, with isolated peer context and no self-modification eligibility. See [peer testing](docs/peer-conversation.md) and the [runbook](docs/runbook.md#local-peer-conversation). This remains a local test surface; public-release security acceptance is unfinished.
+
 ## Read and work
 
 | Artifact | Purpose |

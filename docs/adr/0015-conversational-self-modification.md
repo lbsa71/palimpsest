@@ -60,7 +60,7 @@ The integrated real-host check passed: Slack-authored request, exact proposal, p
 Live direct-operator evidence subsequently established a Mistral-authored candidate, five release calls, checked cutover/probation and application publication of exact admitted source as `f3def48`, independently observed on the configured remote. See [progress](../progress.md). This does not establish a live Slack-origin release or close all P16/qualitative acceptance. The full restart/interruption/provider failure/publication reconciliation and truthful live-answer matrix remains required. The accepted implementation remains a bounded interaction, not general host self-deployment or autonomous plan execution.
 
 
-## Follow-up in preparation — 2026-10-09
+## Reviewed host follow-up — 2026-10-09
 
 The first live plan publication required explicit operator reconciliation after an unconfirmed push. Its command failure details were discarded; the observed roughly 30-second interval cannot establish a timeout. The [diagnostic work contract](../publication-diagnostics.md) separates sanitized execution metadata from independent remote confirmation, retains the fixed target/candidate/commit and existing no-replay boundary, and moves observation backoff to operation completion. Alternatives are retaining opaque errors, retaining potentially sensitive raw streams, or automatically retrying an uncertain push. Prefer bounded metadata; raw output and replay are unsuitable. These proposed changes require tests, fresh review and separate installation; the historical failure remains undiagnosed.
 

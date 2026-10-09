@@ -8,6 +8,7 @@ import { conversationRequest } from './agent/brain.ts';
 import { conversationPolicy, maySuggestSelfModification, sameSlackAuthor } from './conversation-policy.ts';
 import type { ConversationActions } from './conversation-actions.ts';
 import { validateMemoryProjection } from './memory-projection.ts';
+import { assertConversationRole } from './conversation-role.ts';
 
 export interface RuntimeOptions {
   store: Store;
@@ -73,6 +74,9 @@ export class AgentRuntime {
   async submit(input: InboundMessage): Promise<Task> {
     if (this.#stopped) throw new Error('Runtime is stopped');
     if (!this.#communications.has(input.source)) throw new Error('Unknown communication source');
+    // Transport normalization is not the only ingress: direct callers must
+    // preserve the same role boundary before any durable task is created.
+    assertConversationRole(input);
     let task = this.#store.enqueue({ conversationId: input.conversationId, input: input.text,
       source: input.source, eventId: input.id,
       ...(input.slackAuthor ? { slackAuthor: { ...input.slackAuthor } } : {}) });
@@ -94,8 +98,8 @@ export class AgentRuntime {
   hasUserWork(): boolean { return this.#store.listTasks({ states: ['queued', 'running'] }).length > 0; }
 
   cancel(id: string): Task | undefined {
-    this.#actions?.cancel(id);
     const task = this.#store.task(id);
+    if (task?.source !== 'peer') this.#actions?.cancel(id);
     if (!task || ['succeeded', 'failed', 'cancelled'].includes(task.state)) return task;
     const cancelled = this.#store.updateTask(id, { state: 'cancelled' });
     if (this.#current === id) this.#controller?.abort();
@@ -152,7 +156,7 @@ export class AgentRuntime {
         // The candidate sees exactly the bounded set whose source facts the
         // host supplies; it cannot select an unlabeled older memory.
         const interactive = this.#actions?.eligible(task) === true;
-        const scopedMemories = this.#store.listMemories(task.conversationId);
+        const scopedMemories = this.#conversationMemories(task, this.#store.listMemories(task.conversationId));
         const memories = interactive ? this.#actions!.selectMemories(task,scopedMemories) : scopedMemories.slice(-12);
         const memorySourceFacts = (memory: Memory) => {
           const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
@@ -184,7 +188,9 @@ export class AgentRuntime {
           this.#authorize('memory');
           const currentTask = this.#store.task(task.id)!;
           if ((this.#actions?.eligible(currentTask) === true) !== interactive) throw new ProviderError('protocol', 'Current conversation eligibility changed during worker construction');
-          const current = memories.flatMap(memory => { const value = this.#store.memory(memory.id, task.conversationId); return value ? [value] : []; });
+          const current = this.#conversationMemories(currentTask, memories.flatMap(memory => {
+            const value = this.#store.memory(memory.id, task.conversationId); return value ? [value] : [];
+          }));
           const authorizedCurrent = interactive ? this.#actions!.selectMemories(currentTask, current) : current;
           projection = validateMemoryProjection({ request, task: currentTask, supplied: memories, authorizedCurrent, checks, interactive });
           // Identity and authority come from current host records in the actual
@@ -294,12 +300,24 @@ export class AgentRuntime {
     await this.runUntilIdle();
   }
 
+  #conversationMemories(task: Task, memories: Memory[]): Memory[] {
+    if (task.source !== 'peer') return memories;
+    // Before peer ingress existed, operator scopes could use any label. Scope
+    // alone cannot authorize those legacy episodes or anonymous derivations.
+    return memories.filter(memory => {
+      if (memory.kind !== 'episodic' || !memory.source.startsWith('task:')) return false;
+      const origin = this.#store.task(memory.source.slice(5));
+      return origin?.source === 'peer' && origin.conversationId === task.conversationId;
+    });
+  }
+
   #command(task: Task): string {
     const parsed = command(task.input)!; const target = this.#store.task(parsed.id);
-    if (!target || target.conversationId !== task.conversationId || target.id === task.id) return 'Task not found in this conversation.';
+    if (!target || target.conversationId !== task.conversationId || target.id === task.id
+      || (task.source === 'peer' && target.source !== 'peer')) return 'Task not found in this conversation.';
     if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.${this.#actions?.status(target.id) ?? ''}`;
     if (task.source === 'slack' && !sameSlackAuthor(task, target)) return 'Only the original Slack author can cancel or correct this task.';
-    const cancelledProposal = this.#actions?.cancel(target.id) ?? false;
+    const cancelledProposal = task.source === 'peer' ? false : this.#actions?.cancel(target.id) ?? false;
     this.cancel(target.id);
     if (parsed.kind === 'cancel') return cancelledProposal ? `Self-modification cancellation requested for ${target.id}; committed transfers cannot be undone by this command.` : `Task ${target.id}: ${this.#store.task(target.id)!.state}.`;
     const replacement = this.#store.enqueue({ conversationId: task.conversationId, source: task.source, input: parsed.text!, eventId: `${task.id}:replacement`,

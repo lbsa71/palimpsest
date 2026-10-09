@@ -60,6 +60,17 @@ function inbound(value: unknown, source?: string): InboundMessage {
   };
 }
 
+function peerInbound(value: unknown): InboundMessage {
+  const message = inbound(value, 'peer');
+  // The caller supplies a label, never a trusted runtime scope or source role.
+  if (message.conversationId.length > 507) throw new CommunicationsError('invalid_message');
+  return { ...message, conversationId: `peer:${message.conversationId}` };
+}
+
+function peerScope(value: unknown): value is string {
+  return typeof value === 'string' && value.startsWith('peer:') && nonempty(value.slice(5), 507);
+}
+
 function outbound(message: OutboundMessage): OutboundMessage {
   if (!nonempty(message.conversationId) || !nonempty(message.taskId) || !nonempty(message.text, 60_000)
     || !['progress', 'result', 'error'].includes(message.kind)
@@ -75,7 +86,9 @@ export class DirectCommunications implements Communications {
   readonly #outputs = new Map<string, OutboundMessage[]>();
 
   async receive<T>(message: InboundMessage, ingress: (input: InboundMessage) => Promise<T>): Promise<T> {
-    return ingress(inbound(message, 'direct'));
+    const input = inbound(message, 'direct');
+    if (input.conversationId.startsWith('peer:')) throw new CommunicationsError('invalid_direct_context');
+    return ingress(input);
   }
 
   async send(message: OutboundMessage): Promise<void> {
@@ -90,6 +103,28 @@ export class DirectCommunications implements Communications {
   }
 }
 
+/** One unprivileged local peer principal. Runtime task/output history is durable;
+ * these snapshots are only transport observations, as with direct calls. */
+export class PeerCommunications implements Communications {
+  readonly name = 'peer';
+  readonly #outputs = new Map<string, OutboundMessage[]>();
+
+  async receive<T>(message: unknown, ingress: (input: InboundMessage) => Promise<T>): Promise<T> {
+    return ingress(peerInbound(message));
+  }
+
+  async send(message: OutboundMessage): Promise<void> {
+    const copy = outbound(message);
+    if (!peerScope(copy.conversationId)) throw new CommunicationsError('invalid_peer_context', 'rejected');
+    const messages = this.#outputs.get(copy.conversationId) ?? [];
+    messages.push(copy); this.#outputs.set(copy.conversationId, messages);
+  }
+
+  messages(conversationId: string): OutboundMessage[] {
+    return (this.#outputs.get(conversationId) ?? []).map(message => ({ ...message }));
+  }
+}
+
 export interface LocalApi {
   submit(input: InboundMessage): Promise<unknown>;
   status(id: string): unknown;
@@ -99,6 +134,8 @@ export interface LocalApi {
 
 export interface LocalServerOptions {
   token: string;
+  /** Independent unprivileged principal, restricted to /peer routes. */
+  peerToken?: string;
   host?: string;
   port?: number;
 }
@@ -148,40 +185,54 @@ function respond(response: ServerResponse, status: number, body: unknown): void 
   response.end(JSON.stringify(body ?? null));
 }
 
-/** Operator-only HTTP adapter. All state and task semantics remain in the supplied runtime. */
+/** Distinct operator/peer roles. State and task semantics remain in the runtime. */
 export async function createLocalServer(api: LocalApi, options: LocalServerOptions): Promise<LocalServer> {
   const host = options.host ?? '127.0.0.1';
   if (!['127.0.0.1', '::1'].includes(host)) throw new CommunicationsError('local_server_requires_loopback');
   if (typeof options.token !== 'string' || options.token.length < 16 || /\s/.test(options.token)) throw new CommunicationsError('local_server_requires_token_at_least_16_characters');
+  if (options.peerToken !== undefined && (typeof options.peerToken !== 'string' || options.peerToken.length < 16 || /\s/.test(options.peerToken))) throw new CommunicationsError('local_server_requires_peer_token_at_least_16_characters');
+  if (options.peerToken === options.token) throw new CommunicationsError('local_server_role_tokens_must_differ');
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new CommunicationsError('invalid_port');
   const server = createServer(async (request, response) => {
     try {
-      if (!equalSecret(request.headers.authorization ?? '', `Bearer ${options.token}`)) throw new HttpError(401, 'unauthorized');
+      const authorization = request.headers.authorization ?? '';
+      const operator = equalSecret(authorization, `Bearer ${options.token}`);
+      const peer = options.peerToken !== undefined && equalSecret(authorization, `Bearer ${options.peerToken}`);
+      if (!operator && !peer) throw new HttpError(401, 'unauthorized');
       if (request.headers.origin !== undefined) throw new HttpError(403, 'browser_origin_not_allowed');
       let url: URL;
       try { url = new URL(request.url ?? '/', 'http://localhost'); } catch { throw new HttpError(400, 'invalid_url'); }
-      if (request.method === 'POST' && url.pathname === '/messages') {
+      const peerRoute = url.pathname.startsWith('/peer/');
+      if (peerRoute !== peer) throw new HttpError(401, 'unauthorized');
+      if (request.method === 'POST' && url.pathname === (peer ? '/peer/messages' : '/messages')) {
         if (request.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') throw new HttpError(415, 'json_required');
         const body = await readBody(request);
         let input: InboundMessage;
-        try { input = inbound(JSON.parse(body), 'direct'); } catch { throw new HttpError(400, 'invalid_message'); }
+        try {
+          input = peer ? peerInbound(JSON.parse(body)) : inbound(JSON.parse(body), 'direct');
+          if (!peer && input.conversationId.startsWith('peer:')) throw new Error();
+        } catch { throw new HttpError(400, 'invalid_message'); }
         respond(response, 202, await api.submit(input));
         return;
       }
-      if (request.method === 'GET' && url.pathname === '/events') {
+      if (!peer && request.method === 'GET' && url.pathname === '/events') {
         const cursor = url.searchParams.get('after') ?? '0';
         const after = Number(cursor);
         if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(after)) throw new HttpError(400, 'invalid_cursor');
         respond(response, 200, await api.events(after));
         return;
       }
-      const taskRoute = /^\/tasks\/([^/]+)(\/cancel)?$/.exec(url.pathname);
+      const taskRoute = (peer ? /^\/peer\/tasks\/([^/]+)(\/cancel)?$/ : /^\/tasks\/([^/]+)(\/cancel)?$/).exec(url.pathname);
       if (taskRoute && ((!taskRoute[2] && request.method === 'GET') || (taskRoute[2] && request.method === 'POST'))) {
         let id: string;
         try { id = decodeURIComponent(taskRoute[1]!); } catch { throw new HttpError(400, 'invalid_task_id'); }
         if (!nonempty(id) || id.includes('/')) throw new HttpError(400, 'invalid_task_id');
-        const result = taskRoute[2] ? await api.cancel(id) : await api.status(id);
+        // Check trusted provenance before invoking a control callback. The peer
+        // token owns one principal's peer scopes, never operator/Slack tasks.
+        const observed = peer ? await api.status(id) : undefined;
+        if (peer && (!record(observed) || observed.source !== 'peer' || !peerScope(observed.conversationId))) throw new HttpError(404, 'task_not_found');
+        const result = taskRoute[2] ? await api.cancel(id) : peer ? observed : await api.status(id);
         if (result === null || result === undefined) throw new HttpError(404, 'task_not_found');
         respond(response, 200, result);
         return;

@@ -13,6 +13,7 @@ import type { Provider } from './providers.ts';
 import type { Json, Store, Task } from './store.ts';
 import type { ConversationActions } from './conversation-actions.ts';
 import { readGenerationContinuity } from './continuity.ts';
+import { assertConversationRole } from './conversation-role.ts';
 
 export function releaseOf(manifest: CandidateManifest): Release {
   return { digest: manifest.manifestDigest, artifactPath: manifest.releaseDir,
@@ -145,6 +146,7 @@ export class GenerationHost {
 
   async submit(message: InboundMessage): Promise<Task> {
     if (this.#closed || !this.#options.communications.some(adapter => adapter.name === message.source)) throw new Error('Communication source unavailable');
+    assertConversationRole(message);
     const task = this.#options.store.enqueue({ conversationId: message.conversationId, input: message.text, source: message.source, eventId: message.id,
       ...(message.slackAuthor ? { slackAuthor: { ...message.slackAuthor } } : {}) });
     if (task.state === 'queued' && task.checkpoint === null) this.#options.store.updateTask(task.id, { checkpoint: { calls: 0, replyTo: message.replyTo ?? null } });
