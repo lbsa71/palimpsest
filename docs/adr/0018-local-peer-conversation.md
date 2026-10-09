@@ -1,6 +1,6 @@
 # ADR 0018: Separate local peer conversation role
 
-- **Status:** Accepted bounded implementation; independently verified/reviewed, frozen installation and live probes pending.
+- **Status:** Accepted bounded implementation installed in `6028c47c`; mechanical/finite canary checks pass, live conversational authority/truthfulness failed. Corrective guidance and public-release acceptance remain open.
 - **Recorded:** 2026-10-09.
 - **Requirements:** R18–R19, R21, R23–R25; explicit user request for peer-role social-engineering testing.
 - **Specification:** [Local peer conversation](../peer-conversation.md).
