@@ -424,3 +424,87 @@ test('explicit waiver survives a conflicting cancelled continuation acknowledgme
     assert.equal(f.sent.length, 2, 'the withdrawn continuation must respect the persisted notification waiver');
   } finally { release?.(); await f.cleanup(); }
 });
+
+for (const expiredAt of [100, 101]) test(`expired inquiry at ${expiredAt} cannot physically dispatch before the first host review`, async () => {
+  let reflectionCalls = 0;
+  const f = fixture(request => {
+    if (request.system.startsWith('Reflect on')) { reflectionCalls++; return { ...reflectionResult(), stance: 'EXPIRED_RESULT_CANARY_731' }; }
+    if (request.system.includes('growth') && !request.system.includes('Ordinary conversation continuity')) return { observation: 'Standing observation.', lesson: 'Cautious independent thought.', nextQuestion: 'A later finite question.', proposedChange: null };
+    return decision(outcome('pending', { question: 'A finite retained inquiry.' }));
+  });
+  let scheduler: GrowthScheduler | undefined;
+  try {
+    await f.submit(); await f.runtime.runUntilIdle(); const original = f.store.listConversationTopics()[0]!; f.now(expiredAt);
+    scheduler = new GrowthScheduler({ store: f.store, provider: f.p, hasUserWork: () => false, conversationContinuity: f.continuity, now: () => expiredAt, windowMs: 1000, callsPerWindow: 2 });
+    // Serving can start its growth timer before its first no-inference review.
+    await scheduler.tick(); assert.equal(reflectionCalls, 0, 'expired thought must not physically reach the provider');
+    assert.equal(f.continuity.hasPendingReflection(), false); assert.equal(f.store.listEvents().filter(event => event.type === 'conversation.reflection.call_reserved').length, 0);
+    assert.equal(f.store.conversationTopic(original.id)!.revision, 1); assert.equal(f.store.conversationReflection(original.reflectionId!)!.attempts, 0);
+    assert.equal(f.store.growthWindow('standing-growth-v1:0')!.usedCalls, 1, 'expired inquiry must not steal the standing growth opportunity');
+    await f.continuity.reflect('standing-growth-v1:0', new AbortController().signal); assert.equal(reflectionCalls, 0);
+    f.continuity.review(); await f.runtime.runUntilIdle(); assert.equal(f.store.conversationReflection(original.reflectionId!)!.state, 'cancelled');
+    assert.match(f.sent[1]!, /finite review period ended/i); assert.equal(f.store.conversationTopic(original.id)!.report.owedRevision, null);
+    assert.ok(f.store.listMemories(f.scope).every(memory => !memory.content.includes('EXPIRED_RESULT_CANARY_731')));
+  } finally { await scheduler?.stop(); await f.cleanup(); }
+});
+
+test('atomic reflection reservation rejects the deadline and cannot debit a window', async () => {
+  const f = fixture(() => decision(outcome('pending', { question: 'A bounded inquiry.' })));
+  try {
+    await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
+    f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 200, maxCalls: 2 });
+    assert.equal(f.store.claimConversationReflection(topic.reflectionId!, 'window', 100), undefined);
+    assert.equal(f.store.growthWindow('window')!.usedCalls, 0); assert.equal(f.store.conversationReflection(topic.reflectionId!)!.attempts, 0);
+  } finally { await f.cleanup(); }
+});
+
+test('atomic result publication refuses expiry while retaining an already spent reservation', async () => {
+  const f = fixture(() => decision(outcome('pending', { question: 'A bounded inquiry.' })));
+  try {
+    await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
+    f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 200, maxCalls: 2 });
+    assert.ok(f.store.claimConversationReflection(topic.reflectionId!, 'window', 99));
+    assert.throws(() => f.store.completeConversationReflection(topic.reflectionId!, topic.revision, { ...reflectionResult(), status: 'settled', stance: 'ATOMIC_EXPIRED_CANARY_216' }, 100, { provider: 'fixture' }));
+    assert.equal(f.store.growthWindow('window')!.usedCalls, 1); assert.equal(f.store.conversationTopic(topic.id)!.revision, 1);
+    assert.ok(f.store.listMemories(f.scope).every(memory => !memory.content.includes('ATOMIC_EXPIRED_CANARY_216')));
+    f.now(100); f.continuity.review(); await f.runtime.runUntilIdle(); assert.equal(f.store.conversationReflection(topic.reflectionId!)!.state, 'cancelled'); assert.equal(f.store.conversationTopic(topic.id)!.report.owedRevision, null);
+  } finally { await f.cleanup(); }
+});
+
+test('midflight expiry discards the late result and reports inconclusive after reopening without refund or replay', async () => {
+  let release!: (result: unknown) => void; let began!: () => void; const entered = new Promise<void>(resolve => { began = resolve; }); let reflectionCalls = 0;
+  const f = fixture(request => request.system.startsWith('Reflect on') ? new Promise(resolve => { reflectionCalls++; release = resolve; began(); }) : decision(outcome('pending', { question: 'An inquiry with a finite deadline.' })));
+  let reopened: Store | undefined; let runtime: AgentRuntime | undefined;
+  try {
+    await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
+    f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 1000, maxCalls: 2 }); f.now(99);
+    const pending = f.continuity.reflect('window', new AbortController().signal); await entered; f.now(100);
+    release({ ...reflectionResult(), stance: 'MIDFLIGHT_EXPIRED_CANARY_912' }); await pending;
+    assert.equal(f.store.conversationTopic(topic.id)!.revision, 1); assert.equal(f.store.conversationReflection(topic.reflectionId!)!.state, 'cancelled');
+    assert.equal(f.store.growthWindow('window')!.usedCalls, 1); assert.equal(reflectionCalls, 1); assert.equal(f.store.conversationTopic(topic.id)!.report.owedRevision, 1);
+    await f.runtime.stop(); f.store.close(); reopened = new Store(f.path); reopened.recoverConversationReflections();
+    const continuity = new ConversationContinuity({ store: reopened, provider: f.p, now: () => 101, reviewMs: 10 });
+    runtime = new AgentRuntime({ store: reopened, provider: f.p, conversationContinuity: continuity, communications: [{ name: 'direct', send: async message => { assert.equal(message.conversationId, f.scope); f.sent.push(message.text); } }] });
+    continuity.review(); await runtime.runUntilIdle(); assert.match(f.sent[1]!, /finite review period ended/i); assert.equal(reopened.conversationTopic(topic.id)!.report.owedRevision, null);
+    await continuity.reflect('window', new AbortController().signal); continuity.review(); await runtime.runUntilIdle();
+    assert.equal(f.sent.length, 2); assert.equal(reflectionCalls, 1); assert.equal(reopened.growthWindow('window')!.usedCalls, 1);
+    assert.ok(reopened.listMemories(f.scope).every(memory => !memory.content.includes('MIDFLIGHT_EXPIRED_CANARY_912')));
+  } finally { release?.(reflectionResult()); await runtime?.stop(); reopened?.close(); await f.cleanup(); }
+});
+
+test('expiry after admission and prompt preparation prevents physical dispatch without refunding its reservation', async () => {
+  let reflectionCalls = 0;
+  const f = fixture(request => { if (request.system.startsWith('Reflect on')) { reflectionCalls++; return reflectionResult(); } return decision(outcome('pending', { question: 'A finite inquiry.' })); });
+  try {
+    await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
+    f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 1000, maxCalls: 2 });
+    // A finite host clock crosses the boundary after eligible selection, claim
+    // and the early pre-dispatch check, while request preparation is finishing.
+    let reads = 0; const continuity = new ConversationContinuity({ store: f.store, provider: f.p, reviewMs: 10, now: () => ++reads <= 3 ? topic.expiresAt - 1 : topic.expiresAt });
+    await continuity.reflect('window', new AbortController().signal);
+    assert.equal(reflectionCalls, 0); assert.equal(f.store.growthWindow('window')!.usedCalls, 1);
+    assert.equal(f.store.conversationReflection(topic.reflectionId!)!.state, 'cancelled'); assert.equal(f.store.conversationTopic(topic.id)!.report.owedRevision, 1);
+    continuity.review(); await f.runtime.runUntilIdle(); assert.match(f.sent[1]!, /finite review period ended/i); assert.equal(f.store.conversationTopic(topic.id)!.report.owedRevision, null);
+    await continuity.reflect('window', new AbortController().signal); assert.equal(reflectionCalls, 0); assert.equal(f.store.growthWindow('window')!.usedCalls, 1);
+  } finally { await f.cleanup(); }
+});
