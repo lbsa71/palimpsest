@@ -34,7 +34,9 @@ export function createDevelopmentHost(options:DevelopmentHostOptions):{
   const active=()=>{
     const state=host.custodian.inspect();
     if(state.phase!=='normal'||!state.active)throw new Error('Plan work requires a normally serving generation');
-    return readManifest(state.active.release.artifactPath);
+    const manifest=readManifest(state.active.release.artifactPath);
+    if(manifest.id!==state.active.release.digest)throw new Error('Current capability artifact differs from custody');
+    return manifest;
   };
   const assertCatalog=()=>{
     const manifest=active();
@@ -60,7 +62,9 @@ export function createDevelopmentHost(options:DevelopmentHostOptions):{
       if(lastEvidence?.key===key)return structuredClone(lastEvidence.value);
       const checks:DevelopmentEvidence['checks']=[];
       for(const id of new Set(plan.items.flatMap(item=>item.authoritativeChecks))){
-        const check=await evaluateChallenge({repositoryRoot:config.repositoryRoot,releaseDir:manifest.releaseDir,requireCurrentBase:false,challenge:id});
+        const current=host.custodian.inspect().active?.release;
+        if(!current||current.digest!==manifest.id)throw new Error('Current capability custody changed');
+        const check=await evaluateChallenge({repositoryRoot:config.repositoryRoot,releaseDir:manifest.releaseDir,expectedLegacyManifestDigest:current.digest,requireCurrentBase:false,challenge:id});
         checks.push({id,status:check.status,detail:check.detail});
       }
       const value=evidence(source.releaseId,source.sourceDigest,checks,digestJson({key,checks}));lastEvidence={key,value};return structuredClone(value);

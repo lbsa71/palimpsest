@@ -12,6 +12,8 @@ export interface WorkerPeer { pid: number; instanceId: string }
 export interface WorkerCheckpoint { sequence: number; snapshot: Json; policyVersion: string }
 export interface WorkerOptions {
   candidateRoot: string;
+  /** Installed manifest-bound exclusions; never selected by cognitive output. */
+  denyReadPaths?: string[];
   instanceId?: string;
   /** Cold process/module initialization allowance, independent of steady RPC. */
   startupTimeoutMs?: number;
@@ -70,7 +72,7 @@ export class AgentWorker {
     worker.#completion = runIsolated({ program: process.execPath,
       args: ['--disable-warning=ExperimentalWarning', harness, join(options.candidateRoot, 'src/agent/brain.ts'), `--palimpsest-launch-id=${instanceId}`,
         ...(worker.#scope === undefined ? [] : [`--palimpsest-scope=${JSON.stringify(worker.#scope)}`])],
-      cwd: options.candidateRoot, readPaths: [harness, options.candidateRoot],
+      cwd: options.candidateRoot, readPaths: [harness, options.candidateRoot], denyReadPaths: options.denyReadPaths,
       timeoutMs: options.lifetimeMs ?? 300_000, maxOutputBytes: 1_048_576, signal: worker.#controller.signal,
       keepStdinOpen: true, onSpawn(child) {
         if (!child.pid) throw new Error('Worker did not acquire an OS identity');

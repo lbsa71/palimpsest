@@ -1,0 +1,33 @@
+# Staged coding workspace commands
+
+Status: P17.2 second-slice specification; implementation and serving acceptance pending, 2026-10-09. This refines the [coding contract](coding-autonomy.md#staged-command-execution-and-recovery) and [file backend](workspace-primitives.md). Source authoring remains full-codebase; this is an initial executable boundary.
+
+## Problem and expected behavior
+
+File edits alone cannot establish working code. The autark needs actual test/compiler feedback while commands remain isolated from lived state, credentials, the repository and the live installation. Command output, filesystem effects and a database receipt are separate resources; an unknown exit cannot become a pass through recovery.
+
+The first command lane permits host-selected current Node and hash-bound installed native TypeScript, with bounded arguments and a relative working directory. No shell, network, inherited credentials, arbitrary executable, dependency-install side effect or child-process exception is implied. Selected Node tests use `--test-isolation=none`; tests that themselves spawn or need network report actual unsupported failure. Full-suite, broader build/subprocess/dependency/fork support remain required follow-up work.
+
+## Internal runner and receiver contracts
+
+A small internal command runner owns process/output mechanics; it is not a public authority receiver. Its caller supplies exact trusted runtime identities, grants and limits, already bound to the durable effect. The receiver validates task/workspace/epoch/current policy, selects the executable/toolchain, clones arguments, records a latest verified pre-command checkpoint and reserves one unique command effect before launch. Model data never chooses grants, control paths, executables or recovery grades.
+
+Reuse the collection coordinator lock and per-workspace writer claim. Hold them through actual direct-process termination, pipe drain, binary spool sealing and post-command manifest validation. The runner's trusted PID callback persists the actual writer identity. Cancellation, revocation, observer/write failure and timeout abort and drain before ownership is released. Null/reused/unproven PID claims stay held; a lock or timestamp alone is insufficient.
+
+Capture stdout and stderr into separate private host-owned regular binary spool files outside the candidate tree. The command sees only pipes. Initially enforce a combined 1 MiB capture ceiling and at most a 30-second deadline. Seal exact lengths/hashes after close; overflow is incomplete output and an unsuccessful execution. Preserve raw bytes and stream-specific coordinates; split UTF-8 or binary bytes must not be replaced. A spool flush/write failure is an execution failure requiring drain and inspection, never complete capture.
+
+Paged retrieval uses current command/task/workspace authority plus a sealed trusted receipt, stream name and bounded byte offsets; candidate input cannot name a path. Reverify regular/single-link/private identity and sealed length/hash before returning base64 bytes. Optional text is allowed only for a valid complete UTF-8 page. Keep execution outcome, output completeness and workspace usability distinct. No cross-stream ordering is promised.
+
+## Interruption and invalid trees
+
+Commands never reuse an old operation ID, even when the transcript lacks output. Original reservations remain spent. Independently validated finalized receipts may preserve observed exit/signal; a valid unchanged or changed tree alone proves neither. After both old coordinator and writer are proven stopped, a trusted fresh manifest can retire the operational hold with `exit.kind=unknown`, `exitSuccessful=false`, `outputComplete=false` and the observed tree digest. Preserve the earlier unknown event and command lineage. New validation is a new intent, not a replay or retroactive success.
+
+If a command creates unsupported links/FIFOs/nonregular or oversized objects, retain and hold that workspace. Do not traverse or sanitize suspicious entries through unrestricted host reads. Restore a new workspace from the latest verified quiescent pre-command checkpoint, preserving earlier valid edits and recording old/new workspace lineage and abandoned effect. Commands cannot access checkpoint/control/spool content. Real checkpoint creation, restoration and failure behavior are required before calling this an autonomous recovery route.
+
+## Acceptance, dependencies, non-goals and risks
+
+Establish real failing behavior checks before implementation. The internal runner gate covers selected Node edits/native compilation/in-process tests; outside reads/writes, network and detached/ordinary children denied; exact binary stdout/stderr paging and combined overflow; private spool tampering, invalid offsets and limits; deadline/cancellation/observer failure with actual PID disappearance and pipe drain. Receiver gates additionally cover current authority and immutable arguments, shared writer exclusion, durable reservation/no replay, post-command snapshots, lost receipts with unknown exit, earlier-edit checkpoint recovery after unsupported entries and Store reopen. Fresh source and frozen-artifact review precede consequential activation.
+
+Dependencies are macOS Seatbelt, Node 24, the bound native compiler, the existing workspace task/effect store and isolated manifest validation. Non-goals of this first lane are arbitrary shell/package scripts, network dependency acquisition, detached descendant permission or live model/provider acceptance. Lifetime command/checkpoint/spool/held-draft storage admission and retention need explicit implementation; per-command ceilings alone do not bound cumulative storage. No hard CPU/RSS/disk quota or general descendant cleanup is claimed. P17.3/P17.4/P18 remain incomplete.
+
+Material risks are stale writers, mutable accepted arguments, missing PID receipts, output tampering or amplification, false success after unknown exit, invalid trees blocking future file tools, losing previous draft edits during recovery and confusing initial execution limits with a permanent product restriction. Record each tested subset and remaining gap.

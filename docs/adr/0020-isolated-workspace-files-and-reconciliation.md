@@ -33,3 +33,5 @@ The first slice supports bounded discovery/literal search/byte reads and conditi
 ## Evidence and acceptance
 
 Real Seatbelt fixtures exercise supported file operations, Unicode/binary handling, links/path swaps, preconditions and stage/receipt failure points. Receiver tests exercise actual files plus the host journal, restart, epoch/owner transitions, cancellation and replay prevention. Independent final review matched exact source/test hashes and passed 14 helper and 18 receiver checks, with additional disposable helper probes; root passed 57 relevant checks and TypeScript, with one expected platform skip. Evidence and limitations are in the [workspace record](../workspace-primitives.md). The [workspace criteria](../workspace-primitives.md#acceptance-dependencies-and-material-risks) and A22 remain the full completion contract; passing a file-only subset does not complete P17.2/P17.
+
+The staged [command specification](../workspace-commands.md) extends this ownership boundary without inferring an exit result from a valid tree. Its process/spool, checkpoint and receiver gates remain separate implementation work.

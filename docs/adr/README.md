@@ -28,4 +28,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0019](0019-coding-autonomy-and-reusable-agent-plumbing.md) | Explicit full-codebase/seed-coding requirements; direct Mistral adapter boundary selected from fixtures; production integration pending | Iterative coding tools, replaceable/forkable model tooling and autonomous application/governance evolution |
 | [0020](0020-isolated-workspace-files-and-reconciliation.md) | First file backend independently verified; command/model/serving integration pending | Isolated file tools, separate coordinator/helper ownership and observed workspace reconciliation |
 
+| [0021](0021-bound-production-typechecking-and-runtime-exclusions.md) | Source correction independently verified; frozen admission pending | Installed production inputs, immutable runtime exclusions and exact historical custody proof |
+
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

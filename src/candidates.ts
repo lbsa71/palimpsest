@@ -11,9 +11,10 @@ import type { Json } from './store.ts';
 export interface CandidateChange { path: string; content: string }
 export interface CandidateFile { path: string; mode: '100644' | '100755'; sha256: string; size: number }
 export interface CandidateRuntime { nodeVersion: string; nodeSha256: string; compilerPath: string; compilerSha256: string; toolchainDigest: string }
+export interface CandidateTypecheckPolicy { version: 1; implementationSha256: string; entrypoints: string[]; runtimeExcludedPaths: string[] }
 export type CandidateCheckName = 'typecheck' | 'trusted-agent-contract' | 'cross-scope-memory' | 'memory-provenance' | 'memory-context-budget';
 interface ManifestRecord {
-  version: 1; id: string; manifestDigest: string; baseCommit: string; createdAt: string;
+  version: 1 | 2; typecheckPolicy?: CandidateTypecheckPolicy; id: string; manifestDigest: string; baseCommit: string; createdAt: string;
   files: CandidateFile[]; snapshotDigest: string; sourceDigest: string; governanceDigest: string;
   configuration: Record<string, Json>; modelProfile: { provider: string; model: string | null };
   runtime: CandidateRuntime; dataSchemaVersion: 1; acceptanceContractDigest: string; trustedCheckDigest: string;
@@ -25,7 +26,7 @@ export interface CandidateCheck {
   stdout?: string; stderr?: string; stdoutDigest?: string; stderrDigest?: string;
 }
 export interface CandidateEvidence {
-  version: 1; candidateId: string; manifestDigest: string; baseCommit: string; status: 'passed' | 'failed';
+  version: 1; typecheckPolicy?: CandidateTypecheckPolicy; candidateId: string; manifestDigest: string; baseCommit: string; status: 'passed' | 'failed';
   checks: CandidateCheck[]; createdAt: string; evidenceDigest: string;
 }
 export interface FreezeOptions {
@@ -34,12 +35,18 @@ export interface FreezeOptions {
   /** Trusted orchestration selects checks; never take this from model output. */
   requiredChecks?: CandidateCheckName[];
 }
-export interface VerifyOptions { repositoryRoot: string; releaseDir: string; expectedBase?: string; requireCurrentBase?: boolean }
+export interface VerifyOptions {
+  repositoryRoot: string; releaseDir: string; expectedBase?: string; requireCurrentBase?: boolean;
+  /** Historical identity from trusted custody/receipt, never from candidate data.
+   * Default new admission rejects legacy schemas; reading one does not grant it. */
+  expectedLegacyManifestDigest?: string;
+}
 
 const installedRoot = fileURLToPath(new URL('..', import.meta.url));
 const trustedCheckPath = join(installedRoot, 'trusted', 'agent-contract.test.mjs');
 const developmentCheckFile = 'trusted/development-contract.test.mjs';
 const developmentCheckPath = join(installedRoot, developmentCheckFile);
+const installedEvaluatorPath = fileURLToPath(import.meta.url);
 const toolchainRoot = join(installedRoot, 'node_modules');
 const acceptancePath = 'docs/seed-contract.md';
 const writableAgentPath = /^src\/agent\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts$/;
@@ -124,10 +131,58 @@ function currentRuntime(): CandidateRuntime {
 function manifestPayload(record: ManifestRecord): Omit<ManifestRecord, 'id' | 'manifestDigest'> {
   const { id: _id, manifestDigest: _digest, ...payload } = record; return payload;
 }
-function governance(files: CandidateFile[], acceptanceContractDigest: string, trustedCheckDigest: string): string {
+/** This policy is installed host code, never a candidate tsconfig or label.
+ * Excluded packages remain snapshot-bound; imports from production still enter
+ * the compiler's normal closure and cannot turn into unchecked dependencies. */
+function productionTypecheckPolicy(root: string, files: CandidateFile[]): CandidateTypecheckPolicy {
+  const packages = [
+    { path: 'experiments/coding-provider', name: 'palimpsest-coding-provider-spike', dependencies: { ai: '7.0.136', '@ai-sdk/mistral': '4.0.62', zod: '4.6.5' } },
+    { path: 'experiments/coding-provider-adapter', name: 'palimpsest-coding-provider-adapter-spike', dependencies: { '@ai-sdk/mistral': '4.0.62', '@ai-sdk/provider': '4.0.26', zod: '4.6.5' } },
+  ];
+  for (const boundary of packages) {
+    const members = files.filter(file => file.path.startsWith(boundary.path + '/'));
+    if (!members.length) continue;
+    const packagePath = boundary.path + '/package.json'; const lockPath = boundary.path + '/package-lock.json';
+    if (!members.some(file => file.path === packagePath) || !members.some(file => file.path === lockPath)
+      || members.some(file => file.path.endsWith('/package.json') && file.path !== packagePath)) throw new Error('Unclassified typecheck package boundary');
+    const pkg = JSON.parse(readFileSync(join(root, packagePath), 'utf8'));
+    const lock = JSON.parse(readFileSync(join(root, lockPath), 'utf8'));
+    if (pkg.name !== boundary.name || pkg.version !== '0.0.0' || pkg.private !== true || pkg.type !== 'module'
+      || digestJson(pkg.dependencies) !== digestJson(boundary.dependencies) || Object.keys(pkg.devDependencies ?? {}).length
+      || lock.lockfileVersion !== 3 || lock.name !== pkg.name || lock.version !== pkg.version
+      || lock.packages?.['']?.name !== pkg.name || lock.packages?.['']?.version !== pkg.version
+      || digestJson(lock.packages?.['']?.dependencies) !== digestJson(boundary.dependencies)) throw new Error('Unclassified pinned typecheck package boundary');
+  }
+  const entries: string[] = [];
+  for (const file of files.filter(file => /\.(?:[cm]?ts|tsx)$/.test(file.path))) {
+    if (/^(?:src|test|scripts|trusted)\//.test(file.path)) entries.push(file.path);
+    else if (!packages.some(boundary => file.path.startsWith(boundary.path + '/'))) throw new Error('Unclassified TypeScript typecheck path: ' + file.path);
+  }
+  return { version: 1, implementationSha256: sha256(readFileSync(installedEvaluatorPath)), entrypoints: entries,
+    runtimeExcludedPaths: packages.filter(boundary => files.some(file => file.path.startsWith(boundary.path + '/'))).map(boundary => boundary.path) };
+}
+function assertTypecheckPolicy(record: ManifestRecord): void {
+  if (record.version === 1) {
+    if (Object.hasOwn(record, 'typecheckPolicy')) throw new Error('Legacy typecheck policy must remain absent');
+    return;
+  }
+  const policy = record.typecheckPolicy;
+  if (!policy || policy.version !== 1 || !/^[a-f0-9]{64}$/.test(policy.implementationSha256)
+    || !Array.isArray(policy.entrypoints) || policy.entrypoints.some(path => typeof path !== 'string')
+    || !Array.isArray(policy.runtimeExcludedPaths) || policy.runtimeExcludedPaths.some(path => typeof path !== 'string')
+    || Object.keys(policy).sort().join(',') !== 'entrypoints,implementationSha256,runtimeExcludedPaths,version') throw new Error('Invalid candidate typecheck policy');
+}
+/** Installed execution policy closes computed import/read paths that the compiler
+ * cannot resolve statically. Historical custody preserves its original semantics. */
+export function candidateExecutionReadDenials(manifest: CandidateManifest): string[] {
+  if (manifest.version === 1) return [];
+  if (digestJson(manifest.typecheckPolicy) !== digestJson(productionTypecheckPolicy(manifest.candidateRoot, manifest.files))) throw new Error('Frozen installed typecheck policy changed');
+  return manifest.typecheckPolicy!.runtimeExcludedPaths.map(path => join(manifest.candidateRoot, path));
+}
+function governance(files: CandidateFile[], acceptanceContractDigest: string, trustedCheckDigest: string, policy?: CandidateTypecheckPolicy): string {
   const controls = new Set(['AGENTS.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'docs/seed-contract.md', 'docs/acceptance.md', 'config/development-plan.json']);
   const governed = files.filter(file => controls.has(file.path) || (!writableAgentPath.test(file.path) && file.path.startsWith('src/')) || file.path.startsWith('trusted/') || file.path.startsWith('test/'));
-  return digestJson({ files: governed, acceptanceContractDigest, trustedCheckDigest });
+  return digestJson({ files: governed, acceptanceContractDigest, trustedCheckDigest, ...(policy ? { typecheckPolicy: { version: policy.version, implementationSha256: policy.implementationSha256 } } : {}) });
 }
 
 function checkSelection(value: CandidateCheckName[]): CandidateCheckName[] {
@@ -180,10 +235,11 @@ function freezeSource(options: FreezeOptions, baseline: boolean): CandidateManif
     if (!files.some(file => file.path === 'src/agent/brain.ts')) throw new Error('Candidate must contain its cognitive entrypoint');
     const acceptanceContractDigest = sha256(readFileSync(join(candidateRoot, acceptancePath)));
     const trustedCheckDigest = sha256(readFileSync(trustedCheckPath));
+    const typecheckPolicy = productionTypecheckPolicy(candidateRoot, files);
     const payload = {
-      version: 1 as const, baseCommit, createdAt: new Date().toISOString(), files,
+      version: 2 as const, typecheckPolicy, baseCommit, createdAt: new Date().toISOString(), files,
       snapshotDigest: digestJson(files), sourceDigest: digestJson(files.filter(file => writableAgentPath.test(file.path))),
-      governanceDigest: governance(files, acceptanceContractDigest, trustedCheckDigest), configuration: structuredClone(options.configuration), modelProfile: structuredClone(options.modelProfile),
+      governanceDigest: governance(files, acceptanceContractDigest, trustedCheckDigest, typecheckPolicy), configuration: structuredClone(options.configuration), modelProfile: structuredClone(options.modelProfile),
       runtime: currentRuntime(), dataSchemaVersion: 1 as const, acceptanceContractDigest, trustedCheckDigest, requiredChecks,
     };
     const manifestDigest = digestJson(payload); const record: ManifestRecord = { ...payload, id: manifestDigest, manifestDigest };
@@ -199,7 +255,8 @@ export function readManifest(releaseDirectory: string): CandidateManifest {
   const releaseDir = realpathSync(releaseDirectory); const manifestPath = join(releaseDir, 'manifest.json');
   if (!lstatSync(manifestPath).isFile() || lstatSync(manifestPath).size > 2_097_152) throw new Error('Invalid candidate manifest file');
   const record = JSON.parse(readFileSync(manifestPath, 'utf8')) as ManifestRecord;
-  if (record.version !== 1 || record.dataSchemaVersion !== 1 || !Array.isArray(record.files) || record.id !== record.manifestDigest || digestJson(manifestPayload(record)) !== record.manifestDigest) throw new Error('Candidate manifest digest mismatch');
+  if (![1, 2].includes(record.version) || record.dataSchemaVersion !== 1 || !Array.isArray(record.files) || record.id !== record.manifestDigest || digestJson(manifestPayload(record)) !== record.manifestDigest) throw new Error('Candidate manifest digest mismatch');
+  assertTypecheckPolicy(record);
   checkSelection(record.requiredChecks);
   if (record.files.some(file => !file || safePath(file.path) !== file.path || !['100644', '100755'].includes(file.mode) || !/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isSafeInteger(file.size) || file.size < 0)) throw new Error('Invalid frozen file manifest');
   if (new Set(record.files.map(file => file.path)).size !== record.files.length) throw new Error('Duplicate frozen manifest path');
@@ -213,9 +270,13 @@ export function verifyFrozenCandidate(options: VerifyOptions): CandidateManifest
   const repositoryRoot = repoRoot(options.repositoryRoot);
   resolveExternalPath(repositoryRoot, options.releaseDir);
   const manifest = readManifest(options.releaseDir);
+  if (manifest.version === 1 && (!options.expectedLegacyManifestDigest
+    || !/^[a-f0-9]{64}$/.test(options.expectedLegacyManifestDigest)
+    || options.expectedLegacyManifestDigest !== manifest.manifestDigest)) throw new Error('Legacy evaluation requires exact trusted historical manifest identity');
   const expectedBase = options.expectedBase ?? git(repositoryRoot, 'rev-parse', 'HEAD').toString().trim();
   if ((options.requireCurrentBase !== false || options.expectedBase !== undefined) && manifest.baseCommit !== expectedBase) throw new Error('Candidate has a stale Git base');
   const files = scanSnapshot(manifest.candidateRoot);
+  if (manifest.typecheckPolicy && digestJson(manifest.typecheckPolicy) !== digestJson(productionTypecheckPolicy(manifest.candidateRoot, files))) throw new Error('Frozen installed typecheck policy changed');
   if (digestJson(files) !== manifest.snapshotDigest || digestJson(files) !== digestJson(manifest.files) || digestJson(files.filter(file => writableAgentPath.test(file.path))) !== manifest.sourceDigest) throw new Error('Frozen source digest mismatch: candidate was modified');
   const original = baseFiles(repositoryRoot, manifest.baseCommit);
   for (const file of original.filter(file => !writableAgentPath.test(file.path))) {
@@ -223,7 +284,7 @@ export function verifyFrozenCandidate(options: VerifyOptions): CandidateManifest
     if (!actual || actual.mode !== file.mode || actual.sha256 !== sha256(git(repositoryRoot, 'cat-file', 'blob', file.blob))) throw new Error('Frozen candidate modified protected baseline source');
   }
   if (files.some(file => !original.some(base => base.path === file.path) && !writableAgentPath.test(file.path))) throw new Error('Frozen candidate added protected source');
-  if (sha256(readFileSync(join(manifest.candidateRoot, acceptancePath))) !== manifest.acceptanceContractDigest || sha256(readFileSync(trustedCheckPath)) !== manifest.trustedCheckDigest || governance(files, manifest.acceptanceContractDigest, manifest.trustedCheckDigest) !== manifest.governanceDigest) throw new Error('Frozen acceptance or trusted-check identity changed');
+  if (sha256(readFileSync(join(manifest.candidateRoot, acceptancePath))) !== manifest.acceptanceContractDigest || sha256(readFileSync(trustedCheckPath)) !== manifest.trustedCheckDigest || governance(files, manifest.acceptanceContractDigest, manifest.trustedCheckDigest, manifest.typecheckPolicy) !== manifest.governanceDigest) throw new Error('Frozen acceptance or trusted-check identity changed');
   const developmentValidator = files.find(file => file.path === developmentCheckFile);
   if (developmentValidator && developmentValidator.sha256 !== sha256(readFileSync(developmentCheckPath))) throw new Error('Frozen development validator identity changed');
   if (digestJson(currentRuntime()) !== digestJson(manifest.runtime)) throw new Error('Frozen runtime or installed toolchain identity changed');
@@ -252,7 +313,7 @@ async function protectedBehavior(manifest: CandidateManifest, name: Exclude<Cand
     } : undefined;
     const fixtures = development ? developmentContract!.makeDevelopmentFixtures(name) : name === 'cross-scope-memory' ? contract.makeScopeIsolationFixtures() : contract.makeFixtures();
     const bridge = `import { readFileSync } from 'node:fs'; import { pathToFileURL } from 'node:url'; const fixtures=JSON.parse(readFileSync(0,'utf8')); const {conversationRequest}=await import(pathToFileURL(process.argv[1]).href); const responses=[]; for(const fixture of fixtures) responses.push(await conversationRequest(fixture.task,fixture.memories)); process.stdout.write(JSON.stringify({responses}));`;
-    const result = await runIsolated({ program: process.execPath, args: ['--input-type=module', '-e', bridge, join(manifest.candidateRoot, 'src', 'agent', 'brain.ts')], cwd: manifest.candidateRoot, stdin: JSON.stringify(fixtures), timeoutMs: timeoutMs ?? 30_000, maxOutputBytes: 262_144 });
+    const result = await runIsolated({ program: process.execPath, args: ['--input-type=module', '-e', bridge, join(manifest.candidateRoot, 'src', 'agent', 'brain.ts')], cwd: manifest.candidateRoot, denyReadPaths: candidateExecutionReadDenials(manifest), stdin: JSON.stringify(fixtures), timeoutMs: timeoutMs ?? 30_000, maxOutputBytes: 262_144 });
     const check = processCheck(name, result);
     if (check.status === 'passed') {
       try {
@@ -273,7 +334,7 @@ export async function evaluateChallenge(options: VerifyOptions & { challenge: Ex
   return result;
 }
 
-export async function evaluateCandidate(options: { repositoryRoot: string; releaseDir: string; timeoutMs?: number }): Promise<CandidateEvidence> {
+export async function evaluateCandidate(options: Pick<VerifyOptions, 'repositoryRoot' | 'releaseDir' | 'expectedLegacyManifestDigest'> & { timeoutMs?: number }): Promise<CandidateEvidence> {
   const manifest = verifyFrozenCandidate(options); const checks: CandidateCheck[] = [];
   const compiler = manifest.runtime;
   // Relocated immutable hosts link their already bound dependency installation.
@@ -282,7 +343,7 @@ export async function evaluateCandidate(options: { repositoryRoot: string; relea
   const canonicalToolchainRoot = realpathSync(toolchainRoot);
   try {
     const result = await runIsolated({ program: compiler.compilerPath, trustedExecutables: [{ path: compiler.compilerPath, sha256: compiler.compilerSha256 }],
-      args: ['--ignoreConfig', '--noEmit', '--strict', '--target', 'es2024', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--allowImportingTsExtensions', '--erasableSyntaxOnly', '--verbatimModuleSyntax', '--skipLibCheck', '--types', 'node', '--typeRoots', join(canonicalToolchainRoot, '@types'), ...manifest.files.filter(file => file.path.endsWith('.ts')).map(file => join(manifest.candidateRoot, file.path))],
+      args: ['--ignoreConfig', '--noEmit', '--strict', '--target', 'es2024', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--allowImportingTsExtensions', '--erasableSyntaxOnly', '--verbatimModuleSyntax', '--skipLibCheck', '--types', 'node', '--typeRoots', join(canonicalToolchainRoot, '@types'), ...(manifest.typecheckPolicy?.entrypoints ?? manifest.files.filter(file => file.path.endsWith('.ts')).map(file => file.path)).map(path => join(manifest.candidateRoot, path))],
       cwd: manifest.candidateRoot, readPaths: [canonicalToolchainRoot], timeoutMs: options.timeoutMs ?? 30_000, maxOutputBytes: 262_144 });
     checks.push(processCheck('typecheck', result));
   } catch (error) { checks.push({ name: 'typecheck', status: 'failed', detail: error instanceof Error ? error.message : 'Typechecker unavailable' }); }
@@ -292,7 +353,7 @@ export async function evaluateCandidate(options: { repositoryRoot: string; relea
     if (manifest.requiredChecks.includes(name)) checks.push(await protectedBehavior(manifest,name,options.timeoutMs));
   const after = verifyFrozenCandidate(options);
   if (after.manifestDigest !== manifest.manifestDigest) throw new Error('Frozen candidate changed during evaluation');
-  const body = { version: 1 as const, candidateId: manifest.id, manifestDigest: manifest.manifestDigest, baseCommit: manifest.baseCommit, status: checks.every(check => check.status === 'passed') ? 'passed' as const : 'failed' as const, checks, createdAt: new Date().toISOString() };
+  const body = { version: 1 as const, ...(manifest.typecheckPolicy ? { typecheckPolicy: manifest.typecheckPolicy } : {}), candidateId: manifest.id, manifestDigest: manifest.manifestDigest, baseCommit: manifest.baseCommit, status: checks.every(check => check.status === 'passed') ? 'passed' as const : 'failed' as const, checks, createdAt: new Date().toISOString() };
   const evidence: CandidateEvidence = { ...body, evidenceDigest: digestJson(body) };
   const evidenceDir = join(manifest.releaseDir, 'evidence'); mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
   writeFileSync(join(evidenceDir, `${evidence.evidenceDigest}.json`), JSON.stringify(evidence, null, 2), { flag: 'wx', mode: 0o400 });

@@ -101,7 +101,7 @@ export class EvolutionCoordinator {
       if (EVOLUTION_CHECKS.some(check => !selectedChecks.includes(check))) throw new Error('A work contract cannot remove protected baseline checks');
       // New origins do not reset capabilities already admitted by a predecessor.
       const requiredChecks = [...new Set([...readManifest(active.active.release.artifactPath).requiredChecks,...selectedChecks])];
-      report.baselineChallenge = await evaluateChallenge({ repositoryRoot: this.#options.repositoryRoot, releaseDir: active.active.release.artifactPath, challenge: 'cross-scope-memory', requireCurrentBase: false, timeoutMs: this.#options.checkTimeoutMs });
+      report.baselineChallenge = await evaluateChallenge({ repositoryRoot: this.#options.repositoryRoot, releaseDir: active.active.release.artifactPath, expectedLegacyManifestDigest: active.active.release.digest, challenge: 'cross-scope-memory', requireCurrentBase: false, timeoutMs: this.#options.checkTimeoutMs });
       report.phase = 'baseline_challenged'; this.#save(report);
       report.candidate = freezeCandidate({ repositoryRoot: this.#options.repositoryRoot, dataDir: directory, changes: request.proposal.files,
         configuration: this.#options.configuration, modelProfile: this.#options.modelProfile, requiredChecks });
