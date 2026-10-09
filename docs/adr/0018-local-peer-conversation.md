@@ -18,3 +18,7 @@ Peer turns do not receive interactive engineering context or source-proposal dis
 ## Verification obligation
 
 Reject forged roles/authors, foreign task reads/controls, operator routes/global events and namespace collisions. Verify request context with synthetic secret canaries, no source jobs under adversarial model output, durable restart and actual CLI wiring. Frozen independent review and unchanged-cognition host installation precede live claims. Record finite live model tests separately from mechanical checks and preserve failures and uncertainty.
+
+## Installed evidence and remaining decision — 2026-10-09
+
+Mechanical checks and finite live canary/route tests passed after exact frozen review and installation. Fresh impersonation and historical-authority interpretation still failed after strengthened peer guidance. Host denial prevented source actions, while the model asserted permissions it did not have. Treat the model's authority narrative as untrusted; public-release acceptance remains open. Separating globally configured machinery from current-turn callable capabilities and supplying verified historical source/action receipts are candidate next designs, requiring their own specification and tests. They are not yet implemented decisions or guarantees. The [specification](../peer-conversation.md) and [progress](../progress.md) preserve both initial and corrective failures; raw records stay external.
