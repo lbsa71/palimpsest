@@ -161,8 +161,15 @@ export class AgentRuntime {
         const memorySourceFacts = (memory: Memory) => {
           const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
           const sameScope = origin?.conversationId === task.conversationId ? origin : undefined;
-          return { memoryId: memory.id, sourceTaskId: sameScope?.id ?? null, slackAuthor: sameScope?.slackAuthor ?? null,
-            selfModificationSuggestionEligible: sameScope ? (this.#actions ? this.#actions.eligible(sameScope) : maySuggestSelfModification(sameScope, this.#selfModificationUserIds)) : false };
+          const proposal = sameScope ? this.#store.growth(`conversation:${sameScope.id}`) : undefined;
+          return { memoryId: memory.id, sourceTaskId: sameScope?.id ?? null,
+            conversationSource: sameScope && ['peer', 'direct', 'slack'].includes(sameScope.source) ? sameScope.source : null,
+            slackAuthor: sameScope?.slackAuthor ?? null,
+            selfModificationSuggestionEligible: sameScope ? (this.#actions ? this.#actions.eligible(sameScope) : maySuggestSelfModification(sameScope, this.#selfModificationUserIds)) : false,
+            // A submitted proposal is not a release or proof that its claims
+            // are true. Match the trusted task-linked record, never its text.
+            sourceProposalRecorded: !!proposal && proposal.sourceTaskId === sameScope?.id
+              && proposal.origin === proposal.id && proposal.outcome !== null };
         };
         // Collect policy outside candidate execution. These facts guide cognition;
         // future effect receivers must separately enforce the same eligibility.
@@ -171,8 +178,9 @@ export class AgentRuntime {
           memoryPersistence: this.#store.persistent ? 'on-disk SQLite, survives restart' : 'in-memory SQLite, does not survive restart',
           memoryMechanics: { scopedRetrieval: true, versionedCorrections: true, logicalForgetting: true,
             automaticPruning: false, conversationMemoryManagementTools: false },
-          conversationActionTools: this.#actions?.eligible(task) ? ['propose_cognitive_change', 'status', 'cancel'] : [],
-          conversationDispatchToGrowth: !!this.#actions, selfModificationDispatcher: !!this.#actions,
+          conversationActionTools: interactive ? ['propose_cognitive_change', 'status', 'cancel'] : [],
+          conversationDispatchToGrowth: interactive, selfModificationDispatcher: interactive,
+          configuredConversationCapabilities: { conversationDispatchToGrowth: !!this.#actions, selfModificationDispatcher: !!this.#actions },
           requester: { source: task.source, slackAuthor: task.slackAuthor ?? null,
             selfModificationSuggestionEligible: this.#actions ? this.#actions.eligible(task) : maySuggestSelfModification(task, this.#selfModificationUserIds) },
           memorySources: memories.map(memorySourceFacts),
