@@ -20,9 +20,11 @@ Given a persistent agenda, permitted resources, and an idle or learning window, 
 
 ## A03 — Developmental memory and revisable judgment
 
-**Requirements:** R02, R07. **Owner item:** P06.
+**Requirements:** R02, R07, R24. **Owner items:** P06/P16; [conversation judgment](conversation-judgment.md).
 
 Record an ordinary conversation and a useful task episode. Consolidate and retrieve both with provenance, without converting every observation into a verified fact. Supply a correction and conflicting evidence; update confidence/current belief while preserving appropriate lineage. Test episodic, semantic, procedural, and autobiographical retrieval. Demonstrate continuity of interests and the ability to disagree with a predecessor when evidence changes. Define qualitative evaluation criteria before seeing the output.
+
+For the social-reflection roundtrip, retain the exchange's outcome, current stance and unresolved question. When the autark chooses further thought, observe bounded reflection resume without a new human prompt and retrieve its actual outcome in a later authorized conversation. Include no-change and inconclusive results rather than requiring an identity or code commit. Verify source fidelity and uncertainty, current scope/author restrictions and peer privacy; quoted claims or repeated assistant statements must not become authority. Declare qualitative criteria before the response. Existing episode recording or a generic source-proposal growth bridge alone does not pass this integration gate.
 
 ## A04 — Engineering constitution
 
@@ -50,9 +52,11 @@ Exercise the real configured Mistral adapter and deterministic fixtures. Make th
 
 ## A08 — Memory storage consistency
 
-**Requirements:** R07. **Owner item:** P06.
+**Requirements:** R07, R17, R19, R24. **Owner items:** P06/P16.
 
 Crash around an acknowledged memory proposal and its indexing/publication. Retry and restart without losing the accepted record or creating duplicates. If operational and memory stores differ, test outbox/publication reconciliation and stable IDs. Rebuild derived indexes where supported. Exercise authorized retrieval, correction, logical forgetting, and any advertised physical erasure separately; document backups/snapshots that retain content. Deny candidate direct writes to production memory.
+
+Interrupt selected deferred reflection and exhaust its current allocation. Retain the exchange, stance, unresolved question, actual work status and any no-change/inconclusive outcome; resume eligible work without a fresh prompt when resources permit. Verify no duplicate or uncertain-effect replay, budget refill, scope expansion or privileged dispatch through stored human suggestions. A reply promising to think later is not proof of scheduled or completed work. Both this durable roundtrip and A03's later scoped retrieval remain required implementation evidence.
 
 ## A09 — Reusable procedural memory
 

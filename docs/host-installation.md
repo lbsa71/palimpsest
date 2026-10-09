@@ -32,6 +32,14 @@ Retain an explicit operator restore route using the same checked/fenced installa
 
 This rescue route restores the retained cognitive baseline under the currently installed trusted host. Reverting the outer host executable is a separate operator deployment, requiring the retained reviewed source, compatible current storage and the older recovery path. Full autonomous custodian replacement remains disabled.
 
+## Environment continuity limit
+
+The current procedure verifies releases with the installed evaluator/check modules, current Node/compiler/dependency identity and the original Git base objects. Service bundles retain reviewed host source but link the shared checkout dependency tree. They do not yet retain an independently runnable historical verification/execution environment. Removing that checkout or replacing its evaluator, dependencies or identity-bearing compiler path can invalidate verification or recovery even when frozen source remains intact. Do not treat a retained source directory, custody artifact-list entry or matching lockfile as proof of an accepted usable rescue environment.
+
+The selected [retained-environment contract](retained-environments.md) and [ADR 0025](adr/0025-retained-verification-and-execution-environments.md) describe the **unimplemented** replacement foundation. Migration must derive historical bindings from independently accepted admission/installation evidence, preserve original manifests/evidence, retain required Git HEAD/base closure, and preserve canonical paths or separately admit equivalent relocation. Verification, protected checks, normal/scoped workers, service install/restart/restore, publication/import and workspace commands must use one coherent environment-selection contract. Old historical integrity does not itself authorize activation against current state; current custody remains responsible for that decision.
+
+Before autonomous dependency/evaluator upgrades are enabled, prove capture/admission interruption, actual package resolution in every consumer, two successive transitions and recovery with the original checkout, network and provider unavailable. Capacity/retention must preserve referenced environments and the last usable rescue. This operator procedure and deterministic migration fixtures remain intermediate evidence; they do not complete the autonomous P18 upgrade route or grant new installation/publication authority.
+
 ## Operator interface and evidence
 
 The CLI exposes the following operator commands. Their implementation still requires the acceptance evidence below before deployment is claimed successful:
