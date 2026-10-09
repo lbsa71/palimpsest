@@ -30,4 +30,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 
 | [0021](0021-bound-production-typechecking-and-runtime-exclusions.md) | Source/frozen correction verified and installed; subsequent verifier upgrades remain open | Installed production inputs, immutable runtime exclusions and exact historical custody proof |
 
+| [0022](0022-staged-command-observations-and-checkpoint-recovery.md) | Staged host primitives implemented; independent primitive/receiver review passed; serving acceptance pending | Separate execution observations, usable drafts and checkpoint restoration |
+
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

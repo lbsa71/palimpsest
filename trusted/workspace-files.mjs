@@ -192,9 +192,154 @@ function mutate(operation, id, current) {
   for (const path of new Set(changes.map(x => resolve(location(x.path), '..')))) flushDirectory(path);
   const result = observe(record); if (result.status !== 'completed') fail('uncertain'); return result;
 }
+// Checkpoint controls are host-only: fixed staging namespace, no source writes.
+function checkpointRoot(request) {
+  if (!/^[a-f0-9]{64}$/.test(request.operationId) || !object(request.expectedRoot)
+      || Object.keys(request.expectedRoot).sort().join(',') !== 'device,inode'
+      || !integer(request.expectedRoot.device, 0, Number.MAX_SAFE_INTEGER)
+      || !integer(request.expectedRoot.inode, 0, Number.MAX_SAFE_INTEGER)) fail('invalid-request');
+  const stat = fs.lstatSync(root);
+  // Reads deliberately do not traverse or grade the possibly damaged draft.
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.dev !== request.expectedRoot.device
+      || stat.ino !== request.expectedRoot.inode) fail('root-conflict');
+  return stat;
+}
+function privateCheckpointDirectory(path, permissions) {
+  const stat = directory(path);
+  if ((stat.mode & 0o777) !== permissions) fail('invalid-checkpoint');
+}
+function checkpointSummary(record) {
+  return { checkpointDigest: record.checkpointDigest, treeDigest: record.treeDigest, fullTreeDigest: record.fullTreeDigest,
+    files: record.files, directories: record.directories, rootMode: record.rootMode, totalBytes: record.totalBytes };
+}
+function checkpointLayout(files, directories, rootMode) {
+  if (![0o700, 0o755].includes(rootMode) || !Array.isArray(files) || !Array.isArray(directories)
+      || files.length + directories.length > limits.maxFiles) fail('invalid-checkpoint');
+  const names = new Set(), directoryNames = new Set(); let total = 0;
+  for (const entry of [...directories, ...files]) {
+    if (!object(entry)) fail('invalid-checkpoint');
+    pathName(entry.path); const key = entry.path.normalize('NFC').toLocaleLowerCase('en-US');
+    if (names.has(key)) fail('invalid-checkpoint'); names.add(key);
+  }
+  for (const entry of directories) {
+    if (Object.keys(entry).sort().join(',') !== 'mode,path' || ![0o700, 0o755].includes(entry.mode)) fail('invalid-checkpoint');
+    directoryNames.add(entry.path);
+  }
+  for (const entry of files) {
+    if (Object.keys(entry).sort().join(',') !== 'bytes,mode,path,sha256' || !/^[a-f0-9]{64}$/.test(entry.sha256)
+        || !integer(entry.bytes, 0, limits.maxFileBytes) || ![0o644, 0o755].includes(entry.mode)) fail('invalid-checkpoint');
+    total += entry.bytes; if (total > limits.maxTotalBytes) fail('limit-exceeded');
+  }
+  for (const entry of [...directories, ...files]) {
+    const components = entry.path.split('/');
+    while (components.length > 1) { components.pop(); if (!directoryNames.has(components.join('/'))) fail('invalid-checkpoint'); }
+  }
+  for (const entries of [files, directories])
+    if (entries.some((entry, index) => index && entries[index - 1].path >= entry.path)) fail('invalid-checkpoint');
+  return total;
+}
+function sealedBytes(path, expectedMode, maximum) {
+  const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const before = fs.fstatSync(fd);
+    if (!before.isFile() || before.nlink !== 1 || (before.mode & 0o7000) || (before.mode & 0o777) !== expectedMode
+        || before.size > maximum) fail('invalid-checkpoint');
+    const bytes = Buffer.alloc(before.size); let offset = 0;
+    while (offset < bytes.length) { const n = fs.readSync(fd, bytes, offset, bytes.length - offset, offset); if (!n) fail('invalid-checkpoint'); offset += n; }
+    const after = fs.fstatSync(fd);
+    if (after.size !== before.size || after.ctimeMs !== before.ctimeMs || after.mtimeMs !== before.mtimeMs
+        || after.nlink !== 1 || after.mode !== before.mode) fail('invalid-checkpoint');
+    return bytes;
+  } finally { fs.closeSync(fd); }
+}
+function verifiedCheckpoint(request, expectedDigest) {
+  const identity = checkpointRoot(request), dir = operationDirectory(request.operationId), checkpoint = join(dir, 'checkpoint');
+  privateCheckpointDirectory(stage, 0o700); privateCheckpointDirectory(dir, 0o700); privateCheckpointDirectory(checkpoint, 0o500);
+  if (!equal(fs.readdirSync(checkpoint).sort(), ['manifest.json', 'tree'])) fail('invalid-checkpoint');
+  let record; try { record = JSON.parse(text(sealedBytes(join(checkpoint, 'manifest.json'), 0o400, Math.min(1024 * 1024, limits.maxResponseBytes)))); } catch { fail('invalid-checkpoint'); }
+  if (!object(record) || Object.keys(record).sort().join(',') !== 'checkpointDigest,directories,files,fullTreeDigest,operationId,rootDevice,rootInode,rootMode,totalBytes,treeDigest,version'
+      || record.version !== 1 || record.operationId !== request.operationId || record.rootDevice !== identity.dev || record.rootInode !== identity.ino
+      || !/^[a-f0-9]{64}$/.test(record.checkpointDigest)) fail('invalid-checkpoint');
+  const { checkpointDigest, ...body } = record;
+  if (digest(JSON.stringify(body)) !== checkpointDigest || (expectedDigest !== undefined && checkpointDigest !== expectedDigest)) fail('checkpoint-conflict');
+  const total = checkpointLayout(record.files, record.directories, record.rootMode);
+  if (total !== record.totalBytes || record.treeDigest !== digest(JSON.stringify(record.files))
+      || record.fullTreeDigest !== digest(JSON.stringify({ files: record.files, directories: record.directories, rootMode: record.rootMode }))) fail('invalid-checkpoint');
+  const tree = join(checkpoint, 'tree'), actualFiles = [], actualDirectories = []; let count = 0;
+  function walk(path) {
+    const absolute = path ? join(tree, path) : tree; privateCheckpointDirectory(absolute, 0o500);
+    const names = fs.readdirSync(absolute).sort();
+    for (const name of names) {
+      if (++count > limits.maxFiles) fail('limit-exceeded');
+      const relativePath = pathName(path ? `${path}/${name}` : name), target = join(tree, relativePath); const stat = fs.lstatSync(target);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) { actualDirectories.push(relativePath); walk(relativePath); }
+      else {
+        const file = record.files.find(entry => entry.path === relativePath); if (!file) fail('invalid-checkpoint');
+        const bytes = sealedBytes(target, file.mode === 0o755 ? 0o500 : 0o400, limits.maxFileBytes);
+        if (bytes.length !== file.bytes || digest(bytes) !== file.sha256) fail('invalid-checkpoint'); actualFiles.push(relativePath);
+      }
+    }
+  }
+  walk(''); actualFiles.sort(); actualDirectories.sort();
+  if (!equal(actualFiles, record.files.map(file => file.path)) || !equal(actualDirectories, record.directories.map(dir => dir.path))) fail('invalid-checkpoint');
+  checkpointRoot(request); return { record, tree };
+}
+function checkpointEntryExists(path) {
+  try { fs.lstatSync(path); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+function captureCheckpoint(request, operation) {
+  if (!/^[a-f0-9]{64}$/.test(operation.expectedTreeDigest)) fail('invalid-request');
+  const identity = checkpointRoot(request); privateCheckpointDirectory(stage, 0o700);
+  const dir = operationDirectory(request.operationId), checkpoint = join(dir, 'checkpoint'), partial = join(dir, '.checkpoint-partial');
+  if (checkpointEntryExists(checkpoint)) {
+    const { record } = verifiedCheckpoint(request);
+    if (record.treeDigest !== operation.expectedTreeDigest) fail('operation-conflict');
+    return checkpointSummary(record); // Observe the sealed copy; never re-copy.
+  }
+  if (checkpointEntryExists(partial)) fail('checkpoint-incomplete');
+  const current = scan(); const rootMode = identity.mode & 0o777;
+  const directories = current.directories.map(path => ({ path, mode: directory(location(path)).mode & 0o777 }));
+  const totalBytes = checkpointLayout(current.files, directories, rootMode), treeDigest = digest(JSON.stringify(current.files));
+  if (treeDigest !== operation.expectedTreeDigest) fail('tree-conflict');
+  const body = { version: 1, operationId: request.operationId, rootDevice: identity.dev, rootInode: identity.ino, rootMode,
+    treeDigest, fullTreeDigest: digest(JSON.stringify({ files: current.files, directories, rootMode })), files: current.files, directories, totalBytes };
+  const record = { ...body, checkpointDigest: digest(JSON.stringify(body)) }; const raw = JSON.stringify(record);
+  if (Buffer.byteLength(raw) > Math.min(1024 * 1024, limits.maxResponseBytes)) fail('response-limit');
+  encoded({ ok: true, result: checkpointSummary(record) }); // Preflight before any copy.
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { mode: 0o700 }); privateCheckpointDirectory(dir, 0o700);
+  fs.mkdirSync(partial, { mode: 0o700 }); const tree = join(partial, 'tree'); fs.mkdirSync(tree, { mode: 0o700 });
+  for (const entry of directories) fs.mkdirSync(join(tree, entry.path), { mode: 0o700 });
+  for (const file of current.files) {
+    const value = readRegular(location(file.path));
+    if (!equal(value.state, { sha256: file.sha256, bytes: file.bytes, mode: file.mode })) fail('tree-conflict');
+    writeExclusive(join(tree, file.path), value.bytes, file.mode === 0o755 ? 0o500 : 0o400);
+  }
+  const after = scan(); const afterDirectories = after.directories.map(path => ({ path, mode: directory(location(path)).mode & 0o777 }));
+  checkpointRoot(request);
+  if (!equal(current.files, after.files) || !equal(directories, afterDirectories) || (fs.lstatSync(root).mode & 0o777) !== rootMode) fail('tree-conflict');
+  const seal = path => { for (const name of fs.readdirSync(path)) { const child = join(path, name); if (fs.lstatSync(child).isDirectory()) seal(child); } flushDirectory(path); fs.chmodSync(path, 0o500); };
+  seal(tree);
+  writeExclusive(join(partial, '.manifest-partial'), Buffer.from(raw), 0o400); fs.renameSync(join(partial, '.manifest-partial'), join(partial, 'manifest.json'));
+  flushDirectory(partial); fs.chmodSync(partial, 0o500); fs.renameSync(partial, checkpoint); flushDirectory(dir); flushDirectory(stage);
+  return checkpointSummary(verifiedCheckpoint(request, record.checkpointDigest).record);
+}
+function readCheckpoint(request, operation) {
+  if (!/^[a-f0-9]{64}$/.test(operation.checkpointDigest)) fail('invalid-request');
+  const { record, tree } = verifiedCheckpoint(request, operation.checkpointDigest);
+  if (operation.path === undefined) { if (operation.startByte !== undefined || operation.endByte !== undefined) fail('invalid-request'); return checkpointSummary(record); }
+  pathName(operation.path); const file = record.files.find(entry => entry.path === operation.path); if (!file) fail('not-found');
+  const startByte = operation.startByte === undefined ? 0 : operation.startByte;
+  const endByte = operation.endByte === undefined ? Math.min(file.bytes, startByte + 131072) : operation.endByte;
+  if (!integer(startByte, 0, file.bytes) || !integer(endByte, startByte, file.bytes) || endByte - startByte > 131072) fail('invalid-range');
+  const bytes = sealedBytes(join(tree, file.path), file.mode === 0o755 ? 0o500 : 0o400, limits.maxFileBytes);
+  if (bytes.length !== file.bytes || digest(bytes) !== file.sha256) fail('invalid-checkpoint');
+  checkpointRoot(request);
+  return { ...file, checkpointDigest: record.checkpointDigest, startByte, endByte, base64: bytes.subarray(startByte, endByte).toString('base64') };
+}
+
 function run(request) {
   if (!object(request) || request.version !== 1 || !object(request.operation) || !object(request.limits)
-      || Object.keys(request).some(key => !['version', 'operation', 'operationId', 'expectedOperationDigest', 'limits'].includes(key))) fail('invalid-request');
+      || Object.keys(request).some(key => !['version', 'operation', 'operationId', 'expectedOperationDigest', 'expectedRoot', 'limits'].includes(key))) fail('invalid-request');
   limits = request.limits;
   const maxima = { maxFiles: 10000, maxTotalBytes: 64 * 1024 * 1024, maxFileBytes: 16 * 1024 * 1024, maxResponseBytes: 4 * 1024 * 1024, maxResults: 1000 };
   if (Object.keys(limits).sort().join(',') !== Object.keys(maxima).sort().join(',')
@@ -203,6 +348,7 @@ function run(request) {
   const fields = {
     manifest: [], list: ['path', 'cursor'], search: ['query', 'cursor'], read: ['path', 'expectedSha256', 'startByte', 'endByte'],
     create: ['path', 'content', 'mode'], replace: ['path', 'content', 'mode', 'expected'], edit: ['path', 'oldText', 'newText', 'expected'],
+    checkpoint: ['expectedTreeDigest'], 'checkpoint-read': ['checkpointDigest', 'path', 'startByte', 'endByte'],
     delete: ['path', 'expected'], move: ['path', 'destination', 'expected'], mkdir: ['path'], rmdir: ['path'], observe: [],
   };
   if (!Object.hasOwn(fields, operation.kind) || Object.keys(operation).some(key => key !== 'kind' && !fields[operation.kind].includes(key))) fail('invalid-request');
@@ -213,6 +359,8 @@ function run(request) {
     return observe(record);
   }
   if (request.expectedOperationDigest !== undefined) fail('invalid-request');
+  if (operation.kind === 'checkpoint') return captureCheckpoint(request, operation);
+  if (operation.kind === 'checkpoint-read') return readCheckpoint(request, operation);
   const current = scan();
   if (operation.kind === 'manifest') return { files: current.files };
   if (operation.kind === 'list') {
@@ -257,7 +405,8 @@ try {
   if (process.argv.length !== 4) fail('invalid-request');
   // Trusted argv only: the helper never accepts roots from model JSON.
   root = fs.realpathSync(process.argv[2]); stage = fs.realpathSync(process.argv[3]);
-  const rootStat = directory(root), stageStat = directory(stage);
+  const rootStat = fs.lstatSync(root), stageStat = directory(stage);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) fail('invalid-roots');
   const outside = (from, to) => { const path = relative(from, to); return path === '..' || path.startsWith('../'); };
   if (!outside(root, stage) || !outside(stage, root) || rootStat.dev !== stageStat.dev) fail('invalid-roots');
   const chunks = []; let size = 0;
