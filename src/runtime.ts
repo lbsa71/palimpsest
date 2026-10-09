@@ -9,6 +9,8 @@ import { conversationPolicy, maySuggestSelfModification, sameSlackAuthor } from 
 import type { ConversationActions } from './conversation-actions.ts';
 import { validateMemoryProjection } from './memory-projection.ts';
 import { assertConversationRole } from './conversation-role.ts';
+import type { ConversationContinuity } from './conversation-continuity.ts';
+import { conversationMemoryTasks } from './conversation-provenance.ts';
 
 export interface RuntimeOptions {
   store: Store;
@@ -22,6 +24,7 @@ export interface RuntimeOptions {
   /** Host-observed facts, never supplied by a cognitive worker or transport body. */
   hostFacts?: () => Record<string, Json>;
   conversationActions?: ConversationActions;
+  conversationContinuity?: ConversationContinuity;
   /** Exact active-worker manifest floor. Absent only for standalone legacy factories. */
   memoryProjectionChecks?: () => readonly string[];
 }
@@ -32,7 +35,7 @@ function checkpoint(task: Task): Record<string, Json> {
 }
 
 function command(input: string): { kind: string; id: string; text?: string } | undefined {
-  const match = /^(?:<@[A-Z0-9]+>\s*)?\/?(status|cancel|correct)\s+([A-Za-z0-9_-]+)(?:\s+([\s\S]+))?$/i.exec(input.trim());
+  const match = /^(?:<@[A-Z0-9]+>\s*)?\/?(status|cancel|correct|waive)\s+([A-Za-z0-9_:-]+)(?:\s+([\s\S]+))?$/i.exec(input.trim());
   if (!match || (match[1]!.toLowerCase() === 'correct' ? !match[3]?.trim() : match[3] !== undefined)) return;
   return { kind: match[1]!.toLowerCase(), id: match[2]!, text: match[3]?.trim() };
 }
@@ -54,6 +57,7 @@ export class AgentRuntime {
   readonly #selfModificationUserIds: readonly string[];
   readonly #hostFacts: NonNullable<RuntimeOptions['hostFacts']>;
   readonly #actions?: ConversationActions;
+  readonly #continuity?: ConversationContinuity;
   readonly #memoryProjectionChecks?: RuntimeOptions['memoryProjectionChecks'];
 
   constructor(options: RuntimeOptions) {
@@ -67,6 +71,7 @@ export class AgentRuntime {
     if (this.#selfModificationUserIds.some(id => !/^[A-Za-z0-9]+$/.test(id))) throw new Error('Modification whitelist requires explicit user IDs');
     this.#hostFacts = options.hostFacts ?? (() => ({}));
     this.#actions = options.conversationActions;
+    this.#continuity = options.conversationContinuity;
     this.#memoryProjectionChecks = options.memoryProjectionChecks;
     if (!Number.isSafeInteger(this.#maxCalls) || this.#maxCalls < 1) throw new Error('Task call budget must be a positive integer');
   }
@@ -99,6 +104,7 @@ export class AgentRuntime {
 
   cancel(id: string): Task | undefined {
     const task = this.#store.task(id);
+    if (task) this.#continuity?.cancelTask(id);
     if (task?.source !== 'peer') this.#actions?.cancel(id);
     if (!task || ['succeeded', 'failed', 'cancelled'].includes(task.state)) return task;
     const cancelled = this.#store.updateTask(id, { state: 'cancelled' });
@@ -132,9 +138,11 @@ export class AgentRuntime {
     let progress = checkpoint(task);
     try {
       let answer = typeof progress.answer === 'string' ? progress.answer : undefined;
-      if (answer === undefined && typeof progress.decisionText === 'string' && this.#actions) {
+      if (answer === undefined && typeof progress.decisionText === 'string') {
         this.#authorize('store');
-        answer = this.#actions.accept(task, progress.decisionText);
+        const interactive = progress.interactive === true || (!this.#continuity && !!this.#actions);
+        const accepted = this.#continuity?.accept(task, progress.decisionText, interactive) ?? progress.decisionText;
+        answer = interactive ? this.#actions!.accept(task, accepted) : accepted;
         progress = { ...progress, answer }; this.#store.updateTask(task.id, { checkpoint: progress });
       }
       if (answer === undefined && command(task.input)) {
@@ -159,6 +167,7 @@ export class AgentRuntime {
         const scopedMemories = this.#conversationMemories(task, this.#store.listMemories(task.conversationId));
         const memories = interactive ? this.#actions!.selectMemories(task,scopedMemories) : scopedMemories.slice(-12);
         const memorySourceFacts = (memory: Memory) => {
+          const origins = conversationMemoryTasks(this.#store, memory) ?? [];
           const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
           const sameScope = origin?.conversationId === task.conversationId ? origin : undefined;
           const proposal = sameScope ? this.#store.growth(`conversation:${sameScope.id}`) : undefined;
@@ -169,7 +178,9 @@ export class AgentRuntime {
             // A submitted proposal is not a release or proof that its claims
             // are true. Match the trusted task-linked record, never its text.
             sourceProposalRecorded: !!proposal && proposal.sourceTaskId === sameScope?.id
-              && proposal.origin === proposal.id && proposal.outcome !== null };
+              && proposal.origin === proposal.id && proposal.outcome !== null,
+            ...(this.#continuity ? { originatingExchanges: origins.map(origin => ({ taskId: origin.id, source: origin.source, slackAuthor: origin.slackAuthor ?? null,
+              selfModificationSuggestionEligible: this.#actions?.eligible(origin) ?? maySuggestSelfModification(origin, this.#selfModificationUserIds) })) } : {}) };
         };
         // Collect policy outside candidate execution. These facts guide cognition;
         // future effect receivers must separately enforce the same eligibility.
@@ -177,7 +188,8 @@ export class AgentRuntime {
           ...this.#hostFacts(),
           memoryPersistence: this.#store.persistent ? 'on-disk SQLite, survives restart' : 'in-memory SQLite, does not survive restart',
           memoryMechanics: { scopedRetrieval: true, versionedCorrections: true, logicalForgetting: true,
-            automaticPruning: false, conversationMemoryManagementTools: false },
+            automaticPruning: false, conversationMemoryManagementTools: false,
+            interpretedOutcomes: !!this.#continuity, mandatoryDeferredTopicReports: !!this.#continuity },
           conversationActionTools: interactive ? ['propose_cognitive_change', 'status', 'cancel'] : [],
           conversationDispatchToGrowth: interactive, selfModificationDispatcher: interactive,
           configuredConversationCapabilities: { conversationDispatchToGrowth: !!this.#actions, selfModificationDispatcher: !!this.#actions },
@@ -211,15 +223,20 @@ export class AgentRuntime {
           // Keep it when adding the provider result to the durable checkpoint.
           progress = checkpoint(this.#store.task(task.id)!);
         }
+        if (this.#continuity) {
+          this.#authorize('store'); request = this.#continuity.prepare(task, memories, request);
+          progress = checkpoint(this.#store.task(task.id)!);
+        }
         if (signal.aborted) throw new ProviderError('cancelled', 'Task was interrupted before inference');
         this.#authorize('tool');
         const response = await this.#provider.complete({ ...request, system: `${request.system}\n\n${conversationPolicy}\nHost facts: ${JSON.stringify(facts)}`, signal });
         this.#authorize('store');
         if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) return;
-        if (interactive) {
-          progress = { ...progress, decisionText: response.text };
+        if (interactive || this.#continuity) {
+          progress = { ...progress, decisionText: response.text, interactive };
           this.#store.updateTask(task.id, { checkpoint: progress });
-          answer = this.#actions!.accept(task, response.text);
+          const accepted = this.#continuity?.accept(task, response.text, interactive) ?? response.text;
+          answer = interactive ? this.#actions!.accept(task, accepted) : accepted;
         } else answer = response.text;
         progress = { ...progress, answer, provider: response.provider, model: response.model,
           usage: { inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens } };
@@ -229,6 +246,9 @@ export class AgentRuntime {
       }
       const effectId = `${task.id}:result`;
       this.#authorize('store');
+      if (this.#continuity?.isReport(task) && !this.#continuity.reportMaySend(task)) {
+        this.#store.updateTask(task.id, { state: 'cancelled', error: 'conversation_report_context_changed' }); return;
+      }
       const existing = this.#store.effect(effectId);
       if (existing && existing.state !== 'completed') throw new Error('effect_reconciliation_required');
       if (!existing) {
@@ -239,9 +259,9 @@ export class AgentRuntime {
         this.#store.reserveEffect({ id: effectId, taskId: task.id, kind: 'communication', payload: { ...message } });
         try {
           this.#authorize('message');
-          await adapter.send(message);
+          const receipt = await adapter.send(message);
           this.#authorize('store');
-          this.#store.completeEffect(effectId, { delivered: true });
+          this.#store.completeEffect(effectId, { delivered: true, receipt: receipt ?? null });
         } catch (error) {
           this.#authorize('store');
           if (error instanceof CommunicationsError && error.delivery === 'rejected') {
@@ -254,14 +274,23 @@ export class AgentRuntime {
       } else if (existing.result !== null && typeof existing.result === 'object' && !Array.isArray(existing.result) && existing.result.delivered === false) {
         throw new Error('communication_rejected');
       }
-      if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) return;
+      if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) {
+        if (this.#continuity) this.#store.confirmCancelledConversation(task.id);
+        return;
+      }
       this.#authorize('memory');
-      this.#store.finishTask(task.id, answer, {
+      if (this.#continuity?.isReport(task)) {
+        this.#store.updateTask(task.id, { state: 'succeeded', output: answer, error: null });
+        this.#continuity.reconcileReports(); return;
+      }
+      const episode = {
         scope: task.conversationId, kind: 'episodic', source: `task:${task.id}`, confidence: 1,
         content: JSON.stringify({ user: task.input, response: answer, slackAuthor: task.slackAuthor ?? null,
           note: 'Recorded exchange; response assertions are not independently verified facts. Authorship is not execution authority.' }),
         evidence: [`task:${task.id}`],
-      });
+      } as const;
+      if (this.#continuity && typeof progress.decisionText === 'string') this.#store.finishConversationTask(task.id, answer, { ...episode, evidence: [...episode.evidence] });
+      else this.#store.finishTask(task.id, answer, { ...episode, evidence: [...episode.evidence] });
     } catch (error) {
       this.#authorize('store');
       if (this.#store.task(task.id)?.state !== 'running') return;
@@ -309,29 +338,39 @@ export class AgentRuntime {
   }
 
   #conversationMemories(task: Task, memories: Memory[]): Memory[] {
-    if (task.source !== 'peer') return memories;
+    if (task.source !== 'peer') return memories.filter(memory => {
+      const origin = memory.kind === 'episodic' && memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
+      return !origin || this.#store.taskSourceCurrent(origin.id);
+    });
     // Before peer ingress existed, operator scopes could use any label. Scope
     // alone cannot authorize those legacy episodes or anonymous derivations.
     return memories.filter(memory => {
-      if (memory.kind !== 'episodic' || !memory.source.startsWith('task:')) return false;
-      const origin = this.#store.task(memory.source.slice(5));
-      return origin?.source === 'peer' && origin.conversationId === task.conversationId;
+      const origins = conversationMemoryTasks(this.#store, memory);
+      return !!origins?.length && origins.every(origin => origin.source === 'peer' && origin.conversationId === task.conversationId);
     });
   }
 
   #command(task: Task): string {
-    const parsed = command(task.input)!; const target = this.#store.task(parsed.id);
+    const parsed = command(task.input)!;
+    if (parsed.kind === 'waive') {
+      const topic = this.#store.conversationTopic(parsed.id); const original = topic ? this.#store.task(topic.originalTaskId) : undefined;
+      if (!topic || !original || topic.scope !== task.conversationId || topic.source !== task.source) return 'Topic not found in this conversation.';
+      if (task.source === 'slack' && !sameSlackAuthor(task, original)) return 'Only the original Slack author can waive this topic notification.';
+      this.#store.waiveConversationReport(topic.id, `Explicit notification waiver from task ${task.id}`);
+      return 'Further notifications for this topic are explicitly waived. Retained inquiry state is unchanged.';
+    }
+    const target = this.#store.task(parsed.id);
     if (!target || target.conversationId !== task.conversationId || target.id === task.id
       || (task.source === 'peer' && target.source !== 'peer')) return 'Task not found in this conversation.';
-    if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.${this.#actions?.status(target.id) ?? ''}`;
+    if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.${this.#actions?.status(target.id) ?? ''}${this.#continuity?.status(target.id) ?? ''}`;
     if (task.source === 'slack' && !sameSlackAuthor(task, target)) return 'Only the original Slack author can cancel or correct this task.';
     const cancelledProposal = task.source === 'peer' ? false : this.#actions?.cancel(target.id) ?? false;
     this.cancel(target.id);
-    if (parsed.kind === 'cancel') return cancelledProposal ? `Self-modification cancellation requested for ${target.id}; committed transfers cannot be undone by this command.` : `Task ${target.id}: ${this.#store.task(target.id)!.state}.`;
+    if (parsed.kind === 'cancel') return cancelledProposal ? `Self-modification cancellation requested for ${target.id}; committed transfers cannot be undone by this command.` : `Task ${target.id}: ${this.#store.task(target.id)!.state}.${this.#continuity?.status(target.id) ?? ''}`;
     const replacement = this.#store.enqueue({ conversationId: task.conversationId, source: task.source, input: parsed.text!, eventId: `${task.id}:replacement`,
       ...(task.slackAuthor ? { slackAuthor: { ...task.slackAuthor } } : {}) });
     if (replacement.checkpoint === null) this.#store.updateTask(replacement.id, { checkpoint: { calls: 0, replyTo: checkpoint(task).replyTo ?? null } });
-    this.#store.appendEvent('task.corrected', { originalId: target.id, replacementId: replacement.id }, task.id);
+    this.#store.recordTaskCorrection(target.id, replacement.id, task.id);
     return `Correction recorded. Replacement task ${replacement.id} is queued; original history is preserved.`;
   }
 }

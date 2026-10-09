@@ -11,6 +11,7 @@ import type { ReleasePublication } from './release-publication.ts';
 import { parseSourceBinding } from './source-identity.ts';
 import type { SourceBinding } from './source-identity.ts';
 import type { MemoryDescriptor } from './memory-projection.ts';
+import { conversationMemoryTasks } from './conversation-provenance.ts';
 
 const INTERACTIVE_MAX_OUTPUT_TOKENS = 8192;
 const proposalSchema = (reflectionSchema.properties as Record<string, unknown>).proposedChange;
@@ -33,6 +34,20 @@ export interface ConversationActionsOptions {
   cancelWork?(taskId: string): boolean;
 }
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
+
+/** Pure validation is shared with outcome admission: malformed action fields
+ * must not supersede an existing topic before source dispatch rejects them. */
+export function parseConversationDecision(raw: string) {
+  const value = JSON.parse(raw) as Record<string, unknown>;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(key => !['reply','disposition','rationale','proposal'].includes(key))
+    || typeof value.reply !== 'string' || !value.reply.trim() || value.reply.length > 8000
+    || typeof value.rationale !== 'string' || !value.rationale.trim() || value.rationale.length > 12000
+    || !['converse','clarify','decline','propose'].includes(String(value.disposition))) throw new Error('Invalid conversation decision');
+  const result = parseGrowthReflection(JSON.stringify({ observation: value.rationale, lesson: value.rationale, nextQuestion: 'Evaluate the exact human-origin source proposal.', proposedChange: value.proposal }));
+  if ((value.disposition === 'propose') !== !!result.proposedChange) throw new Error('Inconsistent proposal disposition');
+  return { value: value as { reply: string; disposition: string; rationale: string; proposal: unknown }, result };
+}
 
 /** Trusted interpretation/dispatch boundary. It creates an immutable proposal,
  * never changes the checkout or calls cutover from inside the conversation drain. */
@@ -76,25 +91,16 @@ export class ConversationActions {
   }
   selectMemories(task:Task,memories:Memory[]):Memory[] {
     return memories.filter(memory => {
-      if (memory.kind !== 'episodic' || !memory.source.startsWith('task:')) return false;
-      const source = this.#options.store.task(memory.source.slice(5));
-      return source?.conversationId === task.conversationId && this.eligible(source)
+      const sources = conversationMemoryTasks(this.#options.store, memory);
+      return !!sources?.length && sources.every(source => source.conversationId === task.conversationId && this.eligible(source)
         && source.source === task.source && source.slackAuthor?.userId === task.slackAuthor?.userId
-        && source.slackAuthor?.teamId === task.slackAuthor?.teamId;
+        && source.slackAuthor?.teamId === task.slackAuthor?.teamId);
     }).slice(-12);
   }
   accept(task: Task, raw: string): string {
     if (!this.eligible(task)) return 'No source modification was dispatched: current author policy does not permit it.';
-    let value: Record<string, unknown>;
     try {
-      value = JSON.parse(raw);
-      if (!value || typeof value !== 'object' || Array.isArray(value)
-        || Object.keys(value).some(key => !['reply','disposition','rationale','proposal'].includes(key))
-        || typeof value.reply !== 'string' || !value.reply.trim() || value.reply.length > 8000
-        || typeof value.rationale !== 'string' || !value.rationale.trim() || value.rationale.length > 12000
-        || !['converse','clarify','decline','propose'].includes(String(value.disposition))) throw new Error();
-      const result = parseGrowthReflection(JSON.stringify({ observation: value.rationale, lesson: value.rationale, nextQuestion: 'Evaluate the exact human-origin source proposal.', proposedChange: value.proposal }));
-      if ((value.disposition === 'propose') !== !!result.proposedChange) throw new Error();
+      const { value, result } = parseConversationDecision(raw);
       if (result.proposedChange) {
         if (result.proposedChange.files.some(file => !/^src\/agent\/[A-Za-z0-9_.-]+\.ts$/.test(file.path))) return 'Proposal declined: this release path admits only direct src/agent/*.ts changes. No source was changed.';
         const saved = this.#options.store.task(task.id)?.checkpoint;

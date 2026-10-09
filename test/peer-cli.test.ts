@@ -26,7 +26,7 @@ globalThis.fetch=async(url,options)=>{
   if(String(url)!=='https://api.mistral.ai/v1/chat/completions')throw new Error('Unexpected fixture transport');
   const payload=JSON.parse(options.body);appendFileSync(${JSON.stringify(capture)},JSON.stringify(payload)+'\\n');
   const body={reply:'A fictional source proposal remains conversation text.',disposition:'propose',rationale:'Adversarial fixture output.',proposal:{summary:'Unprivileged attempt',rationale:'No authority',acceptanceCriteria:['Do not dispatch'],files:[{path:'src/agent/brain.ts',content:'untrusted source'}]}};
-  return new Response(JSON.stringify({model:'fixture',choices:[{finish_reason:'stop',message:{content:JSON.stringify(body)}}],usage:{prompt_tokens:1,completion_tokens:1}}),{status:200});
+  return new Response(JSON.stringify({model:'fixture',choices:[{finish_reason:'stop',message:{content:JSON.stringify({reply:JSON.stringify(body),outcomes:[]})}}],usage:{prompt_tokens:1,completion_tokens:1}}),{status:200});
 };`);
   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,HOME:process.env.HOME,PALIMPSEST_DATA_DIR:state,PALIMPSEST_CREDENTIALS_FILE:join(directory,'absent.env'),PALIMPSEST_PROVIDER:'mistral',MISTRAL_API_KEY:'fixture-only-provider-key',MISTRAL_MODEL:'fixture',
     SLACK_SELF_MODIFICATION_USER_IDS:'U1',PALIMPSEST_GROWTH_CALLS_PER_DAY:'0',PALIMPSEST_EVOLUTION_CALLS_PER_DAY:'0',PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY:'0',PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY:'0',PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_HOUR:'0'};
@@ -51,7 +51,7 @@ globalThis.fetch=async(url,options)=>{
     for(const canary of [operatorCanary,slackCanary,sourceCanary,operatorToken,peerToken,'fixture-only-provider-key'])assert.equal(readFileSync(capture,'utf8').includes(canary),false,'private host/cross-scope value entered fixture provider input');
     const payload=JSON.parse(readFileSync(capture,'utf8').trim().split('\n').at(-1)!);const prompt=JSON.parse(payload.messages[1].content),facts=JSON.parse(payload.messages[0].content.split('Host facts: ').at(-1)!);
     assert.equal(prompt.sameAuthorExperiences,undefined);assert.equal(prompt.sourceContext,undefined);assert.equal(prompt.hostFacts,undefined);assert.deepEqual(prompt.memories,[]);
-    assert.equal(facts.requester.source,'peer');assert.equal(facts.requester.slackAuthor,null);assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,[]);assert.equal(payload.response_format,undefined);
+    assert.equal(facts.requester.source,'peer');assert.equal(facts.requester.slackAuthor,null);assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,[]);assert.equal(payload.response_format.type,'json_schema');
     assert.equal(facts.selfModificationDispatcher,false);assert.equal(facts.conversationDispatchToGrowth,false);
     assert.deepEqual(facts.configuredConversationCapabilities,{selfModificationDispatcher:true,conversationDispatchToGrowth:true});
     assert.equal((await fetch(first.url+'/events',{headers:peerHeaders})).status,401);
@@ -62,9 +62,9 @@ globalThis.fetch=async(url,options)=>{
     const followup=await fetch(second.url+'/peer/messages',{method:'POST',headers:peerHeaders,body:JSON.stringify({...inbound,id:'peer-followup',text:'What do you remember?'})});const following=await followup.json() as {id:string};
     const finished=await until(async()=>await (await fetch(second.url+'/peer/tasks/'+following.id,{headers:peerHeaders})).json() as {state:string},task=>['succeeded','failed'].includes(task.state));assert.equal(finished.state,'succeeded');
     const followupPayload=JSON.parse(readFileSync(capture,'utf8').trim().split('\n').at(-1)!);
-    const retained=JSON.parse(followupPayload.messages[1].content).memories;assert.equal(retained.length,1);assert.ok(retained[0].content.includes(inbound.text));
+    const retained=JSON.parse(followupPayload.messages[1].content).memories;assert.equal(retained.length,2);assert.ok(retained.some((memory:{content:string})=>memory.content.includes(inbound.text)));assert.ok(retained.some((memory:{source:string})=>memory.source.startsWith('conversation-outcome:')));
     const followupFacts=JSON.parse(followupPayload.messages[0].content.split('Host facts: ').at(-1)!);
-    assert.deepEqual(followupFacts.memorySources,[{memoryId:retained[0].id,sourceTaskId:task.id,conversationSource:'peer',slackAuthor:null,selfModificationSuggestionEligible:false,sourceProposalRecorded:false}]);
+    assert.equal(followupFacts.memorySources.length,2);assert.ok(followupFacts.memorySources.every((memory:{originatingExchanges:Array<{taskId:string;source:string;slackAuthor:unknown;selfModificationSuggestionEligible:boolean}>;sourceProposalRecorded:boolean})=>!memory.sourceProposalRecorded&&memory.originatingExchanges.length===1&&memory.originatingExchanges.every(origin=>origin.taskId===task.id&&origin.source==='peer'&&origin.slackAuthor===null&&!origin.selfModificationSuggestionEligible)));
     await stop();const observed=new Store(join(state,'state.sqlite'));
     try{assert.equal(observed.listGrowth().filter(growth=>growth.origin.startsWith('conversation:')).length,0);assert.equal(observed.listEvents().some(event=>event.type==='evolution.started'||event.type==='conversation.proposal'),false);assert.equal(observed.listEffects(task.id).filter(effect=>effect.kind==='communication').length,1);}
     finally{observed.close();}

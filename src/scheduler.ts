@@ -2,6 +2,7 @@ import { GrowthCoordinator, parseGrowthReflection, type GrowthProposal } from '.
 import type { Provider } from './providers.ts';
 import { Store, type Growth, type GrowthDimension } from './store.ts';
 import type { SourceBinding } from './source-identity.ts';
+import type { ConversationContinuity } from './conversation-continuity.ts';
 
 export interface GrowthSchedulerOptions {
   store: Store;
@@ -19,6 +20,7 @@ export interface GrowthSchedulerOptions {
   proposalTimeoutMs?: number;
   onProposedChange?: (event: { proposalId: string; growth: Growth; proposedChange: GrowthProposal; signal: AbortSignal }) => void | Promise<void>;
   onError?: (code: 'scheduler_tick_failed') => void;
+  conversationContinuity?: ConversationContinuity;
 }
 
 const dimensions: GrowthDimension[] = ['personality_judgment', 'interests_curiosity', 'code_quality', 'capability_potential'];
@@ -96,6 +98,14 @@ export class GrowthScheduler {
     let result: Growth | null = null;
     if (publishing) result = await coordinator.tick({ signal, growthId: publishing.id });
     else if (window.usedCalls < window.maxCalls) {
+      const continuity = this.#options.conversationContinuity;
+      const reservations = store.listEvents().filter(event => ['growth.window.call_reserved', 'conversation.reflection.call_reserved'].includes(event.type)
+        && record(event.payload).schedulerId === this.#schedulerId);
+      const lastReflection = reservations.filter(event => event.type === 'conversation.reflection.call_reserved').at(-1)?.seq ?? 0;
+      const lastGrowth = reservations.filter(event => event.type === 'growth.window.call_reserved').at(-1)?.seq ?? 0;
+      if (continuity?.hasPendingReflection() && lastReflection <= lastGrowth) {
+        await continuity.reflect(window.id, signal); return null;
+      }
       const lastDimension = new Map<GrowthDimension, number>();
       const lastItem = new Map<string, number>();
       for (const event of store.listEvents()) {
