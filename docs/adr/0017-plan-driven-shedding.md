@@ -1,6 +1,6 @@
 # ADR 0017: Durable executable plan contracts across successive sheds
 
-- **Status:** Accepted specification; catalog, durable executor, authoritative item checks and serving integration implemented with fixtures. Final verification, deployment and repeated live model sheds pending.
+- **Status:** Accepted specification; catalog, durable executor, authoritative item checks and serving integration implemented with fixtures. Reviewed implementation installed; first live item completed with restart and publication assistance. Dependent item and unassisted repeated live sheds pending.
 - **Recorded:** 2026-10-09.
 - **Requirements:** R01, R03, R06–R07, R09–R19, R22–R24.
 - **Specification:** [Plan-driven shedding](../plan-driven-evolution.md).

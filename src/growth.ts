@@ -70,6 +70,7 @@ Use only the supplied context. If evidence is thin, explain the limitation and s
 Return JSON with observation, lesson, nextQuestion, and proposedChange. Set proposedChange to null unless the supplied source supports a concrete change.
 A code proposal includes summary, rationale, testable acceptanceCriteria, and files with relative repository path and complete replacement content.
 Follow the supplied engineering rules: start from the observed defect and expected behavior, make the smallest readable change, preserve nearby contracts, and explain invariants or tradeoffs where they are non-obvious. Retain useful functionality within resource bounds. Never hard-code check fixtures, weaken checks, add speculative abstractions, or claim tests you did not run. Use concrete failed-check feedback to correct the cause rather than hide the symptom.
+Separate intended acceptance criteria from observed results: report a check as passed only when supplied authoritative evidence establishes that named contract. Explicitly identify dependent work that remains unimplemented. Character/count limits do not establish UTF-8 byte bounds or safe Unicode truncation; evidence metadata has variable size, so claim a numerical resource bound only from measured serialized data or an enforceable input bound.
 Proposals have no authority to modify files, release code, send messages, spend more budget, or change admission rules.
 Any claimed improvement needs independent evaluation; your reflection is not proof of success.`;
 
