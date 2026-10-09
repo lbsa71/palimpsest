@@ -1,6 +1,6 @@
 # Operator host-baseline installation
 
-**Status:** Bounded procedure implemented and local custodian/real-worker integration verified, 2026-10-08; live installation pending. This is a local operator deployment procedure, separate from conversational self-modification and full autonomous custodian evolution. See [ADR 0016](adr/0016-operator-host-baseline.md).
+**Status:** Bounded procedure implemented, local custodian/real-worker integration and live installation verified; subsequent evidence through 2026-10-09 is recorded in [progress](progress.md). This is a local operator deployment procedure, separate from conversational self-modification and full autonomous custodian evolution. See [ADR 0016](adr/0016-operator-host-baseline.md).
 
 ## Why a separate procedure is needed
 
@@ -14,7 +14,7 @@ The trusted `GenerationHost.installHostBaseline(manifest, expectedIncumbent)` op
 
 Prepare a frozen artifact from a clean, reviewed checkout and current configured model/profile. Preserve the entire currently admitted `src/agent/*.ts` source, including helpers, rather than using a pending proposal or the checkout's potentially different cognitive source. The CLI freezes the clean checkout and requires exact `sourceDigest` equality; it does not automatically copy, overwrite or rebase cognitive source to make the comparison pass. Unexplained drift blocks installation and requires separate reviewed operator work before preparation.
 
-Run **all three** current protected checks: `typecheck`, `trusted-agent-contract`, `cross-scope-memory`. The freezer's two-check bootstrap default is insufficient for this procedure. Verify the exact frozen manifest and independently collected passing evidence; preserve reviewed host commit, old/new identities and evidence digest. Require the expected incumbent to still be current, equal schema and frozen configuration, the currently configured provider/model profile, and a verifiable retained recovery artifact. Ordinary proposal governance equality remains enabled.
+Run **all three** baseline protected checks: `typecheck`, `trusted-agent-contract`, `cross-scope-memory`, plus every previously admitted check. The freezer's two-check bootstrap default is insufficient for this procedure. The CLI carries the incumbent's check floor forward; installation rejects dropping it. Verify the exact frozen manifest and independently collected passing evidence; preserve reviewed host commit, old/new identities and evidence digest. Require the expected incumbent to still be current, equal schema and frozen configuration, the currently configured provider/model profile, and a verifiable retained recovery artifact. Ordinary proposal governance equality remains enabled.
 
 ## State and recovery contract
 
@@ -54,6 +54,6 @@ Required checks cover exact incumbent/evidence binding, unchanged complete cogni
 
 Custodian fixtures passed for retained governance rejection, bound rescue, later epochs/current history, unresolved effects, failed activation and abrupt process death during installation and restoration transfer. Both old/staged worker identities remain durable before the fence, allowing recovery to stop/reconcile them. Restoration intent retains the original installed descriptor across process death, allowing a later bound retry.
 
-The real-worker integration passed operator installation before a subsequent conversational release: all three protected checks ran, unchanged cognitive source/configuration were enforced, current memory survived and the new governance allowed ordinary evaluated succession. Negative cases rejected a proposal masquerading as a baseline, missing protected checks and changed frozen configuration. The operator CLI fixture exercises `prepare`, wrong-incumbent rejection, `install`, memory preservation and `restore` with a later epoch. These are local integration fixtures; no live installation is claimed here.
+The real-worker integration passed operator installation before a subsequent conversational release: all three protected checks ran, unchanged cognitive source/configuration were enforced, current memory survived and the new governance allowed ordinary evaluated succession. Negative cases rejected a proposal masquerading as a baseline, missing protected checks and changed frozen configuration. The operator CLI fixture exercises `prepare`, wrong-incumbent rejection, `install`, memory preservation and `restore` with a later epoch. Live installations separately aligned the host before the Mistral conversational shed and installed the reviewed plan-executor baseline; exact identities and observed results are recorded in progress.
 
 This procedure solves explicit local host-baseline alignment; it does not close meaningful cognitive interview quality, memory calibration, general P16 tooling, whole-service self-restart or autonomous custodian evolution.

@@ -1,9 +1,9 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { verifyFrozenCandidate } from './candidates.ts';
-import type { CandidateManifest } from './candidates.ts';
+import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
+import { digestJson, readManifest, verifyFrozenCandidate } from './candidates.ts';
+import type { CandidateFile, CandidateManifest } from './candidates.ts';
 import { resolveExternalPath } from './config.ts';
 import type { Json } from './store.ts';
 import { Store } from './store.ts';
@@ -29,20 +29,72 @@ export class GitPublisher {
     const {remote,remoteUrl}=this.#options;
     return Promise.all([this.#git(['remote','get-url','--all',remote]),this.#git(['remote','get-url','--push','--all',remote])]).then(values=>values.every(value=>value===remoteUrl),()=>false);
   }
-  #git(args: string[], input?: string, index?: string): Promise<string> {
+  #git(args: string[], input?: string, index?: string, trimOutput = true): Promise<string> {
     const env={...process.env};
     // Host shell Git context must not redirect the configured checkout/index.
     for(const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES'])delete env[key];
     return new Promise((resolve,reject)=>{
-      const child=execFile('/usr/bin/git',['-c','core.hooksPath=/dev/null',...args],{cwd:this.#options.repositoryRoot,encoding:'utf8',timeout:30000,maxBuffer:1048576,
+      const child=execFile('/usr/bin/git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','fetch.writeCommitGraph=false',...args],{cwd:this.#options.repositoryRoot,encoding:'utf8',timeout:30000,maxBuffer:1048576,
         env:{...env,GIT_TERMINAL_PROMPT:'0',...(index?{GIT_INDEX_FILE:index}:{}),GIT_AUTHOR_NAME:'Palimpsest',GIT_AUTHOR_EMAIL:'palimpsest@localhost',GIT_COMMITTER_NAME:'Palimpsest',GIT_COMMITTER_EMAIL:'palimpsest@localhost'}},
-        (error,stdout)=>error?reject(new Error('Bounded Git operation failed')):resolve(stdout.trim()));
+        (error,stdout)=>error?reject(new Error('Bounded Git operation failed')):resolve(trimOutput ? stdout.trim() : stdout));
       child.stdin?.on('error',()=>{});child.stdin?.end(input??'');
     });
   }
   async #remote(): Promise<string | undefined> {
     const line=await this.#git(['ls-remote',this.#options.remote,`refs/heads/${this.#options.branch}`]);
     return line ? line.split(/\s+/)[0] : undefined;
+  }
+  async #matchesAdmittedSource(manifest: CandidateManifest, commit: string): Promise<boolean> {
+    try {
+      // Historical publication is checked against its own immutable artifact.
+      // A subsequent reviewed host/toolchain upgrade is not a reason to revoke
+      // proof that these exact earlier cognitive bytes reached the remote.
+      const frozen = readManifest(manifest.releaseDir);
+      if (frozen.id !== manifest.id) return false;
+      const cognitive = /^src\/agent\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts$/;
+      const admitted = frozen.files.filter(file => cognitive.test(file.path));
+      if (!admitted.some(file => file.path === 'src/agent/brain.ts') || digestJson(admitted) !== frozen.sourceDigest) return false;
+      for (const directory of ['src', 'src/agent']) {
+        const stat = lstatSync(join(frozen.candidateRoot, directory));
+        if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+      }
+      for (const file of admitted) {
+        const path = join(frozen.candidateRoot, file.path), stat = lstatSync(path);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.size
+          || (stat.mode & 0o111 ? '100755' : '100644') !== file.mode) return false;
+        const content = readFileSync(path);
+        if (content.length !== file.size || createHash('sha256').update(content).digest('hex') !== file.sha256) return false;
+      }
+      const actual: CandidateFile[] = [];
+      const tree = await this.#git(['ls-tree', '-rz', '--full-tree', commit]);
+      for (const entry of tree.split('\0').filter(Boolean)) {
+        const split = entry.indexOf('\t'), path = entry.slice(split + 1);
+        if (!cognitive.test(path)) continue;
+        const [mode, kind, blob] = entry.slice(0, split).split(' ');
+        if ((mode !== '100644' && mode !== '100755') || kind !== 'blob' || !blob) return false;
+        const content = Buffer.from(await this.#git(['cat-file', 'blob', blob], undefined, undefined, false));
+        actual.push({ path, mode, size: content.length, sha256: createHash('sha256').update(content).digest('hex') });
+      }
+      return digestJson(actual.sort((a, b) => a.path.localeCompare(b.path))) === frozen.sourceDigest;
+    } catch { return false; }
+  }
+  async #observeReservedPush(manifest: CandidateManifest, commit: string): Promise<boolean> {
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit)) return false;
+    try {
+      const grafts = await this.#git(['rev-parse', '--git-path', 'info/grafts']);
+      if (existsSync(resolvePath(this.#options.repositoryRoot, grafts))) return false;
+      const remoteHead = await this.#remote();
+      if (!remoteHead || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(remoteHead)) return false;
+      try { await this.#git(['cat-file', '-e', `${remoteHead}^{commit}`]); }
+      catch {
+        // Observe the advertised object only. No ref mappings, FETCH_HEAD,
+        // checkout changes or push are allowed during outcome reconciliation.
+        await this.#git(['fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--no-auto-maintenance', '--refmap=', this.#options.remote, remoteHead]);
+      }
+      await this.#git(['merge-base', '--is-ancestor', commit, remoteHead]);
+      if (!await this.#matchesAdmittedSource(manifest, commit)) return false;
+      return await this.#targetMatches() && await this.#remote() === remoteHead;
+    } catch { return false; }
   }
   async publish(manifest: CandidateManifest): Promise<PublicationResult> {
     const {store,repositoryRoot,dataDir,branch,remote,remoteUrl}=this.#options;
@@ -54,7 +106,7 @@ export class GitPublisher {
     if(!await this.#targetMatches())return {status:'declined',reason:'Trusted fetch/push remote identity changed',commit};
     const observed=async()=>{try{return await this.#remote();}catch{return undefined;}};
     if(commit && events.some(event=>event.type==='git.publication.push_reserved')) {
-      if(await observed()===commit)return {status:'published',reason:'Previously reserved push independently observed at the configured remote',commit};
+      if(await this.#observeReservedPush(manifest,commit))return {status:'published',reason:'Exact admitted commit independently observed in configured remote branch history',commit};
       return {status:'uncertain',reason:'Prior push outcome is not independently confirmed; no replay performed',commit};
     }
     if(events.length && !commit)return {status:'uncertain',reason:'Interrupted publication preparation requires operator reconciliation'};

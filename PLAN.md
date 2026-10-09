@@ -229,6 +229,8 @@ Produce reproducible bootstrap, configuration without secrets, operational and b
 
 **Non-goals and risks:** No model-authored catalog/checks, automatic expansion to protected code or silent budget refill. Generic checks and model approval alone cannot establish new behavior. Full histories remain external; bounded continuity projections must preserve current operational state and explicit omissions. Persistent outer-service supervision is a separate operational foundation, not an autonomous host-evolution capability.
 
+**Live recovery follow-up:** The first deployed executor made no authoring call because the earlier successful publication was treated as uncertain after a host commit advanced the remote branch. Resolve this with independently observed remote ancestry and exact saved-source verification, with no push replay or checkout mutation. The [publication recovery contract](docs/plan-driven-evolution.md#publication-recovery-after-later-host-commits) defines its acceptance and uncertainty limits. Live plan sheds remain pending.
+
 ## Deferred and optional work
 
 | Item | Trigger / gate |

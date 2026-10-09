@@ -22,6 +22,8 @@ The trusted executor stores unfinished work and outcomes outside the repository,
 
 Standing growth remains a separate mandatory mission and receives fair configured capacity. User commitments retain priority. Interruption before fencing pauses bounded work; after fencing mechanical recovery finishes. Restart and succession preserve item state, reservations, failures and next actions. Rollback retains lived history while reconsidering which dependencies the current source satisfies.
 
+Publication recovery observes the configured remote's ancestry when later authorized host commits advance its tip. The exact reserved publication commit must remain reachable and its cognitive bytes must match the frozen artifact. Remote-tip equality alone incorrectly strands a previously published release; trusting a local completion flag alone does not independently observe the remote. Missing, divergent or unavailable history retains an explicit hold. Recovery performs observation only, without replaying a push or changing checkout source.
+
 The complete implementation plan extends beyond this initial catalog. Unsupported protected host, tooling, memory-infrastructure or custodian work remains explicitly open until a separate evaluated upgrade/rescue contract or suitable candidate-owned application boundary exists. This ADR does not expand those permissions or claim the broader objective complete.
 
 ## Alternatives

@@ -85,6 +85,14 @@ A proposed materially distinct next capability is P07/P16 procedure routing: a c
 
 ## Code quality and configured resources
 
+### Publication recovery after later host commits
+
+Live startup exposed a recovery defect: an earlier exact cognitive release was pushed successfully, then a reviewed host commit advanced the same configured branch. Reconciliation required the remote tip to equal the earlier commit, so it incorrectly held all new plan work as an uncertain push.
+
+The expected behavior is to independently observe that the fixed configured remote branch still contains the exact reserved publication commit, including when its tip is a descendant. Verify the saved commit's cognitive bytes against the frozen artifact before accepting that observation. Missing objects, unavailable remote observations, divergent history or mismatched source remain uncertain or declined; neither a local tracking ref nor a candidate assertion proves publication. Observation may fetch bounded Git objects, but cannot create another push reservation, push again, overwrite the checkout or rebase the admitted source.
+
+Acceptance requires restart reconciliation after a later remote descendant, rejection of a divergent branch and mismatched saved source, unchanged checkout/ref and unchanged push reservation count. This depends on fixed destination identity and retained Git history. Branch history rewrites and remote unavailability can legitimately leave an unresolved hold. Protected host installation and fresh review remain separate from cognitive sheds.
+
 The user explicitly requested inspection of self-authored work quality on 2026-10-09. Both authoring and fresh review instructions now cover small readable changes, descriptive names, accurate comments, preserved useful behavior, resource costs and edge cases. Memory work receives grounded hints about JSON escaping, multibyte Unicode, ordering ties, oversized immutable evidence and safe truncation. A tiny content prefix that only passes a bound is not evidence of useful context behavior. Hints describe the problem and invariants; they do not supply the candidate patch or held-out fixtures. Read [the quality inspection contract](self-evolution-quality.md).
 
 The serving executor has a separate explicit allocation: `PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY` defaults to **2**, and `PALIMPSEST_PLAN_EVOLUTION_CALLS_PER_DAY` defaults to **16**. Either set to zero disables plan authoring/scheduling in `serve`; configured Git publication is also required. Each selected item still has at most one proposal call and eight release calls per attempt, and at most three attempts. Daily windows are immutable once opened and calls are reserved before inference; no existing standing-growth or interactive window is refilled. Two proposal calls do not guarantee two successful sheds. Cost remains unknown where provider usage/pricing evidence is absent.
