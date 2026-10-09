@@ -38,4 +38,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 
 | [0025](0025-retained-verification-and-execution-environments.md) | Selected design; resolver, transitions and autonomous activation unimplemented | Independently admitted historical environments, coherent execution routing and retained recovery inputs |
 
+| [0026](0026-conversation-outcomes-and-scoped-reflection.md) | Explicit exchange/outcome and mandatory follow-through requirements; proposed mechanism independently reviewed; runtime integration pending | Scoped reflection, durable topic obligations, revision-bound asynchronous reporting and later retrieval |
+
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.
