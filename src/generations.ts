@@ -83,6 +83,7 @@ export class GenerationHost {
             maxCallsPerTask: options.maxCallsPerTask,
             selfModificationUserIds: options.selfModificationUserIds,
             conversationActions: options.conversationActions,
+            memoryProjectionChecks: () => readManifest(releaseOfWorker(this.custodian, peer).artifactPath).requiredChecks,
             hostFacts: () => ({ ...options.hostFacts?.(),
               activeRelease: this.custodian.inspect().active?.release.digest ?? null,
               phase: this.custodian.inspect().phase,

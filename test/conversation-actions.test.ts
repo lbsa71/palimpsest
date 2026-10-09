@@ -84,7 +84,11 @@ test('deliberation may decline or clarify; invalid/protected proposals cannot cr
   const store=new Store(':memory:'); const actions=new ConversationActions({store,userIds:['U1'],sourceContext:()=>''});
   const task=store.enqueue({source:'slack',conversationId:input('one').conversationId,input:'Change anything',slackAuthor:{teamId:'T1',userId:'U1'}});
   try {
-    for(const disposition of ['decline','clarify','converse']) assert.match(actions.accept(task,JSON.stringify({reply:'Please specify the behavior.',disposition,rationale:'No suitable concrete source request.',proposal:null})),/No source modification/);
+    for(const disposition of ['decline','clarify','converse']) {
+      assert.equal(actions.accept(task,JSON.stringify({reply:'Please specify the behavior.',disposition,rationale:'No suitable concrete source request.',proposal:null})), 'Please specify the behavior.');
+      assert.equal(store.listGrowth().length,0);
+      assert.equal((store.listEvents().filter(event=>event.type==='conversation.decision').at(-1)!.payload as Record<string,unknown>).disposition,disposition);
+    }
     assert.match(actions.accept(task,JSON.stringify({...JSON.parse(decision),proposal:{...proposal,files:[{path:'src/custodian.ts',content:'bypass'}]}})),/declined/);
     assert.throws(()=>actions.accept(task,JSON.stringify({...JSON.parse(decision),disposition:'decline'})),/Invalid conversational decision/);
     assert.equal(store.listGrowth().length,0);

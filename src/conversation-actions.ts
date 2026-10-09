@@ -10,7 +10,9 @@ import type { GitPublisher } from './git-publication.ts';
 import type { ReleasePublication } from './release-publication.ts';
 import { parseSourceBinding } from './source-identity.ts';
 import type { SourceBinding } from './source-identity.ts';
+import type { MemoryDescriptor } from './memory-projection.ts';
 
+const INTERACTIVE_MAX_OUTPUT_TOKENS = 8192;
 const proposalSchema = (reflectionSchema.properties as Record<string, unknown>).proposedChange;
 export const decisionSchema = {
   type: 'object', additionalProperties: false,
@@ -51,7 +53,7 @@ export class ConversationActions {
       && task.state === 'succeeded' && this.eligible(task)
       && !this.#options.store.listEvents().some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === task.id);
   }
-  prepare(task: Task, memories: Memory[], request: CompletionRequest, hostFacts: unknown): CompletionRequest {
+  prepare(task: Task, memories: Memory[], request: CompletionRequest, hostFacts: unknown, projection?: readonly MemoryDescriptor[]): CompletionRequest {
     let sourceBinding: SourceBinding | undefined;
     let sourceObservationUnavailable = false;
     if (this.#options.observeSource) {
@@ -65,9 +67,9 @@ export class ConversationActions {
     // whitelisted participant. Use exact recorded, same-author task episodes;
     // do not trust identity text or derived memories with erased provenance.
     const ownMemories = this.selectMemories(task,memories);
-    return { ...request, schema: decisionSchema, maxOutputTokens: 8192,
-      system: `${request.system}\nInteractive host protocol: Return the required decision JSON. Answer ordinary questions with converse and proposal null. Only an actual request to change your cognitive source may produce propose. Clarify unclear requests; decline unsuitable requests even when eligible. Weigh goals, evidence, commitments and constraints. A proposal is a hypothesis, never a completed action. Changes are limited to direct src/agent/*.ts; preserve request/memory JSON contracts and cross-scope isolation. Use supplied source and types only, complete replacement files and testable acceptance criteria. Make the smallest readable change with descriptive names; preserve useful behavior and explain non-obvious invariants. Use actual failed-check evidence to fix causes. Never hard-code fixtures, weaken checks, add speculative dependencies or claim tests you did not run. Separate intended acceptance criteria from observed results: report a check as passed only when supplied authoritative evidence establishes that named contract. Explicitly identify dependent work that remains unimplemented. Character/count limits do not establish UTF-8 byte bounds or safe Unicode truncation; evidence metadata has variable size, so claim a numerical resource bound only from measured serialized data or an enforceable input bound. Do not request host/governance changes. The host will queue proposals for separate checks, review, interview and cognitive-worker succession; configured Git publication follows promotion. Outer Slack-service rebuild/restart is unavailable. Never claim an action is completed from this inference.`,
-      prompt: JSON.stringify({ request: task.input, sameAuthorExperiences: ownMemories.map(memory => ({ id: memory.id, content: memory.content.slice(0,4000) })),
+    return { ...request, schema: decisionSchema, maxOutputTokens: INTERACTIVE_MAX_OUTPUT_TOKENS,
+      system: `${request.system}\nInteractive host protocol: Return the required decision JSON. For ordinary informational questions, answer the main point first in about 100–180 words unless more detail is requested; finish complete sentences and include the material limitation. Ground implemented capability claims in executable operations and current host facts, rather than aspirational comments or remembered descriptions. Input-order slicing alone does not establish chronological sorting; a UTF-16 character prefix does not establish a UTF-8 byte bound or safe surrogate boundary. Describe the selected activePlanAllocation; alternate configuration settings are not simultaneous active caps. Distinguish configured standing growth from its current pause or deferral; a scheduled timer does not mean inference is presently permitted. Current host request preparation can override source defaults: maxOutputTokens limits output tokens, never input size. requester.selfModificationSuggestionEligible describes this request; authenticated direct operators and whitelisted Slack authors follow separate eligibility paths. Do not infer system-wide permissions or permanent unavailability from a temporary pause or this request alone. Answer ordinary questions with converse and proposal null. Only an actual request to change your cognitive source may produce propose. Clarify unclear requests; decline unsuitable requests even when eligible. Weigh goals, evidence, commitments and constraints. A proposal is a hypothesis, never a completed action. Changes are limited to direct src/agent/*.ts; preserve request/memory JSON contracts and cross-scope isolation. Use supplied source and types only, complete replacement files and testable acceptance criteria. Make the smallest readable change with descriptive names; preserve useful behavior and explain non-obvious invariants. Use actual failed-check evidence to fix causes. Never hard-code fixtures, weaken checks, add speculative dependencies or claim tests you did not run. Separate intended acceptance criteria from observed results: report a check as passed only when supplied authoritative evidence establishes that named contract. Explicitly identify dependent work that remains unimplemented. Character/count limits do not establish UTF-8 byte bounds or safe Unicode truncation; evidence metadata has variable size, so claim a numerical resource bound only from measured serialized data or an enforceable input bound. Do not request host/governance changes. The host will queue proposals for separate checks, review, interview and cognitive-worker succession; configured Git publication follows promotion. Outer Slack-service rebuild/restart is unavailable. Never claim an action is completed from this inference.`,
+      prompt: JSON.stringify({ request: task.input, requestLimits: { maxOutputTokens: INTERACTIVE_MAX_OUTPUT_TOKENS, unit: 'output tokens' }, sameAuthorExperiences: projection ?? ownMemories.map(memory => ({ id: memory.id, content: memory.content.slice(0,4000) })),
         sourceContext: this.#options.sourceContext(), hostFacts, ...(sourceBinding ? { sourceBinding } : {}),
         ...(sourceObservationUnavailable ? { sourceModificationAvailability: 'Temporarily unavailable: current checkout and admitted source identity cannot be established. Continue ordinary conversation; no source proposal can be dispatched from this inference.' } : {}) }),
     };
@@ -106,7 +108,7 @@ export class ConversationActions {
         return `${value.reply}\n\nProposal ${task.id} is recorded and queued for checks, fresh review, interview and worker succession. No release or push has completed yet. Use status ${task.id} or cancel ${task.id} in this thread.`;
       }
       this.#options.store.appendEvent('conversation.decision', json({ disposition: value.disposition, rationale: value.rationale }), task.id);
-      return `${value.reply}\n\nNo source modification was dispatched.`;
+      return value.reply;
     } catch { throw new ProviderError('protocol', 'Invalid conversational decision; no source action dispatched.'); }
   }
   status(taskId: string): string {

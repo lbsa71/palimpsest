@@ -27,6 +27,7 @@ import { createDevelopmentHost } from './development-host.ts';
 import type { DevelopmentExecutor } from './development-executor.ts';
 import { observeSourceIdentity } from './source-identity.ts';
 import { EVOLUTION_CHECKS } from './evolution.ts';
+import { conversationSchedulingFacts } from './conversation-host-facts.ts';
 
 /** The single trusted process serializes all provider calls, including growth. */
 function configuredProvider(config: RuntimeConfig): Provider {
@@ -158,7 +159,10 @@ async function main(): Promise<void> {
       model: config.model || null, communications, maxCallsPerTask: config.maxCallsPerTask, quiesceBackground: pauseGrowth,
       selfModificationUserIds: config.slackSelfModificationUserIds,
       conversationActions:actions,
-      hostFacts: () => ({ backgroundGrowthScheduled: growth !== undefined, backgroundEvolutionScheduled: evolution !== undefined,
+      hostFacts: () => ({ ...conversationSchedulingFacts(config, { serving: command === 'serve', ready, stopping: stopped,
+        planScheduled: development !== undefined, growthTimerScheduled: growth !== undefined, userWork: userCommitments(),
+        backgroundQuiescing: evolution?.busy === true || development?.busy === true || publicationReconciler?.busy === true }),
+        backgroundGrowthScheduled: growth !== undefined, backgroundEvolutionScheduled: evolution !== undefined,
         backgroundGrowthInputs: 'Standing growth uses the mission, admitted source and growth-scope observations. Eligible human conversations have a separate deliberative proposal lane with retained authorship.',
         implementationPlanExecution:development?'Two protected P06 work contracts through checked shedding; broader PLAN work remains unsupported':'Not scheduled in this process',
         planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,

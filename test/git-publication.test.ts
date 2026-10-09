@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { freezeCandidate } from '../src/candidates.ts';
-import { GitPublisher } from '../src/git-publication.ts';
+import { GitPublisher, runGitCommand } from '../src/git-publication.ts';
 import { Store } from '../src/store.ts';
 function fixture() {
   const dir=mkdtempSync(join(tmpdir(),'palimpsest-publication-'));const repositoryRoot=join(dir,'repo');const dataDir=join(dir,'state');const remoteUrl=join(dir,'remote.git');
@@ -149,4 +149,198 @@ test('historical remote confirmation rejects mutated frozen cognitive bytes or m
     assert.equal(f.git('ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], published.commit);
     assert.equal(f.store.listEvents().filter(event => event.type === 'git.publication.push_reserved').length, 1);
   } finally { f.close(); }
+});
+
+function singleChild(child: import('node:child_process').ChildProcess): import('../src/git-publication.ts').GitExecution {
+  return { child, terminateOwnedGroup: () => { child.kill('SIGKILL'); } };
+}
+
+function pushDiagnostics(f: ReturnType<typeof fixture>) {
+  return f.store.listEvents().filter(event => event.type === 'git.publication.command_result');
+}
+
+test('rejected initial push retains bounded sanitized evidence and restart does not retry', async () => {
+  const f = fixture(); let pushes = 0;
+  const executeGit: import('../src/git-publication.ts').GitExecutor = (file, args, options, callback) => {
+    if (args.includes('push')) {
+      pushes++;
+      return singleChild(execFile(file, [...args.slice(0, args.indexOf('push')), 'push', '--porcelain', 'origin', 'missing-ref:refs/heads/main'], options, (error, stdout, stderr) => {
+        if (error) error.message = 'secret credential https://private.invalid';
+        callback(error, `${stdout} secret output`, `${stderr} private credential`);
+      }));
+    }
+    return singleChild(execFile(file, args, options, callback));
+  };
+  try {
+    const result = await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate);
+    assert.equal(result.status, 'uncertain');
+    const [event] = pushDiagnostics(f);
+    assert.ok(event);
+    assert.deepEqual(event.payload, {
+      candidateId: f.candidate.id,
+      target: createHash('sha256').update(JSON.stringify({ remote: 'origin', remoteUrl: f.remoteUrl, branch: 'main' })).digest('hex'),
+      commit: result.commit, operation: 'push', exitCode: 1, signal: null, deadlineExpired: false,
+    });
+    assert.ok(event.seq > f.store.listEvents().find(event => event.type === 'git.publication.push_reserved')!.seq);
+    assert.doesNotMatch(JSON.stringify(event.payload), /credential|private|secret|https|stderr|stdout|args|env/);
+    f.store.close();
+    const reopened = new Store(join(f.dataDir, 'state.sqlite'));
+    try {
+      assert.equal((await new GitPublisher({ ...f.options, store: reopened, executeGit }).publish(f.candidate)).status, 'uncertain');
+      assert.equal(pushes, 1);
+      assert.equal(reopened.listEvents().filter(event => event.type === 'git.publication.command_result').length, 1);
+    } finally { reopened.close(); }
+  } finally { f.close(); }
+});
+
+test('failed command reporting can still confirm independently published exact source', async () => {
+  const f = fixture();
+  const executeGit: import('../src/git-publication.ts').GitExecutor = (file, args, options, callback) => singleChild(execFile(file, args, options, (error, stdout, stderr) => {
+    if (args.includes('push') && !error) {
+      const lostResponse = Object.assign(new Error('private transport response'), { code: 1, killed: true, signal: 'SIGTERM' as const });
+      callback(lostResponse, stdout, stderr);
+    } else callback(error, stdout, stderr);
+  }));
+  try {
+    const result = await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate);
+    assert.equal(result.status, 'published');
+    assert.equal(f.git('ls-remote', 'origin', 'refs/heads/main').split(/\s+/)[0], result.commit);
+    assert.equal((pushDiagnostics(f)[0].payload as Record<string, unknown>).exitCode, 1);
+    assert.equal((pushDiagnostics(f)[0].payload as Record<string, unknown>).signal, 'SIGTERM');
+    assert.equal((pushDiagnostics(f)[0].payload as Record<string, unknown>).deadlineExpired, false, 'killed alone is not timeout proof');
+  } finally { f.close(); }
+});
+
+test('successful push with unavailable confirmation stays uncertain then observes across restart without replay', async () => {
+  const f = fixture(); let pushed = false; let unavailable = true; let pushes = 0;
+  const executeGit: import('../src/git-publication.ts').GitExecutor = (file, args, options, callback) => {
+    if (pushed && unavailable && args.includes('ls-remote')) {
+      return singleChild(execFile(file, ['--git-dir', join(f.dir, 'missing.git'), 'rev-parse', 'HEAD'], options, callback));
+    }
+    return singleChild(execFile(file, args, options, (error, stdout, stderr) => {
+      if (args.includes('push')) { pushed = true; pushes++; }
+      callback(error, stdout, stderr);
+    }));
+  };
+  try {
+    const result = await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate);
+    assert.equal(result.status, 'uncertain');
+    assert.equal((pushDiagnostics(f)[0].payload as Record<string, unknown>).exitCode, 0);
+    unavailable = false;
+    assert.equal((await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate)).status, 'published');
+    assert.equal(pushes, 1);
+    assert.equal(pushDiagnostics(f).length, 1);
+  } finally { f.close(); }
+});
+
+test('actual 30-second command deadline records expiration and terminates the subprocess without retry', async () => {
+  const f = fixture(); let childPid: number | undefined; let pushes = 0;
+  const executeGit: import('../src/git-publication.ts').GitExecutor = (file, args, options, callback) => {
+    if (args.includes('push')) {
+      pushes++;
+      const execution = runGitCommand(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], options, callback);
+      childPid = execution.child.pid;
+      return execution;
+    }
+    return singleChild(execFile(file, args, options, callback));
+  };
+  try {
+    const result = await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate);
+    assert.equal(result.status, 'uncertain');
+    const diagnostic = pushDiagnostics(f)[0].payload as Record<string, unknown>;
+    assert.equal(diagnostic.deadlineExpired, true);
+    assert.equal(diagnostic.exitCode, null);
+    assert.equal(diagnostic.signal, null, 'termination was requested at settlement, not observed');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.ok(childPid);
+    assert.throws(() => process.kill(childPid!, 0), { code: 'ESRCH' });
+    assert.equal((await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate)).status, 'uncertain');
+    assert.equal(pushes, 1);
+  } finally { f.close(); }
+});
+
+test('diagnostic target identity cannot authorize altered publication and preflight refusal writes no diagnostic', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.repositoryRoot, 'private.txt'), 'uncommitted');
+    assert.equal((await f.publisher.publish(f.candidate)).status, 'declined');
+    assert.equal(pushDiagnostics(f).length, 0);
+    rmSync(join(f.repositoryRoot, 'private.txt'));
+    assert.equal((await f.publisher.publish(f.candidate)).status, 'published');
+    const before = f.git('rev-parse', 'HEAD');
+    f.store.appendEvent('git.publication.command_result', { candidateId: f.candidate.id, target: 'altered', commit: before, operation: 'push', exitCode: 0, signal: null, deadlineExpired: false });
+    assert.match((await new GitPublisher(f.options).publish(f.candidate)).reason, /target changed/);
+    assert.equal(f.git('rev-parse', 'HEAD'), before);
+    assert.equal(f.store.listEvents().filter(event => event.type === 'git.publication.push_reserved').length, 1);
+  } finally { f.close(); }
+});
+
+test('deadline settles despite inherited descendant pipes and cleans only the owned process group', async (t) => {
+  const f = fixture();
+  const realDelay = globalThis.setTimeout;
+  const sleep = (ms: number) => new Promise<void>(resolve => realDelay(resolve, ms));
+  const { spawn } = await import('node:child_process');
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  let parent: import('node:child_process').ChildProcess | undefined;
+  let descendantPid: number | undefined;
+  let settled = false, closeObserved = false;
+  const executeGit: import('../src/git-publication.ts').GitExecutor = (file, args, options, callback) => {
+    if (args.includes('push')) {
+      const execution = runGitCommand(process.execPath, ['-e', `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdio:'inherit'}); process.stdout.write(String(child.pid)+'\\n'); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000);`], options, (error, stdout, stderr) => { closeObserved = true; callback(error, stdout, stderr); });
+      parent = execution.child;
+      let stdout = '';
+      parent.stdout!.on('data', chunk => { stdout += String(chunk); descendantPid = Number(stdout.trim()); });
+      return execution;
+    }
+    return singleChild(execFile(file, args, options, callback));
+  };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const work = new GitPublisher({ ...f.options, executeGit }).publish(f.candidate).then(result => { settled = true; return result; });
+    for (let n = 0; n < 100 && !descendantPid; n++) await sleep(20);
+    assert.ok(parent?.pid && descendantPid);
+    t.mock.timers.tick(30000);
+    for (let n = 0; n < 50 && !settled; n++) await sleep(20);
+    assert.equal(settled, true, 'the deadline must settle without waiting for inherited pipes to close');
+    assert.equal((await work).status, 'uncertain');
+    const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
+    for (let n = 0; n < 100 && (!gone(parent!.pid!) || !gone(descendantPid!)); n++) await sleep(20);
+    assert.equal(gone(parent!.pid!), true);
+    assert.equal(gone(descendantPid!), true);
+    assert.doesNotThrow(() => process.kill(unrelated.pid!, 0));
+    const events = pushDiagnostics(f);
+    assert.equal(events.length, 1);
+    assert.equal((events[0].payload as Record<string, unknown>).deadlineExpired, true);
+    assert.equal((events[0].payload as Record<string, unknown>).signal, null, 'requested termination is not observed termination');
+    await sleep(100);
+    assert.equal(closeObserved, true, 'the actual late close callback was observed');
+    assert.equal(pushDiagnostics(f).length, 1, 'late close callback cannot duplicate evidence');
+  } finally {
+    t.mock.timers.reset();
+    for (const pid of [parent?.pid, descendantPid, unrelated.pid]) if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    f.close();
+  }
+});
+
+test('owned spawn runner retains bounded stdout and stderr on excessive output', async () => {
+  for (const stream of ['stdout', 'stderr']) {
+    const f = fixture(); let childPid: number | undefined;
+    const executeGit: import('../src/git-publication.ts').GitExecutor = (file, args, options, callback) => {
+      if (args.includes('push')) {
+        const execution = runGitCommand(process.execPath, ['-e', `process.${stream}.write(Buffer.alloc(1048577, 'x')); setInterval(()=>{},1000);`], options, callback);
+        childPid = execution.child.pid;
+        return execution;
+      }
+      return runGitCommand(file, args, options, callback);
+    };
+    try {
+      const result = await new GitPublisher({ ...f.options, executeGit }).publish(f.candidate);
+      assert.equal(result.status, 'uncertain');
+      assert.equal(pushDiagnostics(f).length, 1);
+      assert.deepEqual(Object.fromEntries(Object.entries(pushDiagnostics(f)[0].payload as Record<string, unknown>).filter(([key]) => ['exitCode', 'signal', 'deadlineExpired'].includes(key))), { exitCode: null, signal: null, deadlineExpired: false });
+      assert.ok(childPid);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.throws(() => process.kill(childPid!, 0), { code: 'ESRCH' });
+    } finally { f.close(); }
+  }
 });

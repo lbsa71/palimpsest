@@ -25,3 +25,21 @@ test('publication policy and exact recorded promoted identity are enforced outsi
   const reconciler=new ReleasePublication({store,authorize:()=>false,publisher:{publish:async()=>{calls++;return{status:'published',reason:'must not run'};}}});
   try{await reconciler.reconcile([item]);assert.equal(calls,0);assert.equal(reconciler.result(item.id)?.status,'declined');assert.equal(reconciler.pending([item]),true);}finally{store.close();}
 });
+
+test('slow publication observation starts its persistent backoff at completion', async () => {
+  const store = new Store(':memory:'); const item = setup(store, 'slow'); let time = 0; let calls = 0;
+  const options = { store, authorize: () => true, now: () => time, publisher: { publish: async () => {
+    calls++; time += 45000; return { status: 'uncertain' as const, reason: 'Observation unavailable' };
+  } } };
+  try {
+    await new ReleasePublication(options).reconcile([item]);
+    const payload = store.listEvents().find(event => event.type === 'release.publication.result')!.payload as Record<string, unknown>;
+    assert.equal(payload.observedAt, 45000);
+    assert.equal(payload.nextObservationAt, 75000);
+    time = 74999;
+    const restarted = new ReleasePublication(options);
+    await restarted.reconcile([item]); assert.equal(calls, 1);
+    time = 75000;
+    await restarted.reconcile([item]); assert.equal(calls, 2);
+  } finally { store.close(); }
+});

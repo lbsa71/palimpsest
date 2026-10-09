@@ -7,6 +7,7 @@ import type { Json, Memory, Task } from './store.ts';
 import { conversationRequest } from './agent/brain.ts';
 import { conversationPolicy, maySuggestSelfModification, sameSlackAuthor } from './conversation-policy.ts';
 import type { ConversationActions } from './conversation-actions.ts';
+import { validateMemoryProjection } from './memory-projection.ts';
 
 export interface RuntimeOptions {
   store: Store;
@@ -20,6 +21,8 @@ export interface RuntimeOptions {
   /** Host-observed facts, never supplied by a cognitive worker or transport body. */
   hostFacts?: () => Record<string, Json>;
   conversationActions?: ConversationActions;
+  /** Exact active-worker manifest floor. Absent only for standalone legacy factories. */
+  memoryProjectionChecks?: () => readonly string[];
 }
 
 function checkpoint(task: Task): Record<string, Json> {
@@ -50,6 +53,7 @@ export class AgentRuntime {
   readonly #selfModificationUserIds: readonly string[];
   readonly #hostFacts: NonNullable<RuntimeOptions['hostFacts']>;
   readonly #actions?: ConversationActions;
+  readonly #memoryProjectionChecks?: RuntimeOptions['memoryProjectionChecks'];
 
   constructor(options: RuntimeOptions) {
     this.#store = options.store;
@@ -62,6 +66,7 @@ export class AgentRuntime {
     if (this.#selfModificationUserIds.some(id => !/^[A-Za-z0-9]+$/.test(id))) throw new Error('Modification whitelist requires explicit user IDs');
     this.#hostFacts = options.hostFacts ?? (() => ({}));
     this.#actions = options.conversationActions;
+    this.#memoryProjectionChecks = options.memoryProjectionChecks;
     if (!Number.isSafeInteger(this.#maxCalls) || this.#maxCalls < 1) throw new Error('Task call budget must be a positive integer');
   }
 
@@ -149,6 +154,12 @@ export class AgentRuntime {
         const interactive = this.#actions?.eligible(task) === true;
         const scopedMemories = this.#store.listMemories(task.conversationId);
         const memories = interactive ? this.#actions!.selectMemories(task,scopedMemories) : scopedMemories.slice(-12);
+        const memorySourceFacts = (memory: Memory) => {
+          const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
+          const sameScope = origin?.conversationId === task.conversationId ? origin : undefined;
+          return { memoryId: memory.id, sourceTaskId: sameScope?.id ?? null, slackAuthor: sameScope?.slackAuthor ?? null,
+            selfModificationSuggestionEligible: sameScope ? (this.#actions ? this.#actions.eligible(sameScope) : maySuggestSelfModification(sameScope, this.#selfModificationUserIds)) : false };
+        };
         // Collect policy outside candidate execution. These facts guide cognition;
         // future effect receivers must separately enforce the same eligibility.
         const facts = {
@@ -160,16 +171,28 @@ export class AgentRuntime {
           conversationDispatchToGrowth: !!this.#actions, selfModificationDispatcher: !!this.#actions,
           requester: { source: task.source, slackAuthor: task.slackAuthor ?? null,
             selfModificationSuggestionEligible: this.#actions ? this.#actions.eligible(task) : maySuggestSelfModification(task, this.#selfModificationUserIds) },
-          memorySources: memories.map(memory => {
-            const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
-            const sameScope = origin?.conversationId === task.conversationId ? origin : undefined;
-            return { memoryId: memory.id, sourceTaskId: sameScope?.id ?? null, slackAuthor: sameScope?.slackAuthor ?? null,
-              selfModificationSuggestionEligible: sameScope ? (this.#actions ? this.#actions.eligible(sameScope) : maySuggestSelfModification(sameScope, this.#selfModificationUserIds)) : false };
-          }),
+          memorySources: memories.map(memorySourceFacts),
         };
         let request = await this.#requestFactory(structuredClone(task), structuredClone(memories));
+        if (signal.aborted || this.#store.task(task.id)?.state !== 'running') throw new ProviderError('cancelled', 'Task was interrupted after worker construction');
+        let projection;
+        const checks = this.#memoryProjectionChecks?.();
+        // Pre-P06 ordinary workers may have custom untrusted prompt shapes.
+        // Interactive preparation always needs a validated descriptor bridge;
+        // ordinary lineage becomes enforced only with the admitted capability.
+        if (checks && (interactive || checks.includes('memory-provenance') || checks.includes('memory-context-budget'))) {
+          this.#authorize('memory');
+          const currentTask = this.#store.task(task.id)!;
+          if ((this.#actions?.eligible(currentTask) === true) !== interactive) throw new ProviderError('protocol', 'Current conversation eligibility changed during worker construction');
+          const current = memories.flatMap(memory => { const value = this.#store.memory(memory.id, task.conversationId); return value ? [value] : []; });
+          const authorizedCurrent = interactive ? this.#actions!.selectMemories(currentTask, current) : current;
+          projection = validateMemoryProjection({ request, task: currentTask, supplied: memories, authorizedCurrent, checks, interactive });
+          // Identity and authority come from current host records in the actual
+          // selected order, never from candidate-provided facts or stale policy.
+          facts.memorySources = projection.map(descriptor => memorySourceFacts(authorizedCurrent.find(memory => memory.id === descriptor.id)!));
+        }
         if (interactive) {
-          request = this.#actions!.prepare(task, memories, request, facts);
+          request = this.#actions!.prepare(task, memories, request, facts, projection);
           // prepare persists the host-observed source binding before inference.
           // Keep it when adding the provider result to the durable checkpoint.
           progress = checkpoint(this.#store.task(task.id)!);

@@ -1,4 +1,6 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import type { ChildProcess, ExecFileException, ExecFileOptionsWithStringEncoding } from 'node:child_process';
+import { constants as osConstants } from 'node:os';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
@@ -9,7 +11,46 @@ import type { Json } from './store.ts';
 import { Store } from './store.ts';
 
 export interface PublicationResult { status: 'published' | 'declined' | 'uncertain'; reason: string; commit?: string }
-export interface GitPublisherOptions { repositoryRoot: string; dataDir: string; store: Store; remote: string; branch: string; remoteUrl: string }
+/** Trusted host fixture seam; no candidate or configuration input selects execution. */
+export interface GitExecution { child: ChildProcess; terminateOwnedGroup: () => void }
+export type GitExecutor = (file: string, args: string[], options: ExecFileOptionsWithStringEncoding,
+  callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => GitExecution;
+/** A detached command owns its process group, including ordinary Git helpers.
+ * execFile does not forward detached, so this narrow runner uses spawn directly. */
+export const runGitCommand: GitExecutor = (file, args, options, callback) => {
+  const child = spawn(file, args, { cwd: options.cwd, env: options.env, detached: true, stdio: 'pipe' });
+  const terminateOwnedGroup = () => {
+    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already gone or termination not established. */ } }
+  };
+  let finished = false;
+  const output: Buffer[] = [], errors: Buffer[] = [];
+  let outputBytes = 0, errorBytes = 0;
+  const finish = (error: ExecFileException | null) => {
+    if (finished) return;
+    finished = true;
+    callback(error, Buffer.concat(output).toString('utf8'), Buffer.concat(errors).toString('utf8'));
+  };
+  const collect = (chunks: Buffer[], chunk: Buffer, stderr: boolean) => {
+    if (finished) return;
+    const size = stderr ? errorBytes + chunk.length : outputBytes + chunk.length;
+    if (size > (options.maxBuffer ?? 1048576)) {
+      terminateOwnedGroup();
+      finish(Object.assign(new Error('Bounded Git output exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
+      return;
+    }
+    if (stderr) errorBytes = size; else outputBytes = size;
+    chunks.push(chunk);
+  };
+  child.stdout!.on('data', (chunk: Buffer) => collect(output, chunk, false));
+  child.stderr!.on('data', (chunk: Buffer) => collect(errors, chunk, true));
+  child.once('error', finish);
+  child.once('close', (code, signal) => finish(code === 0 && signal === null ? null
+    : Object.assign(new Error('Bounded Git operation failed'), { code: code ?? undefined, signal: signal ?? undefined })));
+  return { child, terminateOwnedGroup };
+};
+export interface GitPublisherOptions { repositoryRoot: string; dataDir: string; store: Store; remote: string; branch: string; remoteUrl: string; executeGit?: GitExecutor }
+interface PushIdentity { candidateId: string; target: string; commit: string }
+const commandDeadlineMs = 30000;
 const object = (value: Json): Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 /** Fixed Git operations owned by the host. Candidate/model text cannot choose
@@ -29,15 +70,48 @@ export class GitPublisher {
     const {remote,remoteUrl}=this.#options;
     return Promise.all([this.#git(['remote','get-url','--all',remote]),this.#git(['remote','get-url','--push','--all',remote])]).then(values=>values.every(value=>value===remoteUrl),()=>false);
   }
-  #git(args: string[], input?: string, index?: string, trimOutput = true): Promise<string> {
+  #git(args: string[], input?: string, index?: string, trimOutput = true, pushIdentity?: PushIdentity): Promise<string> {
     const env={...process.env};
     // Host shell Git context must not redirect the configured checkout/index.
     for(const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES'])delete env[key];
     return new Promise((resolve,reject)=>{
-      const child=execFile('/usr/bin/git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','fetch.writeCommitGraph=false',...args],{cwd:this.#options.repositoryRoot,encoding:'utf8',timeout:30000,maxBuffer:1048576,
-        env:{...env,GIT_TERMINAL_PROMPT:'0',...(index?{GIT_INDEX_FILE:index}:{}),GIT_AUTHOR_NAME:'Palimpsest',GIT_AUTHOR_EMAIL:'palimpsest@localhost',GIT_COMMITTER_NAME:'Palimpsest',GIT_COMMITTER_EMAIL:'palimpsest@localhost'}},
-        (error,stdout)=>error?reject(new Error('Bounded Git operation failed')):resolve(trimOutput ? stdout.trim() : stdout));
-      child.stdin?.on('error',()=>{});child.stdin?.end(input??'');
+      let execution: GitExecution | undefined;
+      let deadlineExpired = false, settled = false;
+      const dispose = () => {
+        execution?.child.stdin?.destroy();
+        execution?.child.stdout?.destroy();
+        execution?.child.stderr?.destroy();
+      };
+      const completed = (error: ExecFileException | null, stdout: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        if (error) { execution?.terminateOwnedGroup(); dispose(); }
+        try {
+          if (pushIdentity) this.#options.store.appendEvent('git.publication.command_result', {
+            ...pushIdentity, operation: 'push',
+            exitCode: !error ? 0 : typeof error.code === 'number' && Number.isSafeInteger(error.code) ? error.code : null,
+            signal: typeof error?.signal === 'string' && Object.hasOwn(osConstants.signals, error.signal) ? error.signal : null,
+            deadlineExpired,
+          });
+          if (error) reject(new Error('Bounded Git operation failed'));
+          else resolve(trimOutput ? stdout.trim() : stdout);
+        } catch { reject(new Error('Bounded Git operation failed')); }
+      };
+      // A descendant can retain stdio after its parent exits. Deadline settlement
+      // must not wait for the close callback, nor claim a requested kill succeeded.
+      const deadline = setTimeout(() => {
+        deadlineExpired = true;
+        completed(Object.assign(new Error('Bounded Git deadline expired'), {
+          code: execution?.child.exitCode ?? undefined,
+          signal: execution?.child.signalCode ?? undefined,
+        }), '');
+      }, commandDeadlineMs);
+      try {
+        execution=(this.#options.executeGit ?? runGitCommand)('/usr/bin/git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','fetch.writeCommitGraph=false',...args],{cwd:this.#options.repositoryRoot,encoding:'utf8',maxBuffer:1048576,
+          env:{...env,GIT_TERMINAL_PROMPT:'0',...(index?{GIT_INDEX_FILE:index}:{}),GIT_AUTHOR_NAME:'Palimpsest',GIT_AUTHOR_EMAIL:'palimpsest@localhost',GIT_COMMITTER_NAME:'Palimpsest',GIT_COMMITTER_EMAIL:'palimpsest@localhost'}}, completed);
+        execution.child.stdin?.on('error',()=>{});execution.child.stdin?.end(input??'');
+      } catch { completed(new Error('Bounded Git operation failed'), ''); }
     });
   }
   async #remote(): Promise<string | undefined> {
@@ -146,7 +220,7 @@ export class GitPublisher {
         await this.#git(['update-ref',`refs/heads/${branch}`,created,manifest.baseCommit]);
       }
       store.appendEvent('git.publication.push_reserved',{candidateId:manifest.id,target,commit:created});
-      try {await this.#git(['push','--porcelain',remote,`${created}:refs/heads/${branch}`]);}catch{/* Inspect the remote below; transport failure is not proof of rejection. */}
+      try {await this.#git(['push','--porcelain',remote,`${created}:refs/heads/${branch}`],undefined,undefined,true,{candidateId:manifest.id,target,commit:created});}catch{/* Inspect the remote below; transport failure is not proof of rejection. */}
       if(await observed()!==created)return {status:'uncertain',reason:'Push outcome not independently confirmed; no replay permitted',commit:created};
       store.appendEvent('git.publication.completed',{candidateId:manifest.id,target,commit:created});
       return {status:'published',reason:'Exact admitted source committed and observed at configured remote; checkout advanced to that commit',commit:created};

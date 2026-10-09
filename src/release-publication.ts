@@ -53,7 +53,8 @@ export class ReleasePublication {
       else if(!growth||!this.#options.authorize(growth))result={status:'declined',reason:'Current source policy withholds publication'};
       else if(!publisher)result={status:'declined',reason:'Git publication is disabled; no commit or push was performed'};
       else result=await publisher.publish(report.candidate);
-      store.appendEvent('release.publication.result',JSON.parse(JSON.stringify({runId:item.id,candidateId:report?.candidate?.id??null,result,observedAt:now,nextObservationAt:now+this.#retry})),growth?.sourceTaskId);
+      const observedAt=(this.#options.now??Date.now)();
+      store.appendEvent('release.publication.result',JSON.parse(JSON.stringify({runId:item.id,candidateId:report?.candidate?.id??null,result,observedAt,nextObservationAt:observedAt+this.#retry})),growth?.sourceTaskId);
     }
   }
 }
