@@ -22,6 +22,8 @@ Full source autonomy does not turn every conversation into an authorized coding 
 
 ## Workspace and tool contract
 
+The first [file-backend slice](workspace-primitives.md), selected in [ADR 0020](adr/0020-isolated-workspace-files-and-reconciliation.md), is implemented and independently tested in host code. It does not yet give the serving autark a tool loop. Its verified subset and remaining ownership/import/command/storage limits are recorded there; the full contract below remains the completion target.
+
 Each coding task receives a workspace with a recorded repository/base identity, owner/origin, authorized scope, lifetime, allocation and resumable state outside the live installation. Starting a new task must include the actual admitted source identity; stale or unpublished source requires explicit reconciliation. Preserve user changes and other task workspaces. A clean publication checkout must not be used as a scratch area.
 
 Authoring scope covers the project's source, tests, specifications, dependency declarations and explicitly available dependency source/forks. A draft change to the custodian is allowed to exist; it has no power over the installed custodian or the checks evaluating that draft. Private lived state and credentials are separate resources, not implicitly readable files in a coding workspace. Candidate-authored tests may evolve in the workspace; the authoritative suite used to admit this transaction is retained elsewhere under its old identity.
