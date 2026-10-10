@@ -74,6 +74,38 @@ test('failed release feedback reaches a new allocated attempt after cooldown and
   } finally { f.store.close(); }
 });
 
+test('bound terminal failures reconcile before unavailable current diagnostics without another authoring call', async () => {
+  for (const status of ['declined', 'failed', 'interrupted', 'rolled_back'] as const) {
+    const f = fixture();
+    try {
+      const first = await new DevelopmentExecutor(f.options).tick();
+      f.outcomes.set(first!.id, { attemptId: first!.id, growthId: first!.growthId!, catalogDigest: plan.digest,
+        status, reason: 'Independently recorded terminal result', publication: { status: 'disabled' } });
+      let checks = 0;
+      const restarted = new DevelopmentExecutor({ ...f.options, checkCurrent: async () => { checks++; throw new Error('Current diagnostics unavailable'); } });
+      assert.equal((await restarted.tick())?.state, 'paused');
+      assert.equal(checks, 0, 'Fresh diagnostics cannot delay a bound terminal failure');
+      assert.equal(f.calls(), 1); assert.equal(restarted.allocation().used, 1);
+    } finally { f.store.close(); }
+  }
+});
+
+test('early reconciliation cannot complete a promoted result or accept mismatched failure evidence', async () => {
+  for (const promoted of [false, true]) {
+    const f = fixture();
+    try {
+      const first = await new DevelopmentExecutor(f.options).tick();
+      if (promoted) f.complete(first!, 1);
+      else f.outcomes.set(first!.id, { attemptId: first!.id, growthId: first!.growthId!, catalogDigest: hex(88),
+        status: 'declined', reason: 'Wrong catalog', publication: { status: 'disabled' } });
+      let checks = 0;
+      const restarted = new DevelopmentExecutor({ ...f.options, checkCurrent: async () => { checks++; throw new Error('Current diagnostics unavailable'); } });
+      await assert.rejects(restarted.tick(), /Current diagnostics unavailable/);
+      assert.equal(checks, 1); assert.equal(restarted.attempts()[0]?.state, 'queued'); assert.equal(f.calls(), 1);
+    } finally { f.store.close(); }
+  }
+});
+
 test('provider interruption consumes durable allocation without replay and resumes in a later window', async () => {
   const f = fixture(); let calls = 0;
   let executor = new DevelopmentExecutor({ ...f.options, proposalCallsPerDay: 1, propose: async () => { calls++; throw new Error('Provider outcome unknown'); } });
@@ -242,5 +274,25 @@ test('host authoring gate preserves pending completion without opening or spendi
     assert.equal(f.store.listEvents().length, count, 'disabled authoring opens no allocation window or reservation');
     mayAuthor = true; assert.equal((await executor.tick())?.itemId, 'P06-memory-context-budget');
     assert.equal(executor.allocation().used, 1); assert.equal(f.calls(), 2);
+  } finally { f.store.close(); }
+});
+
+test('interrupt cancels the active check collector before allocating authoring', async () => {
+  const f = fixture(); let entered!: () => void;
+  const checking = new Promise<void>(resolve => { entered = resolve; });
+  let observed: AbortSignal | undefined;
+  const executor = new DevelopmentExecutor({ ...f.options, checkCurrent: async (_source, signal) => {
+    entered(); assert.ok(signal, 'The independent collector receives cancellation ownership');
+    observed = signal;
+    return await new Promise<DevelopmentEvidence>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('Actual collector cancellation')), { once: true });
+    });
+  } });
+  try {
+    const running = executor.tick(); await checking; executor.interrupt();
+    assert.equal(await running, null); await executor.stop();
+    assert.equal(observed?.aborted, true); assert.equal(f.calls(), 0);
+    assert.equal(executor.attempts().length, 0);
+    assert.equal(f.store.listEvents().filter(event => event.type === 'development.authoring.request' || event.type === 'development.hourly.window').length, 0);
   } finally { f.store.close(); }
 });

@@ -102,7 +102,8 @@ test('hourly trusted plan sheds two dependent P06 improvements through real work
         catch (error) { store.appendEvent('fixture.coordinator.error', { message: error instanceof Error ? error.message : 'unknown' }); throw error; }
       } });
     publication = new ReleasePublication({ store, authorize: () => true,
-      publisher: new GitPublisher({ repositoryRoot, dataDir, store, remote: 'origin', branch: 'main', remoteUrl: remote }) });
+      publisher: new GitPublisher({ repositoryRoot, dataDir, store, remote: 'origin', branch: 'main', remoteUrl: remote,
+        verifyCandidate: options => host!.collectCandidate({ kind: 'verify', options }) }) });
     wiring = createDevelopmentHost({ config, store, host, provider, scheduler, publication, now:()=>planTime,hasUserWork: () => host!.runtime.hasUserWork() });
     wiring.executor.recoverInterrupted(); scheduler.reconcile();
   };

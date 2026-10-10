@@ -32,7 +32,8 @@ export class ReleasePublication {
   }
   reconcile(items:EvolutionQueueItem[]):Promise<void>{
     if(this.#active)return this.#active;
-    const work=Promise.resolve().then(()=>this.#run(items));this.#active=work;
+    const accepted = structuredClone(items);
+    const work=Promise.resolve().then(()=>this.#run(accepted));this.#active=work;
     void work.finally(()=>{if(this.#active===work)this.#active=undefined;}).catch(()=>{});
     return work;
   }
@@ -47,12 +48,22 @@ export class ReleasePublication {
       if(typeof prior.nextObservationAt==='number'&&prior.nextObservationAt>now)continue;
       const report=object(events.filter(value=>value.type==='evolution.finished'&&object(value.payload).runId===item.id).at(-1)?.payload).report as unknown as EvolutionReport|undefined;
       const growth=store.growth(item.growthId);
+      // A recorded preparation/effect stays unresolved after origin policy
+      // changes. The publisher validates target/commit and denies new mutations.
+      const publicationIntent = !!report?.candidate && events.some(value =>
+        ['git.publication.reserved', 'git.publication.prepared', 'git.publication.push_reserved'].includes(value.type)
+        && object(value.payload).candidateId === report.candidate!.id);
       let result:PublicationResult;
       if(!report?.candidate||report.status!=='promoted'||report.id!==item.id||report.growthId!==item.growthId)
         result={status:'declined',reason:'No exact recorded promoted release authorizes publication'};
-      else if(!growth||!this.#options.authorize(growth))result={status:'declined',reason:'Current source policy withholds publication'};
-      else if(!publisher)result={status:'declined',reason:'Git publication is disabled; no commit or push was performed'};
-      else result=await publisher.publish(report.candidate);
+      else if((!growth||!this.#options.authorize(growth))&&!publicationIntent)result={status:'declined',reason:'Current source policy withholds publication'};
+      else if(!publisher)result=publicationIntent
+        ? {status:'uncertain',reason:'Git publication is disabled; recorded preparation or push remains unresolved'}
+        : {status:'declined',reason:'Git publication is disabled; no commit or push was performed'};
+      else result=await publisher.publish(report.candidate, { authorize: () => {
+        const currentGrowth = store.growth(item.growthId);
+        return !!currentGrowth && this.#options.authorize(currentGrowth);
+      } });
       const observedAt=(this.#options.now??Date.now)();
       store.appendEvent('release.publication.result',JSON.parse(JSON.stringify({runId:item.id,candidateId:report?.candidate?.id??null,result,observedAt,nextObservationAt:observedAt+this.#retry})),growth?.sourceTaskId);
     }
