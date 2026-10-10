@@ -1,5 +1,15 @@
 # Implementation progress and evidence
 
+## Branch integration and independent review — 2026-10-10
+
+The collector work was checkpointed in `19660f3` and integrated with installed conversation-continuity source in `f7f4415`. Both that branch and the independent [full-codebase autonomy audit](autonomy-expressivity-review-2026-10-10.md), strategy head `c59ab4d`, are merged into `main`. This preserves all committed source work; it does not install the collector correction or complete P17/P18.
+
+TypeScript and whitespace checks pass. Independent merge review confirms eleven social files and the original evaluator/custodian/protected checks remain unchanged from their relevant parent. Three bounded in-process observations pass reporting/expiry during busy work and custody queue ordering/rejection. They do not establish actual busy-collector serving or release acceptance. Two experimental CLI probes timed out before reaching that scenario and are excluded from behavioral conclusions. A full source run at exact `f7f4415`, with concurrency explicitly capped at two and 229 file pins, is in progress; its terminal result must be recorded separately. The previous failed full run remains retained.
+
+Review identified the [operator installation interruption gap](work-items/operator-installation-interruption.md): SIGTERM during verification does not currently veto later installation admission. This source finding remains open before collector deployment. Its exact runtime reproduction and phase-specific repair are required. The independent review and probe evidence are preserved outside Git under `audits/branch-integration-review-f7f4415-20261010/`; the archive receipt SHA-256 is `fa48b5a2821d588028b05c805dd26ae30af4e80d89ed37ebfd5cfa15f298e1f9`.
+
+The running installation remains the previously admitted `f2f8be22`. No new provider call, allocation reset, effect replay or installation accompanied this branch integration. Source acceptance, frozen review, live collector observation, actual model-reachable coding and broader activation routes remain separate unfinished work.
+
 ## Scoped conversation continuity installed — 2026-10-09
 
 All existing local branch heads were merged into `main` and pushed. Source commit `737c5aa` includes scoped outcomes, optional allocated reflection and mandatory original-thread reporting. Uncommitted collector implementation remains in its separate worktree because its operator installation regression is still unresolved; it is excluded from this release. See the [continuity work item](work-items/p16-conversation-continuity.md) and [ADR 0026](adr/0026-conversation-outcomes-and-scoped-reflection.md).

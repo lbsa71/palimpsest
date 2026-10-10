@@ -87,6 +87,8 @@ The development worktree now has the fixed confined helper and parent finite-che
 
 **Done when:** Unchanged serving checks and actual latency, cancellation/drain, authority/result and unknown-recovery fixtures pass; failed checks retain their outcomes; exact source/frozen review and live acceptance pass. Do not close this item by extending socket timeouts, retrying assertions or weakening candidate checks. Evaluator/dependency upgrades, broader grants, model/funding changes and complete product/security readiness are outside this correction.
 
+**Integrated source, 2026-10-10:** Collector changes and current installed conversation-continuity source are merged into `main`; this is source publication, not collector deployment or acceptance. Independent merge review identified a separate [operator installation interruption gap](docs/work-items/operator-installation-interruption.md): stopping during verification can reach installation before host cleanup. It remains open and must be resolved before admitting this collector release. Earlier latency failures and negative environment probes remain evidence.
+
 ### P03 — Build durable task execution and provider boundaries
 
 **Priority:** P0. **Dependencies:** P02. **Requirements:** R05, R17, R19.
@@ -279,6 +281,8 @@ The social-reflection gate additionally requires [A03](docs/acceptance.md#a03--d
 
 ### P17 — Implement the seed's iterative coding capability
 
+The [independent expressivity review](docs/autonomy-expressivity-review-2026-10-10.md) defines positive model-reachable coding, continuation and activation witnesses. Host primitives and collector reliability do not complete this capability. Stage draft/session mechanics alongside the retained-environment foundation; full future P18 acceptance is not a prerequisite for every isolated P17 increment.
+
 **Status:** P17.1 boundary selected from isolated typed fixtures; first P17.2 file backend verified; staged commands/output/checkpoint recovery independently reviewed in host code. Production dependency integration, durable coding and live compatibility remain pending; retained-environment selection is specified but unimplemented. **Priority:** P0. **Dependencies:** Existing P03–P05 task/provider/isolation components, P09 artifact identity, P16 origin policy; production dependency integration additionally requires the retained-environment foundation below. **Requirements:** R03, R05–R06, R14, R17–R19, R22–R26. **Specification:** [Coding autonomy](docs/coding-autonomy.md), [ADR 0019](docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md).
 
 **Problem:** A text completion proposing complete cognitive files cannot inspect and iteratively repair a repository. Basic tools and a real coding loop are missing seed behavior.
@@ -299,6 +303,8 @@ The social-reflection gate additionally requires [A03](docs/acceptance.md#a03--d
 **Non-goals:** New UI, distributed platform, compulsory heavyweight framework, automatic upstream submissions or public peer exposure. **Material risks:** Conflicting workspaces, stale edits, hidden SDK requests/retries, code execution escaping the workspace, uncertain commands, private-source disclosure and misleading success claims. Acceptance and failure semantics are in the specification.
 
 ### P18 — Enable autonomous evolution of the whole codebase
+
+Use the [independent expressivity review](docs/autonomy-expressivity-review-2026-10-10.md) to distinguish source authoring, evaluated activation and installed model competence. Whole-tree application, used fork, host and separately governed custodian/catalog evolution each require their positive path and relevant recovery evidence.
 
 **Status:** Specified; retained-environment design selected; broader autonomous routes unimplemented. **Priority:** P0. **Dependencies:** P17.4, existing P09–P13 and the unimplemented [retained-environment foundation](docs/retained-environments.md); integrates P14 and R25 authority boundaries. **Requirements:** R03, R06, R09–R19, R22–R26. **Environment decision:** [ADR 0025](docs/adr/0025-retained-verification-and-execution-environments.md).
 
