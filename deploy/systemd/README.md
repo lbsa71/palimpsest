@@ -29,6 +29,7 @@ Preparation refuses a held coordinator lock, copies the exact known-good manifes
 Root independently reviews the admitted identity and rendered files, then installs the source and checksum anchor. The Node directory must also be root-owned through every `/opt` ancestor, with no group/other write permission. Use the reviewed digest as `release_id` below; do not derive approval from an unchecked mutable descriptor. Refuse overwriting an existing sealed host. With the service stopped, run as root:
 
 ```sh
+set -eu
 release_id='<independently verified 64-character digest>'
 state_dir=/home/palimpsest/.local/share/palimpsest/instance
 sealed_host=/opt/palimpsest/hosts/$release_id
