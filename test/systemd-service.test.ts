@@ -31,12 +31,13 @@ function fixture(native = false, bindNative = native) {
   const nativeBinary = Buffer.alloc(64); nativeBinary.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]); nativeBinary[18] = 0x3e;
   const nativeReceipt = JSON.stringify({ version: 1, arch: 'x64', sourceSha256: hash(nativeSource), binarySha256: hash(nativeBinary) });
   const admittedNativeInputs = { sourceSha256: hash(nativeSource), binarySha256: hash(nativeBinary), receiptSha256: hash(nativeReceipt) };
-  if (native) { mkdirSync(join(repositoryRoot, 'trusted')); writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher.c'), nativeSource); }
+  if (native) { mkdirSync(join(repositoryRoot, 'trusted')); writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher.c'), nativeSource);
+    writeFileSync(join(repositoryRoot, '.gitignore'), '/trusted/linux-isolation-launcher\n/trusted/linux-isolation-launcher.json\n');
+    writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher'), nativeBinary, { mode: 0o500 });
+    writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher.json'), nativeReceipt, { mode: 0o400 }); }
   const git = (...args: string[]) => execFileSync('/usr/bin/git', args, { cwd: repositoryRoot, stdio: 'ignore' });
   git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid'); git('add', '.'); git('commit', '-qm', 'baseline');
   const manifest = freezeBaseline({ repositoryRoot, dataDir, configuration: {}, modelProfile: { provider: 'fixture', model: null } });
-  if (native) { writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher'), nativeBinary, { mode: 0o500 });
-    writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher.json'), nativeReceipt, { mode: 0o400 }); }
   const db = new DatabaseSync(join(dataDir, 'custodian/custodian.sqlite'));
   db.exec('CREATE TABLE custodian_state(id INTEGER PRIMARY KEY,record TEXT NOT NULL)');
   const release = { digest: manifest.id, artifactPath: manifest.releaseDir, governanceDigest: manifest.governanceDigest, dataSchemaVersion: 1 };
