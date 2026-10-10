@@ -1,6 +1,6 @@
 # ADR 0029: Autark deliberation and explicit speech
 
-- **Status:** Accepted user direction with bounded source implementation, 2026-10-10. Integrated verification and independent review are in progress; exact installation and configured-model evaluation remain unverified.
+- **Status:** Accepted user direction with bounded source implementation, 2026-10-10. Deterministic verification and independent source review are recorded in the work item; canonical integration is held for operator coordination, and exact installation/configured-model evaluation remain unverified.
 - **Requirements:** R01–R02, R04, R07, R17–R19, R21–R27.
 - **Work item:** [Autark deliberation](../work-items/autark-deliberation.md), integrated with P06/P08/P16/P17.
 
