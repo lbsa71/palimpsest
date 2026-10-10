@@ -88,19 +88,53 @@ function workBlockers(directory: string): Blocker[] {
       for (const record of records) if (['running', 'waiting_for_provider'].includes(record.state)) blockers.push({ kind: table, id: String(record.id) });
     }
     for (const row of db.prepare("SELECT id FROM effects WHERE state != 'completed'").all()) blockers.push({ kind: 'effect', id: String(row.id) });
-    const evolution = new Map<string, string>(), development = new Map<string, string>(), promoted = new Set<string>(), published = new Set<string>();
-    for (const row of db.prepare('SELECT type,payload FROM journal ORDER BY seq').all()) {
+    const evolution = new Map<string, { state: string; status?: string }>(), development = new Map<string, string>();
+    const results = new Map<string, string>(), candidateResults = new Map<string, { seq: number; status: string; commit: unknown }>();
+    const intents = new Map<string, { candidateId: string; target: string; seq: number; commits: Set<string>; malformed: boolean }>();
+    const completions: Array<{ candidateId: string; target: unknown; commit: unknown; seq: number }> = [];
+    for (const row of db.prepare('SELECT seq,type,payload FROM journal ORDER BY seq').all()) {
       const p = object(JSON.parse(String(row.payload))), type = row.type;
-      if (type === 'evolution.queue.enqueued') evolution.set(String(p.id), 'queued');
-      if (type === 'evolution.queue.claimed') evolution.set(String(p.id), 'running');
-      if (type === 'evolution.queue.observed') evolution.set(String(p.id), p.result?.status === 'probation' ? 'probation' : 'finished');
+      // Match EvolutionScheduler.items(): only an enqueue establishes work, and
+      // a terminal observation cannot be changed by a later claim/observation.
+      if (typeof p.id === 'string') {
+        if (type === 'evolution.queue.enqueued') evolution.set(p.id, { state: 'queued' });
+        const item = evolution.get(p.id);
+        if (item && item.state !== 'finished') {
+          if (type === 'evolution.queue.claimed') item.state = 'running';
+          if (type === 'evolution.queue.observed') { item.status = p.result?.status; item.state = item.status === 'probation' ? 'probation' : 'finished'; }
+        }
+      }
       if (type === 'development.attempt.started' || type === 'development.attempt.updated') development.set(String(p.attempt?.id), String(p.attempt?.state));
-      if (type === 'evolution.finished' && p.report?.status === 'promoted') promoted.add(String(p.runId));
-      if (type === 'release.publication.result' && p.result?.status === 'published') published.add(String(p.runId));
+      if (type === 'release.publication.result') {
+        results.set(String(p.runId), String(p.result?.status));
+        if (typeof p.candidateId === 'string') candidateResults.set(p.candidateId, { seq: Number(row.seq), status: String(p.result?.status), commit: p.result?.commit });
+      }
+      if (['git.publication.reserved', 'git.publication.prepared', 'git.publication.push_reserved'].includes(String(type))) {
+        const key = JSON.stringify([p.candidateId, p.target]);
+        const intent = intents.get(key) ?? { candidateId: String(p.candidateId), target: String(p.target), seq: 0, commits: new Set<string>(), malformed: typeof p.candidateId !== 'string' || typeof p.target !== 'string' };
+        intent.seq = Number(row.seq);
+        if (typeof p.commit === 'string' && p.commit) intent.commits.add(p.commit);
+        else if (type !== 'git.publication.reserved') intent.malformed = true;
+        intents.set(key, intent);
+      }
+      if (type === 'git.publication.completed') completions.push({ candidateId: String(p.candidateId), target: p.target, commit: p.commit, seq: Number(row.seq) });
     }
-    for (const [id, state] of evolution) if (state !== 'finished') blockers.push({ kind: 'evolution', id });
+    for (const [id, item] of evolution) {
+      if (item.state !== 'finished') blockers.push({ kind: 'evolution', id });
+      else if (item.status === 'promoted' && results.get(id) !== 'published') blockers.push({ kind: 'publication', id });
+    }
     for (const [id, state] of development) if (!['completed', 'paused'].includes(state)) blockers.push({ kind: 'development', id });
-    for (const id of promoted) if (!published.has(id)) blockers.push({ kind: 'publication', id });
+    // An interrupted Git effect remains work even without a scheduler item.
+    // A reconciled push may record only a published result, not completed; that
+    // result has no target field, so require one unambiguous recorded target.
+    for (const intent of intents.values()) {
+      const matches = (commit: unknown) => !intent.malformed && typeof commit === 'string' && !!commit && [...intent.commits].every(value => value === commit);
+      const completed = completions.some(value => value.candidateId === intent.candidateId && value.target === intent.target && value.seq > intent.seq && matches(value.commit));
+      const result = candidateResults.get(intent.candidateId);
+      const published = result?.status === 'published' && result.seq > intent.seq && intent.commits.size === 1 && matches(result.commit)
+        && [...intents.values()].filter(value => value.candidateId === intent.candidateId).length === 1;
+      if (!completed && !published && !blockers.some(value => value.kind === 'publication-intent' && value.id === intent.candidateId)) blockers.push({ kind: 'publication-intent', id: intent.candidateId });
+    }
     if (existsSync(join(directory, 'candidate-jobs/active.json'))) blockers.push({ kind: 'candidate', id: 'active-collection' });
     // General coding workspace relocation is deliberately outside this importer.
     for (const entry of inventory(directory)) if (entry.path.endsWith(`${sep}writer.json`) || entry.path.startsWith(`workspaces${sep}`)) blockers.push({ kind: 'workspace', id: entry.path });

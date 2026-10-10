@@ -9,6 +9,8 @@ import { Custodian, digestCustodianValue } from '../src/custodian.ts';
 import type { CustodianHooks } from '../src/custodian.ts';
 import { digestJson, freezeBaseline } from '../src/candidates.ts';
 import { Store } from '../src/store.ts';
+import { EvolutionScheduler } from '../src/evolution-scheduler.ts';
+import { ReleasePublication } from '../src/release-publication.ts';
 import { assertPlatformMigrationReady } from '../src/platform-migration-gate.ts';
 import { inspectMigrationSnapshot, importPlatformSnapshot, verifyPlatformRecovery, databaseDigest } from '../scripts/platform-migration.ts';
 
@@ -106,6 +108,48 @@ test('unresolved effects and unfinished path-dependent work are explicit import 
   assert.ok(metadata.blockers.some(value => value.kind === 'evolution'));
   await assert.rejects(importPlatformSnapshot({ ...f, attestation: { ...f.attestation, snapshotDigest: metadata.snapshotDigest } }), /unfinished|held/i);
   assert.equal(existsSync(f.destination), false);
+});
+
+test('standalone promoted history is archived without inventing queued publication', async t => {
+  const f = await fixture(t), store = new Store(join(f.snapshot, 'state.sqlite'));
+  store.appendEvent('evolution.finished', { runId: 'synthetic-standalone', report: { id: 'synthetic-standalone', status: 'promoted', candidate: { id: 'a'.repeat(64) } } });
+  const scheduler = new EvolutionScheduler({ store, hasUserWork: () => false, phase: () => 'normal', run: async () => { throw new Error('No execution authorized'); } });
+  const publication = new ReleasePublication({ store, authorize: () => true, publisher: { publish: async () => { throw new Error('No publication authorized'); } } });
+  assert.deepEqual(scheduler.items(), []); assert.equal(publication.pending(scheduler.items()), false); store.close();
+  const before = databaseDigest(join(f.snapshot, 'state.sqlite'));
+  assert.deepEqual(inspectMigrationSnapshot(f.snapshot).blockers, []);
+  assert.equal(databaseDigest(join(f.snapshot, 'state.sqlite')), before);
+});
+
+test('queued promoted publication uses the reconciler latest-result semantics', async t => {
+  const f = await fixture(t), store = new Store(join(f.snapshot, 'state.sqlite'));
+  for (const id of ['pending', 'published', 'uncertain', 'declined', 'superseded-result']) {
+    store.appendEvent('evolution.queue.enqueued', { id, growthId: 'old-growth', proposalDigest: 'b'.repeat(64) });
+    store.appendEvent('evolution.queue.observed', { id, result: { status: 'promoted', reason: 'Synthetic acceptance', calls: 5 } });
+    if (id !== 'pending') store.appendEvent('release.publication.result', { runId: id, result: { status: id === 'superseded-result' ? 'published' : id } });
+    if (id === 'superseded-result') store.appendEvent('release.publication.result', { runId: id, result: { status: 'uncertain' } });
+  }
+  const scheduler = new EvolutionScheduler({ store, hasUserWork: () => false, phase: () => 'normal', run: async () => { throw new Error('No execution authorized'); } });
+  const publication = new ReleasePublication({ store, authorize: () => true, publisher: { publish: async () => { throw new Error('No publication authorized'); } } });
+  const expected = scheduler.items().filter(item => publication.pending([item])).map(item => item.id).sort();
+  assert.deepEqual(expected, ['declined', 'pending', 'superseded-result', 'uncertain']); store.close();
+  assert.deepEqual(inspectMigrationSnapshot(f.snapshot).blockers.filter(item => item.kind === 'publication').map(item => item.id).sort(), expected);
+});
+
+test('publication intents remain blockers without queue history until the exact recorded effect is settled', async t => {
+  const f = await fixture(t), store = new Store(join(f.snapshot, 'state.sqlite'));
+  const target = 'c'.repeat(64), commit = 'd'.repeat(40);
+  for (const id of ['reserved', 'prepared', 'push_reserved', 'completed', 'published', 'wrong-target', 'wrong-commit', 'uncertain', 'later-intent', 'wrong-candidate', 'multiple-targets']) {
+    const phase = ['reserved', 'prepared'].includes(id) ? id : 'push_reserved';
+    store.appendEvent(`git.publication.${phase}`, { candidateId: id, target, ...(phase === 'reserved' ? {} : { commit }) });
+    if (['completed', 'wrong-target'].includes(id)) store.appendEvent('git.publication.completed', { candidateId: id, target: id === 'wrong-target' ? 'e'.repeat(64) : target, commit });
+    if (id === 'multiple-targets') store.appendEvent('git.publication.push_reserved', { candidateId: id, target: 'e'.repeat(64), commit });
+    if (['published', 'wrong-commit', 'uncertain', 'later-intent', 'wrong-candidate', 'multiple-targets'].includes(id)) store.appendEvent('release.publication.result', { runId: `synthetic-${id}`, candidateId: id === 'wrong-candidate' ? 'different-candidate' : id, result: { status: id === 'uncertain' ? 'uncertain' : 'published', commit: id === 'wrong-commit' ? 'e'.repeat(40) : commit } });
+    if (id === 'later-intent') store.appendEvent('git.publication.push_reserved', { candidateId: id, target, commit });
+  }
+  store.close();
+  assert.deepEqual(inspectMigrationSnapshot(f.snapshot).blockers.filter(item => item.kind === 'publication-intent').map(item => item.id).sort(),
+    ['later-intent', 'multiple-targets', 'prepared', 'push_reserved', 'reserved', 'uncertain', 'wrong-candidate', 'wrong-commit', 'wrong-target']);
 });
 
 test('unknown delivery is preserved and cannot be silently replayed by import', async t => {
