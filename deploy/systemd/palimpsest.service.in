@@ -1,0 +1,31 @@
+[Unit]
+Description=Palimpsest admitted continuous companion
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=palimpsest
+Group=palimpsest
+WorkingDirectory=@REPO@
+ExecStartPre=/usr/bin/sha256sum --quiet --strict --check /etc/palimpsest/host-@RELEASE@.sha256
+ExecStart=/usr/bin/env -i HOME=/home/palimpsest TMPDIR=@SCRATCH@ PATH=@NODE_DIR@:/usr/bin:/bin PALIMPSEST_DATA_DIR=@DATA@ PALIMPSEST_CREDENTIALS_FILE=@CREDS@ @NODE@ @BUNDLE@/scripts/systemd-service.ts run @RELEASE@
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=120
+SendSIGKILL=yes
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@REPO@ @DATA@
+ReadOnlyPaths=@BUNDLE@ @NODE@
+StandardOutput=append:@DATA@/service/stdout.log
+StandardError=append:@DATA@/service/stderr.log
+
+[Install]
+WantedBy=multi-user.target
