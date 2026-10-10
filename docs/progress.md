@@ -1,5 +1,30 @@
 # Implementation progress and evidence
 
+## Integrated coding and Linux migration source — 2026-10-10
+
+Reviewed P17 source `0c4e5bb` implements durable injected-host coding sessions,
+shared accounting, exact drafts/submissions and originating report obligations.
+The stable normal run passed 680 cases, zero failures and one platform skip with
+266 unchanged file pins. Fresh review reproduced and resolved five lifecycle and
+reporting findings; 51 affected checks and independent probes pass. Relocation
+`31060bc` keeps the unchanged native facade inside its existing pinned experiment
+package: 54 facade cases and five actual synthetic native serving witnesses pass.
+The [serving work item](work-items/p17-serving-coding.md) and
+[packaging record](work-items/native-experiment-packaging.md) retain exact limits.
+The production CLI still has no configured durable coding provider factory;
+P17/P18 and configured-model acceptance remain open.
+
+Reviewed Linux prerequisite `df3c944` adds prepared kernel confinement, native
+runtime identity and exact retained worker/group recovery. Author and fresh
+reviewer separately pass all 15 actual destination checks; 75 macOS checks pass
+with 16 platform skips. Source/native/tool pins agree before and after. Migration
+and systemd source branches are integrated with a CLI startup gate. These are
+source results; copied-state import, sealed installation and operational cutover
+belong to the separate migration verification. Development evidence is preserved
+outside Git in the source evidence archive, without private lived state.
+The merged source also passes strict TypeScript and 19 affected activation,
+runtime, CLI-gate and service checks with zero failures/skips.
+
 ## Reviewed installation repair and coding checkpoints — 2026-10-10
 
 The source interruption finding below was reproduced with the actual operator CLI at `ed1cf96`: SIGTERM during a blocked verifier was followed by five more jobs and installation. Reviewed repair `b3840a2`, merged into `main`, now prevents pre-fence collection/admission and preserves mechanical completion or retained recovery after fencing. All 57 affected CLI/generation/Custodian/collector checks pass with concurrency capped at two in 322,775 ms; root typechecking after integration passes. Bounded independent review found no remaining actionable source blocker and matched all source/evidence pins. The [work item](work-items/operator-installation-interruption.md) records exact receipts, retained original deadlines, current-memory recovery and the separate unchanged restoration contract.

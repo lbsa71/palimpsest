@@ -29,4 +29,11 @@ new installation or publication authority is inferred from this layout repair.
 After relocation, strict root and experiment TypeScript pass, all 54 facade cases
 and five native serving cases pass with no failures/skips. Facade/contracts and
 package/lock bytes remain unchanged. The complete-repository freeze/evaluate
-witness follows the clean source integration; no deployment acceptance is claimed.
+witness ran after clean source integration: the full 279-file repository froze,
+and typecheck, trusted cognitive contract, cross-scope memory and memory provenance
+passed. The additional memory-context-budget check failed against the unchanged
+Git baseline cognition, which does not implement the planned newest-first bounded
+context behavior in `P06-memory-context-budget`. That is an existing cognitive
+work item, not a packaging pass or a waived admission check. Migration must use
+the actual admitted cognition and pass its independently required floor. No
+deployment acceptance is claimed.
