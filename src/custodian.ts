@@ -73,8 +73,16 @@ export interface CustodianState {
   reason?: string;
   operatorBaseline?: { previous: Release; candidate: Release; evidenceDigest: string; status: 'prepared' | 'installed' | 'restored' };
   baselineRestoreIntent?: { previous: Release; candidate: Release; evidenceDigest: string };
+  platformMigration?: { id: string; snapshotDigest: string; shutdownEvidenceDigest: string; sourceStateDigest: string;
+    sourceJournalDigest: string; previous: Release; previousProcess: ProcessRef; candidate: Release; evidenceDigest: string;
+    sourceEpoch: number; destinationPlatform: string };
 }
 export interface CustodianEvent { sequence: number; type: string; payload: Json; at: string }
+export interface PlatformBaselineImport {
+  id: string; snapshotDigest: string; shutdownEvidenceDigest: string; sourceStateDigest: string; sourceJournalDigest: string;
+  sourceStopped: true; candidate: Release; evidenceDigest: string; destinationPlatform: string;
+  checks: Array<{ id: string; status: 'passed' | 'failed' }>;
+}
 
 export class CustodianError extends Error {
   constructor(code: string) { super(code); this.name = 'CustodianError'; }
@@ -239,6 +247,50 @@ export class Custodian {
       const actor = await this.#recover('bootstrap');
       if (!actor) fail('bootstrap_failed');
       return actor;
+    });
+  }
+
+  /** Trusted offline operator import only. The caller has preserved the complete
+   * source snapshot and verified source-host shutdown, cognition, configuration
+   * and native checks. Original history stays intact; no old-platform artifact
+   * is verified as native or selected as the destination recovery baseline.
+   * This grants no actor and performs no launch. A separate cold recovery proves
+   * the imported native baseline before the operator opens production ingress. */
+  async importPlatformBaseline(input: PlatformBaselineImport): Promise<void> {
+    return this.#exclusive(async () => {
+      const value = structuredClone(input);
+      if (!value || ['id', 'snapshotDigest', 'shutdownEvidenceDigest', 'sourceStateDigest', 'sourceJournalDigest', 'evidenceDigest']
+        .some(key => !digest(value[key as keyof PlatformBaselineImport])) || value.sourceStopped !== true
+        || !/^[a-z0-9]+-[a-z0-9]+$/.test(value.destinationPlatform)) fail('platform_migration_binding');
+      const candidate = release(value.candidate);
+      const prior = this.#state.platformMigration;
+      if (prior) {
+        if (prior.id === value.id && prior.snapshotDigest === value.snapshotDigest && prior.shutdownEvidenceDigest === value.shutdownEvidenceDigest
+          && prior.sourceStateDigest === value.sourceStateDigest && prior.sourceJournalDigest === value.sourceJournalDigest
+          && prior.evidenceDigest === value.evidenceDigest && prior.destinationPlatform === value.destinationPlatform
+          && canonical(prior.candidate) === canonical(candidate) && this.#state.knownGood?.digest === candidate.digest) return;
+        fail('platform_migration_already_imported');
+      }
+      if (this.#handles.size || this.#state.phase !== 'normal' || !this.#state.active || !this.#state.knownGood
+        || this.#state.active.release.digest !== this.#state.knownGood.digest || this.#state.pendingLaunch || this.#state.pendingStops.length
+        || this.#state.baselineRestoreIntent || this.#state.operatorBaseline?.status === 'prepared'
+        || this.#state.successions.some(item => ['evaluation', 'transfer', 'probation'].includes(item.state))
+        || digestCustodianValue(this.#state) !== value.sourceStateDigest || digestCustodianValue(this.journal()) !== value.sourceJournalDigest
+        || !Number.isSafeInteger(this.#state.epoch) || this.#state.epoch >= Number.MAX_SAFE_INTEGER - 3) fail('platform_migration_source_not_stopped');
+      if (candidate.digest === this.#state.knownGood.digest || candidate.dataSchemaVersion !== this.#state.knownGood.dataSchemaVersion
+        || !Array.isArray(value.checks) || new Set(value.checks.map(check => check.id)).size !== value.checks.length
+        || value.checks.some(check => check.status !== 'passed') || this.#required.some(id => !value.checks.some(check => check.id === id))) fail('platform_migration_checks');
+      await this.#verify(candidate, 'admission');
+      const checkpoint = await this.#checkpoint();
+      if (!checkpoint.quiesced || checkpoint.unresolvedEffects.length) fail('platform_migration_unresolved_effects');
+      const previous = this.#state.knownGood, previousProcess = this.#state.active.process, sourceEpoch = this.#state.epoch;
+      this.#state.platformMigration = { id: value.id, snapshotDigest: value.snapshotDigest, shutdownEvidenceDigest: value.shutdownEvidenceDigest,
+        sourceStateDigest: value.sourceStateDigest, sourceJournalDigest: value.sourceJournalDigest, previous, previousProcess,
+        candidate, evidenceDigest: value.evidenceDigest, sourceEpoch, destinationPlatform: value.destinationPlatform };
+      this.#state.epoch++; delete this.#state.active; delete this.#state.successionId;
+      this.#state.knownGood = candidate; this.#state.artifacts.push(candidate); this.#state.phase = 'recovering';
+      this.#state.recoveryAttempts = 0; delete this.#state.recoveryIncident; this.#state.reason = 'platform_migration_requires_cold_verification';
+      this.#save('platform.migration.imported', JSON.parse(JSON.stringify({ ...this.#state.platformMigration, historicalArtifactsRunnable: false })) as Json);
     });
   }
 
