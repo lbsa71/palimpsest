@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { ConversationOutcome, ConversationReflection, ConversationTopic, ConversationTopicInput } from './conversation-state.ts';
+export type { ConversationOutcome, ConversationReflection, ConversationTopic } from './conversation-state.ts';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type TaskState = 'queued' | 'running' | 'waiting_for_provider' | 'succeeded' | 'failed' | 'cancelled';
@@ -149,6 +151,10 @@ export class Store {
         scope TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL,
         PRIMARY KEY(scope, id)
       );
+      CREATE TABLE IF NOT EXISTS conversation_topics (id TEXT PRIMARY KEY, scope TEXT NOT NULL, record TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS conversation_reflections (id TEXT PRIMARY KEY, record TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS conversation_topic_intents (task_id TEXT NOT NULL, topic_id TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(task_id, topic_id));
+      CREATE TABLE IF NOT EXISTS background_reservations (id TEXT PRIMARY KEY, window_id TEXT NOT NULL);
     `);
   }
 
@@ -387,8 +393,19 @@ export class Store {
   }
 
   #invalidateMemoryDependents(id: string, scope: string): void {
+    const withdrawContexts = (sourceId: string) => {
+      for (const intent of this.#conversationIntents()) if (intent.scope === scope && intent.sourceRefs.some(ref => ref.id === sourceId)) {
+        const withdrawn = { ...intent, state: 'invalidated' as const, outcome: { question: 'Prior conversation context is no longer current.', stance: 'No current conclusion is retained.', rationale: 'Source corrected or forgotten before exchange completion.', unresolved: [], status: 'settled' as const } };
+        this.#writeConversationIntent(intent.sourceTaskIds.at(-1)!, withdrawn);
+        if (intent.reflectionId) { const reflection = this.conversationReflection(intent.reflectionId)!; this.#writeReflection({ ...reflection, question: 'Source context withdrawn.', state: 'cancelled', checkpoint: { reason: 'source_withdrawn' } }); }
+      }
+      for (const topic of this.listConversationTopics(scope)) if (topic.memoryId === sourceId || topic.sourceRefs.some(ref => ref.id === sourceId)) {
+        this.invalidateConversationTopic(topic.id, 'Source corrected or forgotten; prior interpretation withdrawn.');
+      }
+    };
     const pending = [id]; const seen = new Set(pending);
     for (const sourceId of pending) {
+      withdrawContexts(sourceId);
       for (const row of this.#db.prepare('SELECT memory_id FROM memory_source_refs WHERE scope = ? AND source_id = ?').all(scope, sourceId)) {
         const memoryId = String(row.memory_id);
         if (seen.has(memoryId)) continue;
@@ -475,6 +492,11 @@ export class Store {
     return decode<Memory>(this.#db.prepare('SELECT record FROM memories WHERE id = ? AND scope = ? AND forgotten = 0 ORDER BY version DESC LIMIT 1').get(id, scope));
   }
 
+  memorySourceRefs(id: string, scope: string): MemorySourceRef[] {
+    return this.#db.prepare('SELECT source_id, source_version FROM memory_source_refs WHERE scope = ? AND memory_id = ?').all(scope, id)
+      .map(row => ({ id: String(row.source_id), version: Number(row.source_version) }));
+  }
+
   listMemories(scope: string, filter: { kind?: MemoryKind; includeHistory?: boolean } = {}): Memory[] {
     required(scope, 'Memory scope');
     const rows = this.#db.prepare(`SELECT record FROM memories AS m WHERE scope = ? AND forgotten = 0${filter.kind ? ' AND kind = ?' : ''}${filter.includeHistory ? '' : ' AND version = (SELECT MAX(version) FROM memories WHERE id = m.id)'} ORDER BY rowid`).all(...(filter.kind ? [scope, filter.kind] : [scope]));
@@ -510,6 +532,301 @@ export class Store {
       this.#invalidateMemoryDependents(id, scope);
       this.#db.prepare('UPDATE memories SET forgotten = 1, record = NULL WHERE id = ? AND scope = ?').run(id, scope);
       this.appendEvent('memory.forgotten', { memoryId: id });
+    });
+  }
+
+  conversationTopic(id: string): ConversationTopic | undefined {
+    return decode<ConversationTopic>(this.#db.prepare('SELECT record FROM conversation_topics WHERE id = ?').get(id));
+  }
+
+  listConversationTopics(scope?: string): ConversationTopic[] {
+    return (scope === undefined ? this.#db.prepare('SELECT record FROM conversation_topics ORDER BY rowid').all()
+      : this.#db.prepare('SELECT record FROM conversation_topics WHERE scope = ? ORDER BY rowid').all(scope)).map(row => decode<ConversationTopic>(row)!);
+  }
+
+  #writeTopic(topic: ConversationTopic): ConversationTopic {
+    this.#db.prepare('INSERT INTO conversation_topics(id, scope, record) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record')
+      .run(topic.id, topic.scope, encode(topic)); return topic;
+  }
+  #writeConversationIntent(taskId: string, topic: ConversationTopic): void {
+    this.#db.prepare('INSERT INTO conversation_topic_intents(task_id, topic_id, record) VALUES (?, ?, ?) ON CONFLICT(task_id, topic_id) DO UPDATE SET record = excluded.record').run(taskId, topic.id, encode(topic));
+  }
+  #conversationIntents(taskId?: string): ConversationTopic[] {
+    return (taskId === undefined ? this.#db.prepare('SELECT record FROM conversation_topic_intents').all()
+      : this.#db.prepare('SELECT record FROM conversation_topic_intents WHERE task_id = ?').all(taskId)).map(row => decode<ConversationTopic>(row)!);
+  }
+  conversationAwaitingExchange(topicId: string): boolean {
+    return this.#conversationIntents().some(intent => intent.id === topicId && ['running', 'queued', 'waiting_for_provider'].includes(this.task(intent.sourceTaskIds.at(-1)!)?.state ?? ''));
+  }
+
+  /** Retain tentative exchange evidence, but a terminal unaccepted parent cannot
+   * leave an executable inquiry behind. Delivery reconciliation remains separate. */
+  reconcileConversationIntents(): void {
+    for (const intent of this.#conversationIntents()) {
+      const parent = this.task(intent.sourceTaskIds.at(-1)!); const current = this.conversationTopic(intent.id);
+      if (!intent.reflectionId || !parent || !['succeeded', 'failed', 'cancelled'].includes(parent.state)) continue;
+      if (parent.state === 'succeeded' && current?.state === 'active' && current.reflectionId === intent.reflectionId) continue;
+      this.cancelConversationReflection(intent.reflectionId, 'tentative_exchange_not_current');
+    }
+  }
+
+  /** Host-bound admission precedes the external acknowledgment. A replay of the
+   * same task never increments a revision or creates a second inquiry. */
+  prepareConversationTopics(taskId: string, inputs: ConversationTopicInput[], sourceRefs: MemorySourceRef[], options: { now: number; reviewMs: number; lifetimeMs: number; maxAttempts: number }): ConversationTopic[] {
+    return this.#atomic(() => {
+      const task = this.task(taskId); if (!task || task.state !== 'running') throw new Error('Outcome requires a running exchange');
+      const saved = this.listEvents().find(event => event.type === 'conversation.outcomes.prepared' && event.taskId === taskId);
+      if (saved) return this.#conversationIntents(taskId);
+      if (sourceRefs.some(ref => this.memory(ref.id, task.conversationId)?.version !== ref.version)) throw new Error('Outcome sources changed before admission');
+      const origins = new Map<string, Task>();
+      const visit = (ref: MemorySourceRef, seen = new Set<string>()): void => {
+        if (seen.has(ref.id)) return; seen.add(ref.id);
+        const memory = this.memory(ref.id, task.conversationId); if (!memory || memory.version !== ref.version) throw new Error('Outcome provenance changed');
+        if (memory.kind === 'episodic' && memory.source.startsWith('task:')) {
+          const origin = this.task(memory.source.slice(5)); if (origin?.conversationId === task.conversationId) origins.set(origin.id, origin);
+        }
+        for (const parent of this.memorySourceRefs(memory.id, task.conversationId)) visit(parent, seen);
+      };
+      sourceRefs.forEach(ref => visit(ref)); origins.set(taskId, task);
+      const topics = inputs.map((input, index) => {
+        const old = input.topicId ? this.conversationTopic(input.topicId) : undefined;
+        if (input.topicId && (!old || old.scope !== task.conversationId || old.source !== task.source || old.state !== 'active' || old.revision !== input.expectedRevision)) throw new Error('Unknown current scoped topic revision');
+        const progress = task.checkpoint && typeof task.checkpoint === 'object' && !Array.isArray(task.checkpoint) ? task.checkpoint : {};
+        const id = old?.id ?? `topic:${taskId}:${index}`; const revision = (old?.revision ?? 0) + 1;
+        const now = new Date().toISOString();
+        const topic: ConversationTopic = { id, scope: task.conversationId, source: task.source,
+          originalTaskId: old?.originalTaskId ?? taskId, replyTo: old?.replyTo ?? (typeof progress.replyTo === 'string' ? progress.replyTo : null),
+          sourceTaskIds: [...new Set([...(old?.sourceTaskIds ?? []), ...origins.keys()])],
+          sourceRefs,
+          participants: [...new Map([...(old?.participants ?? []), ...[...origins.values()].map(origin => ({ taskId: origin.id, source: origin.source, slackAuthor: origin.slackAuthor ?? null }))].map(participant => [participant.taskId, participant])).values()],
+          state: 'prepared', revision, outcome: input.outcome, memoryId: null,
+          reflectionId: input.reflectionQuestion && task.source !== 'peer' ? `reflection:${id}:${revision}` : null,
+          nextReviewAt: options.now + options.reviewMs, expiresAt: options.now + options.lifetimeMs,
+          report: { owedRevision: old?.report.waived ? null : input.outcome.status === 'pending' || old?.report.owedRevision !== null && old !== undefined ? revision : null,
+            waived: old?.report.waived ?? false,
+            lastReportedRevision: old?.report.lastReportedRevision ?? 0, taskId: old?.report.taskId ?? null,
+            revision: old?.report.revision ?? null, kind: old?.report.kind ?? null, effectId: old?.report.effectId ?? null,
+            delivery: old?.report.delivery ?? 'pending', receipt: old?.report.receipt ?? null },
+          createdAt: old?.createdAt ?? now, updatedAt: now };
+        // Tentative input cannot replace a confirmed outcome or erase its owed
+        // report. Pause old thought until acknowledgment resolves; do not refund.
+        if (old?.reflectionId) this.updateConversationReflection(old.reflectionId, { state: 'paused', checkpoint: { reason: 'awaiting_continuation_delivery' } });
+        if (topic.reflectionId) this.#writeReflection({ id: topic.reflectionId, topicId: id, scope: task.conversationId,
+          question: input.reflectionQuestion!, sourceRefs: topic.sourceRefs, sourceTaskIds: topic.sourceTaskIds,
+          maxAttempts: options.maxAttempts, attempts: 0, state: 'waiting', checkpoint: { phase: 'awaiting_exchange' }, updatedAt: now });
+        this.#writeConversationIntent(taskId, topic);
+        if (!old) this.#writeTopic(topic);
+        return topic;
+      });
+      this.appendEvent('conversation.outcomes.prepared', { topicIds: topics.map(topic => topic.id) }, taskId); return topics;
+    });
+  }
+
+  /** Confirmed exchange, raw episode, interpreted outcome and inquiry activation
+   * share one SQLite transaction. Unknown/rejected delivery cannot activate it. */
+  finishConversationTask(id: string, output: Json, episode: MemoryInput): Task {
+    return this.#atomic(() => {
+      const task = this.task(id); if (!task || task.state !== 'running' || this.#unresolved(id)) throw new Error('Conversation requires a running reconciled exchange');
+      const progress = task.checkpoint && typeof task.checkpoint === 'object' && !Array.isArray(task.checkpoint) ? task.checkpoint : {};
+      const captured = Array.isArray(progress.conversationSourceRefs) ? progress.conversationSourceRefs as unknown as MemorySourceRef[] : [];
+      const intents = this.#conversationIntents(id);
+      const stale = (intent: ConversationTopic): boolean => {
+        const current = this.conversationTopic(intent.id);
+        return intent.originalTaskId !== id && (!current || current.state !== 'active' || current.revision !== intent.revision - 1);
+      };
+      const sourcesCurrent = captured.every(ref => this.memory(ref.id, task.conversationId)?.version === ref.version) && !intents.some(stale);
+      // An actually delivered reply is still operational evidence. Its stale
+      // assertions cannot become new independent memory after source withdrawal.
+      const safeEpisode = sourcesCurrent ? episode : { ...episode, content: JSON.stringify({ user: task.input,
+        response: 'Response withdrawn from retrieval because its source context changed before exchange completion.', slackAuthor: task.slackAuthor ?? null,
+        note: 'Physical task output/effect retains the actual delivery observation; no stale generated assertion is republished.' }) };
+      const source = (sourcesCurrent && captured.length ? this.publishMemoryFromSourcesOnce({ ...safeEpisode, publicationId: `exchange:${id}`, sourceRefs: captured })
+        : this.publishMemoryOnce({ ...safeEpisode, publicationId: `exchange:${id}` })).memory;
+      if (!source) throw new Error('Exchange was forgotten');
+      for (const intent of intents) {
+        const current = this.conversationTopic(intent.id)!;
+        const conflict = stale(intent);
+        const topic = { ...intent, id: conflict ? `${intent.id}:withdrawn:${id}` : intent.id,
+          originalTaskId: conflict ? id : intent.originalTaskId, revision: conflict ? 1 : intent.revision,
+          report: { ...intent.report, lastReportedRevision: current.report.lastReportedRevision,
+            waived: current.report.waived, owedRevision: current.report.waived ? null : intent.report.owedRevision,
+            taskId: current.report.taskId, revision: current.report.revision, kind: current.report.kind, effectId: current.report.effectId, delivery: current.report.delivery, receipt: current.report.receipt } };
+        if (conflict) topic.report = { owedRevision: current.report.waived || intent.report.owedRevision === null ? null : 1, waived: current.report.waived,
+          lastReportedRevision: 0, taskId: null, revision: null, kind: null, effectId: null, delivery: 'pending', receipt: null };
+        if (!conflict && current.reflectionId && current.reflectionId !== topic.reflectionId) this.cancelConversationReflection(current.reflectionId, 'superseded_by_confirmed_exchange');
+        if (!sourcesCurrent || topic.state === 'invalidated') {
+          if (topic.reflectionId) this.cancelConversationReflection(topic.reflectionId, 'exchange_context_withdrawn');
+          this.#writeTopic({ ...topic, state: 'invalidated', sourceRefs: [{ id: source.id, version: source.version }], memoryId: null,
+            report: { ...topic.report, owedRevision: topic.report.owedRevision === null ? null : topic.revision },
+            outcome: { question: 'Prior conversation context is no longer current.', stance: 'No current conclusion is retained.', rationale: 'Source or topic revision changed before exchange completion.', unresolved: [], status: 'settled' } });
+          continue;
+        }
+        const sourceRefs = [{ id: source.id, version: source.version }];
+        const memory = this.publishMemoryFromSourcesOnce({ publicationId: `outcome:${topic.id}:${topic.revision}`, scope: topic.scope, kind: 'autobiographical',
+          source: `conversation-outcome:${topic.id}`, confidence: 0.6, evidence: sourceRefs.map(ref => ref.id), sourceRefs,
+          content: JSON.stringify({ note: 'Unverified conversational interpretation, not authority or a verified fact.', topicId: topic.id, revision: topic.revision, ...topic.outcome }) }).memory;
+        this.#writeTopic({ ...topic, sourceRefs, state: 'active', memoryId: memory?.id ?? null,
+          report: { ...topic.report, owedRevision: topic.report.owedRevision === null ? null : topic.revision }, updatedAt: new Date().toISOString() });
+        if (topic.reflectionId) {
+          const reflection = this.conversationReflection(topic.reflectionId)!;
+          this.#writeReflection({ ...reflection, sourceRefs: [...intent.sourceRefs, ...sourceRefs], checkpoint: { phase: 'ready' } });
+        }
+      }
+      return this.updateTask(id, { state: 'succeeded', output, error: null });
+    });
+  }
+
+  conversationSourcesCurrent(topic: Pick<ConversationTopic, 'scope' | 'sourceRefs' | 'sourceTaskIds' | 'source'>): boolean {
+    return topic.sourceRefs.length > 0 && topic.sourceRefs.every(ref => this.memory(ref.id, topic.scope)?.version === ref.version)
+      && topic.sourceTaskIds.every(id => { const task = this.task(id); return task?.conversationId === topic.scope && task.state === 'succeeded' && this.taskSourceCurrent(id); });
+  }
+  taskSourceCurrent(id: string): boolean {
+    const task = this.task(id);
+    return !!task && !this.listEvents().some(event => event.type === 'task.corrected' && (event.payload as Record<string, Json>).originalId === id);
+  }
+  recordTaskCorrection(originalId: string, replacementId: string, commandId: string): void {
+    this.#atomic(() => {
+      const task = this.task(originalId); const replacement = this.task(replacementId);
+      if (!task || replacement?.conversationId !== task.conversationId) throw new Error('Correction requires same-scope stored tasks');
+      this.appendEvent('task.corrected', { originalId, replacementId }, commandId);
+      for (const memory of this.listMemories(task.conversationId).filter(value => value.kind === 'episodic' && value.source === `task:${originalId}`)) {
+        this.correctMemory(memory.id, memory.scope, { content: JSON.stringify({ note: 'Superseded exchange; original task/effect history is preserved outside current retrieval.', replacementTaskId: replacementId, correctionTaskId: commandId }), source: memory.source, confidence: 1 });
+      }
+      for (const topic of this.listConversationTopics(task.conversationId).filter(value => value.sourceTaskIds.includes(originalId))) this.invalidateConversationTopic(topic.id, 'Original source task was explicitly corrected.');
+    });
+  }
+
+  confirmCancelledConversation(taskId: string): void {
+    this.#atomic(() => {
+      const task = this.task(taskId); const effect = this.effect(`${taskId}:result`);
+      if (task?.state !== 'cancelled' || effect?.state !== 'completed' || (effect.result as { delivered?: boolean } | null)?.delivered !== true) return;
+      for (const intent of this.#conversationIntents(taskId)) {
+        const current = this.conversationTopic(intent.id)!;
+        const separate = intent.originalTaskId !== taskId; const id = separate ? `${intent.id}:cancelled:${taskId}` : intent.id;
+        if (this.conversationTopic(id)?.state === 'invalidated' && this.conversationTopic(id)?.outcome.rationale === 'Explicit cancellation after confirmed acknowledgment.') continue;
+        if (intent.reflectionId) this.cancelConversationReflection(intent.reflectionId, 'explicit_cancellation');
+        this.#writeTopic({ ...intent, id, originalTaskId: taskId, state: 'invalidated', revision: separate ? 1 : intent.revision,
+          reflectionId: null, memoryId: null, outcome: { question: 'Cancelled deferred topic.', stance: 'No further conclusion is claimed.', rationale: 'Explicit cancellation after confirmed acknowledgment.', unresolved: [], status: 'settled' },
+          report: { ...intent.report, waived: current.report.waived, owedRevision: current.report.waived || intent.report.owedRevision === null ? null : separate ? 1 : intent.revision,
+            lastReportedRevision: 0, taskId: null, revision: null, kind: null, effectId: null, delivery: 'pending', receipt: null } });
+      }
+    });
+  }
+
+  /** Source invalidation removes interpretation text from current registry state.
+   * The owed return survives; old prepared text is rejected before delivery. */
+  invalidateConversationTopic(id: string, reason: string): ConversationTopic {
+    return this.#atomic(() => {
+      const old = this.conversationTopic(id); if (!old) throw new Error('Topic not found');
+      if (old.state === 'invalidated') return old;
+      if (old.reflectionId) {
+        const reflection = this.conversationReflection(old.reflectionId);
+        if (reflection) this.#writeReflection({ ...reflection, question: 'Source context withdrawn.', state: 'cancelled', checkpoint: { reason } });
+      }
+      const revision = old.revision + 1;
+      const topic = this.#writeTopic({ ...old, state: 'invalidated', revision, memoryId: null,
+        outcome: { question: 'Prior conversation context is no longer current.', stance: 'No current conclusion is retained.', rationale: reason, unresolved: [], status: 'settled' },
+        report: { ...old.report, owedRevision: old.report.owedRevision === null ? null : revision }, updatedAt: new Date().toISOString() });
+      this.appendEvent('conversation.topic.invalidated', { topicId: id, reason }); return topic;
+    });
+  }
+
+  reviseConversationOutcome(id: string, outcome: ConversationOutcome, now: number, reason: string): ConversationTopic {
+    return this.#atomic(() => {
+      const old = this.conversationTopic(id); if (!old || old.state !== 'active' || !this.conversationSourcesCurrent(old)) throw new Error('Current outcome sources required');
+      const revision = old.revision + 1;
+      const result = this.publishMemoryFromSourcesOnce({ publicationId: `outcome:${id}:${revision}`, scope: old.scope, kind: 'autobiographical',
+        source: `conversation-outcome:${id}`, confidence: 0.6, evidence: old.sourceRefs.map(ref => ref.id), sourceRefs: old.sourceRefs,
+        content: JSON.stringify({ note: 'Unverified conversational interpretation; no source action authority.', topicId: id, revision, priorStance: old.outcome.stance, ...outcome }) });
+      const topic = this.#writeTopic({ ...old, revision, outcome, memoryId: result.memory?.id ?? null, nextReviewAt: now,
+        report: { ...old.report, owedRevision: old.report.waived || old.report.owedRevision === null && outcome.status === 'settled' ? null : revision }, updatedAt: new Date().toISOString() });
+      this.appendEvent('conversation.outcome.revised', { topicId: id, revision, reason }); return topic;
+    });
+  }
+
+  prepareConversationReport(id: string, text: string, kind: 'holding' | 'final', nextReviewAt: number, basis: 'outcome' | 'awaiting_exchange' = 'outcome'): Task | undefined {
+    return this.#atomic(() => {
+      const topic = this.conversationTopic(id); if (!topic || topic.report.waived || topic.report.owedRevision === null) return;
+      const prior = topic.report.taskId ? this.task(topic.report.taskId) : undefined;
+      const priorInfo = prior ? this.listEvents().find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === prior.id) : undefined;
+      const sameBasis = (priorInfo?.payload as Record<string, Json> | undefined)?.basis === basis;
+      if (topic.report.revision === topic.revision && topic.report.kind === kind && topic.report.delivery === 'delivered' && sameBasis) return prior;
+      const retryWithoutEffect = prior?.state === 'cancelled' && this.effect(`${prior.id}:result`) === undefined;
+      if (topic.report.revision === topic.revision && topic.report.taskId && topic.report.delivery !== 'delivered' && !retryWithoutEffect) return prior;
+      const original = this.task(topic.originalTaskId); if (!original) throw new Error('Original topic task is absent');
+      const attempt = this.listEvents().filter(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).topicId === id
+        && (event.payload as Record<string, Json>).revision === topic.revision && (event.payload as Record<string, Json>).kind === kind).length;
+      const eventId = `${id}:report:${topic.revision}:${kind}:${attempt}`;
+      const task = this.enqueuePreparedReply({ source: topic.source, conversationId: topic.scope, eventId, input: `Host-observed ${kind} conversation outcome report`,
+        ...(original.slackAuthor ? { slackAuthor: original.slackAuthor } : {}) }, text, topic.replyTo ?? undefined);
+      this.#writeTopic({ ...topic, nextReviewAt, report: { ...topic.report, taskId: task.id, revision: topic.revision, kind,
+        effectId: `${task.id}:result`, delivery: 'pending', receipt: null }, updatedAt: new Date().toISOString() });
+      this.appendEvent('conversation.report.prepared', { topicId: id, revision: topic.revision, kind, reportTaskId: task.id, basis }); return task;
+    });
+  }
+
+  acknowledgeConversationReport(id: string, reportTaskId: string): ConversationTopic {
+    return this.#atomic(() => {
+      const topic = this.conversationTopic(id); if (!topic) throw new Error('Topic not found');
+      const prepared = this.listEvents().find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === reportTaskId);
+      const info = prepared?.payload as { topicId: string; revision: number; kind: string } | undefined;
+      if (!info || info.topicId !== id) throw new Error('Report does not belong to topic');
+      const effect = this.effect(`${reportTaskId}:result`);
+      const delivered = effect?.state === 'completed' && effect.result !== null && typeof effect.result === 'object' && !Array.isArray(effect.result) && effect.result.delivered === true;
+      const rejected = effect?.state === 'completed' && !delivered;
+      const current = topic.report.taskId === reportTaskId;
+      const closes = delivered && info.kind === 'final' && info.revision === topic.revision && topic.outcome.status === 'settled';
+      return this.#writeTopic({ ...topic, report: { ...topic.report,
+        ...(delivered ? { lastReportedRevision: Math.max(topic.report.lastReportedRevision, info.revision) } : {}),
+        ...(closes ? { owedRevision: null } : {}), ...(current ? { delivery: delivered ? 'delivered' : rejected ? 'rejected' : effect ? 'unknown' : 'pending', receipt: effect?.result ?? null } : {}) } });
+    });
+  }
+
+  waiveConversationReport(id: string, reason: string): void {
+    required(reason, 'Explicit notification waiver reason'); const topic = this.conversationTopic(id); if (!topic) throw new Error('Topic not found');
+    this.#atomic(() => { this.#writeTopic({ ...topic, report: { ...topic.report, owedRevision: null, waived: true } }); this.appendEvent('conversation.report.waived', { topicId: id, reason }); });
+  }
+
+  conversationReflection(id: string): ConversationReflection | undefined { return decode<ConversationReflection>(this.#db.prepare('SELECT record FROM conversation_reflections WHERE id = ?').get(id)); }
+  listConversationReflections(): ConversationReflection[] { return this.#db.prepare('SELECT record FROM conversation_reflections ORDER BY rowid').all().map(row => decode<ConversationReflection>(row)!); }
+  #writeReflection(value: ConversationReflection): ConversationReflection {
+    this.#db.prepare('INSERT INTO conversation_reflections(id, record) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record').run(value.id, encode(value)); return value;
+  }
+  updateConversationReflection(id: string, patch: Pick<ConversationReflection, 'state' | 'checkpoint'>): ConversationReflection {
+    return this.#atomic(() => {
+      const old = this.conversationReflection(id); if (!old) throw new Error('Reflection not found');
+      if (['completed', 'cancelled', 'rejected'].includes(old.state)) return old;
+      return this.#writeReflection({ ...old, ...patch, updatedAt: new Date().toISOString() });
+    });
+  }
+  completeConversationReflection(id: string, expectedRevision: number, outcome: ConversationOutcome, now: number, evidence: Json): void {
+    this.#atomic(() => {
+      const item = this.conversationReflection(id); const topic = item ? this.conversationTopic(item.topicId) : undefined;
+      if (!item || item.state !== 'running' || !topic || topic.state !== 'active' || topic.revision !== expectedRevision
+        || now >= topic.expiresAt || topic.reflectionId !== id || !this.conversationSourcesCurrent(topic)) throw new Error('Reflection context changed or expired before publication');
+      const revised = this.reviseConversationOutcome(topic.id, outcome, now, 'reflection_result');
+      this.updateConversationReflection(id, { state: 'completed', checkpoint: { evidence, outcomeRevision: revised.revision } });
+    });
+  }
+  cancelConversationReflection(id: string, reason: string): ConversationReflection {
+    return this.updateConversationReflection(id, { state: 'cancelled', checkpoint: { reason } });
+  }
+  recoverConversationReflections(): void {
+    for (const item of this.listConversationReflections().filter(value => value.state === 'running')) this.updateConversationReflection(item.id, { state: 'paused', checkpoint: { reason: 'interrupted' } });
+  }
+  claimConversationReflection(id: string, windowId: string, atMs: number): ConversationReflection | undefined {
+    return this.#atomic(() => {
+      const item = this.conversationReflection(id); const topic = item ? this.conversationTopic(item.topicId) : undefined; const window = this.growthWindow(windowId);
+      if (!item || !topic || topic.state !== 'active' || topic.reflectionId !== id || !this.conversationSourcesCurrent(topic)
+        || atMs >= topic.expiresAt
+        || topic.outcome.status !== 'pending'
+        || this.conversationAwaitingExchange(topic.id)
+        || !['waiting', 'paused'].includes(item.state) || item.attempts >= item.maxAttempts || !window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls) return;
+      const attemptId = `${id}:attempt:${item.attempts + 1}`;
+      this.#db.prepare('INSERT INTO background_reservations(id, window_id) VALUES (?, ?)').run(attemptId, windowId);
+      this.#db.prepare('UPDATE growth_windows SET record = ? WHERE id = ?').run(encode({ ...window, usedCalls: window.usedCalls + 1, updatedAt: new Date().toISOString() }), windowId);
+      const claimed = this.#writeReflection({ ...item, state: 'running', attempts: item.attempts + 1, checkpoint: { attemptId }, updatedAt: new Date().toISOString() });
+      this.appendEvent('conversation.reflection.call_reserved', { reflectionId: id, windowId, schedulerId: window.schedulerId, attemptId }); return claimed;
     });
   }
 

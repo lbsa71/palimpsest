@@ -17,6 +17,7 @@ import type { Json, Store, Task } from './store.ts';
 import type { ConversationActions } from './conversation-actions.ts';
 import { readGenerationContinuity } from './continuity.ts';
 import { assertConversationRole } from './conversation-role.ts';
+import type { ConversationContinuity } from './conversation-continuity.ts';
 
 export function releaseOf(manifest: CandidateManifest): Release {
   return { digest: manifest.manifestDigest, artifactPath: manifest.releaseDir,
@@ -31,6 +32,7 @@ export interface GenerationOptions {
   selfModificationUserIds?: readonly string[];
   hostFacts?: () => Record<string, Json>;
   conversationActions?: ConversationActions;
+  conversationContinuity?: ConversationContinuity;
 }
 
 /** Actual local worker supervision. All production effects stay in this trusted process. */
@@ -105,6 +107,7 @@ export class GenerationHost {
             maxCallsPerTask: options.maxCallsPerTask,
             selfModificationUserIds: options.selfModificationUserIds,
             conversationActions: options.conversationActions,
+            conversationContinuity: options.conversationContinuity,
             memoryProjectionChecks: () => readManifest(releaseOfWorker(this.custodian, peer).artifactPath).requiredChecks,
             hostFacts: () => ({ ...options.hostFacts?.(),
               activeRelease: this.custodian.inspect().active?.release.digest ?? null,

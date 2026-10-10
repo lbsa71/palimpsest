@@ -1,6 +1,6 @@
 # ADR 0026: Conversation outcomes and scoped reflection
 
-- **Status:** Explicit user requirement; independently reviewed proposed implementation direction. The complete serving workflow is not implemented.
+- **Status:** Accepted bounded runtime contract implementing the explicit user requirement. Independently reviewed frozen host `f2f8be22` is installed; a finite live peer/report check passed. Qualitative reflection, judgment and full serving acceptance remain open.
 - **Recorded:** 2026-10-09.
 - **Requirements:** R02, R04, R07, R17–R19, R22–R25; P06/P16.
 - **Specification and evidence:** [Conversation judgment](../conversation-judgment.md#follow-up-investigation-remembered-exchange-versus-owned-reflection).
@@ -11,13 +11,15 @@ The user requires the autark to remember an exchange and its outcome even when i
 
 The user's subsequent clarification on the same date makes an asynchronous return mandatory for every topic deferred or pending investigation/decision. The original optional-follow-up clause is superseded. The autark must track what it owes a reply about, not wait for the human to reopen the conversation.
 
-The current runtime records input/reply episodes. Ordinary replies have no durable reflection action, and eligible conversation retrieval excludes derived memories. A deterministic reproduction using the real runtime, memory coordinator and reopened Store retained two derived interpretations but supplied neither to the next eligible conversation. Existing guidance against habitual approval questions does not implement that missing workflow or establish the cause of the model's repeated hand-back.
+At the investigation baseline, the runtime recorded input/reply episodes but ordinary replies had no durable reflection action, and eligible conversation retrieval excluded derived memories. A deterministic reproduction using the real runtime, memory coordinator and reopened Store retained two derived interpretations but supplied neither to the next eligible conversation. Existing guidance against habitual approval questions did not implement that missing workflow or establish the cause of the model's repeated hand-back.
 
-## Proposed direction
+## Decision
 
 Represent the original exchange, its source-linked interpreted outcome, durable topic/follow-up obligation and any selected operational inquiry separately. Use the existing structured completion boundary to request an outcome and optional reflection; a deferral necessarily creates an owed return. Bind scope, participants, source versions, limits and return route in the host; retain uncertainty and original human provenance. Topic identity is distinct from thread identity so multiple topics and related threads retain their own state and owed destinations.
 
 Persist an admitted continuation before promising it, distinguish prepared intent from confirmed delivery, and activate reflection through an atomic or recoverable exchange-completion path. Run it as a distinct background purpose with the configured allocation and finite cumulative limits, sharing window limits and fair selection with independent standing growth. It must survive restart and succession without appearing as foreground user work that blocks its own execution. Cancellation is terminal; preemption may pause it. Reflection can end without a new lesson or compulsory next inquiry.
+
+The host's finite lifetime is an admission and publication boundary, independent of review-loop ordering. At or after expiry, selection and atomic reservation must refuse a new reflection call; a result returning at or after expiry must not revise the topic or enter memory. A previously reserved call remains spent. Durable review ends the inquiry inconclusively and still owes its final report; neither late output nor deadline expiry establishes delivery.
 
 Reuse and extend `MemoryCoordinator`'s source-aware publication and recovery primitives, the scheduler's resource allocation and the established communication-effect path. Preserve immutable inquiry metadata separately from mutable attempt checkpoints. Add a bounded reflection contract that addresses the retained question, not merely a summary of whichever memories are newest. Revalidate sources and current authority before dispatch, publication and any delivery. Exact schemas and class boundaries remain implementation choices.
 
@@ -40,4 +42,6 @@ This adds a lifecycle and retrieval contract that must be tested together. The m
 
 ## Acceptance and status
 
-The [round-trip acceptance cases](../conversation-judgment.md#acceptance-for-the-round-trip) require real storage/restart, finite background execution, source invalidation, interruption, truthful delivery and actual later-request retrieval. Deterministic mechanics and qualitative model judgment require separate evidence. The current red fixture proves one missing link; it does not demonstrate a fix, automatic scheduling or adequate cognition. No live change or additional provider call is implied by this ADR.
+The [round-trip acceptance cases](../conversation-judgment.md#acceptance-for-the-round-trip) require real storage/restart, finite background execution, source invalidation, interruption, truthful delivery and actual later-request retrieval. The [work item](../work-items/p16-conversation-continuity.md) records the installed slice and finite host policy. Exact replacement-artifact review passed four inherited gates, 124 selected regression/operator cases and 16 independent probes after rejecting the initial expiry defect. The authorized operator installation preserved existing state, allocations and rescue. A live Mistral peer turn retained a pending outcome and received an unprompted final report with no report inference or peer reflection/source job. Deterministic mechanics and that finite wiring check do not establish qualitative model judgment. Related-thread discovery/merge, configured-provider reflection and later retrieval, historical truthfulness and full P16/public-security acceptance remain open.
+
+The concrete lifecycle retains tentative exchange intents separately from the current topic. Only confirmed acknowledgment can activate an intent; a conflicting unresolved continuation pauses older thought but preserves the previously accepted obligation. Result publication and reflection completion commit together. Each final report is tied to an outcome revision and communication effect; holding updates, rejected/unknown sends and older acknowledgments cannot clear a newer obligation. Source-linked raw episodes prevent later generated replies from laundering forgotten evidence or another author's authority.

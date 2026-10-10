@@ -10,6 +10,8 @@ The current seed runs a trusted Node coordinator with durable SQLite tasks, memo
 
 The [local peer role](peer-conversation.md) adds a separate credential and restricted routes to that loopback surface. Trusted ingress assigns peer source and a reserved scope; task controls and memory retrieval check peer provenance before data/effects. Peer conversation uses the same configured runtime/model but cannot enter the eligible source-proposal lane. Public exposure and confidentiality of information already in scope remain separate acceptance obligations under R25/A21.
 
+The installed [scoped continuity slice](work-items/p16-conversation-continuity.md) separates exchange delivery, source-linked interpretation, durable topic/report obligation and optional reflection. Reflection shares existing growth allocation and checks current sources, topic revision and expiry before dispatch/publication. A no-inference review prepares reports through the original communication effect path; only current final delivery or explicit waiver clears the obligation. Peers can retain outcomes and reports but cannot admit reflection. Reopened scoped retrieval is fixture-verified; broader live reflective judgment remains open.
+
 Current-turn dispatch flags are separate from configured global capabilities. Selected memory source facts identify the stored transport and exact recorded proposal presence; neither memory text nor a proposal record establishes human authentication, truth or a completed release. Actual provider tests improved fresh role interpretation but still misrepresented historical peer exchanges, so these facts guide fallible cognition while receiving boundaries enforce authority.
 
 ## Direction and provenance

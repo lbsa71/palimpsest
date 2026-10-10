@@ -145,7 +145,8 @@ test('Slack sends to original thread and refuses ambiguous context', async () =>
     requests.push({ url: String(url), init: init! });
     return new Response(JSON.stringify({ ok: true, channel: 'C1', ts: '125.000' }), { status: 200 });
   } });
-  await slack.send({ conversationId: 'slack:T1:C1:123.000', replyTo: '123.000', taskId: 'task-1', text: 'Done', kind: 'result' });
+  const receipt = await slack.send({ conversationId: 'slack:T1:C1:123.000', replyTo: '123.000', taskId: 'task-1', text: 'Done', kind: 'result' });
+  assert.deepEqual(receipt, { transport: 'slack', messageId: '125.000' });
   assert.equal(requests[0]?.url, 'https://slack.com/api/chat.postMessage');
   assert.deepEqual(JSON.parse(String(requests[0]?.init.body)), { channel: 'C1', thread_ts: '123.000', text: 'Done', mrkdwn: false, unfurl_links: false, unfurl_media: false });
   assert.equal(new Headers(requests[0]?.init.headers).get('authorization'), 'Bearer test-bot-token');

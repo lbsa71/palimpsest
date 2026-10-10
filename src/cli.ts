@@ -28,6 +28,7 @@ import type { DevelopmentExecutor } from './development-executor.ts';
 import { observeSourceIdentity } from './source-identity.ts';
 import { EVOLUTION_CHECKS } from './evolution.ts';
 import { conversationSchedulingFacts } from './conversation-host-facts.ts';
+import { ConversationContinuity } from './conversation-continuity.ts';
 
 /** The single trusted process serializes all provider calls, including growth. */
 function configuredProvider(config: RuntimeConfig): Provider {
@@ -112,7 +113,7 @@ async function main(): Promise<void> {
   try {
     store = new Store(paths.dbPath);
     // The exclusive lock proves earlier coordinator owners have stopped.
-    store.recoverInterrupted(); store.recoverGrowthInterrupted(); store.recoverMemoryConsolidations();
+    store.recoverInterrupted(); store.recoverGrowthInterrupted(); store.recoverMemoryConsolidations(); store.recoverConversationReflections();
     if (command === 'tasks') { console.log(JSON.stringify(store.listTasks(), null, 2)); return; }
     if (command === 'memory') { console.log(JSON.stringify(store.listMemories(args[0] ?? 'local'), null, 2)); return; }
     const provider = configuredProvider(config);
@@ -132,7 +133,11 @@ async function main(): Promise<void> {
     const hasUserWork = () => stopped || evolution?.busy === true || development?.busy===true || publicationReconciler?.busy===true
       || publicationReconciler?.pending(evolution?.items()??[])===true
       || (host !== undefined && (!ready || !['normal', 'probation'].includes(host.custodian.inspect().phase))) || userCommitments();
+    const continuity = new ConversationContinuity({ store, provider, hasUserWork,
+      mayDeliver: topic => topic.source !== 'slack' || (() => { const context = /^slack:([^:]+):([^:]+):[^:]+$/.exec(topic.scope);
+        return !!context && config.slackTeamIds.includes(context[1]!) && (!config.slackChannelIds.length || config.slackChannelIds.includes(context[2]!)); })() });
     const newGrowth = () => new GrowthScheduler({ store: store!, provider, hasUserWork,
+      conversationContinuity: continuity,
       ...(host?{observeSource}:{}),
       callsPerWindow: config.growthCallsPerDay, context, onError: code => console.error(code),
       ...(evolution ? { onProposedChange: event => { evolution!.enqueue(event.growth.id, event.proposedChange); } } : {}) });
@@ -163,6 +168,7 @@ async function main(): Promise<void> {
       model: config.model || null, communications, maxCallsPerTask: config.maxCallsPerTask, quiesceBackground: pauseGrowth,
       selfModificationUserIds: config.slackSelfModificationUserIds,
       conversationActions:actions,
+      conversationContinuity:continuity,
       hostFacts: () => ({ ...conversationSchedulingFacts(config, { serving: command === 'serve', ready, stopping: stopped,
         planScheduled: development !== undefined, growthTimerScheduled: growth !== undefined, userWork: userCommitments(),
         backgroundQuiescing: evolution?.busy === true || development?.busy === true || publicationReconciler?.busy === true }),
@@ -267,6 +273,9 @@ async function main(): Promise<void> {
     evolution.start();
     const tick = () => {
       if (stopped) return;
+      // Registry review performs no inference and must remain available while
+      // a publication, evolution or development collector owns background work.
+      try { continuity.review(); } catch { console.error('conversation_review_failed'); }
       // Mechanical health owns its own promise. A collector or provider call
       // cannot suppress the next probe of the serving worker. Custody still
       // enforces exclusive transitions; task draining owns a separate loop.
