@@ -1,0 +1,212 @@
+{
+  "status": "fixture-only; no production dependency installation or live conformance",
+  "node": "v24.13.0",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "resolution": {
+    "importPrefix": "./fixture-sdk/",
+    "localIgnoredSymlink": "fixture-sdk",
+    "installedClosure": "/Users/stefan/.codex/worktrees/coding-autonomy-implementation/palimpsest/experiments/coding-provider-adapter/node_modules",
+    "selectedLockSha256": "b19be919f3f5ebb9a3d631c77472e33d074eef2115c1f4bc2476ff8df012925e",
+    "selectedBaselineFacadeSha256": "dbc9ecd67b80e8c6ee6892d8f80a5005bb6d613f3f4d70c4c48df3d3536516cd",
+    "selectedBaselineTestSha256": "13e39cea8866432fe800d1ae0d83b59ac9f9414af155ddb089c7039cd6521df9"
+  },
+  "developmentToolchain": {
+    "typescript": "7.0.2",
+    "@types/node": "24.19.1"
+  },
+  "packageCount": 9,
+  "total": {
+    "bytes": 10467348,
+    "files": 1573
+  },
+  "packages": [
+    {
+      "name": "@ai-sdk/mistral",
+      "version": "4.0.62",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "integrity": "sha512-I0Wm4VMBckhVG++KFFhXqX8UGzYfh4L+1obwXJ1JX2AE1NAW6DFKYebVT2slMWPt80RV3erM6scYkwwwFc2d3A==",
+      "files": 33,
+      "bytes": 368109,
+      "treeSha256": "3978803e7610aedae727ba2a875aafbaaff09de560a88994ee85d773430d5944",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "@ai-sdk/provider",
+      "version": "4.0.26",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "integrity": "sha512-BZ443uBEq6HuMA+Z4b7Hpm65GpZSo7pWqnYqpf/7tAO3C48JbtvAhOE2JnODFj+jodsZzfRHkAyQb64xuD2tZQ==",
+      "files": 264,
+      "bytes": 721131,
+      "treeSha256": "04fc16ebd1d2e277d8260f50e3f9835f122d0d3590a494c7b6d5a36af7ff39d6",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "@ai-sdk/provider-utils",
+      "version": "5.0.58",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=22"
+      },
+      "integrity": "sha512-iXSwKR/7LpHzAlyrUl+bTinwzmZ3Nmup1viwPisM5Gn5cogRdIG4rV9w1ZDuKFcrXyu/AeVs42E1CX/0aNwrfQ==",
+      "files": 186,
+      "bytes": 1402875,
+      "treeSha256": "1752cfd3610ce1f0a4226bb4346bb5f4895e253b7533ea87d46aefa3a35aa0f6",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "@standard-schema/spec",
+      "version": "1.1.0",
+      "license": "MIT",
+      "engines": null,
+      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+      "files": 7,
+      "bytes": 22634,
+      "treeSha256": "896eb6d4f2f16a4382371d0438c170bb1645b3e858c8f9a2694687a030c2d42d",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "@workflow/serde",
+      "version": "4.1.0",
+      "license": "Apache-2.0",
+      "engines": null,
+      "integrity": "sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==",
+      "files": 7,
+      "bytes": 3735,
+      "treeSha256": "a140fd4ed07fbf149c95b9fb91a79cc28d132bf2ffa31a508fc7b73bb55ae916",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "eventsource-parser",
+      "version": "3.1.1",
+      "license": "MIT",
+      "engines": {
+        "node": ">=18.0.0"
+      },
+      "integrity": "sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==",
+      "files": 21,
+      "bytes": 123553,
+      "treeSha256": "bdba08c199a647f90d76199b3244672d30e7d6ab8d906c5459d1739d1173ffe3",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "json-schema",
+      "version": "0.4.0",
+      "license": "(AFL-2.1 OR BSD-3-Clause)",
+      "engines": null,
+      "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==",
+      "files": 5,
+      "bytes": 26079,
+      "treeSha256": "da713dc6df26dce8518fb15ed92ed6840c0b95761239a25006ca8368c7c8d677",
+      "lifecycleScripts": {}
+    },
+    {
+      "name": "undici",
+      "version": "7.30.0",
+      "license": "MIT",
+      "engines": {
+        "node": ">=20.18.1"
+      },
+      "integrity": "sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==",
+      "files": 210,
+      "bytes": 1658921,
+      "treeSha256": "342bda88b9f9da4b05697569adf9ce36be15c15a79701f1f48c2b3b802008964",
+      "lifecycleScripts": {
+        "prepare": "husky && node ./scripts/platform-shell.js"
+      }
+    },
+    {
+      "name": "zod",
+      "version": "4.6.5",
+      "license": "MIT",
+      "engines": null,
+      "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==",
+      "files": 840,
+      "bytes": 6140311,
+      "treeSha256": "8db4306ea573cbd58bd3f3deaf5a2dfe1d37777c818817f01d7ad3cbbed687b2",
+      "lifecycleScripts": {}
+    }
+  ],
+  "sdkSource": [
+    {
+      "path": "@ai-sdk/mistral/src/mistral-chat-language-model.ts",
+      "sha256": "d8c2de66a6d7405fa65095beec709900cfa4a5d238db20fa54bd034f2e60cb8a"
+    },
+    {
+      "path": "@ai-sdk/mistral/src/convert-to-mistral-chat-messages.ts",
+      "sha256": "9e963f12e65f2a2e3596a5b73a32a891d464d2ab56359fc9b05e7205e4d29055"
+    },
+    {
+      "path": "@ai-sdk/mistral/src/convert-mistral-usage.ts",
+      "sha256": "6fe500c46518c0be6bff5233b36cfd3437cdeb0057122a500efea02b252f9d4c"
+    },
+    {
+      "path": "@ai-sdk/provider/dist/index.d.ts",
+      "sha256": "9d61b1b74f4bbf3dcdde07e4c704615d34ad9a5232eb83c1f05892a0480f97b7"
+    },
+    {
+      "path": "@ai-sdk/provider-utils/src/response-handler.ts",
+      "sha256": "867e9c7790efffc986f4ae583027316ca9dea8d7fdb11d539357a0cf5b306ea7"
+    },
+    {
+      "path": "@ai-sdk/provider-utils/src/read-response-with-size-limit.ts",
+      "sha256": "c66982cb96e0a315408927c63401db9a9a8edb5116edb96206af7910c7bddd6e"
+    }
+  ],
+  "source": [
+    {
+      "path": ".gitignore",
+      "bytes": 13,
+      "lines": 1,
+      "sha256": "346e24bd8a072f18413c3b2c9d84c94182beff492c52b46babf4baff3c8028e2"
+    },
+    {
+      "path": "README.md",
+      "bytes": 10919,
+      "lines": 63,
+      "sha256": "77eafd22aae097d42d1a9bf6071ea6e9a3b8e4c7c51d1de313da8951882ce797"
+    },
+    {
+      "path": "contracts.ts",
+      "bytes": 2679,
+      "lines": 33,
+      "sha256": "22d8ea7fc7e12fd3e0964e6eec1c26868e4cc2af44c48bb4d0f77268d37195a9"
+    },
+    {
+      "path": "facade.ts",
+      "bytes": 18253,
+      "lines": 277,
+      "sha256": "5d96dce39cb9b30059dc84bf4d8a523fffc1966d2de23e8d2360416ce95c0534"
+    },
+    {
+      "path": "inventory.mjs",
+      "bytes": 4273,
+      "lines": 49,
+      "sha256": "f66c21bdfa93b62be4c18ea90dd60a88c4008d9ea18cab9baf0f3bae5502ffa1"
+    },
+    {
+      "path": "tsconfig.json",
+      "bytes": 673,
+      "lines": 15,
+      "sha256": "be2822e140e0098fa9540de56276743ff1cafb5160e93e0666da4f5a572f6cf6"
+    },
+    {
+      "path": "test/baseline.test.ts",
+      "bytes": 18550,
+      "lines": 302,
+      "sha256": "e0457286ba723592a835452e3c432b31c81e4a525205f4f06c22b921f17def65"
+    },
+    {
+      "path": "test/general.test.ts",
+      "bytes": 13984,
+      "lines": 160,
+      "sha256": "7c0043ad393f94587ca49ca27d8b735d1258ca52c5b1e00ab87b5107d67ecada"
+    }
+  ]
+}
