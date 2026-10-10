@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHmac } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -200,4 +200,72 @@ test('operator CLI prepares exact host baseline, preserves memory and installs/r
     const observed=new Store(join(f.data,'state.sqlite'));assert.equal(observed.listMemories('local')[0]?.content,'history preserved');observed.close();
     const restored=JSON.parse(run(f,'host-baseline','restore',prepared.candidateId));assert.equal(restored.generation,initial.generation);assert.ok(restored.epoch>installed.epoch);
   }finally{f.cleanup();}
+});
+
+
+test('actual operator CLI SIGTERM during a blocked pre-transfer collector prevents installation admission', { skip: process.platform !== 'darwin' }, async t => {
+  const f = fixture(); let child: ChildProcessWithoutNullStreams | undefined; let helper: number | undefined;
+  let stdout = ''; let stderr = '';
+  const custody = () => {
+    const db = new DatabaseSync(join(f.data, 'custodian/custodian.sqlite'), { readOnly: true });
+    try { return { state: JSON.parse(db.prepare('SELECT record FROM custodian_state WHERE id=1').get()!.record as string),
+      events: db.prepare('SELECT type,payload FROM custodian_events ORDER BY sequence').all() }; }
+    finally { db.close(); }
+  };
+  const jobs = () => readdirSync(join(f.data, 'candidate-jobs')).filter(name => /^[a-f0-9]{64}$/.test(name) && existsSync(join(f.data, 'candidate-jobs', name, 'request.json'))).map(name => {
+    const directory = join(f.data, 'candidate-jobs', name);
+    return { directory, request: JSON.parse(readFileSync(join(directory, 'request.json'), 'utf8')),
+      receipt: JSON.parse(readFileSync(join(directory, 'receipt.json'), 'utf8')) };
+  });
+  try {
+    writeFileSync(join(f.repo, 'src/agent/brain.ts'), source.replace('memories.slice(-12)', 'memories.filter(m=>m.scope===task.conversationId).slice(-12)'));
+    execFileSync('/usr/bin/git', ['add', '.'], { cwd: f.repo }); execFileSync('/usr/bin/git', ['commit', '-qm', 'scoped cognition'], { cwd: f.repo });
+    const initial = JSON.parse(run(f, 'init'));
+    const store = new Store(join(f.data, 'state.sqlite'));
+    store.addMemory({ scope: 'local', kind: 'episodic', content: 'interrupted operator continuity', source: 'fixture', confidence: 1 }); store.close();
+    writeFileSync(join(f.repo, 'src/operator-host.ts'), 'export const hostVersion=2;');
+    execFileSync('/usr/bin/git', ['add', '.'], { cwd: f.repo }); execFileSync('/usr/bin/git', ['commit', '-qm', 'host upgrade'], { cwd: f.repo });
+    const prepared = JSON.parse(run(f, 'host-baseline', 'prepare'));
+    const commandStarted = Date.now();
+    child = spawn(process.execPath, [cli, 'host-baseline', 'install', prepared.candidateId, initial.generation], { cwd: f.repo, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+    const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => child!.once('exit', (code, signal) => resolve({ code, signal })));
+    // Pause only the actual helper whose durable request proves this operation's
+    // serving verification. Startup/recovery collectors are never interrupted.
+    const blocked = await until(() => jobs().find(job => job.request.binding.authority === 'serving' && job.receipt.outer.state === 'spawned'), Boolean);
+    helper = blocked!.receipt.outer.pid; process.kill(helper!, 'SIGSTOP');
+    const countAtStop = jobs().length; const before = custody().state;
+    child.kill('SIGTERM');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    try { process.kill(helper!, 'SIGCONT'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+    let timer: NodeJS.Timeout | undefined;
+    const result = await Promise.race([ended, new Promise<never>((_, reject) => { timer = setTimeout(() => { child!.kill('SIGKILL'); reject(new Error('Operator command exceeded its original 20000ms deadline')); }, Math.max(1, 20_000 - (Date.now() - commandStarted))); })]).finally(() => { if (timer) clearTimeout(timer); });
+    const after = custody(); const receipts = jobs();
+    const evidence = { result, initial: initial.generation, candidate: prepared.candidateId, beforeEpoch: before.epoch,
+      afterEpoch: after.state.epoch, phase: after.state.phase, knownGood: after.state.knownGood.digest, commandDurationMs: Date.now() - commandStarted,
+      countAtStop, countAfterStop: receipts.length, installationEvents: after.events.filter(event => String(event.type).startsWith('host_baseline.')),
+      jobs: receipts.map(job => ({ jobId: job.receipt.jobId, operation: job.receipt.operation, status: job.receipt.status, outer: job.receipt.outer,
+        nested: JSON.parse(readFileSync(join(job.directory, 'nested.json'), 'utf8')) })), stdout, stderr };
+    t.diagnostic(JSON.stringify(evidence));
+    if (process.env.PALIMPSEST_TEST_EVIDENCE_DIR) {
+      mkdirSync(process.env.PALIMPSEST_TEST_EVIDENCE_DIR, { recursive: true, mode: 0o700 });
+      writeFileSync(join(process.env.PALIMPSEST_TEST_EVIDENCE_DIR, 'operator-cli-interruption.json'), JSON.stringify({ ...evidence, requests: receipts.map(job => job.request), manifests: [initial.generation, prepared.candidateId].map(id => JSON.parse(readFileSync(join(f.data, 'releases', id, 'manifest.json'), 'utf8'))) }, null, 2), { mode: 0o600 });
+    }
+    assert.equal(result.signal, null); assert.notEqual(result.code, 0, 'A stopped install cannot report successful command completion');
+    const outcome = JSON.parse(stdout); assert.equal(outcome.status, 'interrupted'); assert.equal(outcome.phase, 'normal');
+    assert.equal(outcome.generation, initial.generation); assert.equal(outcome.knownGood, initial.generation); assert.match(outcome.reason, /cancel|abort/i);
+    assert.equal(receipts.length, countAtStop, 'No later collector is admitted after stop');
+    assert.equal(after.state.knownGood.digest, initial.generation); assert.equal(after.state.epoch, before.epoch);
+    assert.equal(after.events.some(event => String(event.type).startsWith('host_baseline.')), false, 'No preparation/fencing/activation follows pre-admission stop');
+    assert.equal(receipts.find(job => job.receipt.jobId === blocked!.receipt.jobId)!.receipt.status, 'cancelled');
+    for (const job of receipts) { assert.equal(job.receipt.outer.state, 'drained'); assert.ok(JSON.parse(readFileSync(join(job.directory, 'nested.json'), 'utf8')).every((nested: { state: string }) => nested.state === 'drained')); }
+    assert.throws(() => process.kill(helper!, 0), { code: 'ESRCH' });
+    const afterStore = new Store(join(f.data, 'state.sqlite'));
+    try { assert.equal(afterStore.listMemories('local')[0]?.content, 'interrupted operator continuity'); assert.equal(afterStore.listEvents().some(event => event.type.includes('call_reserved')), false); }
+    finally { afterStore.close(); }
+  } finally {
+    if (helper) { try { process.kill(helper, 'SIGCONT'); } catch {} }
+    if (child && child.exitCode === null) { const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGKILL'); await exited; }
+    f.cleanup();
+  }
 });

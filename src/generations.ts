@@ -48,7 +48,7 @@ export class GenerationHost {
   #providerAvailable = true;
   #closed = false;
   #custodyTail: Promise<void> = Promise.resolve();
-  #custodyContext = new AsyncLocalStorage<{ active: boolean; validateCurrent?: () => void }>();
+  #custodyContext = new AsyncLocalStorage<{ active: boolean; epoch: number; validateCurrent?: () => void; signal?: AbortSignal }>();
   #closing?: Promise<void>;
   #collectionStop = new AbortController();
   #collections = new Map<Promise<unknown>, AbortController>();
@@ -173,12 +173,20 @@ export class GenerationHost {
     assertFence();
     const validate = control.validateBinding;
     const stop = new AbortController();
-    const signal = AbortSignal.any([this.#collectionStop.signal, stop.signal, ...(control.signal ? [control.signal] : [])]);
+    const context = this.#custodyContext.getStore();
+    // Admission's operation signal owns only pre-fence work. A fenced transfer
+    // or mechanical rescue must finish under custody, even after caller stop.
+    const custodySignal = authority === 'custody-integrity' && context?.active
+      && context.epoch === this.custodian.inspect().epoch ? context.signal : undefined;
+    const signal = AbortSignal.any([this.#collectionStop.signal, stop.signal,
+      ...(control.signal ? [control.signal] : []), ...(custodySignal ? [custodySignal] : [])]);
+    signal.throwIfAborted();
     const pending = this.candidateJobs.run(operation, { jobId: control.jobId, deadlineMs: control.deadlineMs, signal,
       binding: JSON.parse(JSON.stringify({ ...binding, authority })) as Json,
       validateBinding: async () => { assertFence(); await validate?.(); assertFence(); } });
     this.#collections.set(pending, stop);
-    try { return await pending; } finally { this.#collections.delete(pending); }
+    try { const result = await pending; signal.throwIfAborted(); return result; }
+    finally { this.#collections.delete(pending); }
   }
   async #interruptCollections(): Promise<void> {
     const pending = [...this.#collections];
@@ -197,11 +205,11 @@ export class GenerationHost {
    * Callers copy payloads before enqueueing and revalidate their
    * actual authority inside the callback; this queue grants no receiver rights.
    * Hooks already run inside an operation and must not acquire it recursively. */
-  async custodyOperation<T>(operation: () => T | Promise<T>, validateCurrent?: () => void): Promise<T> {
+  async custodyOperation<T>(operation: () => T | Promise<T>, validateCurrent?: () => void, signal?: AbortSignal): Promise<T> {
     if (this.#custodyContext.getStore()?.active) throw new Error('Recursive custody operation is forbidden');
     if (this.#closed) throw new Error('Generation host is closed');
     const pending = this.#custodyTail.then(async () => {
-      const context = { active: true, validateCurrent };
+      const context = { active: true, epoch: this.custodian.inspect().epoch, validateCurrent, signal };
       try { return await this.#custodyContext.run(context, () => {
         this.#validateCustodyConsequence(true);
         return operation();
@@ -238,29 +246,31 @@ export class GenerationHost {
     });
   }
 
-  async installHostBaseline(manifest: CandidateManifest, expectedIncumbent: string): Promise<void> {
+  async installHostBaseline(manifest: CandidateManifest, expectedIncumbent: string, signal?: AbortSignal): Promise<void> {
     manifest = structuredClone(manifest);
+    signal?.throwIfAborted();
     const state = this.custodian.inspect(); const previous = state.knownGood;
     const actor = this.actor;
     const expectedState = digestJson({ epoch: state.epoch, active: state.active, knownGood: state.knownGood });
     if (!previous || previous.digest !== expectedIncumbent) throw new Error('Operator baseline incumbent changed');
-    const old = await this.collectCandidate({ kind: 'verify', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false,expectedLegacyManifestDigest:previous.digest} });
-    const frozen = await this.collectCandidate({ kind: 'verify', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:manifest.releaseDir} });
+    const old = await this.collectCandidate({ kind: 'verify', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:previous.artifactPath,requireCurrentBase:false,expectedLegacyManifestDigest:previous.digest} }, { signal });
+    const frozen = await this.collectCandidate({ kind: 'verify', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:manifest.releaseDir} }, { signal });
     if (frozen.id !== manifest.id || frozen.sourceDigest !== old.sourceDigest || frozen.dataSchemaVersion !== old.dataSchemaVersion)
       throw new Error('Host installation must preserve exact admitted cognitive source and schema');
     if(digestJson(frozen.configuration)!==digestJson(old.configuration))throw new Error('Host installation must preserve configured release policy');
     if(old.requiredChecks.some(name=>!frozen.requiredChecks.includes(name)))throw new Error('Host installation requires all protected checks, including previously admitted checks');
-    const checked = await this.collectCandidate({ kind: 'evaluate', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:frozen.releaseDir} });
+    const checked = await this.collectCandidate({ kind: 'evaluate', options: {repositoryRoot:this.#options.repositoryRoot,releaseDir:frozen.releaseDir} }, { signal });
     if (checked.status !== 'passed' || this.requiredChecks.some(name=>!checked.checks.some(check=>check.name===name && check.status==='passed')))
       throw new Error('Host installation requires all protected checks');
     const release = releaseOf(frozen);
     const validateCurrent = () => {
+      signal?.throwIfAborted();
       const current = this.custodian.inspect();
       if (digestJson({ epoch: current.epoch, active: current.active, knownGood: current.knownGood }) !== expectedState || !current.active || this.worker(current.active.process).closed)
         throw new Error('Operator baseline incumbent changed');
       this.custodian.assertAuthority(actor, 'tool', current.active.process);
     };
-    await this.custodyOperation(() => this.custodian.installHostBaseline(release, expectedIncumbent, checked.evidenceDigest), validateCurrent);
+    await this.custodyOperation(() => this.custodian.installHostBaseline(release, expectedIncumbent, checked.evidenceDigest), validateCurrent, signal);
   }
 
   async submit(message: InboundMessage): Promise<Task> {
