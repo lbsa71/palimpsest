@@ -61,7 +61,7 @@ coordinator separates execution authorization from terminal outcome permission.
 ## Verification and limits
 
 The actual native serving witness lives in
-`experiments/coding-session-provider/serving/serving.test.ts`, outside the normal
+`experiments/coding-provider-adapter/session-provider/serving/serving.test.ts`, outside the normal
 test set because the selected SDK closure is a separate experiment. Run it
 explicitly after preparing that pinned fixture closure; root TypeScript checks
 the SDK-independent serving test interfaces. No production dependency was added.

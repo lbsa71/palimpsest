@@ -5,22 +5,22 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store, type Task } from '../../../src/store.ts';
-import { DirectCommunications, type Communications, type OutboundMessage } from '../../../src/communications.ts';
-import { ConversationActions } from '../../../src/conversation-actions.ts';
-import { ConversationContinuity } from '../../../src/conversation-continuity.ts';
-import { GenerationHost } from '../../../src/generations.ts';
-import { freezeBaseline, digestJson } from '../../../src/candidates.ts';
-import { CodingAccounting } from '../../../src/coding-accounting.ts';
-import { CodingArtifacts } from '../../../src/coding-artifacts.ts';
-import { CodingWorkspaces } from '../../../src/workspaces.ts';
-import { CodingSessionCoordinator } from '../../../src/coding-session.ts';
-import { CodingServing } from '../../../src/coding-serving.ts';
-import { assertSourceBindingCurrent, observeSourceIdentity } from '../../../src/source-identity.ts';
-import { GrowthScheduler } from '../../../src/scheduler.ts';
-import { codingData, type CodingSessionPolicy } from '../../../src/coding-contracts.ts';
-import type { Provider } from '../../../src/providers.ts';
-import type { CodingProviderPort, TrustedCodingProviderOptions } from '../../../src/coding-provider.ts';
+import { Store, type Task } from '../../../../src/store.ts';
+import { DirectCommunications, type Communications, type OutboundMessage } from '../../../../src/communications.ts';
+import { ConversationActions } from '../../../../src/conversation-actions.ts';
+import { ConversationContinuity } from '../../../../src/conversation-continuity.ts';
+import { GenerationHost } from '../../../../src/generations.ts';
+import { freezeBaseline, digestJson } from '../../../../src/candidates.ts';
+import { CodingAccounting } from '../../../../src/coding-accounting.ts';
+import { CodingArtifacts } from '../../../../src/coding-artifacts.ts';
+import { CodingWorkspaces } from '../../../../src/workspaces.ts';
+import { CodingSessionCoordinator } from '../../../../src/coding-session.ts';
+import { CodingServing } from '../../../../src/coding-serving.ts';
+import { assertSourceBindingCurrent, observeSourceIdentity } from '../../../../src/source-identity.ts';
+import { GrowthScheduler } from '../../../../src/scheduler.ts';
+import { codingData, type CodingSessionPolicy } from '../../../../src/coding-contracts.ts';
+import type { Provider } from '../../../../src/providers.ts';
+import type { CodingProviderPort, TrustedCodingProviderOptions } from '../../../../src/coding-provider.ts';
 
 // Keep serving contracts SDK-independent. The selected adapter has its own
 // strict fixture compiler; this test imports that same real implementation.

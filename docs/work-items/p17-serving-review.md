@@ -134,7 +134,7 @@ No remaining observed blocker from these findings is left open. Native source,
 effect recovery and actual artifact receiver execution still require their own
 evidence and fresh final review. The normal `test/` suite no longer imports the
 experimental native facade or ignored `fixture-sdk` symlink; actual native
-serving fixtures reside under `experiments/coding-session-provider/test/` and
+serving fixtures reside under `experiments/coding-provider-adapter/session-provider/serving/` and
 must be run separately in their configured experiment environment. This
 preserves a dependency-independent normal/protected suite without presenting
 unavailable native evidence as a pass.
