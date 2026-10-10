@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, prepareState, resolveExternalPath } from './config.ts';
+import { assertPlatformMigrationReady } from './platform-migration-gate.ts';
 import type { RuntimeConfig } from './config.ts';
 import { DirectCommunications, PeerCommunications, SlackCommunications, createLocalServer } from './communications.ts';
 import type { InboundMessage, LocalServer } from './communications.ts';
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ...config.describe(), node: process.version, liveIntegrationChecked: false }, null, 2));
     return;
   }
+  assertPlatformMigrationReady(config.dataDir);
   const slack = ['init', 'ask', 'serve'].includes(command) ? slackMode(config) : undefined;
   const paths = prepareState(config);
   const lock = new CoordinatorLock(resolveExternalPath(config.repositoryRoot, join(config.dataDir, 'coordinator.sqlite')));

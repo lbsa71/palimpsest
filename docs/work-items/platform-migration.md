@@ -1,6 +1,6 @@
 # Operator platform migration
 
-Status: bounded implementation verified with eight migration fixtures and 21 existing custodian tests on macOS. Native Linux confinement, integrated CLI/service guards and operator cutover verification remain separate gates. This is the user's explicitly authorized move from the stopped macOS installation to the dedicated Linux host, not autonomous P18 environment evolution.
+Status: bounded implementation verified with eight migration fixtures, 21 existing custodian tests and the integrated CLI startup guard on macOS. Native Linux confinement, the service guard and operator cutover verification remain separate gates. This is the user's explicitly authorized move from the stopped macOS installation to the dedicated Linux host, not autonomous P18 environment evolution.
 
 ## Problem and boundary
 
@@ -50,3 +50,11 @@ The attestation is JSON with `version: 1`, `snapshotDigest` from `inspect`, `sou
 The initially unavailable migration API failed its new integration test. The implemented fixture now uses real candidate freezing, native protected checks and two actual restricted-worker cold recoveries, with a provider that throws on any call. Synthetic pending conversation outcomes/reflections, a queued task, confirmed delivery, corrected and forgotten memories, growth-window usage, development/evolution debit events, opaque API tokens and the complete original custody event prefix survive. Separate cases reject shutdown/snapshot mismatch, unsupported unfinished work, unknown effects, changed cognition, failed native checks and artifact tampering. A custodian fixture retains old operator-baseline history and proves failed new-platform recovery only launches the native release; the old restore operation remains bound and rejects the historical installed ID.
 
 `node --test test/platform-migration.test.ts test/custodian.test.ts` passed 29/29; the final populated-state migration suite passed 8/8 separately. `npm run check` and `git diff --check` passed. These are disposable macOS-host fixtures with an explicitly synthetic incompatible historical runtime, not a claim that Linux or real copied state has already passed. The lead must record actual Linux checks and cold recovery against the exact imported baseline before source cleanup.
+
+The integrated CLI gate now runs after the read-only `doctor` early return and
+before any state-opening command constructs storage. Its actual-process check
+passes for `tasks`, `memory`, `growth`, `init`, `ask`, `serve` and host-baseline
+preparation with a held receipt, preserving the unopened directory. The prior
+CLI reproduced the defect by successfully opening `tasks` despite that receipt.
+The new check passed 1/1 and strict TypeScript passed; RED/GREEN logs are retained
+outside Git. This verifies startup gating, not destination readiness.
