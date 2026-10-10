@@ -1,6 +1,6 @@
 # Operator platform migration
 
-Status: bounded implementation verified with eight migration fixtures, 21 existing custodian tests and the integrated CLI startup guard on macOS. Native Linux confinement, the service guard and operator cutover verification remain separate gates. This is the user's explicitly authorized move from the stopped macOS installation to the dedicated Linux host, not autonomous P18 environment evolution.
+Status: bounded implementation verified with eleven migration fixtures, five publication fixtures, 21 existing custodian tests and the integrated CLI startup guard on macOS. Native Linux confinement, the service guard and operator cutover verification remain separate gates. This is the user's explicitly authorized move from the stopped macOS installation to the dedicated Linux host, not autonomous P18 environment evolution.
 
 ## Problem and boundary
 
@@ -12,6 +12,7 @@ The trusted offline importer accepts a copied external state directory and an op
 
 - Import into a new private destination only, under exclusive destination ownership. A durable migration gate blocks ordinary startup until independent cold recovery succeeds. Failures retain a held destination and never report readiness or remove source material.
 - Require a normally serving source known-good identity, no ambiguous custody launch/stop/installation, no unresolved effects, and no running work. Reject unfinished evolution, publication, proposed/queued development or candidate/workspace ownership that this bounded importer cannot safely relocate. Paused historical authoring attempts remain unchanged and spent; any future attempt uses the existing finite attempt and allocation policy.
+- Publication blockers follow the actual reconciler: a finished promoted evolution queue item remains pending unless its latest publication result is published. A standalone historical promoted report with neither queue work nor publication intent is archival evidence, not invented pending work. Independently reject recorded Git reservation/preparation/push intents until a later exact completion or published result settles their candidate, target and recorded commit; uncertainty, a different target/commit or a later new intent cannot be erased by an older success.
 - Verify the complete archive inventory, original known-good manifest/source bytes and retained Git base closure. Archive integrity does not establish current native runtime compatibility. Never rewrite old manifests, approvals, reports or paths to make them runnable.
 - Evaluate a fresh native baseline using trusted current checks. Import custody through a dedicated operator API, unavailable to cognitive tools. Only this new release becomes the destination known-good; historical Darwin artifacts remain lineage evidence and are never selected as its platform fallback.
 - Reopen the new custody in a separate provider-free verification operation, start/probe/close an actual restricted worker and repeat from cold custody. Preserve all operational records throughout. Record the exact new release and increasing epochs before opening the startup gate. This establishes one independently tested native recovery baseline, not cross-platform execution of historical releases.
@@ -24,6 +25,7 @@ The trusted offline importer accepts a copied external state directory and an op
 3. Wrong shutdown binding, archive tampering, changed cognition/configuration, missing checks, failed evaluation, ambiguous source ownership or unsupported pending work cannot open the gate or grant authority.
 4. A failed or interrupted import leaves source bytes intact and destination blocked. Exact completed retries make no new migration transition. Conflicting retries fail.
 5. Real confined worker recovery twice, with a provider that throws on any call and without draining tasks, precedes readiness. Its operational database remains logically identical and its final custody can recover normally on another restart.
+6. Standalone promoted history without queue or Git intent remains byte-preserved and does not block import. Actual queue-promoted unpublished work and independently unresolved Git intents still block, including missing queue history, uncertain results and mismatched or superseded completion evidence.
 
 ## Dependencies, non-goals and risks
 
@@ -58,3 +60,6 @@ preparation with a held receipt, preserving the unopened directory. The prior
 CLI reproduced the defect by successfully opening `tasks` despite that receipt.
 The new check passed 1/1 and strict TypeScript passed; RED/GREEN logs are retained
 outside Git. This verifies startup gating, not destination readiness.
+
+The publication classification repair first failed all three new fixtures: standalone promoted history was falsely blocked, queue-promoted work without a separate report was missed, and Git intents without queue history were missed. The corrected implementation passed `node --test test/platform-migration.test.ts test/release-publication.test.ts` (16/16), typecheck and whitespace checks. Queue expectations come from the real scheduler/reconciler selectors; intent cases cover exact completion, independently observed publication without a completed event, uncertainty, different candidate/target/commit and later reservations. Independent source review found no remaining blocker. These checks use synthetic disposable state and perform no provider, network or live-state operation.
+
