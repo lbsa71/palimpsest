@@ -1,6 +1,6 @@
 # Continuous Linux service for the operator migration
 
-Status: source independently reviewed; actual root-sealed native service, responsiveness and stop/restart accepted, 2026-10-10. See [exact migration evidence](../migration-acceptance-2026-10-10.md). Implements the user's authorized transfer to the dedicated `palimpsest` account on `ssh.lbsa71.net`; this bounded operator service is not autonomous P18 admission. Final source preservation and Mac cleanup are recorded separately. Related requirements: R04, R09–R10, R14–R15, R17–R19, R22; plan areas P05/P12/P15 and the platform migration gate.
+Status: source independently reviewed; actual root-sealed native service, responsiveness and stop/restart accepted, 2026-10-10. See [exact migration evidence](../migration-acceptance-2026-10-10.md). Implements the user's authorized transfer to the dedicated `palimpsest` account on `ssh.lbsa71.net`; this bounded operator service is not autonomous P18 admission. Final source preservation and Mac cleanup are complete; the linked acceptance report retains exact receipts and the reconciled removal failure. Related requirements: R04, R09–R10, R14–R15, R17–R19, R22; plan areas P05/P12/P15 and the platform migration gate.
 
 ## Problem and expected behavior
 

@@ -1,6 +1,6 @@
 # Operator platform migration
 
-Status: bounded implementation verified with eleven migration fixtures, five publication fixtures, 21 existing custodian tests and the integrated CLI startup guard on macOS. Native Linux confinement, actual copied-state recovery and sealed service cutover are now separately verified in the [migration acceptance report](../migration-acceptance-2026-10-10.md); final preservation/cleanup remains a separate operation. This is the user's explicitly authorized move from the stopped macOS installation to the dedicated Linux host, not autonomous P18 environment evolution.
+Status: bounded implementation verified with eleven migration fixtures, five publication fixtures, 21 existing custodian tests and the integrated CLI startup guard on macOS. Native Linux confinement, actual copied-state recovery and sealed service cutover are now separately verified in the [migration acceptance report](../migration-acceptance-2026-10-10.md); final preservation and Mac cleanup are complete with independently verified remote archives and exact cleanup receipts in that report. This is the user's explicitly authorized move from the stopped macOS installation to the dedicated Linux host, not autonomous P18 environment evolution.
 
 ## Problem and boundary
 

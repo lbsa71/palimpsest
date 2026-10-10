@@ -1,5 +1,29 @@
 # Implementation progress and evidence
 
+## Mac cleanup and remote handoff completed — 2026-10-10
+
+After final local source commit c1cd761 was pushed and all writers were frozen,
+independent destination checks verified the full seven-worktree preservation
+package, both prior archive references, original private configuration/state and
+the LaunchAgent. Supported worktree archival was followed by a separately verified
+complete raw Git capture, preserving its final refs and archive metadata.
+
+All 380 exact Mac cleanup targets are absent. Six linked worktrees used their
+supported lifecycle; 374 remaining roots/files were removed directly, with the
+primary checkout last. The first removal paused after two roots on read-only
+release directories. Its failed receipt remains; a scoped resume added owner
+directory permission only within the approved paths and completed removal.
+Personal SSH, shared Node, Codex history and other projects remain. Both Mac
+Codex heartbeats remain paused.
+
+Independent review confirmed target absence and the same enabled native service,
+main process, invocation and actual worker. The final authenticated existing-task
+read returned 200 in 4.172 ms with its original one-call checkpoint. This read made
+no provider request. The later remote merge b635f3d retains the new autark source;
+it does not change the admitted aa687d2f installation. Further work belongs on the
+remote host with the Palimsest guardian. [Exact preservation and cleanup receipts
+are recorded here](migration-acceptance-2026-10-10.md#mac-preservation-cleanup-and-handoff).
+
 ## Autark source branches integrated — 2026-10-10
 
 The user’s merge-all instruction integrates reviewed autark tip `7d2e857` into
@@ -35,9 +59,9 @@ automatic startup once, retaining the same running process. [The acceptance
 report](migration-acceptance-2026-10-10.md) binds exact receipts and limitations.
 
 The dedicated host keeps current memory/state outside the repository. Final Mac
-preservation and cleanup are separate operations after this accepted runtime gate.
+preservation and cleanup are now complete, with exact receipts in the acceptance report.
 The hourly scheduler remains configured; the two Mac Codex heartbeat monitors
-remain paused. New inner-voice behavior is isolated from this release. P06
+remain paused. New inner-voice behavior is merged in source and remains unadmitted to this release. P06
 qualitative calibration, configured-model coding competence, retained dependency
 packaging and P17/P18 autonomous activation remain open. The older source and
 installation entries below are historical evidence, not current deployment facts.

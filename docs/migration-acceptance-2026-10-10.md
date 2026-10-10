@@ -2,8 +2,7 @@
 
 Status: native service and bounded responsiveness/restart gates accepted on
 2026-10-10. The final controller enabled automatic startup once while preserving
-the same running instance. Final Mac preservation/cleanup is recorded separately
-when its operations finish. This is the explicitly
+the same running instance. Final Mac preservation and cleanup are complete, with receipts below. This is the explicitly
 authorized operator migration to the dedicated `palimpsest` Linux account, not
 autonomous P18 host evolution or full seed acceptance.
 
@@ -132,4 +131,65 @@ long-term availability, API latency during every active collector/model workload
 hard resource quotas, broad prompt-attack resistance, configured-model iterative
 coding competence or autonomous host/governance replacement. P06 qualitative
 calibration and P17/P18 production activation remain open. New inner-voice work
-is isolated from this reviewed installation and needs its own admission.
+is merged in remote source at b635f3d and remains outside this reviewed installation; it needs its own admission.
+
+## Mac preservation, cleanup and handoff
+
+Final local main c1cd76141142cd525f998c7085f57987d4d24191 was pushed and frozen.
+The private destination package contains 12,818 inventory entries: 12,398 archived
+and 420 exact prior-archive references. It includes all seven clean worktrees
+through complete raw Git plus ignored inputs, 223 source-evidence entries and
+temporary development/verification evidence. All four archive contents, types,
+modes and link targets passed independent verification; referenced archives were
+separately rehashed. Source ACLs and extended attributes were not preserved.
+
+The original private configuration archive matches all three entries, and the
+stopped-state archive matches all 9,792 entries including original modes and link
+targets. The exact LaunchAgent was separately preserved when review found it
+missing. Historical state is archival; it never replaced the current remote state.
+
+Four managed worktrees were archived through Codex and two clean temporary
+worktrees through Git. A second complete raw Git package, verified independently,
+preserves all 1,913 entries after those lifecycle operations. Before deletion, the
+remaining source/evidence, final Git and original configuration/state were checked
+again against the preserved bytes.
+
+Cleanup removed all 380 exact project targets, with the primary checkout last.
+The first attempt removed two roots, then stopped on a read-only release directory.
+Its failure receipt remains unchanged. The resume added owner directory permission
+to 208 directories inside the same approved paths and removed the other 372 direct
+targets; six worktrees had already been removed through their supported lifecycle.
+No symlink targets or shared parents were changed. Original modes remain in the
+backups. Independent review confirmed every target absent and shared personal
+SSH, Node and Codex locations retained. The unloaded LaunchAgent is gone; both
+Mac Codex heartbeat monitors remain paused.
+
+The remote service remained active/enabled with main PID 89620 and zero automatic
+restarts. Its original completed peer task still returned 200 with one call; the
+final read took 4.172 ms and issued no provider request. The final health receipt
+observed source b635f3d after the separately authorized merge-all operation.
+That newer source is not the admitted runtime. The root-sealed verifier binds the
+retained frozen base and current admitted custody, with requireCurrentBase false;
+moving canonical HEAD alone does not select a new host release. The supported
+sealed verify command subsequently passed against source b635f3d with the current
+admitted custody. Both root checksum inventories, the service unit and Node pin
+remained exact. This verification performed no start, stop, prepare or admission.
+
+Receipts below are private files under /home/palimpsest/migration/. The failed
+attempt is included to preserve the actual sequence.
+
+| Receipt | SHA-256 |
+|---|---|
+| local-preservation-c1cd761-20261010/preservation-receipt.json | aa049c0572a41d4b2609f06e1e0b69b055a3d2ab3a7405aba4890b5f1d62d501 |
+| final-preservation-independent-c1cd761-20261010.json | 401d892d09ec76cf62709d75af84e6b245529043ee32d3268a406b4bf97d171d |
+| final-git-after-lifecycle-c1cd761-20261010/receipt.json | 9dfe3c49dcf6f44c46ee2a4ee24407fe8d8d21dc33cf7a68ee3695d0a321cb5d |
+| final-git-independent-c1cd761-20261010.json | b72ab100e6f8af1f8ebb8cd820296ac0817c1e13789f611235a43ff2b8bb7660 |
+| mac-cleanup-plan-c1cd761-20261010.json | 41514f807b79be21099fe52de6f36da2aff3dc23a2ad21f577861a5fb31dde04 |
+| mac-cleanup-complete-c1cd761-20261010.json (failed first attempt) | 7fe2a5dbfeeea78b65530afad4ea240bc0c1b4aed1b11a057005c3cc956a4e10 |
+| mac-cleanup-resumed-complete-c1cd761-20261010.json | 7e41a56e7273c0c0a3da0128467ffdfc8bb796e47ec606c4a5953a4fce69e976 |
+| post-mac-cleanup-health-c1cd761-20261010.json | 40f4815e6042338b243e5e4ccbd6f759fb97a765a597848c66b96f742799574e |
+| post-merge-sealed-verification-b635f3d-20261010.json | 9996f1bf879bf27d3d725c692b24b6811d26989521d43e621e897563189ba10b |
+
+The Palimsest guardian now has the remote source, configuration, current lived
+state and migration receipts for continued work. Migration does not complete
+P17/P18 or admit the new autark deliberation behavior.
