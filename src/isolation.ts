@@ -6,6 +6,8 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { currentIsolationOwnership, type IsolationDrain, type IsolationOwnershipContext } from './isolation-ownership.ts';
 import { currentFiniteIsolationExecutor } from './isolation-executor.ts';
+import { linuxIsolationLaunch, linuxRuntimeReadPaths, linuxIsolationIdentity, matchesLinuxIsolationMonitor } from './isolation-linux.ts';
+export { matchesLinuxIsolationMonitor } from './isolation-linux.ts';
 
 export interface IsolationOptions {
   program: string;
@@ -99,6 +101,7 @@ function ancestorMetadata(paths: string[]): string {
 }
 
 function runtimeReadPaths(executables: string[]): string[] {
+  if (process.platform === 'linux') return linuxRuntimeReadPaths(executables);
   return [
     '/System/Library', '/System/Volumes/Preboot/Cryptexes/OS/System/Library', '/usr/lib',
     '/dev/null', '/dev/random', '/dev/urandom', ...executables,
@@ -163,7 +166,18 @@ async function drainCurrentGroup(pid: number): Promise<void> {
   }
 }
 
-/** Execute the current trusted Node binary under a macOS deny-default profile.
+/** Reconcile only an exact trusted Linux monitor with its original detached
+ * group. A successful signal or monitor disappearance is not drain evidence. */
+export async function stopLinuxIsolationMonitor(pid: number, descriptor: Parameters<typeof matchesLinuxIsolationMonitor>[1]): Promise<void> {
+  if (!matchesLinuxIsolationMonitor(pid, descriptor)) throw new IsolationError('Cannot verify retained Linux monitor identity');
+  const status = readFileSync(`/proc/${pid}/stat`, 'utf8');
+  // comm is parenthesized and can contain spaces; pgrp is field five.
+  const group = Number(status.slice(status.lastIndexOf(')') + 2).split(' ')[2]);
+  if (group !== pid) throw new IsolationError('Retained Linux monitor is not its detached group leader');
+  await drainCurrentGroup(group);
+}
+
+/** Execute the selected trusted binary under the platform deny-default policy.
  * Path grants and executable selection belong to trusted orchestration. There
  * is deliberately no shell, inherited environment, network, or unsafe fallback.
  */
@@ -194,7 +208,8 @@ export async function runIsolatedSession(options: IsolationSessionOptions): Prom
 }
 
 async function executeIsolated(options: IsolationOptions, session: boolean, ownership?: IsolationOwnershipContext): Promise<IsolationResult> {
-  if (process.platform !== 'darwin' || !existsSync(sandboxExecutable)) throw new IsolationUnavailableError('Local candidate isolation requires macOS /usr/bin/sandbox-exec; no unconfined fallback is available');
+  if (process.platform === 'linux') linuxIsolationIdentity();
+  else if (process.platform !== 'darwin' || !existsSync(sandboxExecutable)) throw new IsolationUnavailableError('Local candidate isolation requires macOS Seatbelt or prepared Linux Bubblewrap/Landlock confinement; no unconfined fallback is available');
   const trustedNode = canonical(process.execPath);
   const executables = [trustedNode];
   for (const grant of options.trustedExecutables ?? []) {
@@ -236,7 +251,10 @@ async function executeIsolated(options: IsolationOptions, session: boolean, owne
       PATH: dirname(trustedNode), HOME: scratch, TMPDIR: scratch, LANG: 'C', NO_COLOR: '1',
       ...options.env,
     };
-    const policy = profile(executables, session ? [...reads, scratch] : reads, session ? [] : [...writes, scratch], denies, allowChildren);
+    const launch = process.platform === 'linux'
+      ? linuxIsolationLaunch({ executables, program, args, cwd, reads: session ? [...reads, scratch] : reads,
+        writes: session ? [] : [...writes, scratch], denies, allowChildren })
+      : { command: sandboxExecutable, args: ['-p', profile(executables, session ? [...reads, scratch] : reads, session ? [] : [...writes, scratch], denies, allowChildren), program, ...args] };
     if (ownership) {
       try { spawnId = ownership.beforeSpawn({ purpose: 'finite-isolated-process', program, args, cwd, scratch }); }
       catch (cause) { throw new IsolationError('Trusted isolation ownership intent failed', { cause }); }
@@ -248,7 +266,7 @@ async function executeIsolated(options: IsolationOptions, session: boolean, owne
       let timedOut = false; let aborted = false; let outputLimitExceeded = false;
       let observerFailure: IsolationError | undefined;
       let child: ChildProcessWithoutNullStreams;
-      try { child = spawn(sandboxExecutable, ['-p', policy, program, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
+      try { child = spawn(launch.command, launch.args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
       catch (cause) { ownership?.fail(cause); throw cause; }
       const currentGroup = child.pid;
       let leaderClosed = false;
@@ -306,7 +324,7 @@ async function executeIsolated(options: IsolationOptions, session: boolean, owne
         // the guard alone controls this still-owned group's final signal.
         void (async () => {
           try {
-            if (!session && allowChildren && currentGroup) await drainCurrentGroup(currentGroup);
+            if (currentGroup && ((!session && allowChildren) || process.platform === 'linux')) await drainCurrentGroup(currentGroup);
             closed = { exitCode, signal: closedSignal };
           } catch (cause) {
             scratchCanCleanup = false;

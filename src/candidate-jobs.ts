@@ -9,6 +9,7 @@ import type { CandidateCheck, CandidateEvidence, CandidateManifest, FreezeOption
 import { resolveExternalPath } from './config.ts';
 import { runIsolated } from './isolation.ts';
 import type { IsolationOptions, IsolationResult } from './isolation.ts';
+import { linuxIsolationIdentity } from './isolation-linux.ts';
 import { withIsolationOwnership } from './isolation-ownership.ts';
 import { CoordinatorLock } from './ownership.ts';
 import type { Json } from './store.ts';
@@ -71,7 +72,8 @@ export class CandidateJobs {
    const developer=existsSync('/var/select/developer_dir')?realpathSync('/var/select/developer_dir'):undefined;
    const selectedGit=developer?join(developer,'usr/bin/git'):undefined;
    const programs=[...(selectedGit?[selectedGit,join(developer!,'usr/bin/xcodebuild')]:[]),'/usr/bin/git','/bin/sh','/bin/bash','/usr/bin/xcrun'].filter(existsSync).map(path=>realpathSync(path));
-   const files=[...(existsSync('/usr/share/firmlinks')?['/usr/share/firmlinks']:[]),process.execPath,'/usr/bin/sandbox-exec',compiler,join(installedRoot,'trusted/agent-contract.test.mjs'),join(installedRoot,'trusted/development-contract.test.mjs'),evaluatorPath,helperPath,join(installedRoot,'src/candidate-job-state.ts'),join(installedRoot,'src/candidate-jobs.ts'),join(installedRoot,'src/config.ts'),join(installedRoot,'src/ownership.ts'),join(installedRoot,'src/isolation.ts'),join(installedRoot,'src/isolation-ownership.ts'),join(installedRoot,'src/isolation-executor.ts'),...programs];
+   const isolationFiles=process.platform==='linux'?linuxIsolationIdentity():['/usr/bin/sandbox-exec'];
+   const files=[...(existsSync('/usr/share/firmlinks')?['/usr/share/firmlinks']:[]),process.execPath,...isolationFiles,compiler,join(installedRoot,'trusted/agent-contract.test.mjs'),join(installedRoot,'trusted/development-contract.test.mjs'),evaluatorPath,helperPath,join(installedRoot,'src/candidate-job-state.ts'),join(installedRoot,'src/candidate-jobs.ts'),join(installedRoot,'src/config.ts'),join(installedRoot,'src/ownership.ts'),join(installedRoot,'src/isolation.ts'),join(installedRoot,'src/isolation-linux.ts'),join(installedRoot,'src/isolation-ownership.ts'),join(installedRoot,'src/isolation-executor.ts'),...programs];
    const installed:InstalledIdentity={nodePath:process.execPath,nodeVersion:process.version,evaluatorPath,...(developer?{developerDir:developer}:{}),files:[...new Set(files)].map(path=>({path,sha256:hashFile(path)}))};
    let target:CandidateJobTarget|undefined,targetManifest:CandidateManifest|undefined;
    if(copy.kind!=='freeze'){const releaseDir=resolveExternalPath(this.#repositoryRoot,copy.options.releaseDir),path=join(releaseDir,'manifest.json');
