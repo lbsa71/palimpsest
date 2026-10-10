@@ -10,3 +10,8 @@ coverage/
 *.db-*
 .palimpsest/
 .DS_Store
+
+# Prepared platform artifacts are independently bound by the Linux runtime.
+# The reviewed source remains tracked; packaging prepares these two exact roles.
+/trusted/linux-isolation-launcher
+/trusted/linux-isolation-launcher.json

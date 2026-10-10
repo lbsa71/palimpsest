@@ -5,12 +5,18 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveExternalPath } from './config.ts';
 import { runIsolated } from './isolation.ts';
+import { linuxIsolationRuntimeIdentity } from './isolation-linux.ts';
 import type { IsolationResult } from './isolation.ts';
 import type { Json } from './store.ts';
 
 export interface CandidateChange { path: string; content: string }
 export interface CandidateFile { path: string; mode: '100644' | '100755'; sha256: string; size: number }
-export interface CandidateRuntime { nodeVersion: string; nodeSha256: string; compilerPath: string; compilerSha256: string; toolchainDigest: string }
+export interface CandidateRuntime {
+  nodeVersion: string; nodeSha256: string; compilerPath: string; compilerSha256: string; toolchainDigest: string;
+  /** Prepared native host inputs, absent on historical Darwin manifests.
+   * Hashes bind relative roles rather than installation paths for relocation. */
+  linuxIsolation?: { sourceSha256: string; binarySha256: string; receiptSha256: string };
+}
 export interface CandidateTypecheckPolicy { version: 1; implementationSha256: string; entrypoints: string[]; runtimeExcludedPaths: string[] }
 export type CandidateCheckName = 'typecheck' | 'trusted-agent-contract' | 'cross-scope-memory' | 'memory-provenance' | 'memory-context-budget';
 interface ManifestRecord {
@@ -126,7 +132,8 @@ function toolchainDigest(): string {
 }
 function currentRuntime(): CandidateRuntime {
   const compilerPath = realpathSync(join(toolchainRoot, '@typescript', `typescript-${process.platform}-${process.arch}`, 'lib', 'tsc'));
-  return { nodeVersion: process.version, nodeSha256: sha256(readFileSync(process.execPath)), compilerPath, compilerSha256: sha256(readFileSync(compilerPath)), toolchainDigest: toolchainDigest() };
+  return { nodeVersion: process.version, nodeSha256: sha256(readFileSync(process.execPath)), compilerPath, compilerSha256: sha256(readFileSync(compilerPath)), toolchainDigest: toolchainDigest(),
+    ...(process.platform === 'linux' ? { linuxIsolation: linuxIsolationRuntimeIdentity() } : {}) };
 }
 function manifestPayload(record: ManifestRecord): Omit<ManifestRecord, 'id' | 'manifestDigest'> {
   const { id: _id, manifestDigest: _digest, ...payload } = record; return payload;

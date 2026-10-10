@@ -25,6 +25,16 @@ export interface WorkerOptions {
   /** Synchronous trusted policy check: throw to deny; returning a thenable fails closed. */
   authorize?: (peer: WorkerPeer) => void;
 }
+
+/** Exact trusted launch shape shared with retained-process reconciliation.
+ * Linux custody names the outer Bubblewrap monitor, not its inner Node PID. */
+export function workerLaunchDescriptor(options: Pick<WorkerOptions, 'candidateRoot' | 'denyReadPaths' | 'scope'> & { instanceId: string }) {
+  const harness = fileURLToPath(new URL('../trusted/agent-worker.mjs', import.meta.url));
+  return { program: process.execPath,
+    args: ['--disable-warning=ExperimentalWarning', harness, join(options.candidateRoot, 'src/agent/brain.ts'), `--palimpsest-launch-id=${options.instanceId}`,
+      ...(options.scope === undefined ? [] : [`--palimpsest-scope=${JSON.stringify(conversationScope(options.scope))}`])],
+    cwd: options.candidateRoot, readPaths: [harness, options.candidateRoot], denyReadPaths: options.denyReadPaths };
+}
 interface Pending { resolve: (result: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -49,7 +59,7 @@ export class AgentWorker {
   readonly #pending = new Map<string, Pending>();
   #child?: ChildProcess;
   #peer?: Readonly<WorkerPeer>;
-  #completion?: Promise<IsolationResult | undefined>;
+  #completion?: Promise<IsolationResult>;
   #closed = false;
   #buffer = '';
   readonly #decoder = new StringDecoder('utf8');
@@ -69,13 +79,9 @@ export class AgentWorker {
   static async start(options: WorkerOptions): Promise<AgentWorker> {
     const worker = new AgentWorker(options);
     const instanceId = options.instanceId ?? randomUUID();
-    const harness = fileURLToPath(new URL('../trusted/agent-worker.mjs', import.meta.url));
     let spawned!: () => void; let failed!: (error: Error) => void;
     const available = new Promise<void>((resolve, reject) => { spawned = resolve; failed = reject; });
-    const launch = { program: process.execPath,
-      args: ['--disable-warning=ExperimentalWarning', harness, join(options.candidateRoot, 'src/agent/brain.ts'), `--palimpsest-launch-id=${instanceId}`,
-        ...(worker.#scope === undefined ? [] : [`--palimpsest-scope=${JSON.stringify(worker.#scope)}`])],
-      cwd: options.candidateRoot, readPaths: [harness, options.candidateRoot], denyReadPaths: options.denyReadPaths,
+    const launch = { ...workerLaunchDescriptor({ ...options, instanceId }),
       maxOutputBytes: 1_048_576, signal: worker.#controller.signal,
       onSpawn(child: ChildProcess) {
         if (!child.pid) throw new Error('Worker did not acquire an OS identity');
@@ -87,7 +93,12 @@ export class AgentWorker {
     };
     worker.#completion = (options.lifetimeMs === undefined ? runIsolatedSession(launch)
       : runIsolated({ ...launch, timeoutMs: options.lifetimeMs, keepStdinOpen: true }))
-      .then(result => { worker.#fail(); return result; }).catch(() => { failed(new Error('Restricted worker launch failed')); worker.#fail(); return undefined; });
+      .then(result => { worker.#fail(); return result; }).catch(error => {
+        failed(new Error('Restricted worker launch failed')); worker.#fail(); throw error;
+      });
+    // Observe asynchronous failure immediately, while retaining its rejection
+    // for stop(): unavailable drain must never retire this worker as stopped.
+    void worker.#completion.catch(() => {});
     await available;
     try { const result = await worker.#call('ping', {}, options.startupTimeoutMs ?? 3000); if (!object(result) || result.alive !== true) throw new Error('Invalid worker handshake'); }
     catch (error) { await worker.stop(); throw error; }

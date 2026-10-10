@@ -16,7 +16,7 @@ function fixture() {
   return { root, work, scratch, privateDir, secret, state, allowed, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-test('unsupported operating systems fail closed', { skip: process.platform === 'darwin' }, async () => {
+test('unsupported operating systems fail closed', { skip: process.platform === 'darwin' || process.platform === 'linux' }, async () => {
   await assert.rejects(runIsolated({ program: process.execPath, args: ['-e', 'console.log(1)'], cwd: tmpdir() }), IsolationUnavailableError);
 });
 

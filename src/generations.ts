@@ -8,7 +8,8 @@ import { readManifest, digestJson, candidateExecutionReadDenials } from './candi
 import type { CandidateManifest } from './candidates.ts';
 import { CandidateJobs } from './candidate-jobs.ts';
 import type { CandidateJobOperation, CandidateJobValue } from './candidate-jobs.ts';
-import { AgentWorker } from './workers.ts';
+import { AgentWorker, workerLaunchDescriptor } from './workers.ts';
+import { matchesLinuxIsolationMonitor, stopLinuxIsolationMonitor } from './isolation.ts';
 import { AgentRuntime } from './runtime.ts';
 import type { RuntimeCoding } from './runtime.ts';
 import type { Communications, InboundMessage } from './communications.ts';
@@ -144,7 +145,7 @@ export class GenerationHost {
         reconcileLaunch: async intent => {
           const known = this.#workers.get(intent.launchId);
           if (known && !known.closed) return { ...known.peer };
-          const matches = processListing().filter(entry => matchesLaunch(entry.command, intent.launchId));
+          const matches = processListing().filter(entry => this.#matchesRetainedWorker(entry, intent.launchId, intent.release));
           if (matches.length > 1) throw new Error('Ambiguous worker launch identity');
           return matches[0] ? { pid: matches[0].pid, instanceId: intent.launchId } : undefined;
         },
@@ -324,14 +325,55 @@ export class GenerationHost {
     const worker = this.#workers.get(peer.instanceId);
     if (worker) { if (worker.peer.pid !== peer.pid) throw new Error('Process identity mismatch'); await worker.stop(); return; }
     const observed = processListing().find(entry => entry.pid === peer.pid);
-    if (!observed) return;
-    if (!matchesLaunch(observed.command, peer.instanceId)) throw new Error('Cannot verify retained process identity');
+    if (!observed) {
+      if (process.platform === 'linux') {
+        try { process.kill(-peer.pid, 0); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+          throw new Error('Cannot confirm retained process group absence', { cause: error });
+        }
+        // A vanished monitor does not prove its namespace descendants drained.
+        // Without its exact identity, this group cannot be safely signalled.
+        throw new Error('Retained process group remains without a verified monitor');
+      }
+      return;
+    }
+    if (process.platform === 'linux') {
+      const descriptor = this.#retainedLinuxDescriptor(observed, peer.instanceId);
+      if (!descriptor) throw new Error('Cannot verify retained process identity');
+      await stopLinuxIsolationMonitor(peer.pid, descriptor);
+      return;
+    }
+    if (!this.#matchesRetainedWorker(observed, peer.instanceId)) throw new Error('Cannot verify retained process identity');
     process.kill(peer.pid, 'SIGKILL');
     for (let attempt = 0; attempt < 20; attempt++) {
       if (!processListing().some(entry => entry.pid === peer.pid)) return;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     throw new Error('Retained process did not terminate');
+  }
+
+  #matchesRetainedWorker(entry: { pid: number; command: string }, instanceId: string, release?: Release): boolean {
+    if (process.platform !== 'linux') return matchesLaunch(entry.command, instanceId);
+    return this.#retainedLinuxDescriptor(entry, instanceId, release) !== undefined;
+  }
+
+  #retainedLinuxDescriptor(entry: { pid: number; command: string }, instanceId: string, release?: Release) {
+    if (!/^[a-f0-9-]{36}$/.test(instanceId)) return undefined;
+    const releases = release ? [release] : this.custodian.inspect().artifacts;
+    for (const retained of releases) {
+      try {
+        const manifest = readManifest(retained.artifactPath);
+        if (manifest.manifestDigest !== retained.digest) continue;
+        const descriptor = {
+          ...workerLaunchDescriptor({ candidateRoot: manifest.candidateRoot, instanceId,
+            scope: this.#options.scope ?? 'local', denyReadPaths: candidateExecutionReadDenials(manifest) }),
+          session: this.#options.lifetimeMs === undefined,
+        };
+        if (matchesLinuxIsolationMonitor(entry.pid, descriptor)) return descriptor;
+      } catch { /* An unverified retained artifact cannot identify this process. */ }
+    }
+    return undefined;
   }
 
   async close(): Promise<void> {

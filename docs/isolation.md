@@ -1,6 +1,9 @@
 # Local candidate isolation
 
-Status: P05 implementation contract, 2026-10-08. This work addresses the local process boundary; it does not by itself complete Skin Shed or release admission.
+Status: P05 implementation contract with a bounded Linux migration refinement,
+2026-10-10. This work addresses the local process boundary; it does not by itself
+complete Skin Shed or release admission. See the
+[Linux work item](work-items/linux-candidate-isolation.md) for exact verification.
 
 The problem is that a candidate running as an ordinary child process inherits the operator's filesystem and network access. Candidate tests must execute with mechanical restrictions that protect external lived experience and credentials even when candidate code ignores its instructions.
 
@@ -26,6 +29,42 @@ Process creation is denied by default. `allowNodeChildren: true` is an explicit 
 
 This is an OS filesystem/network restriction, not a virtual machine or a CPU/memory quota. Finite job deadlines bound wall time and retained stdout/stderr. Supervised workers use finite startup/RPC deadlines, bounded protocol buffering and stderr diagnostics; trusted custody supplies periodic behavioral health checks. Default fork denial limits process creation. Neither mode supplies an independent parent-death watchdog. Scratch disk usage, total memory, and instantaneous CPU use do not have hard quotas in this slice. The caller must bound workload and concurrency. Seatbelt is a platform-specific facility and must be retested when macOS or Node changes. No Docker or unconfined subprocess fallback is used.
 
-Dependencies are Node 24, macOS Seatbelt, and the trusted orchestrator's grant selection. Non-goals are Linux/Windows support, host administration, remote execution, arbitrary runtimes, full resource quotas, and replacing the custodian's independent release checks. Candidate code remains untrusted after a successful sandbox launch.
+Dependencies are Node 24 and the trusted orchestrator's grant selection, with
+macOS Seatbelt or the prepared Linux backend below. Non-goals are Windows support,
+host administration, arbitrary runtimes, full resource quotas and replacing the
+custodian's independent release checks. Candidate code remains untrusted after a
+successful sandbox launch.
+
+## Prepared Linux backend
+
+On the tested Ubuntu 24.04 x86-64 host, Bubblewrap creates private user, mount,
+PID, network, IPC and UTS namespaces with a synthetic read-only root. Trusted
+setup establishes mount restrictions and drops all capabilities. The launcher
+then installs Landlock execute/write restrictions, `no_new_privs` and x86-64
+seccomp before candidate code.
+Recursive noexec source/scratch mounts prevent candidate ELF execution through
+the required dynamic interpreter. Necessary fixed read-only runtime libraries
+remain visible and executable through that interpreter; this is not a promise
+that every installed library entrypoint is excluded. Candidate-written ELF is
+denied. The installed kernel, libraries, Bubblewrap and prepared helper are
+trusted platform inputs.
+
+Missing prepared inputs, inconsistent source/binary/receipt hashes or unavailable
+kernel features fail closed. New Linux candidate runtime manifests bind those
+three hashes independently of installation paths. Packaging prepares the helper
+before freezing; only its C source is tracked in Git. The exact binary and build
+receipt are ignored native extras, independently copied and checked when sealing
+the service host. Runtime never compiles or downloads them.
+
+Linux read exclusions use an omitted read-only projection; exclusions overlapping
+writable grants are rejected. V8 threads remain usable. Default process forks,
+networking and namespace escape are denied. The trusted child exception cannot
+create a different session or process group. Cancellation and stop require
+positive whole-group absence; an absent launcher alone is not drain evidence.
+Retained worker reconciliation checks the exact Bubblewrap descriptor, same-user
+identity, private scratch and detached process group against retained custody.
+Unknown ownership or drain remains held, and `AgentWorker.stop()` propagates it.
+Linux parent-death and PID-namespace teardown supplement that observation; the
+macOS limitations above still apply to its separate backend.
 
 Verification on macOS 26.6.2 / Node 24.13.0: `node --test test/isolation.test.ts` exercises six real sandbox scenarios; the unsupported-platform branch is skipped on this supported host. The fixture attempts also cover symlinks from allowed paths to protected files and JSON-lines worker communication. The procedure suite separately exercises real file entrypoints and JSON execution through this boundary; the candidate suite exercises the hash-bound native TypeScript compiler. These results establish the tested local restrictions, not portability to untested OS versions or unimplemented resource quotas.

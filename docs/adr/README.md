@@ -41,5 +41,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0026](0026-conversation-outcomes-and-scoped-reflection.md) | Accepted bounded runtime contract; frozen review and installation verified; finite live peer/report path passed, qualitative acceptance open | Scoped reflection, durable topic obligations, revision-bound asynchronous reporting and later retrieval |
 
 | [0027](0027-durable-coding-sessions-and-exact-submissions.md) | Bounded host implementation and deterministic evidence; production packaging/model/deployment acceptance pending | SDK-independent sessions, shared cumulative accounting, verified full-source drafts, exact submissions and originating reports |
+| [0028](0028-prepared-linux-isolation.md) | Accepted bounded Linux migration prerequisite; see exact work-item evidence | Prepared kernel isolation and manifest-bound native helper inputs |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

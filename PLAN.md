@@ -155,6 +155,13 @@ Build the independent custodian skeleton, isolated jobs/candidates, scoped crede
 
 **Done when:** relevant A11/A14 isolation failures are denied at boundaries and the custodian can restart known-good code with worker and provider absent. This preliminary restart test does not replace full A15.
 
+**Linux migration refinement, 2026-10-10:** The dedicated Ubuntu host requires
+prepared Bubblewrap/Landlock/seccomp confinement, manifest-bound helper inputs
+and exact monitor/group recovery. The [work item](docs/work-items/linux-candidate-isolation.md)
+and [ADR 0028](docs/adr/0028-prepared-linux-isolation.md) distinguish actual
+primitive/collector/recovery evidence from copied-state import and systemd cutover.
+There is no unconfined fallback or general resource-quota claim.
+
 ### P06 — Implement memory and continuity
 
 **Priority:** P0. **Dependencies:** P03, P05. **Requirements:** R02, R07, R19, R22.
