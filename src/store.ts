@@ -321,12 +321,15 @@ export class Store {
   }
 
   /** Select before decoding payloads; omitted selectors retain the complete audit.
+   * Selectors require well-formed Unicode so UTF-8 conversion cannot change them.
    * Prefix comparison is literal and case-sensitive; NUL prefixes are refused
    * because SQLite's text decoding does not retain embedded NUL suffixes. */
   listEvents(filter: { after?: number; taskId?: string; types?: readonly string[]; typePrefix?: string } = {}): JournalEvent[] {
     if (filter.types !== undefined && (!Array.isArray(filter.types) || filter.types.some(type => typeof type !== 'string')))
       throw new Error('Journal event types must be strings');
+    if (filter.types?.some(type => !type.isWellFormed())) throw new Error('Journal event types must be well-formed Unicode');
     if (filter.typePrefix !== undefined && (typeof filter.typePrefix !== 'string' || filter.typePrefix.includes('\0'))) throw new Error('Journal event prefix must be a string without NUL');
+    if (filter.typePrefix !== undefined && !filter.typePrefix.isWellFormed()) throw new Error('Journal event prefix must be well-formed Unicode');
     if (filter.types?.length === 0) return [];
     const clauses = ['seq > ?']; const parameters: Array<string | number> = [filter.after ?? 0];
     if (filter.taskId !== undefined) { clauses.push('task_id = ?'); parameters.push(filter.taskId); }

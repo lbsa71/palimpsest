@@ -70,6 +70,21 @@ test('selective reads reject malformed relevant payloads without decoding unrela
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('selectors reject ill-formed Unicode rather than normalizing exact types or splitting astral prefixes', () => {
+  const store = new Store(':memory:');
+  try {
+    const replacement = store.appendEvent('replacement.\uFFFD', { retained: true });
+    const astral = store.appendEvent('growth.😀future', { retained: true });
+    assert.throws(() => store.listEvents({ types: ['replacement.\uD800'] }), /well-formed/);
+    assert.throws(() => store.listEvents({ types: ['replacement.\uDC00'] }), /well-formed/);
+    assert.throws(() => store.listEvents({ typePrefix: 'growth.\uD83D' }), /well-formed/);
+    assert.throws(() => store.listEvents({ typePrefix: 'growth.\uDE00' }), /well-formed/);
+    assert.deepEqual(store.listEvents({ types: ['replacement.\uFFFD'] }), [replacement]);
+    assert.deepEqual(store.listEvents({ typePrefix: 'growth.😀' }), [astral]);
+    assert.deepEqual(store.listEvents(), [replacement, astral]);
+  } finally { store.close(); }
+});
+
 test('publication pending follows the latest exact result without parsing unrelated provider history', () => {
   const dir = mkdtempSync(join(tmpdir(), 'journal-publication-')); const store = new Store(join(dir, 'state.sqlite'));
   try {
