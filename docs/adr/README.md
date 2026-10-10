@@ -42,5 +42,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 
 | [0027](0027-durable-coding-sessions-and-exact-submissions.md) | Bounded host implementation and deterministic evidence; production packaging/model/deployment acceptance pending | SDK-independent sessions, shared cumulative accounting, verified full-source drafts, exact submissions and originating reports |
 | [0028](0028-prepared-linux-isolation.md) | Accepted bounded Linux migration prerequisite; see exact work-item evidence | Prepared kernel isolation and manifest-bound native helper inputs |
+| [0029](0029-autark-deliberation-and-explicit-speech.md) | Bounded source implementation; integrated review, exact installation and configured-model acceptance remain open | The continuing autark's deliberative perspective, attributed observations, scoped self-description and explicit speech actions |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

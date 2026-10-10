@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,7 +25,7 @@ function fixture() {
   const requests: CompletionRequest[] = [], sent: OutboundMessage[] = [];
   const host = new GenerationHost({ repositoryRoot, dataDir, store, model: null,
     communications: ['peer', 'direct', 'slack'].map(name => ({ name, send: async message => { sent.push(structuredClone(message)); } })),
-    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: 'Synthetic ordinary answer.', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: spokenTurn('Synthetic ordinary answer.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   return { directory, repositoryRoot, dataDir, store, host, requests, sent,
     async close() { await host.close(); store.close(); rmSync(directory, { recursive: true, force: true }); } };

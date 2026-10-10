@@ -1,9 +1,10 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/store.ts';
 import { AgentRuntime } from '../src/runtime.ts';
 import { DirectCommunications } from '../src/communications.ts';
-import { ConversationActions } from '../src/conversation-actions.ts';
+import { codingDecisionSchema, ConversationActions } from '../src/conversation-actions.ts';
 import type { CompletionRequest, Provider } from '../src/providers.ts';
 import type { Task } from '../src/store.ts';
 
@@ -12,14 +13,14 @@ test('eligible cognition selects a durable coding session before its reply is de
   const observed: string[] = [];
   const provider: Provider = { name: 'fixture', async complete(request) {
     assert.match(request.system, /coding session/);
-    return { text: JSON.stringify({ reply: 'I will inspect the failure and work on a repair.', disposition: 'code',
+    return { text: spokenTurn({ reply: 'I will inspect the failure and work on a repair.', disposition: 'code',
       rationale: 'The request needs iterative repository work.', proposal: null, coding: { objective: 'Repair the failing module.' } }),
       provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
   } };
   const actions = new ConversationActions({ store, userIds: [], allowDirectOperator: true, sourceContext: () => 'Synthetic admitted context.' });
   const coding = {
     eligible: (task: Task) => task.source === 'direct',
-    prepare: (_task: Task, request: CompletionRequest) => ({ ...request, system: request.system + '\nAn eligible request may select a coding session.' }),
+    prepare: (_task: Task, request: CompletionRequest) => ({ ...request, schema: structuredClone(codingDecisionSchema), system: request.system + '\nAn eligible request may select a coding session.' }),
     accept: async (task: Task, raw: string) => {
       const value = JSON.parse(raw); if (value.disposition !== 'code') return undefined;
       assert.equal(store.task(task.id)?.state, 'running');
@@ -35,7 +36,8 @@ test('eligible cognition selects a durable coding session before its reply is de
     await runtime.runUntilIdle();
     assert.equal(store.task(task.id)?.state, 'succeeded');
     assert.deepEqual(observed, [task.id]);
-    assert.equal(direct.messages('local')[0]?.text, 'The durable coding session is queued.');
+    assert.equal(direct.messages('local')[0]?.text, 'I will inspect the failure and work on a repair.');
+    assert.equal((store.task(task.id)?.checkpoint as Record<string, unknown>).actionOutcome, 'The durable coding session is queued.');
     assert.equal(store.listEvents().filter(event => event.type === 'inference.started').length, 1);
   } finally { await runtime.stop(); store.close(); }
 });
@@ -44,7 +46,7 @@ test('runtime keeps foreground execution paused until coding adoption succeeds',
   const store = new Store(':memory:'), direct = new DirectCommunications(); let calls = 0, release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const runtime = new AgentRuntime({ store, communications: [direct], initiallyPaused: true,
-    provider: { name: 'fixture', complete: async () => { calls++; return { text: 'Observed reply.', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async () => { calls++; return { text: spokenTurn('Observed reply.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
     coding: { eligible: () => false, prepare: (_task, request) => request, accept: async () => undefined, resume: () => barrier } });
   try {
     const task = await runtime.submit({ id: 'adoption', source: 'direct', conversationId: 'local', text: 'Ordinary request.' });
@@ -58,7 +60,7 @@ test('runtime keeps foreground execution paused until coding adoption succeeds',
 test('failed coding adoption leaves foreground execution paused', async () => {
   const store = new Store(':memory:'), direct = new DirectCommunications(); let calls = 0;
   const runtime = new AgentRuntime({ store, communications: [direct],
-    provider: { name: 'fixture', complete: async () => { calls++; return { text: 'Observed reply.', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async () => { calls++; return { text: spokenTurn('Observed reply.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
     coding: { eligible: () => false, prepare: (_task, request) => request, accept: async () => undefined, resume: async () => { throw new Error('Adoption unavailable'); } } });
   try {
     await runtime.quiesce(); await runtime.submit({ id: 'failed-adoption', source: 'direct', conversationId: 'local', text: 'Ordinary request.' });
@@ -70,7 +72,7 @@ test('quiescence during coding adoption prevents a delayed resume from reopening
   const store = new Store(':memory:'), direct = new DirectCommunications(); let calls = 0, release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const runtime = new AgentRuntime({ store, communications: [direct],
-    provider: { name: 'fixture', complete: async () => { calls++; return { text: 'Observed reply.', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async () => { calls++; return { text: spokenTurn('Observed reply.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
     coding: { eligible: () => false, prepare: (_task, request) => request, accept: async () => undefined, resume: () => barrier } });
   try {
     await runtime.quiesce(); await runtime.submit({ id: 'interrupted-adoption', source: 'direct', conversationId: 'local', text: 'Ordinary request.' });

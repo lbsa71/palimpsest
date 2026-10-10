@@ -21,6 +21,7 @@ import { GrowthScheduler } from '../../../../src/scheduler.ts';
 import { codingData, type CodingSessionPolicy } from '../../../../src/coding-contracts.ts';
 import type { Provider } from '../../../../src/providers.ts';
 import type { CodingProviderPort, TrustedCodingProviderOptions } from '../../../../src/coding-provider.ts';
+import { spokenTurn } from '../../../../test/fixtures/autark.ts';
 
 // Keep serving contracts SDK-independent. The selected adapter has its own
 // strict fixture compiler; this test imports that same real implementation.
@@ -114,7 +115,7 @@ function fixture(variant: 'broader' | 'cognitive' = 'broader') {
   const provider: Provider = { name: 'fixture', async complete(request) {
     foregroundRequests.push({ system: request.system, schema: request.schema });
     const eligible = Object.keys(object(object(request.schema).properties)).includes('coding');
-    return { text: JSON.stringify({ reply: eligible ? 'I will investigate the code.' : 'Ordinary conversation.', ...(eligible ? {
+    return { text: spokenTurn({ reply: eligible ? 'I will investigate the code.' : 'Ordinary conversation.', ...(eligible ? {
       disposition: 'code', rationale: 'Iterative work is useful.', proposal: null, coding: { objective: 'Repair the observed module failure.' } } : {}),
       outcomes: [{ question: 'Repair the observed module failure.', stance: 'Investigation is pending.', rationale: 'Real execution will determine the result.', unresolved: ['Check the module.'], status: eligible ? 'pending' : 'settled', reflection: null, topicId: null }] }),
       provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };

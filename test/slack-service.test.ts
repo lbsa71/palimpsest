@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -37,7 +38,7 @@ test('Slack retries deduplicate in the shared durable store, including after lis
   const directory = await mkdtemp(join(tmpdir(), 'palimpsest-slack-ingress-'));
   const store = new Store(join(directory, 'state.sqlite'));
   let calls = 0;
-  const runtime = new AgentRuntime({ store, communications: [{ name: 'slack', send: async () => {} }], provider: { name: 'fixture', complete: async () => { calls++; return { text: 'Reply', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } } });
+  const runtime = new AgentRuntime({ store, communications: [{ name: 'slack', send: async () => {} }], provider: { name: 'fixture', complete: async () => { calls++; return { text: spokenTurn('Reply'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } } });
   const api = { submit: (input: InboundMessage) => runtime.submit(input) };
   let server = await createSlackServer(api, options);
   t.after(async () => { await server.close(); await runtime.stop(); store.close(); await rm(directory, { recursive: true, force: true }); });
@@ -90,7 +91,7 @@ test('hostile HTTP/signature input never reaches durable submit or exposes secre
 
 test('signed HTTP accepts mention-free joined-thread followups and commands through shared runtime', async (t) => {
   const store = new Store(':memory:'); let calls = 0; const replies: string[] = [];
-  const runtime = new AgentRuntime({ store, communications: [{ name: 'slack', send: async message => { replies.push(message.conversationId); } }], provider: { name: 'fixture', complete: async () => { calls++; return { text: 'Reply', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } } });
+  const runtime = new AgentRuntime({ store, communications: [{ name: 'slack', send: async message => { replies.push(message.conversationId); } }], provider: { name: 'fixture', complete: async () => { calls++; return { text: spokenTurn('Reply'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } } });
   const server = await createSlackServer({ submit: input => runtime.submit(input) }, { ...options, hasJoinedThread: id => store.hasSlackThread(id) });
   t.after(async () => { await server.close(); await runtime.stop(); store.close(); });
   const initial = envelope('start');

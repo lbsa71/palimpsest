@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
@@ -58,7 +59,7 @@ for(const profile of ['provenance','budget'] as const)test(`real restricted ${pr
   const baseline=freezeBaseline({repositoryRoot,dataDir,configuration:{scope:'local'},modelProfile:{provider:'fixture',model:null},requiredChecks:checks});
   const store=new Store(join(dataDir,'state.sqlite')),captured:CompletionRequest[]=[];
   const provider:Provider={name:'fixture',complete:async request=>{
-    captured.push(request);return {text:request.schema?JSON.stringify({reply:'Current experiences retained.',disposition:'converse',rationale:'Ordinary question.',proposal:null}):'Current experiences retained.',provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};
+    captured.push(request);return {text:spokenTurn((request.schema?.properties as Record<string,unknown>)?.disposition?{reply:'Current experiences retained.',disposition:'converse',rationale:'Ordinary question.',proposal:null}:'Current experiences retained.'),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};
   }};
   const actions=new ConversationActions({store,userIds:['U1'],allowDirectOperator:true,sourceContext:()=> 'Trusted fixture source'});
   const host=new GenerationHost({repositoryRoot,dataDir,store,provider,model:null,requiredChecks:checks,conversationActions:actions,

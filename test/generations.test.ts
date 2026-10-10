@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -28,7 +29,7 @@ function fixture(sourceOverride?: string, quiesceBackground?: () => Promise<void
   const candidate = freezeCandidate({ ...frozen, changes: [{ path: 'src/agent/brain.ts', content: source.replace('slice(-12)', 'slice(-10)') }] });
   const store = new Store(join(dataDir, 'state.sqlite')); const direct = new DirectCommunications();
   let online = true; let calls = 0;
-  const provider: Provider = { name: 'fixture', async complete() { calls++; if (!online) throw new ProviderError('unavailable', 'offline fixture'); return { text: 'fixture reply', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } };
+  const provider: Provider = { name: 'fixture', async complete() { calls++; if (!online) throw new ProviderError('unavailable', 'offline fixture'); return { text: spokenTurn('fixture reply'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } };
   const options = { repositoryRoot, dataDir, store, provider, model: null, communications: [direct], probationChecks: 2, rpcTimeoutMs: 150, quiesceBackground };
   const host = new GenerationHost(options);
   return { directory, baseline, candidate, store, direct, host, options, offline: () => { online = false; }, calls: () => calls };
@@ -232,7 +233,7 @@ test('tampered fallback stops within bounded recovery and preserves external his
 test('inference from a dead bound worker cannot finish effects before the next health poll', { skip: process.platform !== 'darwin' }, async () => {
   const f = fixture(); let release!: () => void; let begin!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; }); const started = new Promise<void>(resolve => { begin = resolve; });
-  f.options.provider.complete = async () => { begin(); await pending; return { text: 'too late', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; };
+  f.options.provider.complete = async () => { begin(); await pending; return { text: spokenTurn('too late'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; };
   try {
     await f.host.start(f.baseline); const task = await f.host.submit({ id: 'late', conversationId: 'local', source: 'direct', text: 'Worker dies during inference' });
     const drain = f.host.drain(); await started;
@@ -253,7 +254,7 @@ test('actual host separates local continuity and candidate globals from other co
     }
   `);
   const prompts: string[] = [];
-  f.options.provider.complete = async (request) => { prompts.push(request.prompt); return { text: 'scoped reply', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; };
+  f.options.provider.complete = async (request) => { prompts.push(request.prompt); return { text: spokenTurn('scoped reply'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; };
   try {
     f.store.addMemory({ scope: 'local', kind: 'episodic', content: 'LOCAL-PRIVATE-MEMORY', source: 'fixture', confidence: 1 });
     f.store.addMemory({ scope: 'alpha', kind: 'episodic', content: 'ALPHA-PRIVATE-MEMORY', source: 'fixture', confidence: 1 });

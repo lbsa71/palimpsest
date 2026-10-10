@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { autarkOrientation } from '../src/autark.ts';
 import { GrowthCoordinator } from '../src/growth.ts';
 import { Store } from '../src/store.ts';
 import { ProviderError, type Provider, type CompletionRequest } from '../src/providers.ts';
@@ -223,8 +224,11 @@ test('code proposals remain data for governed release and context stays scope re
     f.store.addMemory({ scope: 'private-conversation', kind: 'episodic', content: 'PRIVATE OTHER CONTEXT', source: 'user', confidence: 1 });
     const result = await new GrowthCoordinator({ store: f.store, provider: f.provider, hasUserWork: () => false, context: () => 'AUTHORIZED SNAPSHOT' }).tick();
     assert.deepEqual(((result!.outcome as Record<string, unknown>).result as Record<string, unknown>).proposedChange, proposedChange);
+    assert.ok(f.requests[0]!.system.startsWith(autarkOrientation));
+    assert.equal(Object.hasOwn(f.requests[0]!.schema!.properties as object, 'actions'), false);
     assert.ok(f.requests[0]!.prompt.includes('AUTHORIZED SNAPSHOT'));
     assert.ok(!f.requests[0]!.prompt.includes('PRIVATE OTHER CONTEXT'));
+    assert.equal(f.store.listEffects().length, 0);
   } finally { f.cleanup(); }
 });
 

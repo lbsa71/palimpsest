@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,7 @@ function fixture(store = new Store(':memory:'), reply = proposalText) {
   });
   const communications: Communications[] = ['peer', 'direct', 'slack'].map(name => ({ name, send: async message => { sent.push(structuredClone(message)); } }));
   const runtime = new AgentRuntime({ store, communications, conversationActions: actions, selfModificationUserIds: ['UOWNER'],
-    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: reply, provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: spokenTurn({reply}), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   return { store, runtime, requests, sent, actions, get sourceReads() { return sourceReads; }, get sourceObservations() { return sourceObservations; }, get cancelledJobs() { return cancelledJobs; },
     async close() { await runtime.stop(); store.close(); } };
@@ -62,7 +63,7 @@ test('peer final provider request excludes operator/Slack/source canaries and ca
     assert.match(serialized, /OWN_PEER_EXPERIENCE/);
     const actual = facts(f.requests[0]!);
     assert.deepEqual(actual.requester, { source: 'peer', slackAuthor: null, selfModificationSuggestionEligible: false });
-    assert.deepEqual(actual.conversationActionTools, []);
+    assert.deepEqual(actual.conversationActionTools, ['say']);
     assert.deepEqual(actual.memorySources.map((value: { memoryId: string }) => value.memoryId), [own.id]);
     assert.equal(f.sourceReads, 0); assert.equal(f.sourceObservations, 0);
     assert.equal(f.store.listGrowth().length, 0);
@@ -168,7 +169,7 @@ test('peer projection rereads current provenance after worker await and blocks a
       store.correctMemory(memory.id, scope, { content: 'SYNTHETIC_REORIGINATED_PRIVATE', source: `task:${privateOrigin.id}`, confidence: 1, evidence: ['trusted-correction-fixture'] });
       return built;
     },
-    provider: { name: 'fixture', complete: async () => { calls++; return { text: proposalText, provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async () => { calls++; return { text: spokenTurn({reply:proposalText}), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   try {
     const task = await runtime.submit(peer('projection-reread'));

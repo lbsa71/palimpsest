@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {Store} from '../src/store.ts';
 import {GenerationHost,releaseOf} from '../src/generations.ts';
 import {freezeBaseline,freezeCandidate} from '../src/candidates.ts';
+import {spokenTurn} from './fixtures/autark.ts';
 
 // Gate evidence is synthetic fault-injection context; no release is installed.
 test('aborted cutover awaits coding adoption and mechanically recovers from its failure', { skip: process.platform !== 'darwin' }, async () => {
@@ -20,7 +21,7 @@ const store=new Store(join(data,'state.sqlite'));
 let failResume=false,resumeCalls=0,entered!:()=>void,unblock!:()=>void,block=false;
 const atQuiescence=new Promise<void>(r=>entered=r),wait=new Promise<void>(r=>unblock=r);
 const coding={eligible:()=>false,prepare:(_t:any,r:any)=>r,accept:async()=>undefined,pause:async()=>{},resume:async()=>{resumeCalls++;if(failResume){failResume=false;throw Error('coding_adoption_unproven');}}};
-const host=new GenerationHost({repositoryRoot:repo,dataDir:data,store,provider:{name:'fixture',async complete(){return {text:'Observed',provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};}},model:null,communications:[],coding,quiesceBackground:async()=>{if(block){entered();await wait;}}});
+const host=new GenerationHost({repositoryRoot:repo,dataDir:data,store,provider:{name:'fixture',async complete(){return {text:spokenTurn('Observed'),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};}},model:null,communications:[],coding,quiesceBackground:async()=>{if(block){entered();await wait;}}});
 try {
  await host.start(baseline);const c=host.custodian,a=host.actor,next=await c.propose(a,releaseOf(candidate));
  c.recordEvidence(next.id,{candidateDigest:candidate.manifestDigest,evidenceDigest:'e'.repeat(64),checks:['typecheck','trusted-agent-contract','cross-scope-memory'].map(id=>({id,status:'pass',evidenceDigest:'d'.repeat(64)})),review:{candidateDigest:candidate.manifestDigest,evidenceDigest:'e'.repeat(64),status:'pass',contextDigest:'f'.repeat(64)}});

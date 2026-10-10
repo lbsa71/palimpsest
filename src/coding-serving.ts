@@ -13,9 +13,17 @@ const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json
 const route = (task: Task) => ({ source: task.source, scope: task.conversationId, slackAuthor: task.slackAuthor ?? null,
   replyTo: typeof object(task.checkpoint).replyTo === 'string' ? object(task.checkpoint).replyTo as string : null });
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
-const revokedDisposition = 'Coding execution ended; its draft is retained. Execution authority is unavailable. No release acceptance is claimed.';
+const revokedDisposition = 'Host notice: Coding work has a retained disposition. Execution authority is unavailable. No release acceptance is claimed.';
+const codingNotices = {
+  unavailable: 'Host notice: Coding is unavailable. No coding session was queued; its unavailable disposition is retained.',
+  finished: 'Host notice: The coding session ended. No immutable code submission was produced. No release acceptance or publication is claimed.',
+  submitted: 'Host notice: The coding session ended and an immutable draft was retained. No release acceptance or publication is claimed.',
+  queued: 'Host notice: The coding session ended and its exact draft is recorded in the existing cognitive review queue. No release acceptance or publication is claimed.',
+  held: 'Host notice: The coding session ended and its draft is preserved; current source or origin authority prevents release admission.',
+  migrated: 'Host notice: A retained coding result predates the explicit speech protocol. Its internal summary remains private. No release acceptance or publication is claimed.',
+};
 interface ReportBinding {
-  version: 'coding-report/1'; sessionId: string; reportTaskId: string; originTaskId: string;
+  version: 'coding-report/2'; sessionId: string; reportTaskId: string; originTaskId: string;
   originRoute: ReturnType<typeof route>; reportRoute: ReturnType<typeof route>; textDigest: string;
   requiresSourceAuthority: boolean; topics: { id: string; revision: number }[];
   sourceRefs: { id: string; version: number }[]; sourceTaskIds: string[];
@@ -54,7 +62,7 @@ export class CodingServing implements RuntimeCoding {
     const { value } = parseConversationDecision(raw);
     if (value.disposition !== 'code') return;
     if (!this.eligible(task)) throw new Error('Coding admission authority unavailable');
-    const unavailableReply = 'Coding is unavailable: the admitted source, finite policy or provider could not be established. No coding session was queued.';
+    const unavailableReply = codingNotices.unavailable;
     const store = this.#options.store;
     if (store.listEvents({ taskId: task.id }).some(event => event.type === 'coding.admission.unavailable')) {
       this.#unavailable(task, value.coding!.objective, unavailableReply); return unavailableReply;
@@ -69,8 +77,8 @@ export class CodingServing implements RuntimeCoding {
     }
     if (!this.eligible(this.#options.store.task(task.id)!)) throw new Error('Coding admission authority changed');
     this.#oweReport(session, task);
-    if (session.state === 'terminal') return `Coding session ${session.id} could not start: ${session.reason ?? session.phase}. Its disposition is retained.`;
-    return `Coding session ${session.id} is durably queued. I will return the observed outcome here. No release has completed.`;
+    if (session.state === 'terminal') return 'Host notice: The coding session could not start. Its disposition is retained.';
+    return 'Host notice: The coding session is durably queued. Its observed outcome remains owed here. No release has completed.';
   }
   #unavailable(task: Task, objective: string, reply: string): void {
     const store = this.#options.store, sessionId = `coding-admission:${task.id}`;
@@ -109,18 +117,35 @@ export class CodingServing implements RuntimeCoding {
     });
   };
   isReport(task: Task): boolean {
-    return this.#options.store.listEvents().some(event => event.type === 'coding.report.prepared' && object(event.payload).reportTaskId === task.id
+    return this.#options.store.listEvents({ types: ['coding.report.prepared', 'coding.serving.report_prepared'] }).some(event => event.type === 'coding.report.prepared' && object(event.payload).reportTaskId === task.id
       || event.type === 'coding.serving.report_prepared' && Array.isArray(object(event.payload).reportTaskIds)
         && (object(event.payload).reportTaskIds as unknown[]).includes(task.id));
+  }
+  /** Upgrade only unattempted bound reports. Reserved or uncertain sends retain
+   * their original bytes and effect identity for independent reconciliation. */
+  sanitizeReport(task: Task): Task {
+    const store = this.#options.store, current = store.task(task.id) ?? task;
+    if (!this.isReport(current) || !['queued', 'running'].includes(current.state) || store.effect(`${current.id}:result`)) return current;
+    const events = store.listEvents({ taskId: current.id });
+    const event = events.findLast(entry => entry.type === 'coding.report.prepared' || entry.type === 'coding.report.speech_migrated');
+    if (!event) return current; // Unbound legacy reports remain held.
+    const binding = object(event.payload);
+    if (binding.version === 'coding-report/2') return current;
+    if (binding.version !== 'coding-report/1') return current;
+    const answer = binding.requiresSourceAuthority === false ? revokedDisposition : codingNotices.migrated;
+    const report = store.updateTask(current.id, { checkpoint: json({ ...object(current.checkpoint), answer,
+      preparedSpeech: { version: 'prepared-speech/1', kind: 'host_notice' } }) });
+    store.appendEvent('coding.report.speech_migrated', json({ ...binding, version: 'coding-report/2', textDigest: digest(answer) }), current.id);
+    return report;
   }
   /** Pure current-state check: holding a stale report neither clears the owed
    * result nor grants a retry of an uncertain communication effect. */
   reportMaySend(task: Task): boolean {
     const store = this.#options.store;
-    const event = store.listEvents({ taskId: task.id }).find(entry => entry.type === 'coding.report.prepared');
+    const event = store.listEvents({ taskId: task.id }).findLast(entry => entry.type === 'coding.report.prepared' || entry.type === 'coding.report.speech_migrated');
     if (!event) return !this.isReport(task); // Older unbound coding reports fail closed.
     const binding = event.payload as unknown as ReportBinding;
-    if (binding.version !== 'coding-report/1' || binding.reportTaskId !== task.id || typeof binding.requiresSourceAuthority !== 'boolean'
+    if (binding.version !== 'coding-report/2' || binding.reportTaskId !== task.id || typeof binding.requiresSourceAuthority !== 'boolean'
       || !Array.isArray(binding.topics) || !Array.isArray(binding.sourceRefs) || !Array.isArray(binding.sourceTaskIds)) return false;
     const origin = store.task(binding.originTaskId), current = store.task(task.id);
     if (!origin || !current || !['direct', 'slack'].includes(origin.source) || origin.conversationId.startsWith('peer:')
@@ -135,6 +160,7 @@ export class CodingServing implements RuntimeCoding {
       || typeof object(current.checkpoint).answer !== 'string' || typeof object(task.checkpoint).answer !== 'string'
       || digest(object(current.checkpoint).answer as string) !== binding.textDigest
       || digest(object(task.checkpoint).answer as string) !== binding.textDigest
+      || ![...Object.values(codingNotices), revokedDisposition].includes(String(object(current.checkpoint).answer))
       || !store.taskSourceCurrent(origin.id)) return false;
     try {
       if (this.#options.authorizeReport?.(origin, current) === false) return false;
@@ -177,7 +203,7 @@ export class CodingServing implements RuntimeCoding {
       topic.sourceRefs.forEach(visit); topic.sourceTaskIds.forEach(id => sourceTaskIds.add(id));
       return [{ id, revision: topic.revision }];
     });
-    const binding: ReportBinding = { version: 'coding-report/1', sessionId, reportTaskId: report.id, originTaskId: origin.id,
+    const binding: ReportBinding = { version: 'coding-report/2', sessionId, reportTaskId: report.id, originTaskId: origin.id,
       originRoute: route(origin), reportRoute: route(report), textDigest: digest(String(object(report.checkpoint).answer)),
       requiresSourceAuthority, topics, sourceRefs: [...refs.values()], sourceTaskIds: [...sourceTaskIds] };
     store.appendEvent('coding.report.prepared', json(binding), report.id);
@@ -190,7 +216,7 @@ export class CodingServing implements RuntimeCoding {
       const origin = store.task(String(outcome.originTaskId));
       if (!origin || ['queued', 'running'].includes(origin.state)) continue;
       const receipt = typeof outcome.submissionId === 'string' ? this.#options.artifacts().submissionReceipt(outcome.submissionId) : undefined;
-      let disposition = receipt ? `Draft ${receipt.id}: ${receipt.disposition} (${receipt.reason}).` : 'No immutable code submission was produced.';
+      let disposition = receipt ? codingNotices.submitted : codingNotices.finished;
       store.transaction(() => {
         if (receipt?.cognitiveBridge && origin.state === 'succeeded') {
           try {
@@ -212,16 +238,17 @@ export class CodingServing implements RuntimeCoding {
                 store.updateGrowth(proposalId, { state: 'completed', outcome: body, nextStep: 'Exact cognitive draft awaits existing release admission.' });
               } else if (JSON.stringify(store.growth(proposalId)!.outcome) !== JSON.stringify(body)) throw new Error('Coding submission proposal identity changed');
             } else store.recordConversationProposal(origin.id, body);
-            disposition = `Draft ${receipt.id} is recorded in the existing cognitive review queue. No admission or publication is claimed.`;
+            disposition = codingNotices.queued;
             store.appendEvent('coding.submission.queued', json({ sessionId, submissionId: receipt.submissionId, submissionDigest: receipt.id }), origin.id);
           } catch {
-            disposition = `Draft ${receipt.id} is preserved; current source or origin authority prevents release admission.`;
+            disposition = codingNotices.held;
             store.appendEvent('coding.submission.held', json({ sessionId, submissionId: receipt.submissionId, reason: 'current_source_or_origin_unavailable' }), origin.id);
           }
         }
         let sourceAuthority = false;
         try { sourceAuthority = this.#options.authorizeOrigin(origin) === true; } catch { /* Fixed host disposition only. */ }
-        const text = sourceAuthority ? `Host-observed coding outcome for ${sessionId}: ${String(outcome.summary)}\n\n${disposition}` : revokedDisposition;
+        const unavailable = store.listEvents({ taskId: origin.id }).some(entry => entry.type === 'coding.admission.unavailable');
+        const text = sourceAuthority ? unavailable ? codingNotices.unavailable : disposition : revokedDisposition;
         const owed = store.listEvents().find(entry => entry.type === 'coding.report.owed' && object(entry.payload).sessionId === sessionId);
         const topics = Array.isArray(object(owed?.payload).topicIds) ? object(owed?.payload).topicIds as string[] : [];
         const bindings = Array.isArray(object(owed?.payload).topics) ? object(owed?.payload).topics as { id: string; revision: number }[] : [];

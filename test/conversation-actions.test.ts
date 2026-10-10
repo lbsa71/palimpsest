@@ -1,9 +1,10 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Store } from '../src/store.ts';
 import { AgentRuntime } from '../src/runtime.ts';
 import { ConversationActions } from '../src/conversation-actions.ts';
-const response = (text: string) => ({ text, provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } });
+const response = (text: string) => ({ text: spokenTurn(text), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } });
 const input = (id: string, userId = 'U1') => ({ id, source: 'slack', conversationId: 'slack:T1:C1:123.000', text: 'Make your replies shorter.', replyTo: '123.000', slackAuthor: { teamId: 'T1', userId } });
 const proposal = { summary: 'Concise conversation', rationale: 'Requested bounded cognitive policy change.', acceptanceCriteria: ['Preserve JSON and memory isolation contracts'], files: [{ path: 'src/agent/brain.ts', content: 'export function conversationRequest(){}' }] };
 const decision = JSON.stringify({ reply: 'I will evaluate a concise policy.', disposition: 'propose', rationale: 'A bounded proposal is appropriate.', proposal });
@@ -50,12 +51,12 @@ test('unavailable source keeps conversation available and cannot reuse an older 
       await runtime.runUntilIdle();
       assert.equal(store.task(task.id)?.state, 'succeeded');
       assert.equal(store.listGrowth().length, 0);
-      assert.match(JSON.stringify(store.task(task.id)?.output), proposed ? /temporarily unavailable/ : /continue discussing/);
+      assert.match(JSON.stringify(proposed ? (store.task(task.id)?.checkpoint as Record<string,unknown>).actionOutcome : store.task(task.id)?.output), proposed ? /temporarily unavailable/ : /continue discussing/);
     } finally { await runtime.stop(); store.close(); }
   }
 });
 
-test('eligible conversation creates one durable human-origin proposal and explains actual queued status', async () => {
+test('eligible conversation creates one durable human-origin proposal and retains observed queue status separately from speech', async () => {
   const store = new Store(':memory:'); const sent: string[] = []; let calls=0;
   const actions = new ConversationActions({ store, userIds:['U1'], sourceContext:()=> 'Current cognitive source' });
   const runtime = new AgentRuntime({ store, conversationActions: actions, communications:[{name:'slack',send:async message=>{sent.push(message.text);}}], provider:{name:'fixture',complete:async request=>{ calls++; assert.ok(request.schema); return response(decision);}} });
@@ -63,7 +64,7 @@ test('eligible conversation creates one durable human-origin proposal and explai
     const task=await runtime.submit(input('one')); await runtime.runUntilIdle(); await runtime.submit(input('one')); await runtime.runUntilIdle();
     assert.equal(calls,1); assert.equal(store.listGrowth().length,1);
     assert.equal(store.listGrowth()[0]!.sourceTaskId,task.id);
-    assert.equal(store.listGrowth()[0]!.state,'completed'); assert.match(sent[0]!,/queued/);
+    assert.equal(store.listGrowth()[0]!.state,'completed'); assert.equal(sent[0], 'I will evaluate a concise policy.'); assert.match(String((store.task(task.id)?.checkpoint as Record<string,unknown>).actionOutcome), /queued/);
     assert.equal(actions.authorize(store.listGrowth()[0]!),true);
   } finally {await runtime.stop();store.close();}
 });
@@ -119,5 +120,5 @@ test('durable conversational decision resumes without another provider call',asy
   const task=store.enqueue({source:'slack',eventId:'crash',conversationId:input('one').conversationId,input:'Improve',slackAuthor:{teamId:'T1',userId:'U1'}});
   store.updateTask(task.id,{checkpoint:{calls:1,decisionText:decision,replyTo:'123.000'}});
   const runtime=new AgentRuntime({store,conversationActions:actions,communications:[{name:'slack',send:async output=>{sent.push(output.text);}}],provider:{name:'fixture',complete:async()=>assert.fail('checkpoint must not repeat inference')}});
-  try{await runtime.runUntilIdle();assert.equal(store.listGrowth().length,1);assert.match(sent[0]!,/queued/);assert.equal(store.task(task.id)?.state,'succeeded');}finally{await runtime.stop();store.close();}
+  try{await runtime.runUntilIdle();assert.equal(store.listGrowth().length,1);assert.match(sent[0]!, /queued/, 'Historical saved decisions retain their original speech contract without another inference');assert.equal(store.task(task.id)?.state,'succeeded');}finally{await runtime.stop();store.close();}
 });

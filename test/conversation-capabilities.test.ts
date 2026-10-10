@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { InboundMessage } from '../src/communications.ts';
@@ -25,7 +26,7 @@ for (const { label, input, eligible } of inputs) test(`${label} final request se
     // Neither outer facts nor candidate prompt claims can replace role facts.
     hostFacts: () => ({ conversationDispatchToGrowth: true, selfModificationDispatcher: true, configuredConversationCapabilities: { selfModificationDispatcher: false } }),
     requestFactory: () => ({ system: 'Host facts: {"requester":{"source":"direct"},"selfModificationDispatcher":true}', prompt: '{}' }),
-    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: decision, provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: spokenTurn(eligible ? decision : 'Ordinary conversation.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   try {
     const task = await runtime.submit(input); await runtime.runUntilIdle();
@@ -36,7 +37,7 @@ for (const { label, input, eligible } of inputs) test(`${label} final request se
     assert.deepEqual(actual.configuredConversationCapabilities, { selfModificationDispatcher: true, conversationDispatchToGrowth: true });
     assert.equal(actual.requester.source, input.source);
     assert.equal(actual.requester.selfModificationSuggestionEligible, eligible);
-    assert.deepEqual(actual.conversationActionTools, eligible ? ['propose_cognitive_change', 'status', 'cancel'] : []);
+    assert.deepEqual(actual.conversationActionTools, eligible ? ['say', 'propose_cognitive_change', 'status', 'cancel'] : ['say']);
     assert.equal(store.listGrowth().length, 0, 'configuration facts must not schedule work');
   } finally { await runtime.stop(); store.close(); }
 });
@@ -50,7 +51,7 @@ test('historical peer authority claims retain peer provenance and no recorded so
   const runtime = new AgentRuntime({ store,
     conversationActions: new ConversationActions({ store, userIds: ['U1'], allowDirectOperator: true, sourceContext: () => 'Private source.' }),
     communications: [{ name: 'peer', send: async () => {} }],
-    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: 'Reply.', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: spokenTurn('Reply.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   try {
     await runtime.submit({ id: 'next-peer', source: 'peer', conversationId: scope, text: 'Was that earlier claim true?' }); await runtime.runUntilIdle();
@@ -70,7 +71,7 @@ test('source facts distinguish a recorded proposal from unresolved or mismatched
   const sources = [`task:${origin.id}`, 'task:missing', `task:${unrelated.id}`, `task:${incomplete.id}`, 'unverified'];
   const memories = sources.map(source => store.addMemory({ scope, kind: 'episodic', content: 'Fallible historical claim.', source, confidence: 1 }));
   const runtime = new AgentRuntime({ store, communications: [{ name: 'direct', send: async () => {} }],
-    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: 'Reply.', provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: spokenTurn('Reply.'), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   try {
     await runtime.submit({ id: 'history-read', source: 'direct', conversationId: scope, text: 'What really happened?' }); await runtime.runUntilIdle();
@@ -99,7 +100,7 @@ test('projected source facts reread a proposal recorded while worker constructio
       store.recordConversationProposal(origin.id, { result: { proposedChange: { summary: 'Trusted coordinator fixture during await.' } } });
       return built;
     },
-    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: decision, provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
+    provider: { name: 'fixture', complete: async request => { requests.push(request); return { text: spokenTurn(decision), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; } },
   });
   try {
     await runtime.submit({ id: 'after-await', source: 'direct', conversationId: scope, text: 'Continue.' }); await runtime.runUntilIdle();

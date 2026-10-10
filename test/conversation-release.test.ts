@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync } from 'node:fs';
@@ -29,7 +30,7 @@ test('real host conversation carries Slack author through governed succession, e
   const provider:Provider={name:'fixture',complete:async request=>{
     const prompt=JSON.parse(request.prompt);let body:unknown;
     if((request.schema?.properties as Record<string,unknown>)?.disposition){
-      stages.push('conversation');body=prompt.request==='Improve your replies' ? {reply:'I will evaluate a small change.',disposition:'propose',rationale:'A bounded source improvement.',proposal} : {reply:request.system.includes('Keep replies concise.')?'Serving concise successor.':'Old policy.',disposition:'converse',rationale:'Ordinary follow-up.',proposal:null};
+      stages.push('conversation');body=prompt.observation?.text==='Improve your replies' ? {reply:'I will evaluate a small change.',disposition:'propose',rationale:'A bounded source improvement.',proposal} : {reply:request.system.includes('Keep replies concise.')?'Serving concise successor.':'Old policy.',disposition:'converse',rationale:'Ordinary follow-up.',proposal:null};
     }else {
       stages.push(prompt.stage??'review');
       if(!prompt.stage)body={...prompt.bindings,status:'pass',reason:'Synthetic fresh review bound to exact source and independent checks.',coverage:prompt.requiredCheckNames,blockingFindings:[]};
@@ -38,7 +39,7 @@ test('real host conversation carries Slack author through governed succession, e
       else if(prompt.stage==='verdict')body={...prompt.bindings,verdict:'accept',reason:'Bound source and protected checks support acceptance.',coverage:[...INTERVIEW_CRITERIA],challengeResolution:'Cross-scope check establishes the correction.'};
       else body={...prompt.bindings,ready:true,reason:'Ready for custodian-authorized catch-up.',acknowledgesTransferContract:true};
     }
-    return {text:JSON.stringify(body),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};
+    return {text:prompt.observation ? spokenTurn(body as Record<string,unknown>) : JSON.stringify(body),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};
   }};
   let scheduler:EvolutionScheduler|undefined;
   const actions=new ConversationActions({store,userIds:['U1'],sourceContext:()=>source,cancelWork:id=>scheduler?.cancelTask(id)??false});
