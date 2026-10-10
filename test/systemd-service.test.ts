@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,12 +10,14 @@ import { freezeBaseline, freezeCandidate } from '../src/candidates.ts';
 import { CoordinatorLock } from '../src/ownership.ts';
 import { SystemdService } from '../scripts/systemd-service.ts';
 
-function fixture() {
+function fixture(native = false, bindNative = native) {
   const directory = mkdtempSync(join(tmpdir(), 'palimpsest-systemd-'));
   const repositoryRoot = join(directory, 'repo'), dataDir = join(directory, 'state'), credentialsPath = join(directory, 'credentials.env');
   mkdirSync(join(repositoryRoot, 'src/agent'), { recursive: true }); mkdirSync(join(repositoryRoot, 'docs'));
   writeFileSync(join(repositoryRoot, 'src/platform-migration-gate.ts'), 'export function assertPlatformMigrationReady(){}');
-  mkdirSync(join(repositoryRoot, 'scripts')); mkdirSync(join(repositoryRoot, 'deploy/systemd'), { recursive: true });
+  mkdirSync(join(repositoryRoot, 'scripts'));
+  mkdirSync(join(repositoryRoot, 'deploy/systemd'), { recursive: true });
+  writeFileSync(join(repositoryRoot, 'scripts/systemd-native-inputs.ts'), readFileSync(new URL('../scripts/systemd-native-inputs.ts', import.meta.url)));
   writeFileSync(join(repositoryRoot, 'scripts/systemd-service.ts'), readFileSync(new URL('../scripts/systemd-service.ts', import.meta.url)));
   writeFileSync(join(repositoryRoot, 'deploy/systemd/palimpsest.service.in'), readFileSync(new URL('../deploy/systemd/palimpsest.service.in', import.meta.url)));
   mkdirSync(join(dataDir, 'custodian'), { recursive: true, mode: 0o700 });
@@ -23,9 +26,17 @@ function fixture() {
   writeFileSync(join(repositoryRoot, 'src/agent/brain.ts'), 'export function conversationRequest(){return {};}');
   writeFileSync(join(repositoryRoot, 'docs/seed-contract.md'), 'Fixture');
   writeFileSync(credentialsPath, 'MISTRAL_API_KEY=PRIVATE-CANARY', { mode: 0o600 });
+  const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+  const nativeSource = '/* native fixture source */\n';
+  const nativeBinary = Buffer.alloc(64); nativeBinary.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]); nativeBinary[18] = 0x3e;
+  const nativeReceipt = JSON.stringify({ version: 1, arch: 'x64', sourceSha256: hash(nativeSource), binarySha256: hash(nativeBinary) });
+  const admittedNativeInputs = { sourceSha256: hash(nativeSource), binarySha256: hash(nativeBinary), receiptSha256: hash(nativeReceipt) };
+  if (native) { mkdirSync(join(repositoryRoot, 'trusted')); writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher.c'), nativeSource); }
   const git = (...args: string[]) => execFileSync('/usr/bin/git', args, { cwd: repositoryRoot, stdio: 'ignore' });
   git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid'); git('add', '.'); git('commit', '-qm', 'baseline');
   const manifest = freezeBaseline({ repositoryRoot, dataDir, configuration: {}, modelProfile: { provider: 'fixture', model: null } });
+  if (native) { writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher'), nativeBinary, { mode: 0o500 });
+    writeFileSync(join(repositoryRoot, 'trusted/linux-isolation-launcher.json'), nativeReceipt, { mode: 0o400 }); }
   const db = new DatabaseSync(join(dataDir, 'custodian/custodian.sqlite'));
   db.exec('CREATE TABLE custodian_state(id INTEGER PRIMARY KEY,record TEXT NOT NULL)');
   const release = { digest: manifest.id, artifactPath: manifest.releaseDir, governanceDigest: manifest.governanceDigest, dataSchemaVersion: 1 };
@@ -33,6 +44,7 @@ function fixture() {
   let ready = true;
   const hostRoot = join(directory, 'sealed-hosts');
   const service = new SystemdService({ config: { repositoryRoot, dataDir, credentialsPath }, hostRoot, sealOwner: process.getuid!(),
+    ...(bindNative ? { admittedNativeInputs, preparedNativeRoot: repositoryRoot } : {}),
     assertReady: async () => { if (!ready) throw new Error('Migration held'); } });
   return { directory, repositoryRoot, manifest, service, dataDir, credentialsPath,
     async install() { const installation = await service.prepare(); mkdirSync(hostRoot, { recursive: true, mode: 0o755 });
@@ -142,5 +154,29 @@ test('service scratch stays private and is preserved through replacement environ
     assert.ok(f.service.unit(installation).includes(`TMPDIR=${scratch}`));
     assert.equal(f.service.environment(installation).TMPDIR, scratch);
     chmodSync(scratch, 0o755); await assert.rejects(f.service.verify(installation.releaseId), /private/i);
+  } finally { f.close(); }
+});
+
+
+test('sealed native package copies only admitted ELF/receipt extras and bootstraps their exact hashes', async () => {
+  const f = fixture(true); try {
+    const installation = await f.install();
+    const checksum = readFileSync(join(f.dataDir, 'service', `host-${installation.releaseId}.sha256`), 'utf8');
+    for (const path of ['trusted/linux-isolation-launcher.c', 'trusted/linux-isolation-launcher', 'trusted/linux-isolation-launcher.json']) {
+      assert.equal(existsSync(join(installation.bundlePath, path)), true);
+      assert.ok(checksum.includes(join(installation.bundlePath, path)));
+    }
+    assert.equal(lstatSync(join(installation.bundlePath, 'trusted/linux-isolation-launcher')).mode & 0o777, 0o550);
+    assert.deepEqual(await f.service.verify(installation.releaseId), installation);
+    chmodSync(join(installation.bundlePath, 'trusted'), 0o700);
+    writeFileSync(join(installation.bundlePath, 'trusted/unknown-native'), 'unreviewed', { mode: 0o440 });
+    chmodSync(join(installation.bundlePath, 'trusted'), 0o550);
+    await assert.rejects(f.service.verify(installation.releaseId), /projection|identity/i);
+  } finally { f.close(); }
+});
+
+test('tracked native source without admitted prepared hashes refuses service preparation', async () => {
+  const f = fixture(true, false); try {
+    await assert.rejects(f.service.prepare(), /admitted.*native|native.*admitted/i);
   } finally { f.close(); }
 });

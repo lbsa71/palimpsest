@@ -6,9 +6,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { loadConfig, resolveExternalPath } from '../src/config.ts';
 import type { RuntimeConfig } from '../src/config.ts';
 import { verifyFrozenCandidate } from '../src/candidates.ts';
-import type { CandidateManifest } from '../src/candidates.ts';
+import type { CandidateFile, CandidateManifest } from '../src/candidates.ts';
 import type { Release } from '../src/custodian.ts';
 import { CoordinatorLock } from '../src/ownership.ts';
+import { nativeInputPaths, verifyPreparedNativeInputs } from './systemd-native-inputs.ts';
+import type { AdmittedNativeInputs } from './systemd-native-inputs.ts';
 
 const installedRoot = realpathSync(fileURLToPath(new URL('..', import.meta.url)));
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -22,6 +24,8 @@ interface Options {
   assertReady?: (dataDir: string) => void | Promise<void>;
   /** Trusted fixture layout/owner overrides; production is root-sealed under /opt. */
   hostRoot?: string; sealOwner?: number;
+  /** Immutable synthetic admission only, gated by the trusted fixture layout. */
+  admittedNativeInputs?: AdmittedNativeInputs; preparedNativeRoot?: string;
 }
 function privateFile(path: string): void {
   const stat = lstatSync(path);
@@ -41,10 +45,13 @@ function atomicPrivate(path: string, content: string): void {
 export class SystemdService {
   readonly #config: Options['config']; readonly #ready: NonNullable<Options['assertReady']>;
   readonly #hostRoot: string; readonly #sealOwner: number; readonly #fixture: boolean;
+  readonly #nativeRoot: string; readonly #fixtureNative?: AdmittedNativeInputs;
   constructor(options: Options) {
     const repositoryRoot = realpathSync(options.config.repositoryRoot);
     this.#hostRoot = options.hostRoot ?? '/opt/palimpsest/hosts'; this.#sealOwner = options.sealOwner ?? 0;
     this.#fixture = options.hostRoot !== undefined || options.sealOwner !== undefined;
+    if (!this.#fixture && (options.admittedNativeInputs || options.preparedNativeRoot)) throw new Error('Native fixture inputs require trusted fixture layout');
+    this.#nativeRoot = options.preparedNativeRoot ?? installedRoot; this.#fixtureNative = options.admittedNativeInputs;
     this.#config = { repositoryRoot, dataDir: resolveExternalPath(repositoryRoot, options.config.dataDir),
       credentialsPath: resolveExternalPath(repositoryRoot, options.config.credentialsPath) };
     this.#ready = options.assertReady ?? (async dataDir => {
@@ -86,11 +93,22 @@ export class SystemdService {
       || release.dataSchemaVersion !== manifest.dataSchemaVersion) throw new Error('Known-good custody identity mismatch');
     return manifest;
   }
+  #expectedFiles(manifest: CandidateManifest, nativeRoot = this.#nativeRoot): CandidateFile[] {
+    const admitted = this.#fixtureNative ?? (manifest.runtime as typeof manifest.runtime & { linuxIsolation?: AdmittedNativeInputs }).linuxIsolation;
+    const source = manifest.files.find(file => file.path === nativeInputPaths[0]);
+    if (!admitted) {
+      if (source || (!this.#fixture && process.platform === 'linux')) throw new Error('Admitted native isolation identity is required');
+      return manifest.files;
+    }
+    if (!source || source.sha256 !== admitted.sourceSha256) throw new Error('Native C source differs from admitted frozen source');
+    if (manifest.files.some(file => file.path === nativeInputPaths[1] || file.path === nativeInputPaths[2])) throw new Error('Prepared native build products must remain explicit non-Git inputs');
+    return [...manifest.files, ...verifyPreparedNativeInputs(nativeRoot, admitted).slice(1)];
+  }
   #verifyProjection(manifest: CandidateManifest, bundle: string, sealed = false): void {
     const root = lstatSync(bundle);
     const groupRead = sealed ? 0o050 : 0;
     if (!root.isDirectory() || root.isSymbolicLink() || (root.mode & 0o777) !== (0o500 | groupRead) || (sealed && root.uid !== this.#sealOwner)) throw new Error('Host projection root identity mismatch');
-    const expected = new Map(manifest.files.map(file => [file.path, file])); const found = new Set<string>();
+    const expected = new Map(this.#expectedFiles(manifest, bundle).map(file => [file.path, file])); const found = new Set<string>();
     const walk = (directory: string) => {
       for (const name of readdirSync(directory)) {
         const path = join(directory, name), local = relative(bundle, path), stat = lstatSync(path);
@@ -116,17 +134,18 @@ export class SystemdService {
     const lock = new CoordinatorLock(join(this.#config.dataDir, 'coordinator.sqlite'));
     try {
       const manifest = await this.#knownGood();
-      for (const path of ['src/cli.ts', 'src/platform-migration-gate.ts', 'scripts/systemd-service.ts', 'deploy/systemd/palimpsest.service.in']) {
+      for (const path of ['src/cli.ts', 'src/platform-migration-gate.ts', 'scripts/systemd-service.ts', 'scripts/systemd-native-inputs.ts', 'deploy/systemd/palimpsest.service.in']) {
         if (!manifest.files.some(file => file.path === path)) throw new Error('Admitted host lacks the systemd entrypoint/template');
       }
-      if (manifest.files.some(file => /[\n\r\\]/u.test(file.path))) throw new Error('Checksum projection requires plain file names');
+      const files = this.#expectedFiles(manifest);
+      if (files.some(file => /[\n\r\\]/u.test(file.path))) throw new Error('Checksum projection requires plain file names');
       const parent = join(this.#config.dataDir, 'host-installations'); privateDirectory(parent);
       const bundlePath = join(parent, manifest.id);
       if (!existsSync(bundlePath)) {
         const temporary = join(parent, `.preparing-${randomUUID()}`); privateDirectory(temporary);
-        for (const file of manifest.files) {
+        for (const file of files) {
           const path = join(temporary, file.path); mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-          writeFileSync(path, readFileSync(join(manifest.candidateRoot, file.path)), { flag: 'wx', mode: file.mode === '100755' ? 0o500 : 0o400 });
+          writeFileSync(path, readFileSync(join(manifest.files.some(tracked => tracked.path === file.path) ? manifest.candidateRoot : this.#nativeRoot, file.path)), { flag: 'wx', mode: file.mode === '100755' ? 0o500 : 0o400 });
         }
         symlinkSync(realpathSync(join(installedRoot, 'node_modules')), join(temporary, 'node_modules'));
         const freeze = (path: string) => { for (const name of readdirSync(path)) { const child = join(path, name); if (lstatSync(child).isDirectory()) freeze(child); } chmodSync(path, 0o500); };
@@ -137,7 +156,7 @@ export class SystemdService {
       for (const name of ['stdout.log', 'stderr.log']) { const path = join(this.#serviceDir, name); if (!existsSync(path)) writeFileSync(path, '', { flag: 'wx', mode: 0o600 }); privateFile(path); }
       const installation: SystemdInstallation = { version: 1, releaseId: manifest.id, bundlePath: join(this.#hostRoot, manifest.id), nodePath: realpathSync(process.execPath), ...this.#config };
       atomicPrivate(join(this.#serviceDir, `host-${manifest.id}.sha256`),
-        [...manifest.files.map(file => `${file.sha256}  ${join(installation.bundlePath, file.path)}`),
+        [...files.map(file => `${file.sha256}  ${join(installation.bundlePath, file.path)}`),
           `${manifest.runtime.nodeSha256}  ${installation.nodePath}`].join('\n') + '\n');
       atomicPrivate(join(this.#serviceDir, 'systemd-installation.json'), JSON.stringify(installation));
       atomicPrivate(join(this.#serviceDir, 'palimpsest.service'), this.unit(installation));
