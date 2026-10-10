@@ -123,6 +123,10 @@ Forkability is an engineering capability, not a requirement to fork everything i
 
 Primary-source assessment on 2026-10-09: [AI SDK tool calling](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling), [direct Mistral adapter](https://ai-sdk.dev/providers/ai-sdk-providers/mistral), [Pi core](https://github.com/earendil-works/pi/blob/main/packages/agent/README.md), [Pi embedding](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md) and [Pi package dependencies](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/package.json). This is a documentation/source assessment, not a completed compatibility benchmark or a guarantee of future support.
 
+## Bounded host implementation, 2026-10-10
+
+[ADR 0027](adr/0027-durable-coding-sessions-and-exact-submissions.md) records the implemented SDK-independent session/accounting/artifact contract. The [serving work item](work-items/p17-serving-coding.md) separates actual admitted-worker/native SDK synthetic transport evidence from production configuration and model competence. The host imports the complete admitted tree, retains real tool/check feedback, preserves cumulative accounting and queues only lossless cognitive submissions under existing rules. Broader drafts remain immutable pending supported admission. The production CLI factory and retained SDK environment remain unimplemented; these injected interfaces are not an available operator command.
+
 ## Acceptance and evidence
 
 The normative scenarios are [A22/A23 and revised A17](acceptance.md#a22--iterative-coding-with-real-workspace-tools). The implementation lead must establish failing behavior checks before each behavioral slice, preserve trusted fixture ownership and record real results. At minimum:

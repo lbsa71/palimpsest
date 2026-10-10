@@ -125,8 +125,8 @@ async function main(): Promise<void> {
       return ['src/agent/brain.ts', 'GROWTH.md'].filter(path => existsSync(join(root, path)))
         .map(path => `Source ${path}:\n${readFileSync(join(root, path), 'utf8')}`).join('\n\n');
     };
-    const userCommitments = () => store!.listTasks({ states: ['queued', 'running'] }).length > 0
-      || store!.listTasks().some(task => store!.listEffects(task.id).some(effect => effect.state !== 'completed'));
+    const userCommitments = () => store!.listTasks({ states: ['queued', 'running'] }).some(task => !['coding-session', 'coding-origin'].includes(task.source))
+      || store!.listTasks().some(task => !['coding-session', 'coding-origin'].includes(task.source) && store!.listEffects(task.id).some(effect => effect.state !== 'completed'));
     const observeSource=()=>{
       const release=host?.custodian.inspect().active?.release;
       if(!release)throw new Error('No serving source is available');
@@ -303,6 +303,7 @@ async function main(): Promise<void> {
         if (stopped || evolution?.busy) return;
         await publicationReconciler!.reconcile(evolution!.items());
         await actions.reconcileResults(evolution!.items(), undefined, publicationReconciler);
+        if (!userCommitments() && !stopped) await host!.tickCoding();
         if (development && !userCommitments() && !stopped && (development.allocation().remaining > 0
           || development.attempts().some(attempt => ['proposed', 'queued'].includes(attempt.state)))) {
           try { await development.tick(); } catch { if (!stopped) console.error('development_tick_held'); }

@@ -36,7 +36,7 @@ const sourcePaths = ['.gitignore', 'README.md', 'contracts.ts', 'facade.ts', 'in
 const source = sourcePaths.map(path => { const bytes = readFileSync(join(here, path)); return { path, bytes: bytes.length, lines: bytes.toString().split('\n').length - 1, sha256: sha256(bytes) }; });
 const sdkPaths = ['@ai-sdk/mistral/src/mistral-chat-language-model.ts', '@ai-sdk/mistral/src/convert-to-mistral-chat-messages.ts', '@ai-sdk/mistral/src/convert-mistral-usage.ts', '@ai-sdk/provider/dist/index.d.ts', '@ai-sdk/provider-utils/src/response-handler.ts', '@ai-sdk/provider-utils/src/read-response-with-size-limit.ts'];
 const sdkSource = sdkPaths.map(path => ({ path, sha256: sha256(readFileSync(join(closure, path))) }));
-const root = join(here, '../..');
+const root = join(here, '../../..');
 const inventory = {
   status: 'fixture-only; no production dependency installation or live conformance',
   node: process.version, platform: process.platform, architecture: process.arch,

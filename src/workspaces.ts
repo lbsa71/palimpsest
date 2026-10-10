@@ -12,6 +12,10 @@ import { readWorkspaceCommandOutput, runWorkspaceCommand, type WorkspaceCommand,
 import type { WorkspaceOperation as HelperOperation, WorkspaceResponse, WorkspaceCheckpoint, WorkspaceCheckpointPage } from '../trusted/workspace-files.mjs';
 
 export interface WorkspaceFileInput { path: string; content: Uint8Array; mode: 0o644 | 0o755 }
+export interface WorkspaceImport {
+  taskId: string; epoch: number; base: WorkspaceBase; files: WorkspaceFileInput[];
+  directories?: { path: string; mode: number }[]; rootMode?: number;
+}
 export interface WorkspaceFile { path: string; sha256: string; bytes: number; mode: number }
 export interface WorkspaceBase { releaseDigest: string; baseCommit: string; treeDigest: string }
 export interface WorkspaceRecord {
@@ -167,11 +171,11 @@ export class CodingWorkspaces {
     if (!root.isDirectory() || root.isSymbolicLink() || root.dev !== record.device || root.ino !== record.inode) throw new Error('Workspace root identity changed');
   }
 
-  create(input: { taskId: string; epoch: number; base: WorkspaceBase; files: WorkspaceFileInput[] }): WorkspaceRecord {
+  create(input: WorkspaceImport): WorkspaceRecord {
     return this.#create(input);
   }
 
-  #create(input: { taskId: string; epoch: number; base: WorkspaceBase; files: WorkspaceFileInput[] }, restoration?: {
+  #create(input: WorkspaceImport, restoration?: {
     original: WorkspaceRecord; commandId: string; checkpoint: WorkspaceCheckpoint;
   }): WorkspaceRecord {
     const id = randomUUID();
@@ -179,6 +183,23 @@ export class CodingWorkspaces {
     this.#authority({ taskId: input.taskId, workspaceId: id, epoch: input.epoch }); this.#identity();
     const imported = input.files.map(file => ({ ...file, content: Buffer.from(file.content) }));
     const files = inputManifest(imported);
+    const layout = restoration?.checkpoint ?? (input.directories !== undefined || input.rootMode !== undefined
+      ? { directories: input.directories ?? [], rootMode: input.rootMode ?? 0o700 } : undefined);
+    if (layout) {
+      if (!Array.isArray(layout.directories) || layout.directories.length + files.length > limits.maxFiles || ![0o700, 0o755].includes(layout.rootMode)) throw new Error('Invalid imported directory metadata');
+      const aliases = new Map<string, string>();
+      const fileNames = new Set(files.map(file => file.path.normalize('NFC').toLocaleLowerCase('en-US')));
+      for (const directory of layout.directories) {
+        validPath(directory.path); const key = directory.path.normalize('NFC').toLocaleLowerCase('en-US');
+        if (aliases.has(key) || fileNames.has(key) || ![0o700, 0o755].includes(directory.mode)) throw new Error('Invalid imported directory');
+        aliases.set(key, directory.path);
+      }
+      for (const path of [...files.map(file => file.path), ...layout.directories.map(directory => directory.path)]) {
+        for (let parent = dirname(path); parent !== '.'; parent = dirname(parent)) {
+          if (aliases.get(parent.normalize('NFC').toLocaleLowerCase('en-US')) !== parent) throw new Error('Incomplete or conflicting imported directory metadata');
+        }
+      }
+    }
     const expectedTree = restoration?.checkpoint.treeDigest ?? input.base.treeDigest;
     if (!/^[a-f0-9]{64}$/.test(input.base.releaseDigest) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.base.baseCommit)
       || sha(JSON.stringify(files)) !== expectedTree
@@ -201,15 +222,12 @@ export class CodingWorkspaces {
         const checkpoint = restoration.checkpoint;
         if (![0o700, 0o755].includes(checkpoint.rootMode) || sha(JSON.stringify(files)) !== checkpoint.treeDigest
           || sha(JSON.stringify({ files, directories: checkpoint.directories, rootMode: checkpoint.rootMode })) !== checkpoint.fullTreeDigest) throw new Error('Invalid checkpoint tree metadata');
-        const aliases = new Map<string, string>();
-        for (const directory of checkpoint.directories) {
-          validPath(directory.path);
-          const key = directory.path.normalize('NFC').toLocaleLowerCase('en-US');
-          if (aliases.has(key) || ![0o700, 0o755].includes(directory.mode)) throw new Error('Invalid checkpoint directory');
-          aliases.set(key, directory.path);
+      }
+      if (layout) {
+        for (const directory of layout.directories) {
           const path = join(tree, directory.path); mkdirSync(path, { recursive: true, mode: 0o700 }); chmodSync(path, directory.mode); directories.add(path);
         }
-        chmodSync(tree, checkpoint.rootMode);
+        chmodSync(tree, layout.rootMode);
       }
       for (const path of [...directories].sort((a, b) => b.length - a.length)) flushDirectory(path);
       this.#authority({ taskId: input.taskId, workspaceId: id, epoch: input.epoch });

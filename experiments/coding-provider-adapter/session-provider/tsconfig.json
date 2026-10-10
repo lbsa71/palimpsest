@@ -3,7 +3,7 @@
     "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
     "strict": true, "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true,
     "allowImportingTsExtensions": true, "noEmit": true, "skipLibCheck": true,
-    "typeRoots": ["../../node_modules/@types"], "types": ["node"],
+    "typeRoots": ["../../../node_modules/@types"], "types": ["node"],
     "paths": {
       "@ai-sdk/provider": ["./fixture-sdk/@ai-sdk/provider/dist/index.d.ts"],
       "@ai-sdk/provider-utils": ["./fixture-sdk/@ai-sdk/provider-utils/dist/index.d.ts"],

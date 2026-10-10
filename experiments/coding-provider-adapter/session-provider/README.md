@@ -1,6 +1,6 @@
 # P17 general native single-step coding provider fixture
 
-Status: local testable work item implemented and fixture-verified, 2026-10-10. Fifty-four synthetic checks and strict source/interface typechecking pass. This extends the selected [ADR 0019](../../docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) adapter boundary for the durable coding-session host. It is fixture-only code, with no production dependency installation or live compatibility claim.
+Status: local testable work item implemented and fixture-verified, 2026-10-10. Fifty-four synthetic checks and strict source/interface typechecking pass. This extends the selected [ADR 0019](../../../docs/adr/0019-coding-autonomy-and-reusable-agent-plumbing.md) adapter boundary for the durable coding-session host. It is fixture-only code, with no production dependency installation or live compatibility claim.
 
 Problem: the selected baseline advertises one fixed read function, model and synthetic credential. A general coding session needs trusted model/credential/catalog configuration and completed read/command/failure history while keeping the SDK protocol behind Palimpsest-owned records.
 
@@ -42,7 +42,7 @@ Overrides require positive safe integers; deadlines also fit Node's maximum time
 
 Transport receives Fetch's `redirect: 'error'` plus the host signal. A returned 3xx or already-redirected response is also rejected. A trusted custom transport must actually honor this redirect policy; a synthetic assertion is not evidence that an arbitrary replacement transport does so. No automatic retry exists. Late bodies are cancelled; a deadline settles without waiting for a cancellation promise. Synchronous validator work must remain bounded by the trusted host because event-loop deadlines cannot interrupt synchronous code.
 
-The [selected baseline](../coding-provider-adapter/README.md#usage-contract-provenance-and-remaining-limits) preserves the Mistral usage provenance conflict: its OpenAPI requires individual counts, while a generated client tolerates omitted counts. This fixture keeps the selected sparse-usage rejection. Known usage means coherent explicitly reported input/output/total counts, including actual zero, with validated optional cache metadata; it is not billing verification. Missing, sparse, malformed or inconsistent usage fails with unknown spent usage. Coherent counts remain known when later tool/finish validation fails. Optional missing cache data stays unknown; no cache/reasoning/audio/cost aggregates are invented.
+The [selected baseline](../README.md#usage-contract-provenance-and-remaining-limits) preserves the Mistral usage provenance conflict: its OpenAPI requires individual counts, while a generated client tolerates omitted counts. This fixture keeps the selected sparse-usage rejection. Known usage means coherent explicitly reported input/output/total counts, including actual zero, with validated optional cache metadata; it is not billing verification. Missing, sparse, malformed or inconsistent usage fails with unknown spent usage. Coherent counts remain known when later tool/finish validation fails. Optional missing cache data stays unknown; no cache/reasoning/audio/cost aggregates are invented.
 
 ## Fixture-only resolution and evidence
 
@@ -50,13 +50,15 @@ The ignored `fixture-sdk` symlink points at the **existing** installed closure i
 
 The selected lockfile SHA-256 is `b19be919f3f5ebb9a3d631c77472e33d074eef2115c1f4bc2476ff8df012925e`. [inventory.json](inventory.json) records actual installed package identities, integrity strings, licenses, lifecycle declarations, package tree hashes, key SDK source hashes, selected baseline hashes and this experiment's source hashes. [inventory.mjs](inventory.mjs) validates the lock/package identities and recalculates this receipt. The closure contains the selected nine packages: Mistral 4.0.62, provider 4.0.26, provider-utils 5.0.58, Zod 4.6.5, standard-schema 1.1.0, workflow serde 4.1.0, eventsource-parser 3.1.1, json-schema 0.4.0 and Undici 7.30.0. Retaining this external local closure is an experiment prerequisite, not production packaging or a retained-environment implementation.
 
-Repeat from the repository root after resolving `experiments/coding-session-provider/fixture-sdk` to that already-installed closure:
+Repeat from the repository root after resolving `experiments/coding-provider-adapter/session-provider/fixture-sdk` to that already-installed closure:
 
 ```sh
-node --test experiments/coding-session-provider/test/*.test.ts
-node node_modules/typescript/bin/tsc --noEmit -p experiments/coding-session-provider/tsconfig.json
-node experiments/coding-session-provider/inventory.mjs
+node --test experiments/coding-provider-adapter/session-provider/test/*.test.ts
+node node_modules/typescript/bin/tsc --noEmit -p experiments/coding-provider-adapter/session-provider/tsconfig.json
+node experiments/coding-provider-adapter/session-provider/inventory.mjs
 ```
+
+The separate `serving/serving.test.ts` witness uses the actual admitted worker, Store, collector, filesystem/process receivers and this selected SDK adapter with synthetic transport. Run it explicitly with `node --test experiments/coding-provider-adapter/session-provider/serving/serving.test.ts` after resolving the pinned fixture closure. Root TypeScript checks its SDK-independent interface; the normal `npm test` set requires no experiment SDK installation. These fixtures do not enable a production provider or establish configured-model competence.
 
 The initial placeholder failed all 53 checks before implementation. Forty-one selected baseline fixtures were carried forward with trusted catalog/configuration and explicitly named tool results; twelve new fixtures establish the general native catalog, independent command-failure/read-repair continuation, exact historical strings, configuration immutability, current veto, bounded catalog/history/intents, strict correlation, leading system text and redirect policy. Root review then reproduced a rejected asynchronous validator crashing a disposable child process; the containment fix adds the fifty-fourth check. The final run passed all 54 on Node 24.13.0/macOS arm64. Strict TypeScript 7.0.2 with Node 24.19.1 declarations, exact optional properties and unchecked-index checks passed. `skipLibCheck` leaves upstream declaration validation outside this source/interface evidence.
 

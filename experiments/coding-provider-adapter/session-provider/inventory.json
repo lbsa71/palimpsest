@@ -168,9 +168,9 @@
     },
     {
       "path": "README.md",
-      "bytes": 10919,
-      "lines": 63,
-      "sha256": "77eafd22aae097d42d1a9bf6071ea6e9a3b8e4c7c51d1de313da8951882ce797"
+      "bytes": 11522,
+      "lines": 65,
+      "sha256": "79f8aa9c4b683acf85b459963493d1519d52ff02e2768477649b210b3dc4f0ed"
     },
     {
       "path": "contracts.ts",
@@ -186,15 +186,15 @@
     },
     {
       "path": "inventory.mjs",
-      "bytes": 4273,
+      "bytes": 4276,
       "lines": 49,
-      "sha256": "f66c21bdfa93b62be4c18ea90dd60a88c4008d9ea18cab9baf0f3bae5502ffa1"
+      "sha256": "902f8a3e82f53474eaac635b3ee5e3991089f4a0c2b8653e1e941dc372258503"
     },
     {
       "path": "tsconfig.json",
-      "bytes": 673,
+      "bytes": 676,
       "lines": 15,
-      "sha256": "be2822e140e0098fa9540de56276743ff1cafb5160e93e0666da4f5a572f6cf6"
+      "sha256": "fb3df5b0d1d60270e0ab1a89ee45966db729d175039631a6d36ec193f05f6153"
     },
     {
       "path": "test/baseline.test.ts",
