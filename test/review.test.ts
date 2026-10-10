@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { autarkOrientation } from '../src/autark.ts';
 import { digestJson, type CandidateEvidence } from '../src/candidates.ts';
 import { ProviderError, type Provider, type CompletionRequest } from '../src/providers.ts';
 import type { Json } from '../src/store.ts';
@@ -51,6 +52,7 @@ test('review verifies identities and fresh context with every required check cov
   const result = await reviewCandidate({ input, provider: provider((request, raw) => {
     calls++;
     assert.equal(raw.system.includes('untrusted'), true);
+    assert.equal(raw.system.includes(autarkOrientation), false, 'The reviewer remains independent of the autark perspective');
     assert.equal(request.untrustedCandidateMaterial.source, input.source);
     assert.equal('authorConversation' in request, false);
     assert.equal(request.trustedEvidence.evidenceDigest, input.evidence.evidenceDigest);
@@ -156,9 +158,17 @@ test('interview mediates a grounded challenge and separately records acceptance 
   const { input, snapshot } = fixture();
   const messages: InterviewMessage[] = [];
   const roles: string[] = [];
+  const act = (role: 'incumbent' | 'successor') => provider((request, raw) => {
+    roles.push(role);
+    assert.ok(raw.system.startsWith(autarkOrientation));
+    assert.equal(request.role, role);
+    assert.deepEqual(request.continuity, snapshot);
+    assert.equal(Object.hasOwn(raw.schema!.properties as object, 'actions'), false);
+    assert.match(request.transferContract, /No production authority before custodian cutover/);
+    return interviewResponse(request, true);
+  });
   const result = await interviewCandidate({ input, snapshot,
-    incumbent: provider((request) => { roles.push('incumbent'); return interviewResponse(request, true); }),
-    successor: provider((request) => { roles.push('successor'); return interviewResponse(request, true); }),
+    incumbent: act('incumbent'), successor: act('successor'),
     onMessage: (message) => { messages.push(message); },
   });
   assert.equal(result.status, 'pass');

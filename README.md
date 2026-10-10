@@ -5,7 +5,9 @@ runtime state outside the checkout. [Native migration acceptance](docs/migration
 records the reviewed installation, measured responsiveness and cold recovery.
 General iterative coding and full-codebase autonomous release remain P17/P18 work.
 
-Palimpsest is an autonomous coding companion under development. It develops its capabilities, interests, judgment, and implementation while preserving the history that gives it continuity.
+Palimpsest is an autark under development. It develops its capabilities, interests, judgment, and implementation while preserving the history that gives it continuity. Its model inference is a deliberative interval within that continuing system; outward speech is an explicit action.
+
+The reviewed [autark speech protocol](docs/work-items/autark-deliberation.md) is merged in source; its installation and configured-model acceptance remain pending.
 
 Its defining requirement is a **strong, persistent drive for self-improvement**. It should initiate worthwhile learning and engineering work, develop interests beyond immediate utility, and leave each successor better equipped than its predecessor. Growth must have evidence; additional complexity and greater agreeableness are not measures of progress.
 

@@ -757,7 +757,7 @@ export class Store {
         const separate = intent.originalTaskId !== taskId; const id = separate ? `${intent.id}:cancelled:${taskId}` : intent.id;
         if (this.conversationTopic(id)?.state === 'invalidated' && this.conversationTopic(id)?.outcome.rationale === 'Explicit cancellation after confirmed acknowledgment.') continue;
         if (intent.reflectionId) this.cancelConversationReflection(intent.reflectionId, 'explicit_cancellation');
-        this.#writeTopic({ ...intent, id, originalTaskId: taskId, state: 'invalidated', revision: separate ? 1 : intent.revision,
+        this.#writeTopic({ ...intent, id, originalTaskId: taskId, state: 'invalidated', revision: separate ? 1 : intent.revision, speech: null,
           reflectionId: null, memoryId: null, outcome: { question: 'Cancelled deferred topic.', stance: 'No further conclusion is claimed.', rationale: 'Explicit cancellation after confirmed acknowledgment.', unresolved: [], status: 'settled' },
           report: { ...intent.report, waived: current.report.waived, owedRevision: current.report.waived || intent.report.owedRevision === null ? null : separate ? 1 : intent.revision,
             lastReportedRevision: 0, taskId: null, revision: null, kind: null, effectId: null, delivery: 'pending', receipt: null } });
@@ -776,7 +776,7 @@ export class Store {
         if (reflection) this.#writeReflection({ ...reflection, question: 'Source context withdrawn.', state: 'cancelled', checkpoint: { reason } });
       }
       const revision = old.revision + 1;
-      const topic = this.#writeTopic({ ...old, state: 'invalidated', revision, memoryId: null,
+      const topic = this.#writeTopic({ ...old, state: 'invalidated', revision, memoryId: null, speech: null,
         outcome: { question: 'Prior conversation context is no longer current.', stance: 'No current conclusion is retained.', rationale: reason, unresolved: [], status: 'settled' },
         report: { ...old.report, owedRevision: old.report.owedRevision === null ? null : revision }, updatedAt: new Date().toISOString() });
       this.appendEvent('conversation.topic.invalidated', { topicId: id, reason }); return topic;
@@ -790,13 +790,13 @@ export class Store {
       const result = this.publishMemoryFromSourcesOnce({ publicationId: `outcome:${id}:${revision}`, scope: old.scope, kind: 'autobiographical',
         source: `conversation-outcome:${id}`, confidence: 0.6, evidence: old.sourceRefs.map(ref => ref.id), sourceRefs: old.sourceRefs,
         content: JSON.stringify({ note: 'Unverified conversational interpretation; no source action authority.', topicId: id, revision, priorStance: old.outcome.stance, ...outcome }) });
-      const topic = this.#writeTopic({ ...old, revision, outcome, memoryId: result.memory?.id ?? null, nextReviewAt: now,
+      const topic = this.#writeTopic({ ...old, revision, outcome, speech: null, memoryId: result.memory?.id ?? null, nextReviewAt: now,
         report: { ...old.report, owedRevision: old.report.waived || old.report.owedRevision === null && outcome.status === 'settled' ? null : revision }, updatedAt: new Date().toISOString() });
       this.appendEvent('conversation.outcome.revised', { topicId: id, revision, reason }); return topic;
     });
   }
 
-  prepareConversationReport(id: string, text: string, kind: 'holding' | 'final', nextReviewAt: number, basis: 'outcome' | 'awaiting_exchange' = 'outcome'): Task | undefined {
+  prepareConversationReport(id: string, text: string, kind: 'holding' | 'final', nextReviewAt: number, basis: 'outcome' | 'awaiting_exchange' = 'outcome', speechKind: 'host_notice' | 'say' = 'host_notice'): Task | undefined {
     return this.#atomic(() => {
       const topic = this.conversationTopic(id); if (!topic || topic.report.waived || topic.report.owedRevision === null) return;
       const prior = topic.report.taskId ? this.task(topic.report.taskId) : undefined;
@@ -810,10 +810,11 @@ export class Store {
         && (event.payload as Record<string, Json>).revision === topic.revision && (event.payload as Record<string, Json>).kind === kind).length;
       const eventId = `${id}:report:${topic.revision}:${kind}:${attempt}`;
       const task = this.enqueuePreparedReply({ source: topic.source, conversationId: topic.scope, eventId, input: `Host-observed ${kind} conversation outcome report`,
-        ...(original.slackAuthor ? { slackAuthor: original.slackAuthor } : {}) }, text, topic.replyTo ?? undefined);
+        ...(original.slackAuthor ? { slackAuthor: original.slackAuthor } : {}) }, text, topic.replyTo ?? undefined, speechKind);
       this.#writeTopic({ ...topic, nextReviewAt, report: { ...topic.report, taskId: task.id, revision: topic.revision, kind,
         effectId: `${task.id}:result`, delivery: 'pending', receipt: null }, updatedAt: new Date().toISOString() });
-      this.appendEvent('conversation.report.prepared', { topicId: id, revision: topic.revision, kind, reportTaskId: task.id, basis }); return task;
+      this.appendEvent('conversation.report.prepared', { topicId: id, revision: topic.revision, kind, reportTaskId: task.id, basis,
+        speechProtocol: 'prepared-speech/1', speechKind }); return task;
     });
   }
 
@@ -851,12 +852,22 @@ export class Store {
       return this.#writeReflection({ ...old, ...patch, updatedAt: new Date().toISOString() });
     });
   }
-  completeConversationReflection(id: string, expectedRevision: number, outcome: ConversationOutcome, now: number, evidence: Json): void {
+  completeConversationReflection(id: string, expectedRevision: number, outcome: ConversationOutcome, now: number, evidence: Json, sayText?: string): void {
     this.#atomic(() => {
       const item = this.conversationReflection(id); const topic = item ? this.conversationTopic(item.topicId) : undefined;
       if (!item || item.state !== 'running' || !topic || topic.state !== 'active' || topic.revision !== expectedRevision
         || now >= topic.expiresAt || topic.reflectionId !== id || !this.conversationSourcesCurrent(topic)) throw new Error('Reflection context changed or expired before publication');
+      if (sayText !== undefined) {
+        required(sayText, 'Explicit follow-up say');
+        if (sayText.length > 8000) throw new Error('Follow-up say exceeds bound');
+        if (Buffer.from(sayText, 'utf8').toString('utf8') !== sayText) throw new Error('Invalid Unicode in follow-up say');
+      }
       const revised = this.reviseConversationOutcome(topic.id, outcome, now, 'reflection_result');
+      if (sayText !== undefined) {
+        this.#writeTopic({ ...revised, speech: { version: 'conversation-say/1', revision: revised.revision, text: sayText,
+          sourceRefs: revised.sourceRefs, sourceTaskIds: revised.sourceTaskIds } });
+        this.appendEvent('conversation.reflection.say.admitted', { topicId: revised.id, revision: revised.revision, reflectionId: id });
+      }
       this.updateConversationReflection(id, { state: 'completed', checkpoint: { evidence, outcomeRevision: revised.revision } });
     });
   }
@@ -920,13 +931,14 @@ export class Store {
     });
   }
 
-  /** Host-generated replies bypass cognition but retain the ordinary durable
+  /** Prepared host notices and explicit model speech retain the ordinary durable
    * communication/effect/reconciliation path. Never exposed in transport JSON. */
-  enqueuePreparedReply(input: TaskInput, answer: string, replyTo?: string): Task {
+  enqueuePreparedReply(input: TaskInput, answer: string, replyTo?: string, kind: 'host_notice' | 'say' = 'host_notice'): Task {
     return this.#atomic(() => {
       const task = this.enqueue(input);
       if (task.checkpoint !== null) return task;
-      return this.updateTask(task.id, { checkpoint: { calls: 0, answer, replyTo: replyTo ?? null } });
+      return this.updateTask(task.id, { checkpoint: { calls: 0, answer, replyTo: replyTo ?? null,
+        preparedSpeech: { version: 'prepared-speech/1', kind } } });
     });
   }
   listGrowth(): Growth[] { return this.#db.prepare('SELECT record FROM growth ORDER BY rowid').all().map(row => decode<Growth>(row)!); }

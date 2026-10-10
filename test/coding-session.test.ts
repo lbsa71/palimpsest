@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { codingOrientation } from '../src/autark.ts';
 import { codingData } from '../src/coding-contracts.ts';
 import { CodingSessionCoordinator } from '../src/coding-session.ts';
 import { CodingAccounting } from '../src/coding-accounting.ts';
@@ -53,6 +55,62 @@ test('response persists before tools; cold reopen resumes it without a second pr
     await f.coordinator.tick(); assert.equal(f.coordinator.status(admitted.id)?.state, 'paused'); assert.equal(f.sent, 1);
     f.clock(3_600_001); await f.coordinator.tick(); assert.equal(f.sent, 2); assert.equal(f.coordinator.status(admitted.id)?.state, 'terminal');
     const accounting = new CodingAccounting(f.store, { now: () => 3_600_001 }); assert.equal(accounting.reservations(admitted.id).length, 2);
+  } finally { await f.cleanup(); }
+});
+test('legacy coding orientation changes only the next request while cold recovery preserves receipts and spent allocation', async () => {
+  const f = fixture(); try {
+    const session = await f.coordinator.admitTask(f.origin, 'Inspect fixture');
+    const ledger = new CodingAccounting(f.store), initial = codingData(session);
+    const legacySystem: CodingMessage = { role: 'system', text: 'You are Palimpsest, a coding companion. LEGACY_RETAINED_ORIENTATION' };
+    initial.messages[0] = legacySystem;
+    ledger.update(session.id, { data: JSON.parse(JSON.stringify(initial)) }, { expectedRevision: session.revision });
+    await f.coordinator.tick();
+    assert.equal(f.sent, 1);
+    const current = ledger.get(session.id)!, interrupted = codingData(current), pending = interrupted.pending[0]!;
+    const spent = ledger.reservations(session.id);
+    assert.equal(spent.length, 1); assert.equal(spent[0]!.status, 'observed');
+
+    // Seed the receiver's durable completion cut. Native file isolation is a
+    // separate platform witness; this fixture observes real Store/coordinator
+    // recovery of an already completed receiver receipt without running it again.
+    pending.state = 'started';
+    ledger.update(session.id, { phase: 'tool-intended', data: JSON.parse(JSON.stringify(interrupted)) }, { expectedRevision: current.revision });
+    f.store.reserveEffect({ id: pending.effectId, taskId: session.contract.taskId, kind: 'workspace.files',
+      payload: { workspaceId: interrupted.workspaceId, operation: JSON.parse(pending.intent.arguments) } });
+    const receipt = f.store.completeEffect(pending.effectId, { ok: true, result: { text: 'RECOVERED_RECEIVER_VALUE' } });
+    const historicalMessages = structuredClone(interrupted.messages);
+
+    f.epoch(2); await f.reopen();
+    const reopenedLedger = new CodingAccounting(f.store), reopened = codingData(f.coordinator.status(session.id)!);
+    assert.deepEqual(reopened.messages, historicalMessages);
+    assert.deepEqual(reopened.pending, interrupted.pending);
+    assert.deepEqual(reopenedLedger.reservations(session.id), spent);
+    assert.deepEqual(f.store.effect(pending.effectId), receipt);
+    assert.equal(reopened.epoch, 2);
+    assert.deepEqual(f.coordinator.status(session.id)!.contract, session.contract);
+
+    await f.coordinator.tick(); // Recover the pending tool from its existing receipt.
+    assert.equal(f.sent, 1); assert.equal(codingData(f.coordinator.status(session.id)!).pending.length, 0);
+    assert.deepEqual(f.store.listEffects(), [receipt]);
+    await f.coordinator.tick(); // The original hourly allocation is still spent.
+    assert.equal(f.sent, 1); assert.equal(f.coordinator.status(session.id)!.state, 'paused');
+    assert.deepEqual(reopenedLedger.reservations(session.id), spent);
+
+    f.clock(3_600_001); await f.coordinator.tick();
+    assert.equal(f.sent, 2);
+    const physicalRequest = f.histories[1]!;
+    assert.deepEqual(physicalRequest[0], { role: 'system', text: codingOrientation });
+    assert.equal(physicalRequest.some(message => 'text' in message && message.text.includes('LEGACY_RETAINED_ORIENTATION')), false);
+    const observedTool = physicalRequest.find(message => message.role === 'tool' && message.callId === pending.intent.callId);
+    assert.ok(observedTool && observedTool.role === 'tool' && observedTool.outcome.ok);
+    assert.match(observedTool.outcome.text, /RECOVERED_RECEIVER_VALUE/);
+    assert.deepEqual(codingData(f.coordinator.status(session.id)!).messages[0], legacySystem);
+    assert.deepEqual(f.store.listEffects(), [receipt]);
+    const reservations = reopenedLedger.reservations(session.id);
+    assert.equal(reservations.length, 2); assert.deepEqual(reservations[0], spent[0]);
+    assert.equal(reservations[1]!.ordinal, 2);
+    assert.equal((reservations[1]!.intent as { transcriptDigest: string }).transcriptDigest,
+      createHash('sha256').update(JSON.stringify(physicalRequest)).digest('hex'));
   } finally { await f.cleanup(); }
 });
 test('invalid mixed batch produces zero actual receiver effects and a durable terminal reason', async () => {

@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,7 +15,7 @@ import { GrowthScheduler } from '../src/scheduler.ts';
 
 const outcome = (status = 'pending', reflection: null | { question: string } = null) => ({ question: 'Which provisional name fits?', stance: 'The short name currently fits.', rationale: 'It is easy to say; the example was not an instruction.', unresolved: status === 'pending' ? ['Consider the historical collision.'] : [], status, reflection, topicId: null as string | null });
 function provider(answer: (request: CompletionRequest) => unknown | Promise<unknown>): Provider {
-  return { name: 'fixture', async complete(request) { return { text: JSON.stringify(await answer(request)), provider: 'fixture', model: 'deterministic', usage: { inputTokens: 1, outputTokens: 1 } }; } };
+  return { name: 'fixture', async complete(request) { return { text: (request.schema?.properties as Record<string, unknown>)?.version ? spokenTurn(await answer(request) as Record<string, unknown>) : JSON.stringify(await answer(request)), provider: 'fixture', model: 'deterministic', usage: { inputTokens: 1, outputTokens: 1 } }; } };
 }
 
 test('pending topic without reflection or explicit promise returns unprompted and survives reopening', async () => {
@@ -64,11 +65,11 @@ function fixture(answer: (request: CompletionRequest) => unknown | Promise<unkno
     cleanup: async () => { await runtime.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 function decision(item = outcome()) { return { reply: 'A provisional stance; the historical question is pending.', disposition: 'converse', rationale: 'Independent interpretation.', proposal: null, outcomes: [item] }; }
-function reflectionResult() { const { topicId: _topic, reflection: _reflection, ...result } = outcome('settled'); return { ...result, stance: 'After thought, the short name remains provisional.', rationale: 'The collision does not by itself outweigh ease of speech.' }; }
+function reflectionResult() { const { topicId: _topic, reflection: _reflection, ...result } = outcome('settled'); return { ...result, stance: 'After thought, the short name remains provisional.', rationale: 'The collision does not by itself outweigh ease of speech.', actions: [{name: 'say', arguments: {text: 'After thought, the short name remains provisional.'}}] }; }
 
 test('retained question runs finitely in shared allocation and result reaches later eligible request after reopen', async () => {
   const requests: CompletionRequest[] = [];
-  const f = fixture(request => { requests.push(request); return request.system.startsWith('Reflect on') ? reflectionResult() : decision(outcome('pending', { question: 'Does the recorded historical collision change my provisional preference?' })); });
+  const f = fixture(request => { requests.push(request); return request.system.includes('Reflect on the retained') ? reflectionResult() : decision(outcome('pending', { question: 'Does the recorded historical collision change my provisional preference?' })); });
   try {
     await f.submit(); await f.runtime.runUntilIdle(); const before = f.store.listConversationTopics(f.scope)[0]!;
     f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 100, maxCalls: 1 });
@@ -89,7 +90,7 @@ test('retained question runs finitely in shared allocation and result reaches la
 });
 
 test('holding delivery and work completion leave final report owed, with exact Slack receipt and destination', async () => {
-  const f = fixture(request => request.system.startsWith('Reflect on') ? reflectionResult() : decision(outcome('pending', { question: 'Consider the collision.' })),
+  const f = fixture(request => request.system.includes('Reflect on the retained') ? reflectionResult() : decision(outcome('pending', { question: 'Consider the collision.' })),
     { source: 'slack', send: async () => ({ transport: 'slack', messageId: '321.654' }) });
   try {
     await f.submit(); await f.runtime.runUntilIdle(); f.now(11); f.continuity.review(); await f.runtime.runUntilIdle();
@@ -138,7 +139,7 @@ for (const delivery of ['uncertain', 'rejected'] as const) test(`${delivery} fin
 
 for (const change of ['correct', 'forget', 'correct-outcome', 'forget-outcome'] as const) test(`${change} during reflection rejects late interpretation and withdraws scoped content`, async () => {
   let resolve!: (value: unknown) => void; let started!: () => void; const began = new Promise<void>(ready => { started = ready; });
-  const f = fixture(request => request.system.startsWith('Reflect on') ? new Promise(ready => { resolve = ready; started(); }) : decision(outcome('pending', { question: 'Consider the historical collision.' })));
+  const f = fixture(request => request.system.includes('Reflect on the retained') ? new Promise(ready => { resolve = ready; started(); }) : decision(outcome('pending', { question: 'Consider the historical collision.' })));
   try {
     await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics(f.scope)[0]!;
     f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 100, maxCalls: 2 });
@@ -149,7 +150,7 @@ for (const change of ['correct', 'forget', 'correct-outcome', 'forget-outcome'] 
     resolve(reflectionResult()); await pending; f.now(11); f.continuity.review(); await f.runtime.runUntilIdle();
     assert.equal(f.store.listConversationReflections()[0]!.state, 'cancelled'); assert.equal(f.store.conversationTopic(topic.id)!.state, 'invalidated');
     assert.ok(!f.store.listMemories(f.scope).some(memory => memory.content.includes('After thought')));
-    assert.match(f.sent[1]!, /corrected or forgotten/); assert.ok(!f.sent[1]!.includes('short name'));
+    assert.match(f.sent[1]!, /Host notice:.*no longer current/); assert.ok(!f.sent[1]!.includes('short name'));
     assert.equal(f.store.growthWindow('window')!.usedCalls, 1);
     if (change.startsWith('correct')) assert.equal(f.store.memory(id, f.scope)!.version, 2); else assert.equal(f.store.memory(id, f.scope), undefined);
   } finally { resolve?.(reflectionResult()); await f.cleanup(); }
@@ -183,7 +184,7 @@ test('source-aware eligible retrieval excludes a mixed-author interpretation and
 });
 
 test('fair scheduler debits the existing window for reflection and standing growth without expanding allocation', async () => {
-  const f = fixture(request => request.system.startsWith('Reflect on') ? reflectionResult() : request.system.includes('growth') && !request.system.includes('Ordinary conversation continuity')
+  const f = fixture(request => request.system.includes('Reflect on the retained') ? reflectionResult() : request.system.includes('growth') && !request.system.includes('Ordinary conversation continuity')
     ? { observation: 'Scoped fixture observation', lesson: 'Cautious fixture interpretation', nextQuestion: 'A finite later question', proposedChange: null }
     : decision(outcome('pending', { question: 'Consider the retained question.' })));
   let scheduler: GrowthScheduler | undefined;
@@ -199,7 +200,7 @@ test('fair scheduler debits the existing window for reflection and standing grow
 
 test('preemption and provider failures retain immutable question and finite cumulative attempts across reopen', async () => {
   let resolve!: (value: unknown) => void; let started!: () => void; const began = new Promise<void>(ready => { started = ready; });
-  const f = fixture(request => request.system.startsWith('Reflect on') ? new Promise(ready => { resolve = ready; started(); }) : decision(outcome('pending', { question: 'Keep this exact inquiry through interruption.' })), { maxAttempts: 1 });
+  const f = fixture(request => request.system.includes('Reflect on the retained') ? new Promise(ready => { resolve = ready; started(); }) : decision(outcome('pending', { question: 'Keep this exact inquiry through interruption.' })), { maxAttempts: 1 });
   try {
     await f.submit(); await f.runtime.runUntilIdle(); f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 100, maxCalls: 4 });
     const controller = new AbortController(); const pending = f.continuity.reflect('window', controller.signal); await began; controller.abort(); resolve(reflectionResult()); await pending;
@@ -214,14 +215,14 @@ test('preemption and provider failures retain immutable question and finite cumu
 
 test('budget waits, malformed output and unavailable providers never borrow calls or create source work', async () => {
   let mode = 'conversation'; let calls = 0;
-  const f = fixture(request => { calls++; if (request.system.startsWith('Reflect on')) { if (mode === 'offline') throw new ProviderError('unavailable', 'Fixture offline'); return { ...reflectionResult(), proposedChange: { files: [] } }; } return decision(outcome('pending', { question: 'A bounded question.' })); });
+  const f = fixture(request => { calls++; if (request.system.includes('Reflect on the retained')) { if (mode === 'offline') throw new ProviderError('unavailable', 'Fixture offline'); return { ...reflectionResult(), proposedChange: { files: [] } }; } return decision(outcome('pending', { question: 'A bounded question.' })); });
   try {
     await f.submit(); await f.runtime.runUntilIdle(); f.store.openGrowthWindow({ id: 'empty', schedulerId: 'fixture-empty', startsAt: 0, endsAt: 100, maxCalls: 0 });
     await f.continuity.reflect('empty', new AbortController().signal); assert.equal(calls, 1); assert.equal(f.store.listConversationReflections()[0]!.attempts, 0);
     f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 100, maxCalls: 2 }); mode = 'offline'; await f.continuity.reflect('window', new AbortController().signal);
     assert.equal(f.store.listConversationReflections()[0]!.state, 'paused'); mode = 'malformed'; await f.continuity.reflect('window', new AbortController().signal);
     assert.equal(f.store.listConversationReflections()[0]!.state, 'rejected'); assert.equal(f.store.growthWindow('window')!.usedCalls, 2); assert.equal(f.store.listGrowth().length, 0);
-    f.now(11); f.continuity.review(); await f.runtime.runUntilIdle(); assert.match(f.sent[1]!, /Inconclusive closure/);
+    f.now(11); f.continuity.review(); await f.runtime.runUntilIdle(); assert.match(f.sent[1]!, /Host notice:.*closed inconclusively/);
   } finally { await f.cleanup(); }
 });
 
@@ -279,7 +280,7 @@ test('explicit cancellation during continuation send prevents stale activation a
 });
 
 test('authorized notification waiver persists independently of thought through reopen and later outcome revision', async () => {
-  const f = fixture(request => request.system.startsWith('Reflect on') ? reflectionResult() : decision(outcome('pending', { question: 'A retained question.' })));
+  const f = fixture(request => request.system.includes('Reflect on the retained') ? reflectionResult() : decision(outcome('pending', { question: 'A retained question.' })));
   try {
     await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
     await f.submit('waive', `waive ${topic.id}`); await f.runtime.runUntilIdle(); assert.equal(f.store.conversationTopic(topic.id)!.report.waived, true);
@@ -389,7 +390,7 @@ test('withdrawn continuation has its own report identity after earlier holding r
 
 test('a rejected tentative inquiry cannot starve the current inquiry after reopening', async () => {
   let topicId: string | null = null; let calls = 0;
-  const f = fixture(request => { calls++; return request.system.startsWith('Reflect on') ? reflectionResult()
+  const f = fixture(request => { calls++; return request.system.includes('Reflect on the retained') ? reflectionResult()
     : decision({ ...outcome('pending', { question: 'The current bounded inquiry.' }), topicId }); },
   { send: async () => { if (f.sent.length === 2) throw new CommunicationsError('fixture_uncertain', 'uncertain'); } });
   try {
@@ -428,7 +429,7 @@ test('explicit waiver survives a conflicting cancelled continuation acknowledgme
 for (const expiredAt of [100, 101]) test(`expired inquiry at ${expiredAt} cannot physically dispatch before the first host review`, async () => {
   let reflectionCalls = 0;
   const f = fixture(request => {
-    if (request.system.startsWith('Reflect on')) { reflectionCalls++; return { ...reflectionResult(), stance: 'EXPIRED_RESULT_CANARY_731' }; }
+    if (request.system.includes('Reflect on the retained')) { reflectionCalls++; return { ...reflectionResult(), stance: 'EXPIRED_RESULT_CANARY_731' }; }
     if (request.system.includes('growth') && !request.system.includes('Ordinary conversation continuity')) return { observation: 'Standing observation.', lesson: 'Cautious independent thought.', nextQuestion: 'A later finite question.', proposedChange: null };
     return decision(outcome('pending', { question: 'A finite retained inquiry.' }));
   });
@@ -473,7 +474,7 @@ test('atomic result publication refuses expiry while retaining an already spent 
 
 test('midflight expiry discards the late result and reports inconclusive after reopening without refund or replay', async () => {
   let release!: (result: unknown) => void; let began!: () => void; const entered = new Promise<void>(resolve => { began = resolve; }); let reflectionCalls = 0;
-  const f = fixture(request => request.system.startsWith('Reflect on') ? new Promise(resolve => { reflectionCalls++; release = resolve; began(); }) : decision(outcome('pending', { question: 'An inquiry with a finite deadline.' })));
+  const f = fixture(request => request.system.includes('Reflect on the retained') ? new Promise(resolve => { reflectionCalls++; release = resolve; began(); }) : decision(outcome('pending', { question: 'An inquiry with a finite deadline.' })));
   let reopened: Store | undefined; let runtime: AgentRuntime | undefined;
   try {
     await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
@@ -494,7 +495,7 @@ test('midflight expiry discards the late result and reports inconclusive after r
 
 test('expiry after admission and prompt preparation prevents physical dispatch without refunding its reservation', async () => {
   let reflectionCalls = 0;
-  const f = fixture(request => { if (request.system.startsWith('Reflect on')) { reflectionCalls++; return reflectionResult(); } return decision(outcome('pending', { question: 'A finite inquiry.' })); });
+  const f = fixture(request => { if (request.system.includes('Reflect on the retained')) { reflectionCalls++; return reflectionResult(); } return decision(outcome('pending', { question: 'A finite inquiry.' })); });
   try {
     await f.submit(); await f.runtime.runUntilIdle(); const topic = f.store.listConversationTopics()[0]!;
     f.store.openGrowthWindow({ id: 'window', schedulerId: 'fixture', startsAt: 0, endsAt: 1000, maxCalls: 2 });

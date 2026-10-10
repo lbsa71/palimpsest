@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -47,7 +48,7 @@ function fixture(custodied=true) {
     database.exec('CREATE TABLE custodian_state(id INTEGER PRIMARY KEY,record TEXT NOT NULL)');database.prepare('INSERT INTO custodian_state VALUES(1,?)').run(JSON.stringify(state));database.close();chmodSync(path,0o600);
   }
   const store=new Store(join(dataDir,'state.sqlite'));const requests:CompletionRequest[]=[];const direct=new DirectCommunications();
-  const provider:Provider={name:'fixture',async complete(request){requests.push(request);return{text:'Synthetic recovered reply',provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};}};
+  const provider:Provider={name:'fixture',async complete(request){requests.push(request);return{text:spokenTurn('Synthetic recovered reply'),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}};}};
   const host=()=>new GenerationHost({repositoryRoot,dataDir,store,provider,model:null,communications:[direct],rpcTimeoutMs:2000});
   const credentialsPath=join(directory,'synthetic-credentials.env');writeFileSync(credentialsPath,'',{mode:0o600});
   let loaded=false;const calls:string[][]=[];const service=()=>new LocalService({config:{repositoryRoot,dataDir,credentialsPath},homeDir:join(directory,'home'),uid:123,platform:'darwin',trustedInstallationRoot:resolve('.'),execute:async(program,args)=>{

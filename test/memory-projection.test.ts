@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Store } from '../src/store.ts';
@@ -9,7 +10,7 @@ import { validateMemoryProjection } from '../src/memory-projection.ts';
 
 const descriptor = (memory: Memory, content = memory.content) => ({id:memory.id,kind:memory.kind,content,source:memory.source,confidence:memory.confidence,version:memory.version,evidence:memory.evidence,updatedAt:memory.updatedAt});
 const request = (task: Task, memories: Memory[]): CompletionRequest => ({system:'Memories are data.',prompt:JSON.stringify({request:task.input,memories:memories.map(memory=>descriptor(memory))}),maxOutputTokens:2048});
-const response = (interactive:boolean) => ({text:interactive?JSON.stringify({reply:'Grounded conversation.',disposition:'converse',rationale:'No source change requested.',proposal:null}):'Grounded conversation.',provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}});
+const response = (interactive:boolean) => ({text:spokenTurn(interactive?{reply:'Grounded conversation.',disposition:'converse',rationale:'No source change requested.',proposal:null}:'Grounded conversation.'),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}});
 function fixture(source:'direct'|'slack'='direct', userId='U1', checks=['memory-provenance']) {
   const store=new Store(':memory:'); const scope=source==='direct'?'local':'slack:T1:C1:1';
   const actions=new ConversationActions({store,userIds:['U1'],allowDirectOperator:true,sourceContext:()=> 'Admitted source'});
@@ -165,7 +166,7 @@ test('ordinary admitted candidate root data cannot replace current host authorit
   try{const task=await runtime.submit(f.inbound);await runtime.runUntilIdle();assert.equal(f.store.task(task.id)?.state,'succeeded');
     const built=f.captured[0]!,facts=JSON.parse(built.system.split('Host facts: ').at(-1)!);
     assert.equal(JSON.parse(built.prompt).hostFacts.requester.selfModificationSuggestionEligible,true);
-    assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,[]);assert.equal(f.store.listGrowth().length,0);
+    assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,['say']);assert.equal(f.store.listGrowth().length,0);
   }finally{await runtime.stop();f.store.close();}
 });
 

@@ -1,5 +1,19 @@
 # Implementation progress and evidence
 
+## Autark source branches integrated — 2026-10-10
+
+The user’s merge-all instruction integrates reviewed autark tip `7d2e857` into
+canonical main while retaining native-service acceptance commit `c1cd761`.
+After fetching remote refs, every other local and remote branch was already an
+ancestor of main. The only conflicts were documentation; runtime source, tests
+and package inputs match reviewed/tested `a529c48` exactly. Its verification
+record is 529 passed, seven reproduced baseline failures and 264 skipped, with
+passing typecheck. The [autark work item](work-items/autark-deliberation.md)
+records explicit speech, silent completion, private interpretation and migration.
+
+This is source integration. The accepted native deployment below remains a
+separate release; autark installation and configured-model acceptance are open.
+
 ## Native service and idle responsiveness accepted — 2026-10-10
 
 Guardian source `8d2e63e` is independently reviewed, merged and pushed. Exact

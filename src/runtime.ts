@@ -11,7 +11,8 @@ import { validateMemoryProjection } from './memory-projection.ts';
 import { assertConversationRole } from './conversation-role.ts';
 import type { ConversationContinuity } from './conversation-continuity.ts';
 import { conversationMemoryTasks } from './conversation-provenance.ts';
-import { parseConversationDecision } from './conversation-actions.ts';
+import { isConversationReleaseReport, parseConversationDecision } from './conversation-actions.ts';
+import { DELIBERATION_PROTOCOL, parseDeliberation, prepareDeliberation } from './deliberation.ts';
 
 /** Trusted durable coding receiver. Presence alone never authorizes a requester. */
 export interface RuntimeCoding {
@@ -25,6 +26,7 @@ export interface RuntimeCoding {
   tick?(): Promise<boolean>;
   pendingTopic?(topicId: string): boolean;
   isReport?(task: Task): boolean;
+  sanitizeReport?(task: Task): Task;
   reportMaySend?(task: Task): boolean;
 }
 
@@ -161,12 +163,25 @@ export class AgentRuntime {
   async #execute(task: Task, signal: AbortSignal): Promise<void> {
     let progress = checkpoint(task);
     try {
-      let answer = typeof progress.answer === 'string' ? progress.answer : undefined;
+      this.#requireReportReceivers(task);
+      // Coding reports may also own a conversation-report identity; migrate their
+      // unattempted historical payload before the general report sanitizer.
+      task = this.#coding?.sanitizeReport?.(task) ?? task;
+      task = this.#continuity?.sanitizeReport(task) ?? task;
+      task = this.#actions?.sanitizeReport(task) ?? task;
+      progress = checkpoint(task);
+      if (progress.deliberationProtocol !== undefined && progress.deliberationProtocol !== DELIBERATION_PROTOCOL) {
+        throw new ProviderError('protocol', 'Unknown saved deliberation protocol; no legacy speech fallback permitted.');
+      }
+      let answer: string | null | undefined = typeof progress.answer === 'string' ? progress.answer
+        : progress.decisionAccepted === true && progress.answer === null ? null : undefined;
       if (answer === undefined && typeof progress.decisionText === 'string') {
         this.#authorize('store');
-        const interactive = progress.interactive === true || (!this.#continuity && !!this.#actions);
-        answer = await this.#acceptDecision(task, progress.decisionText, interactive);
-        progress = { ...checkpoint(this.#store.task(task.id)!), answer }; this.#store.updateTask(task.id, { checkpoint: progress });
+        const interactive = typeof progress.interactive === 'boolean' ? progress.interactive : (!this.#continuity && !!this.#actions);
+        answer = progress.deliberationProtocol === DELIBERATION_PROTOCOL
+          ? await this.#acceptDeliberation(task, progress.decisionText, interactive)
+          : await this.#acceptDecision(task, progress.decisionText, interactive);
+        progress = { ...checkpoint(this.#store.task(task.id)!), answer, decisionAccepted: true }; this.#store.updateTask(task.id, { checkpoint: progress });
       }
       if (answer === undefined && command(task.input)) {
         this.#authorize('store'); answer = this.#command(task);
@@ -213,7 +228,7 @@ export class AgentRuntime {
           memoryMechanics: { scopedRetrieval: true, versionedCorrections: true, logicalForgetting: true,
             automaticPruning: false, conversationMemoryManagementTools: false,
             interpretedOutcomes: !!this.#continuity, mandatoryDeferredTopicReports: !!this.#continuity },
-          conversationActionTools: interactive ? ['propose_cognitive_change', 'status', 'cancel'] : [],
+          conversationActionTools: interactive ? ['say', 'propose_cognitive_change', 'status', 'cancel'] : ['say'],
           iterativeCodingAvailable: this.#codingEligible(task),
           conversationDispatchToGrowth: interactive, selfModificationDispatcher: interactive,
           configuredConversationCapabilities: { conversationDispatchToGrowth: !!this.#actions, selfModificationDispatcher: !!this.#actions },
@@ -252,32 +267,40 @@ export class AgentRuntime {
           this.#authorize('store'); request = this.#continuity.prepare(task, memories, request);
           progress = checkpoint(this.#store.task(task.id)!);
         }
+        request = prepareDeliberation(task, { ...request, system: `${request.system}\n\n${conversationPolicy}` });
+        request = { ...request, system: `${request.system}\nHost facts: ${JSON.stringify(facts)}` };
+        this.#authorize('store');
+        progress = { ...checkpoint(this.#store.task(task.id)!), deliberationProtocol: DELIBERATION_PROTOCOL,
+          deliberationSourceRefs: memories.map(memory => ({ id: memory.id, version: memory.version })),
+          deliberationFields: Object.keys(request.schema!.properties as Record<string, unknown>) };
+        this.#store.updateTask(task.id, { checkpoint: progress });
         if (signal.aborted) throw new ProviderError('cancelled', 'Task was interrupted before inference');
         this.#authorize('tool');
-        const response = await this.#provider.complete({ ...request, system: `${request.system}\n\n${conversationPolicy}\nHost facts: ${JSON.stringify(facts)}`, signal });
+        const response = await this.#provider.complete({ ...request, signal });
         this.#authorize('store');
         if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) return;
-        if (interactive || this.#continuity) {
-          progress = { ...progress, decisionText: response.text, interactive };
-          this.#store.updateTask(task.id, { checkpoint: progress });
-          answer = await this.#acceptDecision(task, response.text, interactive);
-        } else answer = response.text;
-        progress = { ...checkpoint(this.#store.task(task.id)!), answer, provider: response.provider, model: response.model,
+        progress = { ...progress, decisionText: response.text, interactive };
+        this.#store.updateTask(task.id, { checkpoint: progress });
+        answer = await this.#acceptDeliberation(task, response.text, interactive);
+        progress = { ...checkpoint(this.#store.task(task.id)!), answer, decisionAccepted: true, provider: response.provider, model: response.model,
           usage: { inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens } };
         this.#store.updateTask(task.id, { checkpoint: progress });
         this.#store.appendEvent('inference.completed', { provider: response.provider, model: response.model,
           usage: progress.usage! }, task.id);
       }
+      if (signal.aborted || this.#store.task(task.id)?.state !== 'running') throw new ProviderError('cancelled', 'Task was interrupted before delivery');
       const effectId = `${task.id}:result`;
       this.#authorize('store');
+      const existing = this.#store.effect(effectId);
       const reportMaySend = () => (!this.#continuity?.isReport(task) || this.#continuity.reportMaySend(task))
-        && this.#coding?.reportMaySend?.(task) !== false;
+        && this.#coding?.reportMaySend?.(task) !== false
+        && this.#actions?.reportMaySend(task) !== false
+        && (existing !== undefined || progress.deliberationProtocol !== DELIBERATION_PROTOCOL || this.#deliberationSourcesCurrent(task));
       if (!reportMaySend()) {
         this.#store.updateTask(task.id, { state: 'cancelled', error: 'conversation_report_context_changed' }); return;
       }
-      const existing = this.#store.effect(effectId);
       if (existing && existing.state !== 'completed') throw new Error('effect_reconciliation_required');
-      if (!existing) {
+      if (!existing && answer !== null) {
         const adapter = this.#communications.get(task.source);
         if (!adapter) throw new Error('communication_adapter_unavailable');
         const message = { conversationId: task.conversationId, taskId: task.id, text: answer, kind: 'result' as const,
@@ -301,7 +324,7 @@ export class AgentRuntime {
           this.#store.markEffectUnknown(effectId, 'Delivery outcome requires independent reconciliation');
           throw new Error('effect_reconciliation_required');
         }
-      } else if (existing.result !== null && typeof existing.result === 'object' && !Array.isArray(existing.result) && existing.result.delivered === false) {
+      } else if (existing && existing.result !== null && typeof existing.result === 'object' && !Array.isArray(existing.result) && existing.result.delivered === false) {
         throw new Error('communication_rejected');
       }
       if (this.#store.task(task.id)?.state !== 'running' || signal.aborted) {
@@ -309,7 +332,7 @@ export class AgentRuntime {
         return;
       }
       this.#authorize('memory');
-      if (this.#continuity?.isReport(task) || this.#coding?.isReport?.(task)) {
+      if (this.#continuity?.isReport(task) || this.#coding?.isReport?.(task) || this.#actions?.isReport(task)) {
         this.#store.updateTask(task.id, { state: 'succeeded', output: answer, error: null });
         this.#continuity?.reconcileReports(); return;
       }
@@ -348,11 +371,70 @@ export class AgentRuntime {
       || (task.source === 'direct' && this.#actions?.eligible(task) === true)) && this.#coding?.eligible(task) === true;
   }
 
+  /** Bound reports cannot fall back to an ordinary prepared reply when a host
+   * feature is temporarily disabled. Its receiver owns revision/source checks. */
+  #requireReportReceivers(task: Task): void {
+    if (!this.#actions && isConversationReleaseReport(this.#store, task)) {
+      throw new ProviderError('configuration', 'The retained release report requires its current source and delivery receiver.');
+    }
+    if (this.#continuity && this.#coding) return;
+    for (const event of this.#store.listEvents({ types: ['conversation.report.prepared', 'coding.report.prepared', 'coding.serving.report_prepared'] })) {
+      const value = event.payload;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const conversation = event.type === 'conversation.report.prepared' && value.reportTaskId === task.id;
+      const coding = event.type === 'coding.report.prepared' && value.reportTaskId === task.id
+        || event.type === 'coding.serving.report_prepared' && Array.isArray(value.reportTaskIds) && value.reportTaskIds.includes(task.id);
+      if (conversation && !this.#continuity || coding && !this.#coding) {
+        throw new ProviderError('configuration', 'The retained report requires its current source and delivery receiver.');
+      }
+    }
+  }
+
+  #deliberationSourcesCurrent(task: Task): boolean {
+    if (!this.#store.taskSourceCurrent(task.id)) return false;
+    const progress = checkpoint(this.#store.task(task.id)!);
+    for (const key of ['deliberationSourceRefs', 'conversationSourceRefs']) {
+      const refs = progress[key];
+      if (refs !== undefined && (!Array.isArray(refs) || refs.some(ref => !ref || typeof ref !== 'object' || Array.isArray(ref)
+        || typeof ref.id !== 'string' || this.#store.memory(ref.id, task.conversationId)?.version !== ref.version))) return false;
+    }
+    const topics = progress.conversationTopicRefs;
+    return topics === undefined || Array.isArray(topics) && topics.every(ref => ref && typeof ref === 'object' && !Array.isArray(ref)
+      && typeof ref.id === 'string' && this.#store.conversationTopic(ref.id)?.revision === ref.revision);
+  }
+
+  async #acceptDeliberation(task: Task, raw: string, interactive: boolean): Promise<string | null> {
+    if (!this.#store.effect(`${task.id}:result`) && !this.#deliberationSourcesCurrent(task)) {
+      throw new ProviderError('cancelled', 'Deliberation evidence changed before action admission.');
+    }
+    const progress = checkpoint(this.#store.task(task.id)!);
+    const fields = Array.isArray(progress.deliberationFields) ? progress.deliberationFields.filter((field): field is string => typeof field === 'string') : undefined;
+    const admitted = parseDeliberation(raw, fields);
+    const outcome = interactive || this.#continuity ? await this.#acceptDecision(task, admitted.decision, interactive) : admitted.speech;
+    this.#authorize('store');
+    if (this.#store.task(task.id)?.state !== 'running') throw new ProviderError('cancelled', 'Deliberation admission was interrupted.');
+    const saved = checkpoint(this.#store.task(task.id)!);
+    // Handler receipts describe operations, not additional model-authored words.
+    // They remain inspectable without modifying or manufacturing a say action.
+    if (outcome !== admitted.speech) this.#store.updateTask(task.id, { checkpoint: { ...saved, actionOutcome: outcome } });
+    if (admitted.speech !== null && !this.#store.listEvents({ taskId: task.id, types: ['conversation.say.admitted'] }).some(event => event.type === 'conversation.say.admitted')) {
+      this.#store.appendEvent('conversation.say.admitted', { version: DELIBERATION_PROTOCOL, effectId: `${task.id}:result`,
+        action: { name: 'say', arguments: { text: admitted.speech } } }, task.id);
+    }
+    return admitted.speech;
+  }
+
   async #acceptDecision(task: Task, raw: string, interactive: boolean): Promise<string> {
+    if (!interactive && !this.#continuity) {
+      // Historical decisionText exists only for structured interpretation/action
+      // paths. It is never a plain public reply and must not become one on restart.
+      throw new ProviderError('configuration', 'The retained interpretation requires its conversation receiver.');
+    }
     if (interactive) {
-      let coded = false;
-      try { coded = JSON.parse(raw)?.disposition === 'code'; } catch { /* Strict admission below reports malformed data. */ }
-      if (coded && !this.#codingEligible(task)) throw new ProviderError('protocol', 'Coding authority or configuration unavailable.');
+      let disposition: unknown;
+      try { disposition = JSON.parse(raw)?.disposition; } catch { /* Strict admission below reports malformed data. */ }
+      if (disposition === 'propose' && !this.#actions) throw new ProviderError('configuration', 'The retained proposal requires its source-action receiver.');
+      if (disposition === 'code' && !this.#codingEligible(task)) throw new ProviderError('protocol', 'Coding authority or configuration unavailable.');
     }
     const accepted = this.#continuity?.accept(task, raw, interactive) ?? raw;
     if (!interactive) return accepted;

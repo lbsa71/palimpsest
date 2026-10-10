@@ -392,8 +392,8 @@ test('independent legacy executors cannot concurrently reuse one attempt identit
 test('actual background scheduler and coding continuation share a live turn without an initial tie deadlock', async () => {
   const f = durable(); const selected: string[] = []; let now = 1; let ordinal = 0;
   const provider: Provider = { name: 'fixture', async complete(request) {
-    const kind = request.system.startsWith('Reflect on') ? 'reflection' : 'growth'; selected.push(kind);
-    const text = kind === 'reflection' ? JSON.stringify({ stance: 'Provisional', rationale: 'Evidence observed.', unresolved: ['More evidence'], status: 'pending', evidence: 'Actual deterministic response.' })
+    const kind = request.system.includes('Reflect on the retained') ? 'reflection' : 'growth'; selected.push(kind);
+    const text = kind === 'reflection' ? JSON.stringify({ stance: 'Provisional', rationale: 'Evidence observed.', unresolved: ['More evidence'], status: 'pending', evidence: 'Actual deterministic response.', actions: [] })
       : JSON.stringify({ observation: 'Current evidence', lesson: 'Provisional lesson', nextQuestion: 'Continue inquiry', proposedChange: null });
     return { text, provider: 'fixture', model: 'explicit-fixture', usage: { inputTokens: 1, outputTokens: 1 } };
   } };

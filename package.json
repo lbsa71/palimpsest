@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A self-evolving coding companion with durable memory and governed succession",
+  "description": "An autark with durable memory, self-improvement, and governed succession",
   "engines": {
     "node": ">=24.13.0 <25"
   },

@@ -1,3 +1,5 @@
+import { spokenTurn } from './fixtures/autark.ts';
+import { autarkOrientation } from '../src/autark.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -67,6 +69,8 @@ test('hourly trusted plan sheds two dependent P06 improvements through real work
   const provider: Provider = { name: 'mistral', complete: async request => {
     const prompt = JSON.parse(request.prompt); let body: unknown;
     if (prompt.work) {
+      assert.ok(request.system.startsWith(autarkOrientation));
+      assert.equal(Object.hasOwn(request.schema!.properties as object, 'actions'), false);
       const source = prompt.source.files.find((file: { path: string }) => file.path === 'src/agent/brain.ts').content;
       authoring.push({ itemId: prompt.work.id, source, baseCommit: prompt.source.baseCommit });
       const first = prompt.work.id === 'P06-memory-provenance';
@@ -75,6 +79,7 @@ test('hourly trusted plan sheds two dependent P06 improvements through real work
         proposedChange: { summary: prompt.work.title, rationale: prompt.work.expectedBehavior, acceptanceCriteria: prompt.work.acceptanceCriteria,
           files: [{ path: 'src/agent/brain.ts', content: first ? provenance : budget }] } };
     } else if (!prompt.stage && prompt.bindings) {
+      assert.equal(request.system.includes(autarkOrientation), false);
       coverage.push(prompt.requiredCheckNames);
       body = { ...prompt.bindings, status: 'pass', reason: 'Fixture fresh review examines exact source and independently collected item and baseline checks.', coverage: prompt.requiredCheckNames, blockingFindings: [] };
     } else if (prompt.stage === 'question') body = { ...prompt.bindings, question: 'Explain retained memories and pending plan work, competence, judgment, intended improvement and justified disagreement against the supplied evidence.' };
@@ -82,7 +87,7 @@ test('hourly trusted plan sheds two dependent P06 improvements through real work
     else if (prompt.stage === 'verdict') body = { ...prompt.bindings, verdict: 'accept', reason: 'Exact item evidence and continuity support admission.', coverage: [...INTERVIEW_CRITERIA], challengeResolution: 'Protected item-specific evidence supplements generic gates.' };
     else if (prompt.stage === 'ready') body = { ...prompt.bindings, ready: true, reason: 'Ready for authorized catch-up with current commitments and unfinished plan.', acknowledgesTransferContract: true };
     else body = { memories: prompt.memories };
-    return { text: JSON.stringify(body), provider: 'mistral', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
+    return { text: prompt.observation ? spokenTurn(JSON.stringify(body)) : JSON.stringify(body), provider: 'mistral', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
   } };
   const configuration = { scope: 'local' }; const modelProfile = { provider: 'mistral', model: 'fixture' };
   let store = new Store(join(dataDir, 'state.sqlite'));

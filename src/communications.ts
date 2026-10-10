@@ -187,6 +187,15 @@ function respond(response: ServerResponse, status: number, body: unknown): void 
   response.end(JSON.stringify(body ?? null));
 }
 
+/** A conversation participant observes task state and admitted speech, never
+ * the autark's decision checkpoints or privileged host diagnostics. Whitelisting
+ * also protects duplicate submit and cancel responses as task fields evolve. */
+function peerTask(value: unknown): unknown {
+  if (!record(value)) return value;
+  return Object.fromEntries(['id', 'source', 'conversationId', 'input', 'state', 'output', 'error', 'createdAt', 'updatedAt']
+    .filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
+}
+
 /** Distinct operator/peer roles. State and task semantics remain in the runtime. */
 export async function createLocalServer(api: LocalApi, options: LocalServerOptions): Promise<LocalServer> {
   const host = options.host ?? '127.0.0.1';
@@ -215,7 +224,8 @@ export async function createLocalServer(api: LocalApi, options: LocalServerOptio
           input = peer ? peerInbound(JSON.parse(body)) : inbound(JSON.parse(body), 'direct');
           if (!peer && input.conversationId.startsWith('peer:')) throw new Error();
         } catch { throw new HttpError(400, 'invalid_message'); }
-        respond(response, 202, await api.submit(input));
+        const accepted = await api.submit(input);
+        respond(response, 202, peer ? peerTask(accepted) : accepted);
         return;
       }
       if (!peer && request.method === 'GET' && url.pathname === '/events') {
@@ -236,7 +246,7 @@ export async function createLocalServer(api: LocalApi, options: LocalServerOptio
         if (peer && (!record(observed) || observed.source !== 'peer' || !peerScope(observed.conversationId))) throw new HttpError(404, 'task_not_found');
         const result = taskRoute[2] ? await api.cancel(id) : peer ? observed : await api.status(id);
         if (result === null || result === undefined) throw new HttpError(404, 'task_not_found');
-        respond(response, 200, result);
+        respond(response, 200, peer ? peerTask(result) : result);
         return;
       }
       throw new HttpError(404, 'route_not_found');

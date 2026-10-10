@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -30,7 +31,7 @@ test('genuine scoped workers retain outcomes across host restart and deliver ori
   const provider: Provider = { name: 'fixture', async complete(request) {
     requests.push(structuredClone({ ...request, signal: undefined }));
     const topic = { question: 'Which name fits?', stance: 'A provisional short name.', rationale: 'Independent but unverified preference.', unresolved: ['Historical collision.'], status: 'pending', reflection: null, topicId: null };
-    return { text: JSON.stringify({ reply: 'A provisional choice; the historical question remains open.', outcomes: [topic],
+    return { text: spokenTurn({ reply: 'A provisional choice; the historical question remains open.', outcomes: [topic],
       ...(request.system.includes('Interactive host protocol') ? { disposition: 'converse', rationale: 'Independent preference.', proposal: null } : {}) }),
       provider: 'fixture', model: 'deterministic', usage: { inputTokens: 1, outputTokens: 1 } };
   } };

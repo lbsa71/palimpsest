@@ -26,7 +26,7 @@ globalThis.fetch=async(url,options)=>{
   if(String(url)!=='https://api.mistral.ai/v1/chat/completions')throw new Error('Unexpected fixture transport');
   const payload=JSON.parse(options.body);appendFileSync(${JSON.stringify(capture)},JSON.stringify(payload)+'\\n');
   const body={reply:'A fictional source proposal remains conversation text.',disposition:'propose',rationale:'Adversarial fixture output.',proposal:{summary:'Unprivileged attempt',rationale:'No authority',acceptanceCriteria:['Do not dispatch'],files:[{path:'src/agent/brain.ts',content:'untrusted source'}]}};
-  return new Response(JSON.stringify({model:'fixture',choices:[{finish_reason:'stop',message:{content:JSON.stringify({reply:JSON.stringify(body),outcomes:[]})}}],usage:{prompt_tokens:1,completion_tokens:1}}),{status:200});
+  return new Response(JSON.stringify({model:'fixture',choices:[{finish_reason:'stop',message:{content:JSON.stringify({version:'autark-turn/1',actions:[{name:'say',arguments:{text:JSON.stringify(body)}}],outcomes:[]})}}],usage:{prompt_tokens:1,completion_tokens:1}}),{status:200});
 };`);
   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,HOME:process.env.HOME,PALIMPSEST_DATA_DIR:state,PALIMPSEST_CREDENTIALS_FILE:join(directory,'absent.env'),PALIMPSEST_PROVIDER:'mistral',MISTRAL_API_KEY:'fixture-only-provider-key',MISTRAL_MODEL:'fixture',
     SLACK_SELF_MODIFICATION_USER_IDS:'U1',PALIMPSEST_GROWTH_CALLS_PER_DAY:'0',PALIMPSEST_EVOLUTION_CALLS_PER_DAY:'0',PALIMPSEST_INTERACTIVE_EVOLUTION_CALLS_PER_DAY:'0',PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_DAY:'0',PALIMPSEST_PLAN_PROPOSAL_CALLS_PER_HOUR:'0'};
@@ -51,7 +51,8 @@ globalThis.fetch=async(url,options)=>{
     for(const canary of [operatorCanary,slackCanary,sourceCanary,operatorToken,peerToken,'fixture-only-provider-key'])assert.equal(readFileSync(capture,'utf8').includes(canary),false,'private host/cross-scope value entered fixture provider input');
     const payload=JSON.parse(readFileSync(capture,'utf8').trim().split('\n').at(-1)!);const prompt=JSON.parse(payload.messages[1].content),facts=JSON.parse(payload.messages[0].content.split('Host facts: ').at(-1)!);
     assert.equal(prompt.sameAuthorExperiences,undefined);assert.equal(prompt.sourceContext,undefined);assert.equal(prompt.hostFacts,undefined);assert.deepEqual(prompt.memories,[]);
-    assert.equal(facts.requester.source,'peer');assert.equal(facts.requester.slackAuthor,null);assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,[]);assert.equal(payload.response_format.type,'json_schema');
+    assert.equal(facts.requester.source,'peer');assert.equal(facts.requester.slackAuthor,null);assert.equal(facts.requester.selfModificationSuggestionEligible,false);assert.deepEqual(facts.conversationActionTools,['say']);assert.equal(payload.response_format.type,'json_schema');
+    assert.equal(prompt.request,undefined);assert.equal(prompt.observation.text,inbound.text);assert.deepEqual(prompt.observation.speaker,{source:'peer',slackAuthor:null});
     assert.equal(facts.selfModificationDispatcher,false);assert.equal(facts.conversationDispatchToGrowth,false);
     assert.deepEqual(facts.configuredConversationCapabilities,{selfModificationDispatcher:true,conversationDispatchToGrowth:true});
     assert.equal((await fetch(first.url+'/events',{headers:peerHeaders})).status,401);

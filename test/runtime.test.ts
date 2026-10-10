@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/store.ts';
@@ -7,7 +8,7 @@ import type { CompletionRequest, Provider } from '../src/providers.ts';
 import { AgentRuntime } from '../src/runtime.ts';
 
 function provider(complete: Provider['complete']): Provider { return { name: 'fixture', complete }; }
-function result(text: string) { return { text, model: 'fixture', provider: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; }
+function result(text: string) { return { text: spokenTurn(text), model: 'fixture', provider: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } }; }
 const message = (id: string, conversationId = 'one') => ({ id, conversationId, text: `Hello ${id}`, source: 'direct' });
 
 test('late old-generation inference cannot cross storage or communications receivers', async () => {

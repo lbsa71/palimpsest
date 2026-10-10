@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { autarkOrientation } from '../src/autark.ts';
 import { MemoryCoordinator, captureContinuitySnapshot, refreshContinuitySnapshot } from '../src/memory.ts';
 import { MistralProvider, ProviderError, type Provider, type CompletionRequest } from '../src/providers.ts';
 import { Store } from '../src/store.ts';
@@ -23,6 +24,8 @@ test('grounded consolidation retains ordinary experience, bounds confidence and 
     const source = episode(f.store); const other = episode(f.store, 'other'); let reservations = 0; let calls = 0;
     const coordinator = new MemoryCoordinator({ store: f.store, reserveBudget: () => { reservations++; return true; }, provider: provider(request => {
       calls++; assert.equal(reservations, 1); assert.ok(!request.system.includes(source.content));
+      assert.ok(request.system.startsWith(autarkOrientation));
+      assert.deepEqual(Object.keys(request.schema!.properties as object), ['lessons']);
       const input = JSON.parse(request.prompt); assert.equal(input.memories.length, 1); assert.equal(input.memories[0].id, source.id);
       assert.ok(!request.prompt.includes(other.id)); return lesson(source.id);
     }) });
@@ -32,6 +35,7 @@ test('grounded consolidation retains ordinary experience, bounds confidence and 
     const derived = memories.find(memory => memory.id !== source.id)!;
     assert.equal(derived.kind, 'autobiographical'); assert.equal(derived.confidence, 0.4); assert.match(derived.content, /Unverified/);
     assert.ok(derived.evidence.includes(source.id)); assert.equal(f.store.listTasks().length, 0);
+    assert.equal(f.store.listEffects().length, 0);
     assert.equal((await coordinator.consolidate({ id: 'ordinary-walk', scope: 'one' })).status, 'completed'); assert.equal(calls, 1);
   } finally { f.cleanup(); }
 });

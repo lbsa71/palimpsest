@@ -29,7 +29,7 @@ globalThis.fetch=async(url,options)=>{
   const payload=JSON.parse(options.body), prompt=JSON.parse(payload.messages[1].content);
   let output;
   if(prompt.hostFacts){appendFileSync(capture,JSON.stringify({hostFacts:prompt.hostFacts,requestLimits:prompt.requestLimits,maxTokens:payload.max_tokens})+'\\n');
-    output={reply:JSON.stringify({plan:prompt.hostFacts.activePlanAllocation,growth:prompt.hostFacts.standingGrowth,eligible:prompt.hostFacts.requester.selfModificationSuggestionEligible}),disposition:'converse',rationale:'Informational question; no source change requested.',proposal:null};
+    output={version:'autark-turn/1',actions:[{name:'say',arguments:{text:JSON.stringify({plan:prompt.hostFacts.activePlanAllocation,growth:prompt.hostFacts.standingGrowth,eligible:prompt.hostFacts.requester.selfModificationSuggestionEligible})}}],disposition:'converse',rationale:'Informational question; no source change requested.',proposal:null,outcomes:[]};
   }else output={observation:'Fixture timer ran.',lesson:'No source change proposed.',nextQuestion:'Continue bounded observation.',proposedChange:null};
   return new Response(JSON.stringify({model:'fixture',choices:[{finish_reason:'stop',message:{content:JSON.stringify(output)}}],usage:{prompt_tokens:1,completion_tokens:1}}),{status:200});
 };`);

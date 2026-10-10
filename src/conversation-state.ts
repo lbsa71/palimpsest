@@ -11,6 +11,10 @@ export interface ConversationTopic {
   sourceTaskIds: string[]; sourceRefs: MemorySourceRef[];
   participants: { taskId: string; source: string; slackAuthor: SlackAuthor | null }[];
   state: 'prepared' | 'active' | 'invalidated'; revision: number; outcome: ConversationOutcome;
+  /** Only an explicit reflection say is eligible for generated follow-up speech.
+   * Legacy topics have no speech; revisions and source changes invalidate it. */
+  speech?: { version: 'conversation-say/1'; revision: number; text: string;
+    sourceRefs: MemorySourceRef[]; sourceTaskIds: string[] } | null;
   memoryId: string | null; reflectionId: string | null; nextReviewAt: number; expiresAt: number;
   report: { owedRevision: number | null; lastReportedRevision: number; taskId: string | null;
     waived: boolean;

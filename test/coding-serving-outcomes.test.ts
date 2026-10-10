@@ -1,3 +1,4 @@
+import { spokenTurn } from './fixtures/autark.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
@@ -30,7 +31,7 @@ function fixture() {
   const store = new Store(join(directory, 'state.sqlite')), clock = { now: 1 }, accounting = new CodingAccounting(store, { now: () => clock.now });
   const sent: OutboundMessage[] = []; let calls = 0, receipt: CodingSubmissionReceipt | undefined;
   const provider: Provider = { name: 'deterministic-foreground', async complete() {
-    calls++; return { text: JSON.stringify(decision()), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
+    calls++; return { text: spokenTurn(decision()), provider: 'fixture', model: 'fixture', usage: { inputTokens: 1, outputTokens: 1 } };
   } };
   const authorize = (task: Task) => store.taskSourceCurrent(task.id) && (task.source === 'direct' || task.slackAuthor?.userId === 'ALLOWED');
   const admit = (task: Task, objective: string) => accounting.admit({ version: 'coding-session/1', sessionId: `coding:${task.id}`,
@@ -95,7 +96,7 @@ test('source import failure delivers honest unavailable acknowledgment and owed 
     f.setCoordinator(failedImportCoordinator(f, () => imports++));
     await f.runtime.submit({ id: 'unavailable', source: 'direct', conversationId: 'ordinary', text: 'Inspect module' }); await f.runtime.runUntilIdle();
     const origin = f.store.listTasks().find(task => task.eventId === 'unavailable')!;
-    assert.equal(origin.state, 'succeeded'); assert.match(f.sent[0]!.text, /Coding is unavailable/); assert.doesNotMatch(f.sent[0]!.text, /durably queued/);
+    assert.equal(origin.state, 'succeeded'); assert.equal(f.sent[0]!.text, 'The question is retained.'); assert.match(String(object(origin.checkpoint).actionOutcome), /Coding is unavailable/); assert.doesNotMatch(f.sent[0]!.text, /durably queued/);
     assert.equal(imports, 1); assert.equal(f.calls(), 1); assert.equal(f.accounting.list().length, 0); assert.equal(f.accounting.reservations().length, 0);
     assert.equal(f.store.listEvents({ taskId: origin.id }).filter(event => event.type === 'coding.report.owed').length, 1);
     assert.equal(f.store.listEvents({ taskId: origin.id }).filter(event => event.type === 'coding.serving.outcome').length, 1);
@@ -151,7 +152,7 @@ test('an old coding result cannot overwrite the newer confirmed topic or clear i
     assert.deepEqual(f.store.conversationTopic(first.topicId), current);
     await f.runtime.runUntilIdle();
     assert.deepEqual(f.store.conversationTopic(first.topicId), current);
-    assert.equal(f.sent.length, 1); assert.match(f.sent[0]!.text, /Actual retained coding result/);
+    assert.equal(f.sent.length, 1); assert.match(f.sent[0]!.text, /^Host notice:/); assert.doesNotMatch(f.sent[0]!.text, /Actual retained coding result/);
   } finally { await f.cleanup(); }
 });
 

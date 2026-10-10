@@ -120,7 +120,7 @@ for (const continuity of [false, true]) test(`unchanged fallback delivers once w
   const f = fixture('slack', continuity);
   try {
     const { report } = f.prepare(); f.policy.available = false; await f.reopen(); await f.runtime().runUntilIdle();
-    assert.equal(f.sent.length, 1); assert.equal(f.sent[0]!.replyTo, 'THREAD'); assert.match(f.sent[0]!.text, /SOURCE_BEARING_RESULT_CANARY/);
+    assert.equal(f.sent.length, 1); assert.equal(f.sent[0]!.replyTo, 'THREAD'); assert.match(f.sent[0]!.text, /^Host notice:/); assert.doesNotMatch(f.sent[0]!.text, /SOURCE_BEARING_RESULT_CANARY/);
     assert.equal(f.store().task(report.id)!.state, 'succeeded');
     assert.deepEqual(f.store().effect(`${report.id}:result`)!.result, { delivered: true, receipt: { transport: 'slack', messageId: '1700000000.000123' } });
     assert.equal(f.store().listMemories(report.conversationId).filter(memory => memory.source === `task:${report.id}`).length, 0);
