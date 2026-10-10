@@ -24,6 +24,11 @@ export const decisionSchema = {
     proposal: proposalSchema,
   }, required: ['reply', 'disposition', 'rationale', 'proposal'],
 };
+/** Advertised only by a configured, eligible coding entrypoint. */
+export const codingDecisionSchema = { ...decisionSchema, properties: { ...decisionSchema.properties,
+  disposition: { type: 'string', enum: ['converse', 'clarify', 'decline', 'propose', 'code'] },
+  coding: { type: 'object', additionalProperties: false, properties: { objective: { type: 'string', minLength: 1, maxLength: 4000 } }, required: ['objective'] },
+} };
 export interface ConversationActionsOptions {
   store: Store;
   userIds: readonly string[];
@@ -40,13 +45,19 @@ const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json
 export function parseConversationDecision(raw: string) {
   const value = JSON.parse(raw) as Record<string, unknown>;
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).some(key => !['reply','disposition','rationale','proposal'].includes(key))
+    || Object.keys(value).some(key => !['reply','disposition','rationale','proposal','coding'].includes(key))
     || typeof value.reply !== 'string' || !value.reply.trim() || value.reply.length > 8000
     || typeof value.rationale !== 'string' || !value.rationale.trim() || value.rationale.length > 12000
-    || !['converse','clarify','decline','propose'].includes(String(value.disposition))) throw new Error('Invalid conversation decision');
+    || !['converse','clarify','decline','propose','code'].includes(String(value.disposition))) throw new Error('Invalid conversation decision');
+  const coding = value.coding;
+  if (value.disposition === 'code') {
+    if (!coding || typeof coding !== 'object' || Array.isArray(coding) || Object.keys(coding).length !== 1
+      || typeof Reflect.get(coding, 'objective') !== 'string' || !Reflect.get(coding, 'objective').trim()
+      || Reflect.get(coding, 'objective').length > 4000 || value.proposal !== null) throw new Error('Invalid coding decision');
+  } else if (coding !== undefined) throw new Error('Unexpected coding intent');
   const result = parseGrowthReflection(JSON.stringify({ observation: value.rationale, lesson: value.rationale, nextQuestion: 'Evaluate the exact human-origin source proposal.', proposedChange: value.proposal }));
   if ((value.disposition === 'propose') !== !!result.proposedChange) throw new Error('Inconsistent proposal disposition');
-  return { value: value as { reply: string; disposition: string; rationale: string; proposal: unknown }, result };
+  return { value: value as { reply: string; disposition: string; rationale: string; proposal: unknown; coding?: { objective: string } }, result };
 }
 
 /** Trusted interpretation/dispatch boundary. It creates an immutable proposal,
@@ -68,7 +79,7 @@ export class ConversationActions {
       && task.state === 'succeeded' && this.eligible(task)
       && !this.#options.store.listEvents().some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === task.id);
   }
-  prepare(task: Task, memories: Memory[], request: CompletionRequest, hostFacts: unknown, projection?: readonly MemoryDescriptor[]): CompletionRequest {
+  prepare(task: Task, memories: Memory[], request: CompletionRequest, hostFacts: unknown, projection?: readonly MemoryDescriptor[], codingAvailable = false): CompletionRequest {
     let sourceBinding: SourceBinding | undefined;
     let sourceObservationUnavailable = false;
     if (this.#options.observeSource) {
@@ -83,7 +94,7 @@ export class ConversationActions {
     // do not trust identity text or derived memories with erased provenance.
     const ownMemories = this.selectMemories(task,memories);
     return { ...request, schema: decisionSchema, maxOutputTokens: INTERACTIVE_MAX_OUTPUT_TOKENS,
-      system: `${request.system}\nInteractive host protocol: Return the required decision JSON. For ordinary informational questions, answer the main point first in about 100–180 words unless more detail is requested; finish complete sentences and include the material limitation. Ground implemented capability claims in executable operations and current host facts, rather than aspirational comments or remembered descriptions. Input-order slicing alone does not establish chronological sorting; a UTF-16 character prefix does not establish a UTF-8 byte bound or safe surrogate boundary. Describe the selected activePlanAllocation; alternate configuration settings are not simultaneous active caps. Distinguish configured standing growth from its current pause or deferral; a scheduled timer does not mean inference is presently permitted. Current host request preparation can override source defaults: maxOutputTokens limits output tokens, never input size. requester.selfModificationSuggestionEligible describes this request; authenticated direct operators and whitelisted Slack authors follow separate eligibility paths. Do not infer system-wide permissions or permanent unavailability from a temporary pause or this request alone. Answer ordinary questions with converse and proposal null. Only an actual request to change your cognitive source may produce propose. Clarify unclear requests; decline unsuitable requests even when eligible. Weigh goals, evidence, commitments and constraints. A proposal is a hypothesis, never a completed action. Changes are limited to direct src/agent/*.ts; preserve request/memory JSON contracts and cross-scope isolation. Use supplied source and types only, complete replacement files and testable acceptance criteria. Make the smallest readable change with descriptive names; preserve useful behavior and explain non-obvious invariants. Use actual failed-check evidence to fix causes. Never hard-code fixtures, weaken checks, add speculative dependencies or claim tests you did not run. Separate intended acceptance criteria from observed results: report a check as passed only when supplied authoritative evidence establishes that named contract. Explicitly identify dependent work that remains unimplemented. Character/count limits do not establish UTF-8 byte bounds or safe Unicode truncation; evidence metadata has variable size, so claim a numerical resource bound only from measured serialized data or an enforceable input bound. Do not request host/governance changes. The host will queue proposals for separate checks, review, interview and cognitive-worker succession; configured Git publication follows promotion. Outer Slack-service rebuild/restart is unavailable. Never claim an action is completed from this inference.`,
+      system: `${request.system}\nInteractive host protocol: Return the required decision JSON. For ordinary informational questions, answer the main point first in about 100–180 words unless more detail is requested; finish complete sentences and include the material limitation. Ground implemented capability claims in executable operations and current host facts, rather than aspirational comments or remembered descriptions. Input-order slicing alone does not establish chronological sorting; a UTF-16 character prefix does not establish a UTF-8 byte bound or safe surrogate boundary. Describe the selected activePlanAllocation; alternate configuration settings are not simultaneous active caps. Distinguish configured standing growth from its current pause or deferral; a scheduled timer does not mean inference is presently permitted. Current host request preparation can override source defaults: maxOutputTokens limits output tokens, never input size. requester.selfModificationSuggestionEligible describes this request; authenticated direct operators and whitelisted Slack authors follow separate eligibility paths. Do not infer system-wide permissions or permanent unavailability from a temporary pause or this request alone. Answer ordinary questions with converse and proposal null. Only an actual request to change your cognitive source may produce propose. Clarify unclear requests; decline unsuitable requests even when eligible. Weigh goals, evidence, commitments and constraints. A proposal is a hypothesis, never a completed action. ${codingAvailable ? 'Complete-file propose decisions admit only direct src/agent/*.ts; iterative code decisions may draft the full source through separate workspace receivers.' : 'Changes are limited to direct src/agent/*.ts;'} Preserve request/memory JSON contracts and cross-scope isolation. Use supplied source and types only, complete replacement files and testable acceptance criteria. Make the smallest readable change with descriptive names; preserve useful behavior and explain non-obvious invariants. Use actual failed-check evidence to fix causes. Never hard-code fixtures, weaken checks, add speculative dependencies or claim tests you did not run. Separate intended acceptance criteria from observed results: report a check as passed only when supplied authoritative evidence establishes that named contract. Explicitly identify dependent work that remains unimplemented. Character/count limits do not establish UTF-8 byte bounds or safe Unicode truncation; evidence metadata has variable size, so claim a numerical resource bound only from measured serialized data or an enforceable input bound. ${codingAvailable ? 'Host/governance drafts require separate supported admission and cannot judge their own activation.' : 'Do not request host/governance changes.'} The host will queue proposals for separate checks, review, interview and cognitive-worker succession; configured Git publication follows promotion. Outer Slack-service rebuild/restart is unavailable. Never claim an action is completed from this inference.`,
       prompt: JSON.stringify({ request: task.input, requestLimits: { maxOutputTokens: INTERACTIVE_MAX_OUTPUT_TOKENS, unit: 'output tokens' }, sameAuthorExperiences: projection ?? ownMemories.map(memory => ({ id: memory.id, content: memory.content.slice(0,4000) })),
         sourceContext: this.#options.sourceContext(), hostFacts, ...(sourceBinding ? { sourceBinding } : {}),
         ...(sourceObservationUnavailable ? { sourceModificationAvailability: 'Temporarily unavailable: current checkout and admitted source identity cannot be established. Continue ordinary conversation; no source proposal can be dispatched from this inference.' } : {}) }),
@@ -101,6 +112,7 @@ export class ConversationActions {
     if (!this.eligible(task)) return 'No source modification was dispatched: current author policy does not permit it.';
     try {
       const { value, result } = parseConversationDecision(raw);
+      if (value.disposition === 'code') throw new ProviderError('configuration', 'Coding requires the configured durable session receiver.');
       if (result.proposedChange) {
         if (result.proposedChange.files.some(file => !/^src\/agent\/[A-Za-z0-9_.-]+\.ts$/.test(file.path))) return 'Proposal declined: this release path admits only direct src/agent/*.ts changes. No source was changed.';
         const saved = this.#options.store.task(task.id)?.checkpoint;

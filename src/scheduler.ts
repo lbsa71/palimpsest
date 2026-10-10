@@ -1,4 +1,4 @@
-import { GrowthCoordinator, parseGrowthReflection, type GrowthProposal } from './growth.ts';
+import { GrowthCoordinator, parseGrowthReflection, type GrowthProposal, type GrowthCoding } from './growth.ts';
 import type { Provider } from './providers.ts';
 import { Store, type Growth, type GrowthDimension } from './store.ts';
 import type { SourceBinding } from './source-identity.ts';
@@ -21,6 +21,7 @@ export interface GrowthSchedulerOptions {
   onProposedChange?: (event: { proposalId: string; growth: Growth; proposedChange: GrowthProposal; signal: AbortSignal }) => void | Promise<void>;
   onError?: (code: 'scheduler_tick_failed') => void;
   conversationContinuity?: ConversationContinuity;
+  coding?: GrowthCoding;
 }
 
 const dimensions: GrowthDimension[] = ['personality_judgment', 'interests_curiosity', 'code_quality', 'capability_potential'];
@@ -89,12 +90,15 @@ export class GrowthScheduler {
     const window = store.openGrowthWindow({ id: `${this.#schedulerId}:${startsAt}`, schedulerId: this.#schedulerId, startsAt, endsAt, maxCalls: this.#calls });
     const coordinator = new GrowthCoordinator({
       store, provider: this.#options.provider, hasUserWork: this.#options.hasUserWork, budgetPerExperiment: 0,
-      memoryScope: this.#options.memoryScope, context: this.#options.context, observeSource: this.#options.observeSource, maxOutputTokens: this.#options.maxOutputTokens,
+      memoryScope: this.#options.memoryScope, context: this.#options.context, observeSource: this.#options.observeSource, maxOutputTokens: this.#options.maxOutputTokens, coding: this.#options.coding,
       claim: (id) => signal.aborted || this.#options.hasUserWork() ? undefined : store.claimGrowthInWindow(id, window.id, integer((this.#options.now ?? Date.now)(), 0)),
     });
     coordinator.seedAgenda();
     const all = store.listGrowth();
-    const publishing = all.find((item) => item.state === 'paused' && record(item.checkpoint).phase === 'publish_result');
+    // These phases resume already retained results. They require no inference
+    // permit, including when the decision spent the final call in this window.
+    const publishing = all.find((item) => item.state === 'paused' && (record(item.checkpoint).phase === 'publish_result'
+      || record(item.checkpoint).phase === 'coding_decision' && this.#options.coding?.eligible(item)));
     let result: Growth | null = null;
     if (publishing) result = await coordinator.tick({ signal, growthId: publishing.id });
     else if (window.usedCalls < window.maxCalls) {
@@ -116,6 +120,7 @@ export class GrowthScheduler {
       const order = [...dimensions].sort((a, b) => (lastDimension.get(a) ?? 0) - (lastDimension.get(b) ?? 0));
       for (const dimension of order) {
         const inquiry = all.filter((item) => item.dimension === dimension && ['queued', 'paused'].includes(item.state))
+          .filter(item => record(item.checkpoint).phase !== 'coding_decision')
           .sort((a, b) => (lastItem.get(a.id) ?? 0) - (lastItem.get(b.id) ?? 0))[0];
         if (!inquiry) continue;
         result = await coordinator.tick({ signal, growthId: inquiry.id });

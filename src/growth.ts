@@ -1,4 +1,4 @@
-import { ProviderError, type Provider, type CompletionResult } from './providers.ts';
+import { ProviderError, type Provider, type CompletionResult, type CompletionRequest } from './providers.ts';
 import { Store, type Growth, type GrowthDimension, type Json } from './store.ts';
 import { parseSourceBinding } from './source-identity.ts';
 import type { SourceBinding } from './source-identity.ts';
@@ -31,6 +31,13 @@ export interface GrowthOptions {
   maxOutputTokens?: number;
   /** Trusted host hook for an atomic global-budget claim; never model supplied. */
   claim?: (growthId: string) => Growth | undefined;
+  coding?: GrowthCoding;
+}
+
+export interface GrowthCoding {
+  eligible(growth: Growth): boolean;
+  prepare(growth: Growth, request: CompletionRequest): CompletionRequest;
+  accept(growth: Growth, raw: string, signal?: AbortSignal): Promise<Growth | undefined>;
 }
 
 const agenda: { dimension: GrowthDimension; question: string }[] = [
@@ -170,6 +177,8 @@ export class GrowthCoordinator {
     try {
       this.seedAgenda();
       const all = store.listGrowth();
+      const codingDecision = all.find(item => item.state === 'paused' && checkpoint(item).phase === 'coding_decision' && this.#options.coding?.eligible(item));
+      if (codingDecision) return this.#resumeCodingDecision(codingDecision, options.signal);
       // Publication is replayable and costs no inference. Durable publication
       // identities survive forgetting; active-memory search is not deduplication.
       const pending = all.find((item) => item.state === 'paused' && checkpoint(item).phase === 'publish_result');
@@ -181,6 +190,7 @@ export class GrowthCoordinator {
         if (data !== null && typeof data === 'object' && !Array.isArray(data) && typeof data.growthId === 'string') latest.set(data.growthId, event.seq);
       }
       const eligible = all.filter((item) => (item.state === 'queued' || item.state === 'paused')
+        && checkpoint(item).phase !== 'coding_decision'
         && (options.growthId === undefined || item.id === options.growthId)
         && (this.#options.claim !== undefined || item.remainingBudget >= 1))
         .sort((a, b) => (latest.get(a.id) ?? 0) - (latest.get(b.id) ?? 0));
@@ -214,13 +224,19 @@ export class GrowthCoordinator {
       store.updateGrowth(claimed.id, { checkpoint: json({ phase: 'awaiting_provider', input: prompt, ...binding }), nextStep: 'Await the bounded inquiry result; interruption consumes this attempt.' });
       let completion: CompletionResult;
       try {
-        completion = await this.#options.provider.complete({ system, prompt, schema: reflectionSchema, signal: options.signal, maxOutputTokens: this.#options.maxOutputTokens ?? 4096 });
+        const request = { system, prompt, schema: reflectionSchema, signal: options.signal, maxOutputTokens: this.#options.maxOutputTokens ?? 4096 };
+        completion = await this.#options.provider.complete(this.#options.coding?.eligible(claimed) ? this.#options.coding.prepare(claimed, request) : request);
       } catch (error) {
         const reason = options.signal?.aborted ? 'cancelled' : error instanceof ProviderError ? error.code : 'provider_unavailable';
         return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({ phase: 'awaiting_provider', input: prompt, reason, ...binding }), nextStep: 'Resume this inquiry only within its remaining allocation; do not refund the uncertain attempt.' });
       }
       if (options.signal?.aborted) {
         return store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({ phase: 'awaiting_provider', input: prompt, reason: 'cancelled', ...binding }), nextStep: 'Late result discarded after cancellation; resume within remaining allocation.' });
+      }
+      if (this.#options.coding?.eligible(claimed)) {
+        const retained = store.updateGrowth(claimed.id, { state: 'paused', checkpoint: json({ phase: 'coding_decision', input: prompt,
+          decisionText: completion.text, provider: completion.provider, model: completion.model, usage: completion.usage, ...binding }), nextStep: 'Retained agenda decision awaits host admission.' });
+        return this.#resumeCodingDecision(retained, options.signal);
       }
       let result: GrowthReflection;
       try { result = parseGrowthReflection(completion.text); }
@@ -232,6 +248,21 @@ export class GrowthCoordinator {
       }) });
       return this.#publish(publishing);
     } finally { this.#busy = false; }
+  }
+
+  async #resumeCodingDecision(growth: Growth, signal?: AbortSignal): Promise<Growth> {
+    const saved = checkpoint(growth), store = this.#options.store;
+    if (signal?.aborted || this.#options.hasUserWork() || !this.#options.coding?.eligible(growth)) return growth;
+    try {
+      const admitted = await this.#options.coding.accept(growth, String(saved.decisionText), signal);
+      if (admitted) return admitted;
+      const value = JSON.parse(String(saved.decisionText)); const { coding: _coding, ...reflection } = value;
+      const result = parseGrowthReflection(JSON.stringify(reflection));
+      const publishing = store.updateGrowth(growth.id, { state: 'paused', checkpoint: json({ ...saved, phase: 'publish_result', result }) });
+      return this.#publish(publishing);
+    } catch {
+      return store.updateGrowth(growth.id, { state: 'paused', checkpoint: json({ ...saved, reason: 'coding_admission_held' }), nextStep: 'The retained decision needs valid current host admission; no further inference is claimed.' });
+    }
   }
 
   #publish(growth: Growth): Growth {

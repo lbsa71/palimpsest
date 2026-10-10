@@ -10,6 +10,7 @@ import { CandidateJobs } from './candidate-jobs.ts';
 import type { CandidateJobOperation, CandidateJobValue } from './candidate-jobs.ts';
 import { AgentWorker } from './workers.ts';
 import { AgentRuntime } from './runtime.ts';
+import type { RuntimeCoding } from './runtime.ts';
 import type { Communications, InboundMessage } from './communications.ts';
 import { ProviderError } from './providers.ts';
 import type { Provider } from './providers.ts';
@@ -33,6 +34,7 @@ export interface GenerationOptions {
   hostFacts?: () => Record<string, Json>;
   conversationActions?: ConversationActions;
   conversationContinuity?: ConversationContinuity;
+  coding?: RuntimeCoding;
 }
 
 /** Actual local worker supervision. All production effects stay in this trusted process. */
@@ -55,6 +57,7 @@ export class GenerationHost {
 
   constructor(options: GenerationOptions) {
     this.#options = options;
+    options.conversationContinuity?.bindCodingWork(options.coding);
     this.candidateJobs = new CandidateJobs({ repositoryRoot: options.repositoryRoot, dataDir: options.dataDir });
     this.requiredChecks = Object.freeze(options.requiredChecks ?? ['typecheck', 'trusted-agent-contract', 'cross-scope-memory']);
     this.custodian = new Custodian({ storeDir: join(options.dataDir, 'custodian'),
@@ -91,7 +94,13 @@ export class GenerationHost {
         catchUp: async (peer, checkpoint) => this.worker(peer).catchUp(checkpoint),
         activate: async (peer, actor, checkpoint) => {
           const worker = this.worker(peer);
-          if (this.#worker === worker && this.#runtime) { this.#actor = actor; void this.#runtime.resume().catch(() => {}); return; }
+          if (this.#worker === worker && this.#runtime) {
+            this.#actor = actor;
+            await this.#runtime.resume({ drain: false });
+            // Custody awaits adoption, while ordinary inference stays detached.
+            void this.#runtime.runUntilIdle().catch(() => {}); return;
+          }
+          await options.coding?.pause?.();
           await this.#runtime?.stop().catch(() => {});
           this.#actor = actor; this.#worker = worker;
           const authorize = (boundary: 'tool' | 'store' | 'memory' | 'message') => {
@@ -108,11 +117,14 @@ export class GenerationHost {
             selfModificationUserIds: options.selfModificationUserIds,
             conversationActions: options.conversationActions,
             conversationContinuity: options.conversationContinuity,
+            coding: options.coding, initiallyPaused: true,
             memoryProjectionChecks: () => readManifest(releaseOfWorker(this.custodian, peer).artifactPath).requiredChecks,
             hostFacts: () => ({ ...options.hostFacts?.(),
               activeRelease: this.custodian.inspect().active?.release.digest ?? null,
               phase: this.custodian.inspect().phase,
-              sourceEvolutionScope: 'Only direct src/agent/*.ts, through candidate checks, review and succession; replaces cognitive workers, not the outer service.',
+              sourceEvolutionScope: options.coding
+                ? 'Eligible configured coding sessions may draft the full admitted source. Cognitive changes use existing checks/review/succession; broader drafts await supported admission.'
+                : 'Only direct src/agent/*.ts, through candidate checks, review and succession; replaces cognitive workers, not the outer service.',
               applicationGitPublication: options.hostFacts?.().applicationGitPublication ?? false }),
             authorize,
             requestFactory: async (task, memories) => {
@@ -126,6 +138,7 @@ export class GenerationHost {
               try { return await scoped.request(task, memories); } finally { await scoped.stop(); }
             },
           });
+          await this.#runtime.resume({ drain: false });
           if (worker.sequence !== checkpoint.sequence) throw new Error('Worker activation lacks current checkpoint');
         },
         reconcileLaunch: async intent => {
@@ -283,12 +296,17 @@ export class GenerationHost {
     return this.#options.store.task(task.id)!;
   }
   async drain(): Promise<void> { await this.runtime.runUntilIdle(); }
-  async tick(): Promise<void> { await this.checkHealth(); if (this.custodian.inspect().active) await this.drain(); }
+  async tick(): Promise<void> { await this.checkHealth(); if (this.custodian.inspect().active) { await this.drain(); await this.tickCoding(); } }
+  async tickCoding(): Promise<boolean> {
+    if (this.#closed || !this.#runtime || this.#runtime.hasUserWork() || !['normal', 'probation'].includes(this.custodian.inspect().phase)) return false;
+    return await this.#options.coding?.tick?.() ?? false;
+  }
 
   async #checkpoint(quiesce: boolean): Promise<Checkpoint> {
     const store = this.#options.store;
     if (quiesce) {
       await this.#options.quiesceBackground?.();
+      await this.#options.coding?.pause?.();
       await this.#runtime?.quiesce().catch(() => {});
       // No active task loop remains, and all effects must still reconcile below.
       store.recoverInterrupted();

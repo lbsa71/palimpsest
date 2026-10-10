@@ -40,6 +40,8 @@ function clip(value: string, limit: number): string {
 export class ConversationContinuity {
   readonly #options: ConversationContinuityOptions;
   readonly #reviewMs: number; readonly #lifetimeMs: number; readonly #attempts: number;
+  #codingWork?: { pendingTopic?(topicId: string): boolean };
+  bindCodingWork(work: { pendingTopic?(topicId: string): boolean } | undefined): void { this.#codingWork = work; }
   constructor(options: ConversationContinuityOptions) {
     this.#options = options; this.#reviewMs = options.reviewMs ?? 60_000;
     this.#lifetimeMs = options.lifetimeMs ?? 86_400_000; this.#attempts = options.maxAttempts ?? 2;
@@ -72,7 +74,7 @@ export class ConversationContinuity {
   accept(task: Task, raw: string, interactive: boolean): string {
     try {
       if (Buffer.byteLength(raw) > 131_072) throw new Error('Oversized outcome');
-      const value = object(JSON.parse(raw)); const allowed = interactive ? ['reply', 'disposition', 'rationale', 'proposal', 'outcomes'] : ['reply', 'outcomes'];
+      const value = object(JSON.parse(raw)); const allowed = interactive ? ['reply', 'disposition', 'rationale', 'proposal', 'coding', 'outcomes'] : ['reply', 'outcomes'];
       if (Object.keys(value).some(key => !allowed.includes(key)) || (value.outcomes !== undefined && (!Array.isArray(value.outcomes) || value.outcomes.length > 4))) throw new Error('Invalid conversational envelope');
       const reply = text(value.reply, 8000);
       const { outcomes: _outcomes, ...decision } = value;
@@ -154,6 +156,7 @@ export class ConversationContinuity {
         continue;
       }
       const reflection = topic.reflectionId ? store.conversationReflection(topic.reflectionId) : undefined;
+      if (topic.state === 'active' && this.#codingWork?.pendingTopic?.(topic.id)) continue;
       if (topic.state === 'active' && topic.outcome.status === 'pending') {
         const exhausted = reflection && reflection.attempts >= reflection.maxAttempts && reflection.state !== 'running';
         if (!reflection || ['completed', 'cancelled', 'rejected'].includes(reflection.state) || exhausted || now >= topic.expiresAt) {

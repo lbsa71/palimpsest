@@ -11,6 +11,22 @@ import { validateMemoryProjection } from './memory-projection.ts';
 import { assertConversationRole } from './conversation-role.ts';
 import type { ConversationContinuity } from './conversation-continuity.ts';
 import { conversationMemoryTasks } from './conversation-provenance.ts';
+import { parseConversationDecision } from './conversation-actions.ts';
+
+/** Trusted durable coding receiver. Presence alone never authorizes a requester. */
+export interface RuntimeCoding {
+  eligible(task: Task): boolean;
+  prepare(task: Task, request: CompletionRequest): CompletionRequest;
+  accept(task: Task, rawDecision: string): Promise<string | undefined>;
+  cancel?(taskId: string): void;
+  status?(taskId: string): string;
+  pause?(): Promise<void>;
+  resume?(): void | Promise<void>;
+  tick?(): Promise<boolean>;
+  pendingTopic?(topicId: string): boolean;
+  isReport?(task: Task): boolean;
+  reportMaySend?(task: Task): boolean;
+}
 
 export interface RuntimeOptions {
   store: Store;
@@ -27,6 +43,9 @@ export interface RuntimeOptions {
   conversationContinuity?: ConversationContinuity;
   /** Exact active-worker manifest floor. Absent only for standalone legacy factories. */
   memoryProjectionChecks?: () => readonly string[];
+  coding?: RuntimeCoding;
+  /** A host activation must prove adoption before permitting foreground work. */
+  initiallyPaused?: boolean;
 }
 
 function checkpoint(task: Task): Record<string, Json> {
@@ -51,6 +70,7 @@ export class AgentRuntime {
   #current?: string;
   #stopped = false;
   #paused = false;
+  #pauseRevision = 0;
   readonly #commands = new Set<Promise<void>>();
   readonly #requestFactory: NonNullable<RuntimeOptions['requestFactory']>;
   readonly #authorize: NonNullable<RuntimeOptions['authorize']>;
@@ -59,6 +79,7 @@ export class AgentRuntime {
   readonly #actions?: ConversationActions;
   readonly #continuity?: ConversationContinuity;
   readonly #memoryProjectionChecks?: RuntimeOptions['memoryProjectionChecks'];
+  readonly #coding?: RuntimeCoding;
 
   constructor(options: RuntimeOptions) {
     this.#store = options.store;
@@ -73,6 +94,8 @@ export class AgentRuntime {
     this.#actions = options.conversationActions;
     this.#continuity = options.conversationContinuity;
     this.#memoryProjectionChecks = options.memoryProjectionChecks;
+    this.#coding = options.coding;
+    this.#paused = options.initiallyPaused ?? false;
     if (!Number.isSafeInteger(this.#maxCalls) || this.#maxCalls < 1) throw new Error('Task call budget must be a positive integer');
   }
 
@@ -100,12 +123,13 @@ export class AgentRuntime {
 
   status(id: string): Task | undefined { return this.#store.task(id); }
   events(after = 0) { return this.#store.listEvents({ after }); }
-  hasUserWork(): boolean { return this.#store.listTasks({ states: ['queued', 'running'] }).length > 0; }
+  hasUserWork(): boolean { return this.#store.listTasks({ states: ['queued', 'running'] }).some(task => !['coding-session', 'coding-origin'].includes(task.source)); }
 
   cancel(id: string): Task | undefined {
     const task = this.#store.task(id);
     if (task) this.#continuity?.cancelTask(id);
     if (task?.source !== 'peer') this.#actions?.cancel(id);
+    if (task?.source !== 'peer') this.#coding?.cancel?.(id);
     if (!task || ['succeeded', 'failed', 'cancelled'].includes(task.state)) return task;
     const cancelled = this.#store.updateTask(id, { state: 'cancelled' });
     if (this.#current === id) this.#controller?.abort();
@@ -126,7 +150,7 @@ export class AgentRuntime {
   async #drain(): Promise<void> {
     while (!this.#stopped && !this.#paused) {
       this.#authorize('store');
-      const task = this.#store.claimNext();
+      const task = this.#store.claimNext({ excludeSources: ['coding-session', 'coding-origin'] });
       if (!task) return;
       this.#controller = new AbortController(); this.#current = task.id;
       try { await this.#execute(task, this.#controller.signal); }
@@ -141,9 +165,8 @@ export class AgentRuntime {
       if (answer === undefined && typeof progress.decisionText === 'string') {
         this.#authorize('store');
         const interactive = progress.interactive === true || (!this.#continuity && !!this.#actions);
-        const accepted = this.#continuity?.accept(task, progress.decisionText, interactive) ?? progress.decisionText;
-        answer = interactive ? this.#actions!.accept(task, accepted) : accepted;
-        progress = { ...progress, answer }; this.#store.updateTask(task.id, { checkpoint: progress });
+        answer = await this.#acceptDecision(task, progress.decisionText, interactive);
+        progress = { ...checkpoint(this.#store.task(task.id)!), answer }; this.#store.updateTask(task.id, { checkpoint: progress });
       }
       if (answer === undefined && command(task.input)) {
         this.#authorize('store'); answer = this.#command(task);
@@ -163,9 +186,9 @@ export class AgentRuntime {
         this.#authorize('memory');
         // The candidate sees exactly the bounded set whose source facts the
         // host supplies; it cannot select an unlabeled older memory.
-        const interactive = this.#actions?.eligible(task) === true;
+        const interactive = this.#actions?.eligible(task) === true || this.#codingEligible(task);
         const scopedMemories = this.#conversationMemories(task, this.#store.listMemories(task.conversationId));
-        const memories = interactive ? this.#actions!.selectMemories(task,scopedMemories) : scopedMemories.slice(-12);
+        const memories = interactive && this.#actions ? this.#actions.selectMemories(task,scopedMemories) : scopedMemories.slice(-12);
         const memorySourceFacts = (memory: Memory) => {
           const origins = conversationMemoryTasks(this.#store, memory) ?? [];
           const origin = memory.source.startsWith('task:') ? this.#store.task(memory.source.slice(5)) : undefined;
@@ -191,6 +214,7 @@ export class AgentRuntime {
             automaticPruning: false, conversationMemoryManagementTools: false,
             interpretedOutcomes: !!this.#continuity, mandatoryDeferredTopicReports: !!this.#continuity },
           conversationActionTools: interactive ? ['propose_cognitive_change', 'status', 'cancel'] : [],
+          iterativeCodingAvailable: this.#codingEligible(task),
           conversationDispatchToGrowth: interactive, selfModificationDispatcher: interactive,
           configuredConversationCapabilities: { conversationDispatchToGrowth: !!this.#actions, selfModificationDispatcher: !!this.#actions },
           requester: { source: task.source, slackAuthor: task.slackAuthor ?? null,
@@ -207,22 +231,23 @@ export class AgentRuntime {
         if (checks && (interactive || checks.includes('memory-provenance') || checks.includes('memory-context-budget'))) {
           this.#authorize('memory');
           const currentTask = this.#store.task(task.id)!;
-          if ((this.#actions?.eligible(currentTask) === true) !== interactive) throw new ProviderError('protocol', 'Current conversation eligibility changed during worker construction');
+          if ((this.#actions?.eligible(currentTask) === true || this.#codingEligible(currentTask)) !== interactive) throw new ProviderError('protocol', 'Current conversation eligibility changed during worker construction');
           const current = this.#conversationMemories(currentTask, memories.flatMap(memory => {
             const value = this.#store.memory(memory.id, task.conversationId); return value ? [value] : [];
           }));
-          const authorizedCurrent = interactive ? this.#actions!.selectMemories(currentTask, current) : current;
+          const authorizedCurrent = interactive && this.#actions ? this.#actions.selectMemories(currentTask, current) : current;
           projection = validateMemoryProjection({ request, task: currentTask, supplied: memories, authorizedCurrent, checks, interactive });
           // Identity and authority come from current host records in the actual
           // selected order, never from candidate-provided facts or stale policy.
           facts.memorySources = projection.map(descriptor => memorySourceFacts(authorizedCurrent.find(memory => memory.id === descriptor.id)!));
         }
-        if (interactive) {
-          request = this.#actions!.prepare(task, memories, request, facts, projection);
+        if (interactive && this.#actions) {
+          request = this.#actions!.prepare(task, memories, request, facts, projection, this.#codingEligible(task));
           // prepare persists the host-observed source binding before inference.
           // Keep it when adding the provider result to the durable checkpoint.
           progress = checkpoint(this.#store.task(task.id)!);
         }
+        if (this.#codingEligible(task)) request = this.#coding!.prepare(task, request);
         if (this.#continuity) {
           this.#authorize('store'); request = this.#continuity.prepare(task, memories, request);
           progress = checkpoint(this.#store.task(task.id)!);
@@ -235,10 +260,9 @@ export class AgentRuntime {
         if (interactive || this.#continuity) {
           progress = { ...progress, decisionText: response.text, interactive };
           this.#store.updateTask(task.id, { checkpoint: progress });
-          const accepted = this.#continuity?.accept(task, response.text, interactive) ?? response.text;
-          answer = interactive ? this.#actions!.accept(task, accepted) : accepted;
+          answer = await this.#acceptDecision(task, response.text, interactive);
         } else answer = response.text;
-        progress = { ...progress, answer, provider: response.provider, model: response.model,
+        progress = { ...checkpoint(this.#store.task(task.id)!), answer, provider: response.provider, model: response.model,
           usage: { inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens } };
         this.#store.updateTask(task.id, { checkpoint: progress });
         this.#store.appendEvent('inference.completed', { provider: response.provider, model: response.model,
@@ -246,7 +270,9 @@ export class AgentRuntime {
       }
       const effectId = `${task.id}:result`;
       this.#authorize('store');
-      if (this.#continuity?.isReport(task) && !this.#continuity.reportMaySend(task)) {
+      const reportMaySend = () => (!this.#continuity?.isReport(task) || this.#continuity.reportMaySend(task))
+        && this.#coding?.reportMaySend?.(task) !== false;
+      if (!reportMaySend()) {
         this.#store.updateTask(task.id, { state: 'cancelled', error: 'conversation_report_context_changed' }); return;
       }
       const existing = this.#store.effect(effectId);
@@ -259,6 +285,10 @@ export class AgentRuntime {
         this.#store.reserveEffect({ id: effectId, taskId: task.id, kind: 'communication', payload: { ...message } });
         try {
           this.#authorize('message');
+          if (!reportMaySend()) {
+            this.#store.completeEffect(effectId, { delivered: false, rejected: true, reason: 'report_context_changed' });
+            this.#store.updateTask(task.id, { state: 'cancelled', error: 'conversation_report_context_changed' }); return;
+          }
           const receipt = await adapter.send(message);
           this.#authorize('store');
           this.#store.completeEffect(effectId, { delivered: true, receipt: receipt ?? null });
@@ -279,9 +309,9 @@ export class AgentRuntime {
         return;
       }
       this.#authorize('memory');
-      if (this.#continuity?.isReport(task)) {
+      if (this.#continuity?.isReport(task) || this.#coding?.isReport?.(task)) {
         this.#store.updateTask(task.id, { state: 'succeeded', output: answer, error: null });
-        this.#continuity.reconcileReports(); return;
+        this.#continuity?.reconcileReports(); return;
       }
       const episode = {
         scope: task.conversationId, kind: 'episodic', source: `task:${task.id}`, confidence: 1,
@@ -313,13 +343,43 @@ export class AgentRuntime {
     }
   }
 
+  #codingEligible(task: Task): boolean {
+    return (maySuggestSelfModification(task, this.#selfModificationUserIds)
+      || (task.source === 'direct' && this.#actions?.eligible(task) === true)) && this.#coding?.eligible(task) === true;
+  }
+
+  async #acceptDecision(task: Task, raw: string, interactive: boolean): Promise<string> {
+    if (interactive) {
+      let coded = false;
+      try { coded = JSON.parse(raw)?.disposition === 'code'; } catch { /* Strict admission below reports malformed data. */ }
+      if (coded && !this.#codingEligible(task)) throw new ProviderError('protocol', 'Coding authority or configuration unavailable.');
+    }
+    const accepted = this.#continuity?.accept(task, raw, interactive) ?? raw;
+    if (!interactive) return accepted;
+    const { value } = parseConversationDecision(accepted);
+    if (value.disposition === 'code') {
+      this.#authorize('tool');
+      const current = this.#store.task(task.id);
+      if (!current || current.state !== 'running' || !this.#codingEligible(current)) throw new ProviderError('cancelled', 'Coding admission was withdrawn.');
+      const reply = await this.#coding!.accept(current, accepted);
+      this.#authorize('store');
+      if (this.#stopped || this.#paused || this.#store.task(task.id)?.state !== 'running' || !this.#codingEligible(this.#store.task(task.id)!))
+        throw new ProviderError('cancelled', 'Coding admission interrupted before its reply.');
+      if (reply === undefined) throw new ProviderError('configuration', 'The coding receiver did not admit this intent.');
+      return reply;
+    }
+    return this.#actions ? this.#actions.accept(task, accepted) : value.reply;
+  }
+
   async stop(): Promise<void> {
-    this.#stopped = true; this.#controller?.abort();
+    this.#stopped = true; this.#pauseRevision++; this.#controller?.abort();
+    await this.#coding?.pause?.();
     await this.#settleOwnedWork();
   }
 
   async quiesce(): Promise<void> {
-    this.#paused = true; this.#controller?.abort();
+    this.#paused = true; this.#pauseRevision++; this.#controller?.abort();
+    await this.#coding?.pause?.();
     await this.#settleOwnedWork();
   }
 
@@ -331,10 +391,14 @@ export class AgentRuntime {
     if (failure) throw failure.reason;
   }
 
-  async resume(): Promise<void> {
+  async resume(options: { drain?: boolean } = {}): Promise<void> {
     if (this.#stopped) throw new Error('Runtime is stopped');
+    const revision = this.#pauseRevision;
+    this.#paused = true;
+    await this.#coding?.resume?.();
+    if (this.#stopped || revision !== this.#pauseRevision) throw new Error('Runtime resume interrupted');
     this.#paused = false;
-    await this.runUntilIdle();
+    if (options.drain !== false) await this.runUntilIdle();
   }
 
   #conversationMemories(task: Task, memories: Memory[]): Memory[] {
@@ -362,7 +426,7 @@ export class AgentRuntime {
     const target = this.#store.task(parsed.id);
     if (!target || target.conversationId !== task.conversationId || target.id === task.id
       || (task.source === 'peer' && target.source !== 'peer')) return 'Task not found in this conversation.';
-    if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.${this.#actions?.status(target.id) ?? ''}${this.#continuity?.status(target.id) ?? ''}`;
+    if (parsed.kind === 'status') return `Task ${target.id}: ${target.state}${target.error ? ` (${target.error})` : ''}.${this.#actions?.status(target.id) ?? ''}${this.#continuity?.status(target.id) ?? ''}${this.#coding?.status?.(target.id) ?? ''}`;
     if (task.source === 'slack' && !sameSlackAuthor(task, target)) return 'Only the original Slack author can cancel or correct this task.';
     const cancelledProposal = task.source === 'peer' ? false : this.#actions?.cancel(target.id) ?? false;
     this.cancel(target.id);

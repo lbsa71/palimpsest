@@ -4,6 +4,7 @@ import { parseGrowthReflection } from './growth.ts';
 import type { GrowthProposal } from './growth.ts';
 import { ProviderError } from './providers.ts';
 import { Store } from './store.ts';
+import { developmentAllocation } from './coding-accounting.ts';
 import type { Growth, Json } from './store.ts';
 
 export interface DevelopmentSource {
@@ -47,8 +48,6 @@ export interface DevelopmentExecutorOptions {
   observe(attempt: DevelopmentAttempt): Promise<DevelopmentReleaseObservation | undefined>;
   now?: () => number;
 }
-const DAY = 86_400_000;
-const HOUR = 3_600_000;
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const validDigest = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -89,28 +88,9 @@ export class DevelopmentExecutor {
     return this.#allocation(integer((this.#options.now ?? Date.now)()));
   }
   #allocation(now: number): ReturnType<DevelopmentExecutor['allocation']> {
-    const cadence = this.#options.proposalCadence ?? 'daily'; const duration = cadence === 'hourly' ? HOUR : DAY;
-    const startsAt = Math.floor(now / duration) * duration; const endsAt = startsAt + duration;
+    const cadence = this.#options.proposalCadence ?? 'daily';
     const maxCalls = cadence === 'hourly' ? this.#options.proposalCallsPerHour ?? 1 : this.#options.proposalCallsPerDay;
-    const eventType = cadence === 'hourly' ? 'development.hourly.window' : 'development.window';
-    const events = this.#options.store.listEvents();
-    const window = events.find(event => event.type === eventType && object(event.payload).startsAt === startsAt);
-    if (window && object(window.payload).maxCalls !== maxCalls) throw new Error(`Development UTC-${cadence === 'hourly' ? 'hour' : 'day'} proposal allocation is immutable`);
-    if (!window) this.#options.store.appendEvent(eventType, { startsAt, endsAt, maxCalls });
-    const used = events.filter(event => {
-      if (event.type !== 'development.attempt.started') return false;
-      const payload = object(event.payload); const timestamp = object(payload.attempt).startedAt;
-      // Count calls by their actual reservation time across policy and catalog
-      // changes. Attempt updates never refund failed, interrupted or unknown calls.
-      if (typeof timestamp === 'number' && Number.isSafeInteger(timestamp) && timestamp >= 0) return timestamp >= startsAt && timestamp < endsAt;
-      // Legacy startsAt names a day allocation, not the actual inference time.
-      // Without that timestamp, conservatively debit every overlapping hour.
-      const legacyStart = payload.startsAt;
-      if (typeof legacyStart !== 'number' || !Number.isSafeInteger(legacyStart) || legacyStart < 0) return true;
-      const legacyDuration = payload.cadence === 'hourly' ? HOUR : DAY;
-      return legacyStart < endsAt && legacyStart + legacyDuration > startsAt;
-    }).length;
-    return { cadence, startsAt, endsAt, used, remaining: Math.max(0, maxCalls - used) };
+    return developmentAllocation(this.#options.store, { cadence, maxCalls }, now);
   }
   recoverInterrupted(): void {
     if (this.busy) throw new Error('Cannot recover a running development execution owner');
@@ -174,13 +154,21 @@ export class DevelopmentExecutor {
     if (previous.some(attempt => attempt.state === 'completed') && !this.#options.store.listEvents().some(event => event.type === 'development.capability.reopened'
       && object(event.payload).itemId === item.id && object(event.payload).sourceDigest === source.sourceDigest && object(event.payload).catalogDigest === this.#options.plan.digest))
       this.#options.store.appendEvent('development.capability.reopened', json({ itemId: item.id, catalogDigest: this.#options.plan.digest, releaseId: source.releaseId, sourceDigest: source.sourceDigest, evidence: current }));
-    const allocation = this.#allocation(now); if (allocation.remaining < 1) return null;
     const ordinal = previous.length + 1;
     const attempt: DevelopmentAttempt = { id: `development:${digestJson({ catalogDigest: this.#options.plan.digest, itemId: item.id, ordinal })}`,
       itemId: item.id, catalogDigest: this.#options.plan.digest, ordinal, startedAt: now, state: 'authoring', source };
     // One durable record is both the attempt claim and its call reservation, so a
     // crash cannot reserve a call and then reuse the same attempt identity.
-    this.#options.store.appendEvent('development.attempt.started', json({ startsAt: allocation.startsAt, cadence: allocation.cadence, attempt }));
+    const admitted = this.#options.store.transaction(() => {
+      if (signal.aborted || this.#options.hasUserWork() || this.#options.mayAuthor && !this.#options.mayAuthor()) return false;
+      const current = this.attempts();
+      if (current.some(value => ['authoring', 'proposed', 'queued'].includes(value.state)) || current.filter(value => value.itemId === item.id).length !== previous.length) return false;
+      const reservedAt = integer((this.#options.now ?? Date.now)());
+      const allocation = this.#allocation(reservedAt); if (allocation.remaining < 1) return false;
+      attempt.startedAt = reservedAt;
+      this.#options.store.appendEvent('development.attempt.started', json({ startsAt: allocation.startsAt, cadence: allocation.cadence, attempt })); return true;
+    });
+    if (!admitted) return null;
     let proposed: GrowthProposal | null;
     const feedback = [...previous.flatMap(value => value.feedback ? [value.feedback] : []), { reason: 'Current independently observed item checks', checks: current.checks }];
     try { proposed = await this.#options.propose({ attemptId: attempt.id, catalogDigest: attempt.catalogDigest, item: structuredClone(item), source: structuredClone(source), feedback: structuredClone(feedback), signal }); }

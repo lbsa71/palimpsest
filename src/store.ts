@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ConversationOutcome, ConversationReflection, ConversationTopic, ConversationTopicInput } from './conversation-state.ts';
 export type { ConversationOutcome, ConversationReflection, ConversationTopic } from './conversation-state.ts';
 
@@ -95,6 +96,8 @@ export class Store {
   readonly persistent: boolean;
   #db: DatabaseSync;
   #transaction = false;
+  #transactionScope = new AsyncLocalStorage<{ active: boolean }>();
+  #savepoint = 0;
   #closed = false;
 
   constructor(dbPath: string) {
@@ -158,9 +161,38 @@ export class Store {
     `);
   }
 
-  close(): void { if (!this.#closed) { this.#db.close(); this.#closed = true; } }
+  close(): void { this.#assertTransactionScope(); if (!this.#closed) { this.#db.close(); this.#closed = true; } }
+
+  #assertTransactionScope(): void {
+    if (this.#transactionScope.getStore()?.active === false) throw new Error('Asynchronous transaction continuation cannot mutate Store');
+  }
+
+  /** Trusted synchronous compound writes. A callback must never await; rejected
+   * thenables roll back, and their escaped continuations cannot mutate state. */
+  transaction<T>(operation: () => T): T {
+    this.#assertTransactionScope();
+    if (operation.constructor.name === 'AsyncFunction') throw new Error('Store transaction callback must be synchronous');
+    const nested = this.#transaction; const savepoint = `public_transaction_${++this.#savepoint}`;
+    return this.#atomic(() => {
+      if (nested) this.#db.exec(`SAVEPOINT ${savepoint}`);
+      const scope = { active: true };
+      try {
+        const result = this.#transactionScope.run(scope, operation);
+        if (result && (typeof result === 'object' || typeof result === 'function') && 'then' in result && typeof result.then === 'function') {
+          void Promise.resolve(result).catch(() => {});
+          throw new Error('Store transaction callback must be synchronous');
+        }
+        if (nested) this.#db.exec(`RELEASE ${savepoint}`);
+        return result;
+      } catch (error) {
+        if (nested) { this.#db.exec(`ROLLBACK TO ${savepoint}`); this.#db.exec(`RELEASE ${savepoint}`); }
+        throw error;
+      } finally { scope.active = false; }
+    });
+  }
 
   #atomic<T>(operation: () => T): T {
+    this.#assertTransactionScope();
     if (this.#transaction) return operation();
     this.#db.exec('BEGIN IMMEDIATE');
     this.#transaction = true;
@@ -231,9 +263,11 @@ export class Store {
     });
   }
 
-  claimNext(): Task | undefined {
+  claimNext(filter: { excludeSources?: string[] } = {}): Task | undefined {
+    const excluded = filter.excludeSources ?? [];
+    for (const source of excluded) required(source, 'Excluded task source');
     return this.#atomic(() => {
-      const row = this.#db.prepare("SELECT record FROM tasks WHERE state = 'queued' AND NOT EXISTS (SELECT 1 FROM effects WHERE effects.task_id = tasks.id AND effects.state IN ('reserved', 'unknown')) ORDER BY rowid LIMIT 1").get();
+      const row = this.#db.prepare(`SELECT record FROM tasks WHERE state = 'queued'${excluded.length ? ` AND source NOT IN (${excluded.map(() => '?').join(',')})` : ''} AND NOT EXISTS (SELECT 1 FROM effects WHERE effects.task_id = tasks.id AND effects.state IN ('reserved', 'unknown')) ORDER BY rowid LIMIT 1`).get(...excluded);
       const task = decode<Task>(row);
       return task ? this.updateTask(task.id, { state: 'running' }) : undefined;
     });
@@ -279,6 +313,7 @@ export class Store {
   }
 
   appendEvent(type: string, payload: Json, taskId?: string): JournalEvent {
+    this.#assertTransactionScope();
     required(type, 'Event type');
     const createdAt = new Date().toISOString();
     const result = this.#db.prepare('INSERT INTO journal(type, task_id, payload, created_at) VALUES (?, ?, ?, ?)').run(type, taskId ?? null, encode(payload), createdAt);
@@ -821,7 +856,8 @@ export class Store {
         || atMs >= topic.expiresAt
         || topic.outcome.status !== 'pending'
         || this.conversationAwaitingExchange(topic.id)
-        || !['waiting', 'paused'].includes(item.state) || item.attempts >= item.maxAttempts || !window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls) return;
+        || !['waiting', 'paused'].includes(item.state) || item.attempts >= item.maxAttempts || !window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls
+        || !this.backgroundTurn(windowId, 'reflection', atMs)) return;
       const attemptId = `${id}:attempt:${item.attempts + 1}`;
       this.#db.prepare('INSERT INTO background_reservations(id, window_id) VALUES (?, ?)').run(attemptId, windowId);
       this.#db.prepare('UPDATE growth_windows SET record = ? WHERE id = ?').run(encode({ ...window, usedCalls: window.usedCalls + 1, updatedAt: new Date().toISOString() }), windowId);
@@ -882,6 +918,70 @@ export class Store {
     return decode<GrowthWindow>(this.#db.prepare('SELECT record FROM growth_windows WHERE id = ?').get(id));
   }
 
+  /** Durable kind fairness when coding joins the existing background lane.
+   * Successful reservations, including legacy reservations, advance the turn.
+   * A continuously eligible kind waits at most two other successful debits. */
+  backgroundTurn(windowId: string, kind: 'growth' | 'reflection' | 'coding', atMs: number): boolean {
+    const window = this.growthWindow(windowId); if (!window) return false;
+    const object = (value: Json): Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const sessions = new Map<string, Record<string, Json>>(); const events = this.listEvents();
+    for (const event of events) if (['coding.session.admitted', 'coding.session.updated'].includes(event.type)) {
+      const session = object(object(event.payload).session); if (typeof session.id === 'string') sessions.set(session.id, session);
+    }
+    const coding = [...sessions.values()].some(session => {
+      const contract = object(session.contract); const lane = object(contract.lane);
+      const limits = object(contract.limits);
+      const charges = events.filter(event => event.type === 'coding.request.reserved').map(event => object(object(event.payload).reservation));
+      const initial = events.filter(event => event.type === 'coding.initial_call.linked').map(event => object(event.payload));
+      const available = (field: string, id: Json, limit: Json) => typeof limit === 'number'
+        && charges.filter(charge => charge[field] === id).length + initial.filter(charge => charge[field] === id).length < limit;
+      return session.version === 'coding-state/1' && lane.kind === 'growth' && lane.schedulerId === window.schedulerId
+        && typeof lane.maxCalls === 'number' && lane.maxCalls > 0
+        && available('sessionId', session.id, limits.maxSessionCalls) && available('workRootId', contract.workRootId, limits.maxWorkCalls)
+        && available('attemptId', contract.attemptId, limits.maxAttemptCalls)
+        && typeof contract.expiresAt === 'number' && contract.expiresAt > atMs
+        && (session.state === 'ready' || session.state === 'paused' && typeof session.nextEligibleAt === 'number' && session.nextEligibleAt <= atMs
+          || session.state === 'running' && ['model-intended', 'request-intended'].includes(String(session.phase)));
+    });
+    // Legacy schedules remain unchanged until a coding consumer is eligible.
+    if (!coding && kind !== 'coding') return true;
+    const eligible: Array<'growth' | 'reflection' | 'coding'> = [];
+    if (this.listGrowth().some(item => ['queued', 'paused'].includes(item.state))) eligible.push('growth');
+    if (this.listConversationReflections().some(item => {
+      const topic = this.conversationTopic(item.topicId);
+      return ['waiting', 'paused'].includes(item.state) && item.attempts < item.maxAttempts && topic?.state === 'active'
+        && topic.reflectionId === item.id && topic.outcome.status === 'pending' && atMs < topic.expiresAt
+        && !this.conversationAwaitingExchange(topic.id) && this.conversationSourcesCurrent(topic);
+    })) eligible.push('reflection');
+    if (coding || kind === 'coding') eligible.push('coding');
+    if (!eligible.includes(kind)) return false;
+    const last = new Map<string, number>();
+    for (const event of events) {
+      if (object(event.payload).schedulerId !== window.schedulerId) continue;
+      const consumer = event.type === 'growth.window.call_reserved' ? 'growth' : event.type === 'conversation.reflection.call_reserved' ? 'reflection' : event.type === 'coding.window.call_reserved' ? 'coding' : undefined;
+      if (consumer) last.set(consumer, event.seq);
+    }
+    // Match the existing scheduler's reflection-first initial tie. Choosing a
+    // different tie would veto its only attempted claim and stall both owners.
+    const initialOrder = { reflection: 0, growth: 1, coding: 2 };
+    eligible.sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0) || initialOrder[a] - initialOrder[b]);
+    return eligible[0] === kind;
+  }
+
+  /** Coding uses the actual existing background window, never a parallel pool.
+   * Caller atomically persists the matching request intent in the same transaction. */
+  reserveCodingInGrowthWindow(reservationId: string, windowId: string, atMs: number): boolean {
+    required(reservationId, 'Coding reservation ID'); budget(atMs);
+    return this.#atomic(() => {
+      if (this.#db.prepare('SELECT id FROM background_reservations WHERE id = ?').get(reservationId)) return false;
+      const window = this.growthWindow(windowId);
+      if (!window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls || !this.backgroundTurn(windowId, 'coding', atMs)) return false;
+      this.#db.prepare('INSERT INTO background_reservations(id, window_id) VALUES (?, ?)').run(reservationId, windowId);
+      this.#db.prepare('UPDATE growth_windows SET record = ? WHERE id = ?').run(encode({ ...window, usedCalls: window.usedCalls + 1, updatedAt: new Date().toISOString() }), windowId);
+      this.appendEvent('coding.window.call_reserved', { reservationId, windowId, schedulerId: window.schedulerId }); return true;
+    });
+  }
+
   /** Window limits are trusted policy, immutable once an allocation is opened. */
   openGrowthWindow(input: GrowthWindowInput): GrowthWindow {
     required(input.id, 'Growth window ID'); required(input.schedulerId, 'Growth scheduler ID');
@@ -911,7 +1011,7 @@ export class Store {
       const window = this.growthWindow(windowId);
       const old = this.growth(id);
       if (!window || atMs < window.startsAt || atMs >= window.endsAt || window.usedCalls >= window.maxCalls
-        || !old || !['queued', 'paused'].includes(old.state)) return undefined;
+        || !old || !['queued', 'paused'].includes(old.state) || !this.backgroundTurn(windowId, 'growth', atMs)) return undefined;
       const allocation = old.remainingBudget < 1 ? 1 : 0;
       budget(old.budget + allocation);
       const now = new Date().toISOString();
