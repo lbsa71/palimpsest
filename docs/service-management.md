@@ -1,6 +1,6 @@
 # Durable local service
 
-Work item: P15 operational continuity, 2026-10-09. Status: implemented with fixture verification; existing known-good live installation, authenticated API and Slack connection observed. Installation of the new plan-executor host remains separate work.
+Work item: P15 operational continuity. This page describes the historical macOS LaunchAgent and its verified contract. Current deployment is the independently accepted [root-sealed Linux systemd service](work-items/linux-systemd-service.md), with [actual native acceptance](migration-acceptance-2026-10-10.md) recorded on 2026-10-10; Mac shutdown and preservation precede source cleanup.
 
 ## Problem and intended behavior
 

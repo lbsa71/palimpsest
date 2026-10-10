@@ -1,5 +1,10 @@
 # Palimpsest
 
+Current operator deployment is the dedicated Linux service, with memory and
+runtime state outside the checkout. [Native migration acceptance](docs/migration-acceptance-2026-10-10.md)
+records the reviewed installation, measured responsiveness and cold recovery.
+General iterative coding and full-codebase autonomous release remain P17/P18 work.
+
 Palimpsest is an autonomous coding companion under development. It develops its capabilities, interests, judgment, and implementation while preserving the history that gives it continuity.
 
 Its defining requirement is a **strong, persistent drive for self-improvement**. It should initiate worthwhile learning and engineering work, develop interests beyond immediate utility, and leave each successor better equipped than its predecessor. Growth must have evidence; additional complexity and greater agreeableness are not measures of progress.

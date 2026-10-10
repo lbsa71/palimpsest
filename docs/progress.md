@@ -1,5 +1,33 @@
 # Implementation progress and evidence
 
+## Native service and idle responsiveness accepted — 2026-10-10
+
+Guardian source `8d2e63e` is independently reviewed, merged and pushed. Exact
+native TypeScript, eleven scheduler cases and all four unchanged incumbent floors
+passed before supported operator installation of `aa687d2f`. Its cognition,
+configuration/model and current lived history remain unchanged; predecessor
+`bab265dc` is retained as native rescue. The post-commit drain failure remains
+recorded, followed by one supported provider-free recovery to epoch 142. No
+database rewrite, reimport, refund or weakened product deadline occurred.
+
+Root sealing and actual service gates passed. Three initial idle CPU windows used
+15.066/15.533/15.333% of one core with twelve measured reads below 12 ms. After
+clean shutdown, cold restart to epoch 144 used 17.200/18.133/17.933%, with twelve
+reads below 180 ms. All substantive records and spent budgets survived, the
+original peer task still has one call, and no new reservations appeared during
+measurement. Six worker namespaces, seccomp/NNP/zero capabilities, private scratch
+and all 22 drained collector receipts were verified. The controller enabled
+automatic startup once, retaining the same running process. [The acceptance
+report](migration-acceptance-2026-10-10.md) binds exact receipts and limitations.
+
+The dedicated host keeps current memory/state outside the repository. Final Mac
+preservation and cleanup are separate operations after this accepted runtime gate.
+The hourly scheduler remains configured; the two Mac Codex heartbeat monitors
+remain paused. New inner-voice behavior is isolated from this release. P06
+qualitative calibration, configured-model coding competence, retained dependency
+packaging and P17/P18 autonomous activation remain open. The older source and
+installation entries below are historical evidence, not current deployment facts.
+
 ## Integrated coding and Linux migration source — 2026-10-10
 
 Reviewed P17 source `0c4e5bb` implements durable injected-host coding sessions,

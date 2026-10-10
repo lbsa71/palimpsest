@@ -2,7 +2,9 @@
 
 - **Status:** Accepted bounded migration prerequisite; source and actual target
   checks recorded in the [work item](../work-items/linux-candidate-isolation.md).
-  Destination installation and copied-state recovery are separate gates.
+  Destination installation, copied-state recovery and actual sealed service
+  worker confinement now pass the bounded [migration gate](../migration-acceptance-2026-10-10.md).
+  Cross-kernel compatibility and hard resource quotas remain outside this evidence.
 - **Recorded:** 2026-10-10.
 - **Requirements:** R17–R19, P05; refinement of [ADR 0009](0009-local-enforcement-and-recovery.md).
 

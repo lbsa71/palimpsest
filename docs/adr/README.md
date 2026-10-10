@@ -34,13 +34,13 @@ These records preserve the decisions and proposals recoverable from the [referen
 
 | [0023](0023-supervised-read-only-worker-sessions.md) | Source/frozen reviewed, installed and bounded local live worker gate passed; broader readiness open | Persistent read-only descriptor workers with finite RPC supervision |
 
-| [0024](0024-serving-responsive-candidate-collection.md) | Source integrated; bounded-concurrency full suite passes; operator interruption repair and frozen/live acceptance pending | Unchanged candidate collection off the serving event loop with durable outer/nested ownership |
+| [0024](0024-serving-responsive-candidate-collection.md) | Reviewed source native-installed; bounded idle/restart accepted; final full-source and destination busy-collector gates open | Unchanged candidate collection off the serving event loop with durable outer/nested ownership |
 
 | [0025](0025-retained-verification-and-execution-environments.md) | Selected design; resolver, transitions and autonomous activation unimplemented | Independently admitted historical environments, coherent execution routing and retained recovery inputs |
 
 | [0026](0026-conversation-outcomes-and-scoped-reflection.md) | Accepted bounded runtime contract; frozen review and installation verified; finite live peer/report path passed, qualitative acceptance open | Scoped reflection, durable topic obligations, revision-bound asynchronous reporting and later retrieval |
 
 | [0027](0027-durable-coding-sessions-and-exact-submissions.md) | Bounded host implementation and deterministic evidence; production packaging/model/deployment acceptance pending | SDK-independent sessions, shared cumulative accounting, verified full-source drafts, exact submissions and originating reports |
-| [0028](0028-prepared-linux-isolation.md) | Accepted bounded Linux migration prerequisite; see exact work-item evidence | Prepared kernel isolation and manifest-bound native helper inputs |
+| [0028](0028-prepared-linux-isolation.md) | Native prerequisite, copied-state recovery and sealed service worker confinement accepted; wider portability/quotas open | Prepared kernel isolation and manifest-bound native helper inputs |
 
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.
