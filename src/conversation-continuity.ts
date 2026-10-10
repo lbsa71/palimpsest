@@ -100,10 +100,10 @@ export class ConversationContinuity {
     } catch { throw new ProviderError('protocol', 'Invalid scoped conversation outcome; no continuation or source action admitted.'); }
   }
 
-  isReport(task: Task): boolean { return this.#options.store.listEvents().some(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === task.id); }
+  isReport(task: Task): boolean { return this.#options.store.listEvents({ types: ['conversation.report.prepared'] }).some(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === task.id); }
   reportMaySend(task: Task): boolean {
     const store = this.#options.store;
-    const event = store.listEvents().find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === task.id);
+    const event = store.listEvents({ types: ['conversation.report.prepared'] }).find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === task.id);
     if (!event) return true;
     const info = event.payload as { topicId: string; revision: number; basis?: string }; const topic = store.conversationTopic(info.topicId);
     if (!topic || topic.source !== task.source || topic.scope !== task.conversationId || topic.report.waived || topic.report.owedRevision === null || topic.revision !== info.revision) return false;

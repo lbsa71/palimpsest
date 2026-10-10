@@ -74,7 +74,7 @@ export class EvolutionScheduler {
 
   items(): EvolutionQueueItem[] {
     const items = new Map<string, EvolutionQueueItem>();
-    for (const event of this.#options.store.listEvents()) {
+    for (const event of this.#options.store.listEvents({ types: ['evolution.queue.enqueued', 'evolution.queue.claimed', 'evolution.queue.observed'] })) {
       const data = plain(event.payload); const id = data.id;
       if (typeof id !== 'string') continue;
       if (event.type === 'evolution.queue.enqueued') items.set(id, { id, growthId: String(data.growthId), proposalDigest: String(data.proposalDigest), state: 'queued' });
@@ -144,7 +144,7 @@ export class EvolutionScheduler {
     const item = this.items().find(value => value.state !== 'finished' && this.#options.store.growth(value.growthId)?.sourceTaskId === taskId);
     const growth = this.#options.store.growth(`conversation:${taskId}`);
     if (!growth || (this.items().some(value => value.growthId === growth.id) && !item)) return false;
-    if (!this.#options.store.listEvents().some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === taskId))
+    if (!this.#options.store.listEvents({ types: ['conversation.proposal.cancelled'], taskId }).some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === taskId))
       this.#options.store.appendEvent('conversation.proposal.cancelled', { growthId: growth.id }, taskId);
     if (this.#current?.item.id === item?.id) this.interrupt();
     return true;
@@ -170,7 +170,7 @@ export class EvolutionScheduler {
     const cadence = plan ? this.#planCadence : 'daily';
     const durationMs = cadence === 'hourly' ? HOUR : DAY;
     const startsAt = Math.floor(now / durationMs) * durationMs;
-    const events = this.#options.store.listEvents();
+    const events = this.#options.store.listEvents({ types: ['evolution.scheduler.window', 'evolution.scheduler.call_reserved'] });
     const maximum = interactive ? this.#interactiveCalls : plan ? cadence === 'hourly' ? this.#planCallsPerHour : this.#planCalls : this.#calls;
     const lane=(payload:unknown)=> (plain(payload).interactive === true) === interactive && (plain(payload).plan === true) === plan;
     // Legacy windows are daily. Hourly plan windows have a distinct identity,
@@ -199,7 +199,7 @@ export class EvolutionScheduler {
     if (!current || current.recovery || this.#controller?.signal.aborted || (!current.interactive && this.#options.hasUserWork())
       || !['normal', 'evaluation'].includes(this.#options.phase()) || current.calls >= 8) return false;
     if (attemptId !== `evolution:${current.item.id}:call:${current.calls + 1}`) return false;
-    if (this.#options.store.listEvents().some(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).attemptId === attemptId)) return false;
+    if (this.#options.store.listEvents({ types: ['evolution.scheduler.call_reserved'] }).some(event => event.type === 'evolution.scheduler.call_reserved' && plain(event.payload).attemptId === attemptId)) return false;
     const reservedAt = integer((this.#options.now ?? Date.now)());
     const window = this.#window(current.interactive,current.plan,reservedAt); if (window.remaining < 1) return false;
     this.#options.store.appendEvent('evolution.scheduler.call_reserved', { startsAt: window.startsAt, reservedAt, cadence: window.cadence,
@@ -208,7 +208,7 @@ export class EvolutionScheduler {
   }
 
   #previous(id: string): EvolutionReport | undefined {
-    const events = this.#options.store.listEvents().filter(event => ['evolution.checkpoint', 'evolution.finished'].includes(event.type) && plain(event.payload).runId === id);
+    const events = this.#options.store.listEvents({ types: ['evolution.checkpoint', 'evolution.finished'] }).filter(event => ['evolution.checkpoint', 'evolution.finished'].includes(event.type) && plain(event.payload).runId === id);
     return events.length ? plain(events.at(-1)!.payload).report as EvolutionReport : undefined;
   }
 

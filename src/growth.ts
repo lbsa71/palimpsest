@@ -184,7 +184,7 @@ export class GrowthCoordinator {
       const pending = all.find((item) => item.state === 'paused' && checkpoint(item).phase === 'publish_result');
       if (pending) return this.#publish(pending);
       const latest = new Map<string, number>();
-      for (const event of store.listEvents()) {
+      for (const event of store.listEvents({ typePrefix: 'growth.' })) {
         if (!event.type.startsWith('growth.')) continue;
         const data = event.payload;
         if (data !== null && typeof data === 'object' && !Array.isArray(data) && typeof data.growthId === 'string') latest.set(data.growthId, event.seq);

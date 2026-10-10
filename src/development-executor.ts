@@ -77,7 +77,7 @@ export class DevelopmentExecutor {
   get busy(): boolean { return this.#active !== undefined; }
   attempts(): DevelopmentAttempt[] {
     const records = new Map<string, DevelopmentAttempt>();
-    for (const event of this.#options.store.listEvents()) {
+    for (const event of this.#options.store.listEvents({ types: ['development.attempt.started', 'development.attempt.updated'] })) {
       if (!['development.attempt.started', 'development.attempt.updated'].includes(event.type)) continue;
       const value = object(event.payload).attempt as unknown as DevelopmentAttempt;
       if (value?.catalogDigest === this.#options.plan.digest) records.set(value.id, value);
@@ -151,7 +151,7 @@ export class DevelopmentExecutor {
     const previous = attempts.filter(attempt => attempt.itemId === item.id);
     const now = integer((this.#options.now ?? Date.now)());
     if (previous.length >= item.budget.maxAttempts || (previous.at(-1)?.nextEligibleAt ?? 0) > now) return null;
-    if (previous.some(attempt => attempt.state === 'completed') && !this.#options.store.listEvents().some(event => event.type === 'development.capability.reopened'
+    if (previous.some(attempt => attempt.state === 'completed') && !this.#options.store.listEvents({ types: ['development.capability.reopened'] }).some(event => event.type === 'development.capability.reopened'
       && object(event.payload).itemId === item.id && object(event.payload).sourceDigest === source.sourceDigest && object(event.payload).catalogDigest === this.#options.plan.digest))
       this.#options.store.appendEvent('development.capability.reopened', json({ itemId: item.id, catalogDigest: this.#options.plan.digest, releaseId: source.releaseId, sourceDigest: source.sourceDigest, evidence: current }));
     const ordinal = previous.length + 1;

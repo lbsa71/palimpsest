@@ -320,10 +320,24 @@ export class Store {
     return { seq: Number(result.lastInsertRowid), type, taskId: taskId ?? null, payload, createdAt };
   }
 
-  listEvents(filter: { after?: number; taskId?: string } = {}): JournalEvent[] {
-    const rows = filter.taskId === undefined
-      ? this.#db.prepare('SELECT * FROM journal WHERE seq > ? ORDER BY seq').all(filter.after ?? 0)
-      : this.#db.prepare('SELECT * FROM journal WHERE seq > ? AND task_id = ? ORDER BY seq').all(filter.after ?? 0, filter.taskId);
+  /** Select before decoding payloads; omitted selectors retain the complete audit.
+   * Prefix comparison is literal and case-sensitive; NUL prefixes are refused
+   * because SQLite's text decoding does not retain embedded NUL suffixes. */
+  listEvents(filter: { after?: number; taskId?: string; types?: readonly string[]; typePrefix?: string } = {}): JournalEvent[] {
+    if (filter.types !== undefined && (!Array.isArray(filter.types) || filter.types.some(type => typeof type !== 'string')))
+      throw new Error('Journal event types must be strings');
+    if (filter.typePrefix !== undefined && (typeof filter.typePrefix !== 'string' || filter.typePrefix.includes('\0'))) throw new Error('Journal event prefix must be a string without NUL');
+    if (filter.types?.length === 0) return [];
+    const clauses = ['seq > ?']; const parameters: Array<string | number> = [filter.after ?? 0];
+    if (filter.taskId !== undefined) { clauses.push('task_id = ?'); parameters.push(filter.taskId); }
+    if (filter.types !== undefined) {
+      const types = [...new Set(filter.types)];
+      clauses.push(`type COLLATE BINARY IN (${types.map(() => '?').join(',')})`); parameters.push(...types);
+    }
+    if (filter.typePrefix !== undefined) {
+      clauses.push('substr(type, 1, length(?)) COLLATE BINARY = ?'); parameters.push(filter.typePrefix, filter.typePrefix);
+    }
+    const rows = this.#db.prepare(`SELECT * FROM journal WHERE ${clauses.join(' AND ')} ORDER BY seq`).all(...parameters);
     return rows.map(row => ({ seq: Number(row.seq), type: String(row.type), taskId: row.task_id === null ? null : String(row.task_id), payload: JSON.parse(String(row.payload)) as Json, createdAt: String(row.created_at) }));
   }
 
@@ -610,7 +624,7 @@ export class Store {
   prepareConversationTopics(taskId: string, inputs: ConversationTopicInput[], sourceRefs: MemorySourceRef[], options: { now: number; reviewMs: number; lifetimeMs: number; maxAttempts: number }): ConversationTopic[] {
     return this.#atomic(() => {
       const task = this.task(taskId); if (!task || task.state !== 'running') throw new Error('Outcome requires a running exchange');
-      const saved = this.listEvents().find(event => event.type === 'conversation.outcomes.prepared' && event.taskId === taskId);
+      const saved = this.listEvents({ types: ['conversation.outcomes.prepared'], taskId }).find(event => event.type === 'conversation.outcomes.prepared' && event.taskId === taskId);
       if (saved) return this.#conversationIntents(taskId);
       if (sourceRefs.some(ref => this.memory(ref.id, task.conversationId)?.version !== ref.version)) throw new Error('Outcome sources changed before admission');
       const origins = new Map<string, Task>();
@@ -717,7 +731,7 @@ export class Store {
   }
   taskSourceCurrent(id: string): boolean {
     const task = this.task(id);
-    return !!task && !this.listEvents().some(event => event.type === 'task.corrected' && (event.payload as Record<string, Json>).originalId === id);
+    return !!task && !this.listEvents({ types: ['task.corrected'] }).some(event => event.type === 'task.corrected' && (event.payload as Record<string, Json>).originalId === id);
   }
   recordTaskCorrection(originalId: string, replacementId: string, commandId: string): void {
     this.#atomic(() => {
@@ -783,13 +797,13 @@ export class Store {
     return this.#atomic(() => {
       const topic = this.conversationTopic(id); if (!topic || topic.report.waived || topic.report.owedRevision === null) return;
       const prior = topic.report.taskId ? this.task(topic.report.taskId) : undefined;
-      const priorInfo = prior ? this.listEvents().find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === prior.id) : undefined;
+      const priorInfo = prior ? this.listEvents({ types: ['conversation.report.prepared'] }).find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === prior.id) : undefined;
       const sameBasis = (priorInfo?.payload as Record<string, Json> | undefined)?.basis === basis;
       if (topic.report.revision === topic.revision && topic.report.kind === kind && topic.report.delivery === 'delivered' && sameBasis) return prior;
       const retryWithoutEffect = prior?.state === 'cancelled' && this.effect(`${prior.id}:result`) === undefined;
       if (topic.report.revision === topic.revision && topic.report.taskId && topic.report.delivery !== 'delivered' && !retryWithoutEffect) return prior;
       const original = this.task(topic.originalTaskId); if (!original) throw new Error('Original topic task is absent');
-      const attempt = this.listEvents().filter(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).topicId === id
+      const attempt = this.listEvents({ types: ['conversation.report.prepared'] }).filter(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).topicId === id
         && (event.payload as Record<string, Json>).revision === topic.revision && (event.payload as Record<string, Json>).kind === kind).length;
       const eventId = `${id}:report:${topic.revision}:${kind}:${attempt}`;
       const task = this.enqueuePreparedReply({ source: topic.source, conversationId: topic.scope, eventId, input: `Host-observed ${kind} conversation outcome report`,
@@ -803,7 +817,7 @@ export class Store {
   acknowledgeConversationReport(id: string, reportTaskId: string): ConversationTopic {
     return this.#atomic(() => {
       const topic = this.conversationTopic(id); if (!topic) throw new Error('Topic not found');
-      const prepared = this.listEvents().find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === reportTaskId);
+      const prepared = this.listEvents({ types: ['conversation.report.prepared'] }).find(event => event.type === 'conversation.report.prepared' && (event.payload as Record<string, Json>).reportTaskId === reportTaskId);
       const info = prepared?.payload as { topicId: string; revision: number; kind: string } | undefined;
       if (!info || info.topicId !== id) throw new Error('Report does not belong to topic');
       const effect = this.effect(`${reportTaskId}:result`);
@@ -924,7 +938,7 @@ export class Store {
   backgroundTurn(windowId: string, kind: 'growth' | 'reflection' | 'coding', atMs: number): boolean {
     const window = this.growthWindow(windowId); if (!window) return false;
     const object = (value: Json): Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
-    const sessions = new Map<string, Record<string, Json>>(); const events = this.listEvents();
+    const sessions = new Map<string, Record<string, Json>>(); const events = this.listEvents({ types: ['coding.session.admitted', 'coding.session.updated', 'coding.request.reserved', 'coding.initial_call.linked', 'growth.window.call_reserved', 'conversation.reflection.call_reserved', 'coding.window.call_reserved'] });
     for (const event of events) if (['coding.session.admitted', 'coding.session.updated'].includes(event.type)) {
       const session = object(object(event.payload).session); if (typeof session.id === 'string') sessions.set(session.id, session);
     }

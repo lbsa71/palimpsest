@@ -103,7 +103,7 @@ export class GrowthScheduler {
     if (publishing) result = await coordinator.tick({ signal, growthId: publishing.id });
     else if (window.usedCalls < window.maxCalls) {
       const continuity = this.#options.conversationContinuity;
-      const reservations = store.listEvents().filter(event => ['growth.window.call_reserved', 'conversation.reflection.call_reserved'].includes(event.type)
+      const reservations = store.listEvents({ types: ['growth.window.call_reserved', 'conversation.reflection.call_reserved'] }).filter(event => ['growth.window.call_reserved', 'conversation.reflection.call_reserved'].includes(event.type)
         && record(event.payload).schedulerId === this.#schedulerId);
       const lastReflection = reservations.filter(event => event.type === 'conversation.reflection.call_reserved').at(-1)?.seq ?? 0;
       const lastGrowth = reservations.filter(event => event.type === 'growth.window.call_reserved').at(-1)?.seq ?? 0;
@@ -112,7 +112,7 @@ export class GrowthScheduler {
       }
       const lastDimension = new Map<GrowthDimension, number>();
       const lastItem = new Map<string, number>();
-      for (const event of store.listEvents()) {
+      for (const event of store.listEvents({ typePrefix: 'growth.' })) {
         const data = record(event.payload);
         if (event.type.startsWith('growth.') && typeof data.growthId === 'string') lastItem.set(data.growthId, event.seq);
         if (event.type === 'growth.window.call_reserved' && data.schedulerId === this.#schedulerId && dimensions.includes(data.dimension as GrowthDimension)) lastDimension.set(data.dimension as GrowthDimension, event.seq);

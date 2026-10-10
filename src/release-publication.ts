@@ -24,7 +24,7 @@ export class ReleasePublication {
   }
   get busy():boolean{return !!this.#active;}
   result(runId:string):PublicationResult|undefined {
-    const event=this.#options.store.listEvents().filter(value=>value.type==='release.publication.result'&&object(value.payload).runId===runId).at(-1);
+    const event=this.#options.store.listEvents({ types: ['release.publication.result'] }).filter(value=>value.type==='release.publication.result'&&object(value.payload).runId===runId).at(-1);
     return event?object(event.payload).result as unknown as PublicationResult:undefined;
   }
   pending(items:EvolutionQueueItem[]):boolean {
@@ -40,12 +40,12 @@ export class ReleasePublication {
   async #run(items:EvolutionQueueItem[]):Promise<void>{
     const {store,publisher}=this.#options;
     for(const item of items.filter(value=>value.state==='finished'&&value.result?.status==='promoted')){
-      const events=store.listEvents();
-      const last=events.filter(value=>value.type==='release.publication.result'&&object(value.payload).runId===item.id).at(-1);
+      const last=store.listEvents({ types: ['release.publication.result'] }).filter(value=>object(value.payload).runId===item.id).at(-1);
       const prior=object(last?.payload);
       if(object(prior.result).status==='published')continue;
       const now=(this.#options.now??Date.now)();
       if(typeof prior.nextObservationAt==='number'&&prior.nextObservationAt>now)continue;
+      const events=store.listEvents({ types: ['evolution.finished', 'git.publication.reserved', 'git.publication.prepared', 'git.publication.push_reserved'] });
       const report=object(events.filter(value=>value.type==='evolution.finished'&&object(value.payload).runId===item.id).at(-1)?.payload).report as unknown as EvolutionReport|undefined;
       const growth=store.growth(item.growthId);
       // A recorded preparation/effect stays unresolved after origin policy

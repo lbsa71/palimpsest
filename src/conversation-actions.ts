@@ -77,7 +77,7 @@ export class ConversationActions {
     const task = this.#options.store.task(growth.sourceTaskId);
     return !!task && growth.id === `conversation:${task.id}` && growth.origin === growth.id
       && task.state === 'succeeded' && this.eligible(task)
-      && !this.#options.store.listEvents().some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === task.id);
+      && !this.#options.store.listEvents({ types: ['conversation.proposal.cancelled'], taskId: task.id }).some(event => event.type === 'conversation.proposal.cancelled' && event.taskId === task.id);
   }
   prepare(task: Task, memories: Memory[], request: CompletionRequest, hostFacts: unknown, projection?: readonly MemoryDescriptor[], codingAvailable = false): CompletionRequest {
     let sourceBinding: SourceBinding | undefined;
@@ -132,7 +132,7 @@ export class ConversationActions {
   status(taskId: string): string {
     const growth = this.#options.store.growth(`conversation:${taskId}`);
     if (!growth) return '';
-    const events = this.#options.store.listEvents();
+    const events = this.#options.store.listEvents({ types: ['evolution.queue.enqueued', 'evolution.queue.observed', 'conversation.proposal.cancelled'] });
     const queued = events.find(event => event.type === 'evolution.queue.enqueued' && (event.payload as Record<string, Json>)?.growthId === growth.id);
     const id = (queued?.payload as Record<string, Json>)?.id;
     const result = events.filter(event => event.type === 'evolution.queue.observed' && (event.payload as Record<string, Json>)?.id === id).at(-1);
@@ -149,7 +149,7 @@ export class ConversationActions {
       if(!task || !item.result)continue;
       const eventId=`${item.id}:release-result`;
       if(this.#options.store.listTasks().some(value=>value.source===task.source && value.eventId===eventId))continue;
-      const final=this.#options.store.listEvents().filter(event=>event.type==='evolution.finished' && (event.payload as Record<string,Json>)?.runId===item.id).at(-1);
+      const final=this.#options.store.listEvents({ types: ['evolution.finished'] }).filter(event=>event.type==='evolution.finished' && (event.payload as Record<string,Json>)?.runId===item.id).at(-1);
       const report=(final?.payload as unknown as {report?:EvolutionReport})?.report;
       let publication='Git publication is disabled; no commit or push was performed.';
       if(item.result.status==='promoted' && report?.candidate && (publisher || publications)) {

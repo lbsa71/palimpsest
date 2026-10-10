@@ -27,7 +27,7 @@ export function developmentAllocation(store: Store, policy: { cadence: 'daily' |
     const duration = policy.cadence === 'hourly' ? HOUR : DAY;
     const startsAt = Math.floor(now / duration) * duration; const endsAt = startsAt + duration; codingInteger(endsAt, 'Window end');
     const eventType = policy.cadence === 'hourly' ? 'development.hourly.window' : 'development.window';
-    const events = store.listEvents(); const window = events.find(event => event.type === eventType && object(event.payload).startsAt === startsAt);
+    const events = store.listEvents({ types: [eventType, 'development.attempt.started'] }); const window = events.find(event => event.type === eventType && object(event.payload).startsAt === startsAt);
     if (window && object(window.payload).maxCalls !== policy.maxCalls) throw new Error(`Development UTC-${policy.cadence === 'hourly' ? 'hour' : 'day'} proposal allocation is immutable`);
     if (!window) store.appendEvent(eventType, { startsAt, endsAt, maxCalls: policy.maxCalls });
     const charged = new Set<string>();

@@ -131,6 +131,8 @@ Implement shared communications contracts with direct calls, an authenticated lo
 
 ### Operational defect — recovery with accumulated continuity
 
+**Destination migration follow-up, 2026-10-10:** Native import and two provider-free recoveries passed, but live acceptance is held: settled idle CPU remained near one core and completed-task reads took 4.8–6.3 seconds. Service is stopped/disabled with epoch 139 and current lived state retained. The isolated [idle journal selector repair](docs/work-items/idle-journal-responsiveness.md) preserves full audit history and narrows recurring reads before decoding. Offline evidence does not establish installed acceptance; exact review, protected checks, supported host-baseline installation retaining current memory/rescue, and fresh destination responsiveness gates remain required. P17/P18 production activation remains open.
+
 **Status:** Fixed and verified. **Area:** P05/P14/P15. **Trigger:** The first live Slack mention was durably queued after the five-minute worker lifetime expired, but both known-good recovery attempts failed. Accumulated continuity exceeded the worker pipe’s 256 KiB input-frame bound while remaining below the custodian’s existing 1 MiB snapshot bound.
 
 **Expected behavior:** Known-good restart transfers the entire accepted snapshot and drains the queued request. Align the catch-up frame allowance with the existing snapshot limit, retain the smaller ordinary-request limit and scope/sequence validation, and preserve fail-closed bounded recovery. No state deletion or snapshot truncation. Verify a real restricted worker receiving more than 256 KiB and real generation recovery with that history; then retry the live queued mention through the operator recovery API.
