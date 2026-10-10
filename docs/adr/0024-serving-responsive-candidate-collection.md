@@ -1,6 +1,6 @@
 # ADR 0024: Serving-responsive candidate collection
 
-- **Status:** Selected correction design; source implementation under review, complete acceptance and installation pending.
+- **Status:** Selected correction design; source integrated and bounded-concurrency full source checks pass. Complete acceptance and installation remain pending.
 - **Recorded:** 2026-10-09.
 - **Work:** P04/P05/P09/P10; R04, R09–R11, R14, R17–R19.
 - **Specification:** [Serving responsiveness](../serving-responsiveness.md).
@@ -20,6 +20,8 @@ Durably retain outer and checker process ownership. A trusted operation-scoped i
 
 Keep ordinary serving collection's current live-worker/tool-authority checks separate from the private custody artifact-integrity hook. The hook verifies the exact requested artifact and unchanged custody fence even when a retained observer has been stopped; it does not confer proposal or production authority. Its purpose is host-selected and unavailable in public collector controls. New admission still passes the queued current-origin validator after verification, while actual recovery retains its separate preemption/drain contract. The full source run exposed this distinction through three unchanged stopped-observer/offline recovery failures.
 
+Operator installation carries its caller's stop signal through collection and queued admission. Private artifact verification inherits it only before the installation fence, and its asynchronous result is revalidated before consumption. The exclusive custody operation records its entry epoch to distinguish pre-fence admission from its own fenced transfer. Mechanical completion and retained recovery do not inherit a stopped admission signal. This preserves the existing Custodian bytes and installation/recovery rules; [the interruption work item](../work-items/operator-installation-interruption.md) records the actual race and repair evidence.
+
 ## Alternatives and consequences
 
 - Yielding between calls can reduce the observed chain but leaves individual synchronous operations blocking.
@@ -31,4 +33,4 @@ This adds trusted job identity and descendant ownership across asynchronous boun
 
 ## Acceptance and evidence
 
-The [testable specification](../serving-responsiveness.md#acceptance-criteria) covers actual responsive serving, failed-check preservation, cancellation, unknown-process recovery, authority/result negatives and source/frozen/live review. Original red runs and independent diagnostics exist outside Git. Its [evidence status](../serving-responsiveness.md#evidence-status) records passing independent slices and concurrent serving/recovery checks, followed by a failed full source run: 519 passes, five failures and one platform skip with test concurrency capped at two. The missing relocated-fixture imports are corrected and their check passes. Seven selected recovery/origin checks pass the private custody-integrity repair. An unchanged isolated operator rerun passes its original deadline, but fresh confined helpers still repeat costly Xcode Git discovery; no supported narrow environment correction has been demonstrated. Complete source, frozen-artifact and live acceptance remain pending; this correction is not installed.
+The [testable specification](../serving-responsiveness.md#acceptance-criteria) covers actual responsive serving, failed-check preservation, cancellation, unknown-process recovery, authority/result negatives and source/frozen/live review. Original red runs and independent diagnostics exist outside Git. Its [evidence status](../serving-responsiveness.md#evidence-status) retains the failed full source run: 519 passes, five failures and one platform skip with test concurrency capped at two. After correcting relocated-fixture imports and private custody-integrity verification, the integrated run at `f7f4415` passed 565 checks with one platform skip and no failures under the same concurrency bound. All 229 source pins remained unchanged and the original operator deadlines were retained. Fresh confined helpers still repeat costly Xcode Git discovery; no supported narrow environment correction has been demonstrated. Subsequent operator interruption repair has its own source evidence and review. Exact frozen-artifact and live acceptance remain pending; this correction is not installed.

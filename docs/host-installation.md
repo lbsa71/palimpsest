@@ -10,7 +10,7 @@ Updating the retained baseline must therefore be an explicit operator installati
 
 ## Scope and preparation
 
-The trusted `GenerationHost.installHostBaseline(manifest, expectedIncumbent)` operation re-evaluates mandatory checks and installs a reviewed host baseline with **the same complete cognitive source digest as its incumbent**. It is absent from worker handles, conversation decisions and Slack tools. The custodian has a distinct trusted host-installation operation; no candidate can invoke it through a model-selected tool.
+The trusted `GenerationHost.installHostBaseline(manifest, expectedIncumbent, signal?)` operation re-evaluates mandatory checks and installs a reviewed host baseline with **the same complete cognitive source digest as its incumbent**. It is absent from worker handles, conversation decisions and Slack tools. The custodian has a distinct trusted host-installation operation; no candidate can invoke it through a model-selected tool.
 
 Prepare a frozen artifact from a clean, reviewed checkout and current configured model/profile. Preserve the entire currently admitted `src/agent/*.ts` source, including helpers, rather than using a pending proposal or the checkout's potentially different cognitive source. The CLI freezes the clean checkout and requires exact `sourceDigest` equality; it does not automatically copy, overwrite or rebase cognitive source to make the comparison pass. Unexplained drift blocks installation and requires separate reviewed operator work before preparation.
 
@@ -25,6 +25,8 @@ Run **all three** baseline protected checks: `typecheck`, `trusted-agent-contrac
 5. Only after successful activation/health commit the new known-good baseline and retain the prior rescue release. Retire the old worker through recorded stop intent. The installed outer host remains operator-managed; this operation does not grant autonomous host/custodian replacement.
 
 Staging processes and stop intents are durable. Failure or restart before successful commit restores the old known-good release with current external state under a later epoch. Failure after successful commit recovers the new known-good release normally. Interrupted installation intent cannot be discarded, and an uncertain launch/stop must be reconciled. Failed fallback follows the existing bounded recovery/quarantine/recovery-required contract; no reset or history rewind is permitted.
+
+The optional installation signal governs pre-fence admission: check it before collection, on entering the custody queue and after the final asynchronous verifier before `host_baseline.fenced`. Cancel and drain positively owned collection; unknown ownership remains held. Once the installation increments the epoch at that fence, stopping its caller must permit mechanical completion or retained recovery with current history. The CLI passes its stop signal to installation and reports exit code 1 with `status: interrupted`, the resulting phase and exact active/known-good identities. That receipt can describe a mechanically completed installation after fencing. The separate restoration route retains its existing interruption/recovery contract; it does not accept this optional admission signal. See [the interruption work item](work-items/operator-installation-interruption.md) for source evidence and remaining release gates.
 
 ## Bound operator restoration
 

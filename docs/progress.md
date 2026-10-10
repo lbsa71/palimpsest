@@ -1,5 +1,15 @@
 # Implementation progress and evidence
 
+## Reviewed installation repair and coding checkpoints — 2026-10-10
+
+The source interruption finding below was reproduced with the actual operator CLI at `ed1cf96`: SIGTERM during a blocked verifier was followed by five more jobs and installation. Reviewed repair `b3840a2`, merged into `main`, now prevents pre-fence collection/admission and preserves mechanical completion or retained recovery after fencing. All 57 affected CLI/generation/Custodian/collector checks pass with concurrency capped at two in 322,775 ms; root typechecking after integration passes. Bounded independent review found no remaining actionable source blocker and matched all source/evidence pins. The [work item](work-items/operator-installation-interruption.md) records exact receipts, retained original deadlines, current-memory recovery and the separate unchanged restoration contract.
+
+Strategy commit `2eb498b` adds the reviewed [durable serving coding-session specification](work-items/p17-durable-coding-session.md). Its shared accounting, fairness, provenance, real failure/repair, continuation and exact submission acceptance rows remain unexecuted. Fixture commit `c03f51d` adds the [general native single-step facade](../experiments/coding-session-provider/README.md). All 54 synthetic selected-SDK fixtures and strict source/interface typechecking pass, independently rerun by the lead. Review reproduced and repaired an asynchronous-validator rejection escaping into an unhandled private error. The fixture uses the already-installed selected experiment closure; production dependencies, serving integration and live-model competence remain open.
+
+Private RED/GREEN logs and review are preserved outside Git under the external substrate's `audits/operator-installation-interruption-b3840a2-20261010/`, `audits/operator-installation-review-b3840a2-20261010/` and `audits/native-coding-provider-c03f51d-20261010/`. The native archive receipt SHA-256 is `033dd2b403aa958ea8fcf7cbffbed2c1ff117f2b84275633c1ac43357a557240`; the interruption work item lists its receipts. Source publication includes no live installation, actual provider request, budget reset or effect replay.
+
+The earlier 565-pass full source run is pinned to `f7f4415`. This subsequent checkpoint has affected-file and adapter-fixture evidence; a new integrated full-source run, exact frozen collector admission and live collector observation remain pending. P17/P18 and the standing self-evolution objective remain incomplete.
+
 ## Branch integration and independent review — 2026-10-10
 
 The collector work was checkpointed in `19660f3` and integrated with installed conversation-continuity source in `f7f4415`. Both that branch and the independent [full-codebase autonomy audit](autonomy-expressivity-review-2026-10-10.md), strategy head `c59ab4d`, are merged into `main`. This preserves all committed source work; it does not install the collector correction or complete P17/P18.
