@@ -190,9 +190,19 @@ async function main(): Promise<void> {
         if(evidence.status!=='passed')process.exitCode=1;
       }else {
         await host.start();ready=true;
-        if(args[0]==='install')await host.installHostBaseline(readManifest(join(config.dataDir,'releases',args[1]!)),args[2]!);
-        else await host.custodian.restoreHostBaseline(args[1]!);
-        console.log(JSON.stringify({hostBaseline:args[0],generation:host.custodian.inspect().active?.release.digest,epoch:host.custodian.inspect().epoch}));
+        let interruptionReason: string | undefined;
+        try {
+          if(args[0]==='install')await host.installHostBaseline(readManifest(join(config.dataDir,'releases',args[1]!)),args[2]!,collectionStop.signal);
+          else await host.custodian.restoreHostBaseline(args[1]!);
+        } catch (error) {
+          if (!stopped) throw error;
+          interruptionReason = error instanceof Error ? error.message : 'Operator operation interrupted';
+        }
+        const state = host.custodian.inspect();
+        if (stopped) process.exitCode = 1;
+        console.log(JSON.stringify({hostBaseline:args[0],generation:state.active?.release.digest,epoch:state.epoch,
+          ...(stopped ? { status: 'interrupted', phase: state.phase, knownGood: state.knownGood?.digest,
+            reason: interruptionReason ?? 'Operator stop requested; custody reconciliation completed' } : {})}));
       }
       return;
     }
