@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -145,5 +146,75 @@ test('source reviewer cannot add private paths, executable mounts or resource gr
     assert.throws(() => sourceReviewer({ ...reviewer, executable: '/bin/sh' }), /Declared reviewer executable/);
     assert.throws(() => sourceReviewer({ ...reviewer, files: [{ mount: '/etc/passwd', sha256: identity('x'), inherit: true }] }), /mount and hash/);
     assert.throws(() => sourceReviewer({ ...reviewer, files: [{ mount: '/reviewer/check', sha256: identity('x'), source: 'deployment/check.test.ts' }] }), /control-owned/);
+  } finally { f.close(); }
+});
+
+
+test('snapshot publication never follows a directory replaced after its privacy check', t => {
+  const f = fixture();
+  try {
+    const candidate = f.candidate(f.changed()), directory = join(f.privateRoot, 'sealed'), redirected = join(f.privateRoot, 'redirected');
+    mkdirSync(redirected, { mode: 0o700 });
+    const originalWrite = fs.writeFileSync;
+    let replaced = false;
+    t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
+      if (!replaced && String(args[0]).includes('.pending-')) {
+        replaced = true; renameSync(directory, `${directory}-retained`); symlinkSync(redirected, directory);
+      }
+      return originalWrite(...args);
+    });
+    syncBuiltinESMExports();
+    assert.throws(() => f.policies.prepare(f.policy.policyDigest, candidate));
+    assert.equal(replaced, true, 'The race occurs at the first snapshot write');
+    assert.deepEqual(readdirSync(redirected), [], 'No reviewer bytes may be published through the substituted path');
+    assert.equal(f.store.list('host.derived-reviewers').length, 0);
+    assert.equal(f.store.list('host.derived-policies').length, 0);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); f.close(); }
+});
+
+test('snapshot retention counts unique bytes and rejects a cumulative overflow before publishing new files', () => {
+  const f = fixture();
+  try {
+    const code = 'a'.repeat(33000), first = f.policies.prepare(f.policy.policyDigest, f.candidate(f.changed(code), code));
+    const directory = join(f.privateRoot, 'sealed'), before = readdirSync(directory).sort();
+    assert.equal(before.length, 2);
+    const inherited = f.policies.prepare(first.policyDigest, f.candidate(undefined, 'ordinary source edit', policyDescriptor(first)));
+    assert.deepEqual(f.reviewers.get(inherited).files, f.reviewers.get(first).files);
+    assert.deepEqual(readdirSync(directory).sort(), before, 'Repeated inherited bytes use the existing sealed objects');
+    const overflow = 'b'.repeat(33000), candidate = f.candidate(f.changed(overflow), overflow);
+    assert.throws(() => f.policies.prepare(inherited.policyDigest, candidate), /retained snapshots exceed/);
+    assert.deepEqual(readdirSync(directory).sort(), before, 'Cumulative byte rejection does not leave a partial new snapshot');
+    assert.equal(f.store.list('host.derived-reviewers').length, 2);
+    assert.equal(f.store.list('host.derived-policies').length, 2);
+    assert.equal(readFileSync(f.reviewers.get(first).files[1]!.path, 'utf8'), code);
+  } finally { f.close(); }
+});
+
+test('interrupted or redirected snapshot entries never acquire policy bindings', () => {
+  const f = fixture();
+  try {
+    const directory = join(f.privateRoot, 'sealed'); mkdirSync(directory, { mode: 0o700 });
+    const pending = join(directory, '.pending-interrupted'); writeFileSync(pending, 'incomplete', { mode: 0o500 });
+    const candidate = f.candidate(f.changed());
+    assert.throws(() => f.policies.prepare(f.policy.policyDigest, candidate), /interrupted reviewer snapshot/);
+    rmSync(pending);
+    symlinkSync(f.files[0]!.path, join(directory, f.files[0]!.sha256));
+    assert.throws(() => f.policies.prepare(f.policy.policyDigest, candidate), /Private singly linked/);
+    assert.equal(f.store.list('host.derived-reviewers').length, 0);
+    assert.equal(f.store.list('host.derived-policies').length, 0);
+  } finally { f.close(); }
+});
+
+test('reviewer source in the frozen payload must also belong to the immutable control inventory', () => {
+  const f = fixture();
+  try {
+    const candidate = f.candidate(f.changed());
+    const inputs = structuredClone(candidate.inputs), controls = inputs.controls as { files: { path: string; sha256: string }[] };
+    controls.files = controls.files.filter(file => file.path !== 'deployment/reviewer.mjs');
+    const unbound = freezeCandidate(join(f.host.artifactStore, candidate.manifest.id, 'payload'), f.host.artifactStore, ['deployment'], inputs);
+    assert.ok(unbound.files.some(file => file.path === 'deployment/reviewer.mjs'));
+    assert.throws(() => f.policies.prepare(f.policy.policyDigest, unbound), /bind the frozen control closure/);
+    assert.equal(f.store.list('host.derived-reviewers').length, 0);
+    assert.equal(f.store.list('host.derived-policies').length, 0);
   } finally { f.close(); }
 });

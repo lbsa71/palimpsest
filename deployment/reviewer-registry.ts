@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { canonicalJson, identity, invariant, type JsonValue } from '../packages/contracts/index.ts';
 import { hashBytes, verifyCandidate, type FrozenCandidate } from '../packages/release/artifacts.ts';
@@ -9,7 +9,7 @@ import type { OperationalStore } from '../packages/storage/index.ts';
 import type { ReviewerFile } from './evaluation-dispatch.ts';
 import type { HostBindings } from './materialize.ts';
 import { beneath } from './config.ts';
-import { assertPrivateHostDirectory, readHostFile, type HostPolicyFile } from './host-policy.ts';
+import { readHostFile, type HostPolicyFile } from './host-policy.ts';
 
 export const governanceProposalPath = 'deployment/governance-proposal.json';
 export type PublicPolicy = HostPolicyFile['descriptor'];
@@ -67,6 +67,20 @@ export function validateReviewerMetadata(value: unknown): ReviewerMetadata {
     invariant(Number.isSafeInteger(metadata.bounds[key]) && metadata.bounds[key] > 0 && metadata.bounds[key] <= max, 'Finite existing reviewer metadata bounds required');
   invariant(new Map(policy.evaluatorArtifacts).get(reviewer.evaluatorId) === hashBytes(Buffer.from(descriptor({ ...reviewer, files: reviewer.files.map(file => ({ ...file, path: '' })) }))), 'Public reviewer metadata differs from policy artifact');
   return { version: 1, policy, reviewer, bounds: structuredClone(metadata.bounds) };
+}
+/** Keep publication anchored to the checked inode even if any pathname component moves. */
+function snapshotDirectory(path: string): number {
+  invariant(!beneath('/usr', path), 'Host private paths must remain outside worker system mounts');
+  let fd = openSync('/', constants.O_RDONLY | constants.O_DIRECTORY);
+  try {
+    for (const part of path.split('/').filter(Boolean)) {
+      const next = openSync(`/proc/self/fd/${fd}/${part}`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      closeSync(fd); fd = next;
+    }
+    const stat = fstatSync(fd);
+    invariant(stat.isDirectory() && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0, 'Host directory must be owner-only');
+    return fd;
+  } catch (error) { closeSync(fd); throw error; }
 }
 interface SavedReviewer { policyDigest: string; candidateId: string; reviewer: ReviewerFile; descriptorDigest: string }
 const namespace = 'host.derived-reviewers';
@@ -138,31 +152,34 @@ export class ReviewerRegistry {
     const reviewer: ReviewerFile = { ...previous, executable: requested.executable, args: requested.args, files: files.map(({ mount, sha256 }) => ({ mount, sha256, path: join(directory, sha256) })) };
     const descriptorDigest = hashBytes(Buffer.from(descriptor(reviewer)));
     invariant(next.evaluatorArtifacts.get(reviewer.evaluatorId) === descriptorDigest, 'Proposed reviewer closure differs from next governance descriptor');
-    mkdirSync(directory, { recursive: true, mode: 0o700 }); assertPrivateHostDirectory(directory);
-    invariant(store.list(namespace).length < 64 || store.get(namespace, next.policyDigest), 'Reviewer revision retention limit reached');
-    const retained = readdirSync(directory); invariant(retained.length <= 4096, 'Reviewer snapshot entry limit reached');
-    let retainedBytes = 0;
-    for (const name of retained) {
-      invariant(digest(name), 'Unexpected interrupted reviewer snapshot; host cleanup required');
-      const stat = lstatSync(join(directory, name));
-      invariant(stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0, 'Private singly linked reviewer snapshot required');
-      retainedBytes += stat.size;
-    }
-    const additions = new Map(files.filter(file => !existsSync(join(directory, file.sha256))).map(file => [file.sha256, file.bytes.length]));
-    invariant(retainedBytes + [...additions.values()].reduce((sum, size) => sum + size, 0) <= previous.maxClosureBytes && retained.length + additions.size <= 4096, 'Reviewer retained snapshots exceed the existing closure byte grant');
-    for (const file of files) {
-      const destination = join(directory, file.sha256);
-      if (!existsSync(destination)) {
-        const temporary = join(directory, `.pending-${randomUUID()}`);
-        try {
-          writeFileSync(temporary, file.bytes, { flag: 'wx', mode: 0o500 });
-          const fd = openSync(temporary, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
-          linkSync(temporary, destination);
-        } finally { rmSync(temporary, { force: true }); }
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const directoryFd = snapshotDirectory(directory), storage = `/proc/self/fd/${directoryFd}`;
+    try {
+      invariant(store.list(namespace).length < 64 || store.get(namespace, next.policyDigest), 'Reviewer revision retention limit reached');
+      const retained = readdirSync(storage); invariant(retained.length <= 4096, 'Reviewer snapshot entry limit reached');
+      let retainedBytes = 0;
+      for (const name of retained) {
+        invariant(digest(name), 'Unexpected interrupted reviewer snapshot; host cleanup required');
+        const stat = lstatSync(join(storage, name));
+        invariant(stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0, 'Private singly linked reviewer snapshot required');
+        retainedBytes += stat.size;
       }
-      invariant(hashBytes(readHostFile(destination, previous.maxClosureBytes)) === file.sha256, 'Sealed reviewer snapshot changed');
-    }
-    const fd = openSync(directory, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+      const additions = new Map(files.filter(file => !existsSync(join(storage, file.sha256))).map(file => [file.sha256, file.bytes.length]));
+      invariant(retainedBytes + [...additions.values()].reduce((sum, size) => sum + size, 0) <= previous.maxClosureBytes && retained.length + additions.size <= 4096, 'Reviewer retained snapshots exceed the existing closure byte grant');
+      for (const file of files) {
+        const destination = join(storage, file.sha256);
+        if (!existsSync(destination)) {
+          const temporary = join(storage, `.pending-${randomUUID()}`);
+          try {
+            writeFileSync(temporary, file.bytes, { flag: 'wx', mode: 0o500 });
+            const fd = openSync(temporary, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+            linkSync(temporary, destination);
+          } finally { rmSync(temporary, { force: true }); }
+        }
+        invariant(hashBytes(readHostFile(join(directory, file.sha256), previous.maxClosureBytes)) === file.sha256, 'Sealed reviewer snapshot changed');
+      }
+      fsyncSync(directoryFd);
+    } finally { closeSync(directoryFd); }
     const value: SavedReviewer = { policyDigest: next.policyDigest, candidateId: candidate.manifest.id, reviewer, descriptorDigest };
     store.transaction(() => {
       const existing = store.get<SavedReviewer>(namespace, next.policyDigest);
