@@ -2,10 +2,12 @@ import { mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { AutarkApplication, type ApplicationOptions } from '../../deployment/application.ts';
 import { beneath } from '../../deployment/config.ts';
-import { identity, invariant, type ArtifactRef, type Effect, type Observation, type ShellCheckpoint } from '../../packages/contracts/index.ts';
+import { identity, invariant, type ArtifactRef, type Effect, type Observation, type ShellCheckpoint, type PhysicalRequest } from '../../packages/contracts/index.ts';
 import type { DelegationRecord } from '../../packages/delegation/index.ts';
 import { artifactReader, assertPrivateRoot, hash, observe, type AdapterOptions, type EvaluationResult } from './adapter.ts';
-import { runConfined } from '../../packages/supervisor/confinement.ts';
+import { runConfined, type CommandReceipt } from '../../packages/supervisor/confinement.ts';
+import { OperationalStore } from '../../packages/storage/index.ts';
+import { ResourceLedger } from '../../packages/runtime/index.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -84,7 +86,11 @@ export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness
   }
   switch (caseId) {
     case 'S01': check('manifest-and-implementation-read', inOrder(witness.tools, [read('package.json'), read('src/main.mjs')]), witness.tools); break;
-    case 'S02': check('failed-check-repair-same-check', inOrder(witness.tools, [command('check.mjs', false), read('sum.mjs'), write('sum.mjs'), command('check.mjs', true)]), witness.tools); check('public-check-preserved', witness.files['check.mjs'] === publicWorkload('S02').files['check.mjs'], witness.files['check.mjs']); break;
+    case 'S02': {
+      const firstFailure = witness.tools.findIndex(command('check.mjs', false));
+      const boundedCommand = (tool: ToolWitness) => { const values = args(tool).args; return args(tool).executable === '/runtime/node' && Array.isArray(values) && (JSON.stringify(values) === '[\"check.mjs\"]' || values.length === 3 && values[0] === 'sum.mjs' && values.slice(1).every(value => typeof value === 'string' && /^-?\d{1,6}$/.test(value))); };
+      check('seeded-checker-untampered', firstFailure >= 0 && witness.tools.every((tool, index) => named(tool, 'command_run') ? boundedCommand(tool) : tool.effect.kind.startsWith('workspace_') && !['workspace_read', 'workspace_discover', 'workspace_search', 'workspace_diff'].includes(tool.effect.kind) ? index > firstFailure && ['workspace_write', 'workspace_patch'].includes(tool.effect.kind) && args(tool).path === 'sum.mjs' : true), witness.tools);
+      check('failed-check-repair-same-check', inOrder(witness.tools, [command('check.mjs', false), read('sum.mjs'), write('sum.mjs'), command('check.mjs', true)]), witness.tools); check('public-check-preserved', witness.files['check.mjs'] === publicWorkload('S02').files['check.mjs'], witness.files['check.mjs']); break; }
     case 'S03': check('actual-edge-verification', [['-3', '-1', '-6\n'], ['4', '4', '4\n'], ['4', '2', '0\n']].every(([a, b, expected]) => witness.tools.some(tool => named(tool, 'command_run') && ok(tool) && receipt(tool).exitCode === 0 && JSON.stringify(args(tool).args) === JSON.stringify(['range.mjs', a, b]) && receipt(tool).stdout === expected)), witness.tools); break;
     case 'S04': check('missing-path-discovery-recovery', inOrder(witness.tools, [tool => named(tool, 'workspace_read', 'data/value.txt') && tool.effect.status === 'failed' && tool.observation.kind === 'error', tool => named(tool, 'workspace_discover') && ok(tool), read('data/current/value.txt')]), witness.tools); break;
     case 'S05': check('both-attributed-sources-read', ['sources/alpha.json', 'sources/beta.json'].every(path => witness.tools.some(read(path))), witness.tools); break;
@@ -98,29 +104,60 @@ export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness
       };
       check('actual-child-inspected-accepted-and-rejected', accepted.length === 1 && rejected.length === 1 && [...accepted, ...rejected].every(authentic), { children: witness.children, delegations: witness.delegations, parent: witness.tools });
       const acceptedChild = witness.children.find(child => child.runId === accepted[0]?.result?.childRunId), rejectedChild = witness.children.find(child => child.runId === rejected[0]?.result?.childRunId);
-      check('child-result-attribution', !!acceptedChild && !!rejectedChild && acceptedChild.tools.some(tool => named(tool, 'command_run') && receipt(tool).stdout === '14\n') && rejectedChild.tools.some(tool => named(tool, 'command_run') && receipt(tool).stdout !== '14\n'), witness.children);
+      check('child-result-attribution', !!acceptedChild && !!rejectedChild && acceptedChild.tools.some(tool => named(tool, 'command_run') && ok(tool) && receipt(tool).exitCode === 0 && JSON.stringify(args(tool).args) === '[\"double.mjs\",\"7\"]' && receipt(tool).stdout === '14\n') && rejectedChild.tools.some(tool => named(tool, 'command_run') && ok(tool) && receipt(tool).exitCode === 0 && JSON.stringify(args(tool).args) === '[\"double.mjs\",\"7\"]' && typeof receipt(tool).stdout === 'string' && receipt(tool).stdout !== '14\n'), witness.children);
       check('accepted-bytes-integrated-and-verified', !!acceptedChild && !!acceptedChild.files['double.mjs'] && witness.files['double.mjs'] === acceptedChild.files['double.mjs'] && inOrder(witness.tools, [tool => named(tool, 'delegation_judge') && args(tool).id === accepted[0]?.task.id && ok(tool), tool => named(tool, 'workspace_write', 'double.mjs') && ok(tool), tool => named(tool, 'command_run') && ok(tool) && receipt(tool).exitCode === 0 && receipt(tool).stdout === '14\n' && JSON.stringify(args(tool).args) === '["double.mjs","7"]']), witness.tools); break;
     }
   }
   return { quality: checks.every(check => check.passed) ? 3 : 0, checks };
 }
-async function executableChecks(caseId: ScreenCaseId, witness: ScreenWitness, packet: PrivateScreenPacket, protectedPaths: string[]): Promise<EvaluationResult['checks']> {
-  if (!['S02', 'S03', 'S10'].includes(caseId)) return [];
+export interface PrivateProbeReceipt { index: number; request: PhysicalRequest; receipt: CommandReceipt | null; failure: string | null }
+function validateProbes(caseId: ScreenCaseId, packet: PrivateScreenPacket): void {
+  if (!['S02', 'S03', 'S10'].includes(caseId)) return;
   invariant(packet.probes && packet.probes.length >= 3 && packet.probes.length <= 8, 'Three to eight frozen external probes required');
-  const name = caseId === 'S02' ? 'sum.mjs' : caseId === 'S03' ? 'range.mjs' : 'double.mjs';
+  for (const probe of packet.probes) invariant(probe.args.length >= 1 && probe.args.length <= 2 && probe.args.every(arg => /^-?\d{1,6}$/.test(arg)) && /^-?\d{1,12}\n$/.test(probe.stdout), 'Bounded integer probe required');
+}
+/** Uses existing parent allocation and original clocks; creates no new grant or allowance. */
+export async function executePrivateProbes(options: ScreenOptions, witness: ScreenWitness, packet: PrivateScreenPacket, deadline: number, retained: PrivateProbeReceipt[]): Promise<EvaluationResult['checks']> {
+  validateProbes(options.caseId, packet);
+  if (!['S02', 'S03', 'S10'].includes(options.caseId)) return [];
+  const config = options.application.config, name = options.caseId === 'S02' ? 'sum.mjs' : options.caseId === 'S03' ? 'range.mjs' : 'double.mjs';
   invariant(typeof witness.files[name] === 'string', 'Executable artifact missing');
-  const workspace = mkdtempSync(join(tmpdir(), 'aeon-screen-private-check-'));
+  const workspace = mkdtempSync(join(config.workspaceDirectory, 'host-private-probe-'));
+  const state = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot });
+  const resources = new ResourceLedger(state, { tokens: 0, costUsd: 0, elapsedMs: 0 });
   try {
     writeFileSync(join(workspace, name), witness.files[name]);
     const checks: EvaluationResult['checks'] = [];
-    for (const [index, probe] of packet.probes.entries()) {
-      invariant(probe.args.length <= 2 && probe.args.every(arg => /^-?\d{1,6}$/.test(arg)) && /^-?\d{1,12}\n$/.test(probe.stdout), 'Bounded integer probe required');
-      const result = await runConfined({ workspace, protectedPaths, nodeBinary: process.execPath, executable: '/runtime/node', args: [name, ...probe.args], timeoutMs: 2000, maxOutputBytes: 4096 });
-      checks.push({ id: `private-executable-${index}`, passed: result.exitCode === 0 && !result.stoppedFor && result.stdout === probe.stdout, evidence: hash(JSON.stringify({ probe, result })) });
+    for (const [index, probe] of packet.probes!.entries()) {
+      options.application.authorityStore.assert(options.application.authority);
+      invariant(Date.now() < deadline, 'Original screen deadline expired before private probe');
+      const id = `screen-private:${options.attemptId}:${index}`;
+      let request: PhysicalRequest = { id, runId: witness.runId, purpose: 'review', provider: 'screen-private-command', model: 'none', promptManifestId: `private-check:${options.observer.taskDigest}`, requestDigest: identity({ name, probe }), reservationId: id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 2000 } };
+      resources.reserve(request); // exhaustion refuses dispatch under the original lineage
+      const start = performance.now(); let receipt: CommandReceipt | null = null, failure: string | null = null;
+      try {
+        request = { ...request, status: 'dispatched' }; resources.dispatched(request);
+        receipt = await runConfined({ workspace, protectedPaths: [options.observer.privateRoot, config.applicationRoot, config.stateDirectory], nodeBinary: config.nodeBinary, executable: '/runtime/node', args: [name, ...probe.args], timeoutMs: 2000, maxOutputBytes: 4096, resourceLimits: config.resourceLimits, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+        request = { ...request, status: receipt.stoppedFor || receipt.exitCode === null ? 'uncertain' : receipt.exitCode === 0 ? 'succeeded' : 'failed', usage: { ...request.usage, elapsedMs: performance.now() - start } };
+        resources.settle(request);
+        invariant(artifactReader(workspace)(name) === witness.files[name], 'Candidate changed its tested source during private verification');
+      } catch (error) {
+        failure = error instanceof Error ? error.message : 'Private command outcome unknown';
+        const current = resources.request(id);
+        if (current?.status === 'dispatched') resources.settle({ ...current, status: 'uncertain', usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: performance.now() - start } });
+        else if (current?.status === 'reserved') resources.settle({ ...current, status: 'failed', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
+      }
+      const actual = resources.request(id)!;
+      const result = { index, request: actual, receipt, failure }; retained.push(result);
+      state.put('screen.private-receipts', id, { ...result, artifact: state.putJsonArtifact(JSON.parse(JSON.stringify(result))) }, null);
+      checks.push({ id: `private-executable-${index}`, passed: !failure && actual.status === 'succeeded' && receipt?.stdout === probe.stdout, evidence: hash(JSON.stringify({ probe, result })) });
+      if (failure || actual.status === 'uncertain') break; // unknown local physical outcome never replayed
     }
+    invariant(retained.length === packet.probes!.length, 'Private verification stopped with incomplete physical outcomes');
     return checks;
-  } finally { rmSync(workspace, { recursive: true, force: true }); }
+  } finally { state.close(); rmSync(workspace, { recursive: true, force: true }); }
 }
+
 function deepFreeze<T>(value: T): T { if (value && typeof value === 'object') { Object.freeze(value); for (const child of Object.values(value)) deepFreeze(child); } return value; }
 /** Fixed host preparation: synchronous receive+seed completes before queued onReady can dispatch.
  * No callback, model-visible seed tool, grant invention, or post-dispatch mutation is exposed. */
@@ -152,9 +189,9 @@ export async function runScreenCase(options: ScreenOptions) {
   invariant(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 900000, 'Finite screen deadline required');
   for (const digest of [options.observer.evaluatorDigest, options.observer.taskDigest, ...Object.values(options.manifest)]) invariant(/^[a-f0-9]{64}$/.test(digest), 'Frozen artifact digests required');
   if (options.mode === 'synthetic-application') invariant(options.application.performRequest, 'Synthetic mode requires declared bounded transport fixture');
-  else { invariant(config.resourceLimits, 'Live screen requires existing host kernel resource delegation'); invariant(!options.application.performRequest, 'Live screen cannot substitute a fixture transport'); invariant(options.liveSeal?.grantId && /^[a-f0-9]{64}$/.test(options.liveSeal.calibrationDigest) && options.liveSeal.isolationReceipt, 'Live screen closed without host-issued grant/isolation/calibration seals'); }
+  else invariant(false, 'Live public screen unavailable until an independently qualified host grant route is bound');
   const packetBytes = readFileSync(options.privatePacketPath, 'utf8'); invariant(Buffer.byteLength(packetBytes) <= 65536 && hash(packetBytes) === options.observer.taskDigest, 'Frozen private packet digest mismatch');
-  const packet = JSON.parse(packetBytes) as PrivateScreenPacket;
+  const packet = JSON.parse(packetBytes) as PrivateScreenPacket; validateProbes(options.caseId, packet);
   // Durable evaluator receipt is written before admission. Same attempt cannot be reset after failure.
   const attemptReceipt = join(options.observer.privateRoot, `screen-${options.caseId}-initial-${options.attempt}.json`);
   writeFileSync(attemptReceipt, JSON.stringify({ attemptId: options.attemptId, caseId: options.caseId, attempt: options.attempt, taskDigest: options.observer.taskDigest, manifest: options.manifest, configuration: hash(JSON.stringify(config)), recordedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
@@ -162,6 +199,7 @@ export async function runScreenCase(options: ScreenOptions) {
   let app: AutarkApplication | undefined; let preparation: ReturnType<typeof seedBeforeDispatch> | null = null;
   let observation: ReturnType<typeof observe> | null = null; let witness: ScreenWitness | null = null;
   let assessment: EvaluationResult | null = null; let failure: string | null = null;
+  const privateCommands: PrivateProbeReceipt[] = []; let originalResources: unknown = null; const deadline = Date.now() + options.timeoutMs;
   let payloads: RetainedArtifact[] = [], checkpoints: RetainedArtifact[] = [], operatingLedger: unknown = null;
   try {
     app = new AutarkApplication(options.application);
@@ -196,16 +234,27 @@ export async function runScreenCase(options: ScreenOptions) {
     try {
       witness = deepFreeze(JSON.parse(JSON.stringify(witness)) as ScreenWitness);
       assessment = assessScreenWitness(options.caseId, witness, packet);
-      assessment.checks.push(...await executableChecks(options.caseId, witness, packet, [options.observer.privateRoot, config.applicationRoot, config.stateDirectory]));
+      assessment.checks.push(...await executePrivateProbes(options, witness, packet, deadline, privateCommands));
       assessment.quality = assessment.checks.every(check => check.passed) ? 3 : 0;
     } catch (error) { failure = error instanceof Error ? error.message : 'Private verification failed'; }
   }
-  const evidenceBytes = Buffer.byteLength(JSON.stringify({ observation, witness, payloads, checkpoints, operatingLedger }));
-  if (evidenceBytes > 32_000_000) { failure = 'Combined screen evidence bound exceeded'; payloads = []; checkpoints = []; }
+  if (preparation) {
+    const state = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot });
+    try {
+      const resources = new ResourceLedger(state, { tokens: 0, costUsd: 0, elapsedMs: 0 });
+      originalResources = { allocations: state.list('allocations'), budgets: state.list('budgets'), physicalLedger: state.list('requests'), snapshot: resources.snapshot(preparation.runId) };
+      operatingLedger = resources.snapshot('operating-envelope:v1');
+    } finally { state.close(); }
+  }
+  if (Date.now() > deadline) failure ??= 'Original screen deadline exceeded';
+  const evidenceBytes = Buffer.byteLength(JSON.stringify({ observation, witness, payloads, checkpoints, operatingLedger, originalResources, privateCommands }));
+  const evidenceDigest = hash(JSON.stringify({ observation, witness, payloads, checkpoints, operatingLedger, originalResources, privateCommands }));
+  let boundedPrivateCommands: PrivateProbeReceipt[] | null = privateCommands;
+  if (evidenceBytes > 32_000_000) { failure = 'Combined screen evidence bound exceeded; full witness unavailable'; observation = null; witness = null; payloads = []; checkpoints = []; originalResources = null; boundedPrivateCommands = null; }
   return deepFreeze({ schema: screenVersion, coverage: 'eight-case-partial', evidenceKind: options.mode, independent: false, admissionEligible: false,
-    attemptReceipt, evidenceBytes, caseId: options.caseId, initialAttempt: options.attempt, attemptId: options.attemptId, startedAt, endedAt: new Date().toISOString(), wallMs: performance.now() - start,
+    attemptReceipt, evidenceBytes, evidenceDigest, caseId: options.caseId, initialAttempt: options.attempt, attemptId: options.attemptId, startedAt, endedAt: new Date().toISOString(), wallMs: performance.now() - start,
     identities: { ...options.manifest, evaluator: options.observer.evaluatorDigest, privatePacket: options.observer.taskDigest, screen: hash(readFileSync(new URL(import.meta.url), 'utf8')), configuration: hash(JSON.stringify(config)), prompt: hash(readFileSync(config.promptFile, 'utf8')), compactionPrompt: hash(readFileSync(config.compactionPromptFile, 'utf8')) },
-    candidateModel: config.model, environment: { node: process.version, platform: process.platform, architecture: process.arch }, preparation, observation, witness, payloads, checkpoints, operatingLedger, assessment, failure,
+    candidateModel: config.model, configuration: { resources: config.resources, conversationResources: config.conversationResources, resourceLimits: config.resourceLimits ?? null, scheduler: config.scheduler, maxConcurrentRuns: config.maxConcurrentRuns, commands: config.commands }, originalResources, privateCommands: boundedPrivateCommands, environment: { node: process.version, platform: process.platform, architecture: process.arch }, preparation, observation, witness, payloads, checkpoints, operatingLedger, assessment, failure,
     verdict: !failure && assessment?.quality === 3 ? 'case-pass' : 'criterion-unmet', unavailable: unavailableCases,
     claims: { twelveCaseCompletion: false, Q3: 'unavailable', parity: 'unavailable', H1: 'unaccepted', modelCompetence: options.mode === 'synthetic-application' ? 'unavailable' : 'unqualified-public-screen' },
     limitations: ['Public retained engineering screen; no held-out benchmark or independent acceptance.', 'One original application resource ledger per initial attempt; failure and uncertain usage remain charged.', 'S08/S09/S11/S12 lifecycle driver is unavailable; no simulated restart, compaction, delivery reconciliation or prompt transition.', 'Fresh independent evaluator/host integrity review and externally issued live authority remain required.'] });

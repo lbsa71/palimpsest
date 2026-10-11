@@ -95,12 +95,12 @@ test('real communication admission seeds only public files synchronously before 
 test('live driver rejects fixture transport before constructing an application', async () => {
   await assert.rejects(runHostAuthorizedLiveCase({ application: { performRequest: async () => { throw new Error('must never dispatch'); } } } as unknown as Parameters<typeof runHostAuthorizedLiveCase>[0]), /forbids caller-supplied fixture/);
 });
-test('private packet digest mismatch refuses admission and live mode requires a host kernel grant', async () => {
+test('private packet digest mismatch refuses admission and live mode remains unavailable without independently qualified host grant', async () => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-screen-refusal-')), privateRoot = mkdtempSync(join(tmpdir(), 'aeon-screen-refusal-private-'));
   const config = fixtureConfiguration(root, rootSource), privatePacketPath = join(privateRoot, 'packet.json'); writeFileSync(privatePacketPath, '{}');
   const options = { application: { config } as any, caseId: 'S01' as const, attempt: 1 as const, attemptId: 'refused', mode: 'synthetic-application' as const, observer: { id: 'pure-observer', privateRoot, evaluatorDigest: hash('e'), taskDigest: hash('wrong') }, manifest: { source: hash('s'), dependencies: hash('d'), protocol: hash('p') }, privatePacketPath, timeoutMs: 1000 };
   try {
     await assert.rejects(runScreenCase({ ...options, application: { ...options.application, performRequest: async () => { throw new Error('must never dispatch'); } } }), /packet digest mismatch/);
-    await assert.rejects(runScreenCase({ ...options, mode: 'live-public-screen' }), /host kernel resource delegation/);
+    await assert.rejects(runScreenCase({ ...options, mode: 'live-public-screen' }), /independently qualified host grant route/);
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(privateRoot, { recursive: true, force: true }); }
 });
