@@ -50,8 +50,8 @@ test('audit: retained private expected answers cannot change under their accepte
   const root = mkdtempSync(join(tmpdir(), 'aeon-offline-plan-audit-'));
   try {
     const path = join(root, 'plan.json');
-    const original = canonicalJson({ version: 1, kind: 'validator-string-length', runnerDigest: 'a'.repeat(64), cases: [{
-      id: 'unicode-boundary', inputs: [{ schema: { type: 'string', maxLength: 1 }, value: '🚀' }],
+    const original = canonicalJson({ version: 2, runnerDigest: 'a'.repeat(64), cases: [{
+      id: 'unicode-boundary', kind: 'validator-string-length', inputs: [{ schema: { type: 'string', maxLength: 1 }, value: '🚀' }],
       expected: [true], timeoutMs: 100, maxOutputBytes: 1024 }] });
     writeFileSync(path, original.replace('"expected":[true]', '"expected":[false]'), { mode: 0o600 });
     const config = { files: [{ path, mount: offlinePlanMount, sha256: hashBytes(original) }] } as ReviewerFile;

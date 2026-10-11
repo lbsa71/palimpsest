@@ -4,7 +4,7 @@ import { canonicalJson } from '../../packages/contracts/index.ts';
 import { assessOffline, parseOfflinePlan, type OfflinePlan } from './index.ts';
 
 export function validatorPlan(runnerDigest: string): OfflinePlan {
-  return { version: 1, kind: 'validator-string-length', runnerDigest, cases: [{ id: 'validator-string-length', timeoutMs: 3000, maxOutputBytes: 4096,
+  return { version: 2, runnerDigest, cases: [{ id: 'validator-string-length', kind: 'validator-string-length', timeoutMs: 3000, maxOutputBytes: 4096,
     inputs: [
       { schema: { type: 'string', minLength: 1 }, value: '' },
       { schema: { type: 'string', minLength: 1, maxLength: 1 }, value: 'a' },
@@ -20,7 +20,7 @@ export function validatorPlan(runnerDigest: string): OfflinePlan {
 test('offline private plans reject duplicate keys/cases, excessive bounds and arbitrary executable/schema inputs', () => {
   const plan = validatorPlan('a'.repeat(64));
   assert.deepEqual(parseOfflinePlan(Buffer.from(canonicalJson(plan))), plan);
-  assert.throws(() => parseOfflinePlan(Buffer.from(canonicalJson(plan).replace('"version":1', '"version":1,"version":1'))), /Canonical/);
+  assert.throws(() => parseOfflinePlan(Buffer.from(canonicalJson(plan).replace('"version":2', '"version":2,"version":2'))), /Canonical/);
   for (const mutate of [
     (p: any) => p.cases.push(p.cases[0]),
     (p: any) => p.cases[0].timeoutMs = 60000,

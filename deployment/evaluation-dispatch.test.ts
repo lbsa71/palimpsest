@@ -22,6 +22,7 @@ import { contentAddressedEvidence } from './host-policy.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceSupervisor } from './supervisor.ts';
 import { reviewPhysicalId } from './evaluation-resources.ts';
+import { governanceCase } from '../evaluations/offline-review/governance.test.ts';
 import { loadOfflinePlan, offlinePlanMount, offlineRunnerDigest, type OfflineObservation, type OfflinePlan } from '../evaluations/offline-review/index.ts';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -159,13 +160,13 @@ async function eventually<T>(read: () => T, accept: (value: T) => boolean): Prom
   const deadline = Date.now() + 30000;
   while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > deadline) throw Error('Fixture deadline: ' + JSON.stringify(value)); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
-function fixture(activate = false, governance = false, offline = false) {
+function fixture(activate = false, governance = false, offline: boolean | 'reviewer' = false) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-external-dispatch-'));
   const source = join(root, 'source'); mkdirSync(source);
   for (const entry of rewriteSourceEntries) if (existsSync(join(repository, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(join(repository, entry), join(source, entry), { recursive: true }); }
   // This fixture's concrete private packet must not also be readable as candidate test source.
   // Production source freezing is unchanged; only this disposable fixture input is trimmed.
-  if (offline) for (const file of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts']) rmSync(join(source, file));
+  if (offline) for (const file of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts', 'evaluations/offline-review/governance.test.ts']) rmSync(join(source, file));
   cpSync(realpathSync(join(repository, 'node_modules')), join(source, 'node_modules'), { recursive: true });
   const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
   const evidenceDirectory = join(root, 'evidence'), reviewerRoot = join(root, 'external-reviewer');
@@ -179,8 +180,9 @@ function fixture(activate = false, governance = false, offline = false) {
   for (const path of new Set(linked.stdout.match(/\/[^\s()]+/g))) retain(path, path);
   const script = join(reviewerRoot, 'reviewer.mjs'); writeFileSync(script, offline ? readFileSync(join(repository, 'evaluations/offline-review/reviewer.mjs')) : reviewerSource, { mode: 0o600 }); retain(script, '/reviewer/reviewer.mjs');
   const rules = join(reviewerRoot, 'rules.mjs'); writeFileSync(rules, "export const heldOutMarker = 'externalDispatchEngineeringFixture = true';\n", { mode: 0o600 }); retain(rules, '/reviewer/rules.mjs');
+  if (offline) retain(join(repository, 'evaluations/offline-review/review-core.ts'), '/reviewer/review-core.ts');
   if (offline) {
-    const plan: OfflinePlan = { version: 1, kind: 'validator-string-length', runnerDigest: offlineRunnerDigest(), cases: [{ id: 'validator-string-length', timeoutMs: 3000, maxOutputBytes: 4096,
+    const plan: OfflinePlan = offline === 'reviewer' ? { version: 2, runnerDigest: offlineRunnerDigest(), cases: [governanceCase()] } : { version: 2, runnerDigest: offlineRunnerDigest(), cases: [{ id: 'validator-string-length', kind: 'validator-string-length', timeoutMs: 3000, maxOutputBytes: 4096,
       inputs: [
         { schema: { type: 'string', minLength: 1 }, value: '' },
         { schema: { type: 'string', minLength: 1, maxLength: 1 }, value: 'a' },
@@ -203,7 +205,7 @@ function fixture(activate = false, governance = false, offline = false) {
   const futureReviewer = { ...reviewer, files: reviewer.files.map(file => ({ ...file, sha256: file.mount === '/reviewer/reviewer.mjs' ? hashBytes(futureReviewerSource) : file.mount === '/reviewer/rules.mjs' ? hashBytes(futureRules) : file.sha256 })) };
   const futureReviewerDigest = hashBytes(reviewerDescriptor(futureReviewer));
   const evaluator = blob(reviewerDescriptor(reviewer));
-  const fields = { kind: 'engineering' as const, requiredCases: [offline ? 'validator-string-length' : 'held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
+  const fields = { kind: 'engineering' as const, requiredCases: [offline === 'reviewer' ? 'concrete-reviewer' : offline ? 'validator-string-length' : 'held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
   const modifiedBytes = readFileSync(join(source, markerPath), 'utf8') + marker;
   // Frozen fixture transport replaces the provider completely. It exercises the ordinary service child/tools.
   const calls = [['source_checkout', {}], ['workspace_write', { path: markerPath, content: modifiedBytes, expectedSha256: hashBytes(readFileSync(join(source, markerPath))) }],
@@ -236,7 +238,7 @@ function fixtureGovernance(profile) {
     configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
       scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture-operator', scope: { kind: 'public' }, modificationEligible: true } } };
   const incumbent = freezeApplication(source, host.artifactStore, inputs);
-  if (offline) for (const path of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts']) assert.equal(incumbent.files.some(file => file.path === path), false);
+  if (offline) for (const path of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts', 'evaluations/offline-review/governance.test.ts']) assert.equal(incumbent.files.some(file => file.path === path), false);
   const policy = { ...fields, controlRevision: incumbent.manifest.controls, policyDigest: admissionPolicyIdentity({ ...fields, controlRevision: incumbent.manifest.controls }) };
   const initial: Authority = { generation: 'initial-dispatch-fixture', epoch: 1, controlRevision: incumbent.manifest.controls };
   const observation = blob('Bootstrap engineering fixture only; no H1 acceptance.');
@@ -254,6 +256,69 @@ function fixtureGovernance(profile) {
     evaluationDispatcher: { reviewerFile, policyDigests: [...policies.keys()] } };
   return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources, futureReviewerDigest, source, inputs };
 }
+
+test('governance reviewer probes reject actual weakened implementations under the original old judge', { timeout: 180000, skip: process.env.AEON_GOVERNANCE_REVIEW_FIXTURE !== '1' }, async t => {
+  const f = fixture(false, false, 'reviewer'), store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+  try {
+    const authority = f.options.bootstrap.proof.proposal.priorAuthority;
+    const request: EvaluationRequest = { requestId: 'reviewer-good', policyDigest: f.policy.policyDigest, candidate: f.incumbent,
+      proposal: { id: 'reviewer-proposal', runId: 'reviewer-author', scope: { kind: 'public' }, authority, provenance: { kind: 'self', inputId: 'fixture', goalId: 'fixture', actorId: 'fixture' },
+        justification: 'Observe the actual proposed offline reviewer under prior controls', goal: { objective: 'reviewer behavior', successCriteria: ['bound pass, fail and refusal'] }, experience: store.putArtifact('engineering-only'), state: 'frozen' } };
+    const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 });
+    ledger.allocate('reviewer-parent', { ...f.resources, maxConcurrency: 1 });
+    ledger.allocate(request.proposal.runId, { ...f.resources, maxConcurrency: 1 }, 'reviewer-parent');
+    store.put('runs', request.proposal.runId, { id: request.proposal.runId, status: 'completed', revision: 0, scope: request.proposal.scope, authority }, null);
+    const allocation = store.get('allocations', request.proposal.runId)!.value, parent = store.get('allocations', 'reviewer-parent')!.value;
+    const corePath = join(f.source, 'evaluations/offline-review/review-core.ts'), original = readFileSync(corePath, 'utf8');
+    const privatePaths = ['/reviewer-key', offlinePlanMount, '/app/deployment/evaluation-dispatch.test.ts', '/app/evaluations/offline-review/plan.test.ts', '/app/evaluations/offline-review/governance.test.ts', f.reviewer.keyFile,
+      ...f.reviewer.files.filter(file => file.mount === offlinePlanMount).map(file => file.path)];
+    const privacy = `import { readFileSync as probeRead } from 'node:fs';
+for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try { probeRead(path); exposed = true; } catch {} if (exposed) throw Error('private reviewer input exposed'); }
+`;
+    const variants = [
+      { name: 'good-private-isolation', code: privacy + original, verdict: 'pass' },
+      { name: 'always-refusing', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nexport function reviewOfflinePacket() { throw Error("always refuse"); }\n', verdict: 'fail' },
+      { name: 'always-accepting', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nlet first; export function reviewOfflinePacket(...args) { return first ??= originalReview(...args); }\n', verdict: 'fail' },
+      { name: 'ignores-request-binding', code: original.replace('observation.requestId === r.requestId && ', ''), verdict: 'fail' },
+      { name: 'promotes-failed-command', code: original.replace('const passed = commandPassed(c, observation.command);', 'const passed = true;').replace("passed === observation.passed && observation.physical.status", "observation.physical.status"), verdict: 'fail' },
+    ];
+    let expectedRequests = 0;
+    for (const variant of variants) {
+      assert.notEqual(variant.code, original);
+      writeFileSync(corePath, variant.code);
+      const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs);
+      assert.notEqual(candidate.manifest.controls, authority.controlRevision, 'Proposed concrete reviewer is a control change');
+      const current = { ...request, requestId: variant.name, candidate };
+      const resource = { store, request: current, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId,
+        maxElapsedMs: f.reviewer.maxElapsedMs, assertAuthority: (a: Authority) => assert.deepEqual(a, authority), dispatchAuthority: (a: Authority, run: () => void) => { assert.deepEqual(a, authority); run(); } };
+      const response = await runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource);
+      const evidence = response.result.receipt.evidence[0]!, observationHash = evidence.caseResults[0]!.observations.sha256;
+      const observation = JSON.parse(Buffer.from(response.artifacts.find(a => a.sha256 === observationHash)!.base64, 'base64').toString('utf8')) as OfflineObservation;
+      assert.equal(observation.command.exitCode, 0, JSON.stringify(observation.command));
+      assert.equal(observation.command.stoppedFor, undefined);
+      assert.equal(evidence.verdict, variant.verdict, JSON.stringify(observation.command));
+      const outputs = JSON.parse(observation.command.stdout);
+      if (variant.name === 'good-private-isolation') assert.deepEqual(outputs.slice(0, 3).map((r: any) => r.response.result.receipt.evidence[0].verdict), ['pass', 'fail', 'fail']);
+      if (variant.name === 'ignores-request-binding') assert.equal(outputs[3].kind, 'result', 'Seed actually accepts a wrong request observation');
+      if (variant.name === 'promotes-failed-command') assert.equal(outputs[1].response.result.receipt.evidence[0].verdict, 'pass', 'Seed actually promotes failed behavior');
+      const artifacts = new Map(response.artifacts.map(a => [a.sha256, Buffer.from(a.base64, 'base64')]));
+      const admit = () => admitCandidate(f.host.artifactStore, response.result.proof.proposal, authority, f.policy, response.result.proof.signed, uri => artifacts.get(uri.slice(7))!, 'control-upgrade');
+      if (variant.verdict === 'pass') assert.equal(admit().controlChange, true); else assert.throws(admit, /passing evidence/);
+      expectedRequests += 2;
+      assert.equal(ledger.snapshot(request.proposal.runId).requests, expectedRequests);
+      assert.equal(ledger.snapshot('reviewer-parent').requests, expectedRequests);
+      assert.equal(ledger.snapshot(request.proposal.runId).concurrent, 0);
+      assert.deepEqual(store.get('allocations', request.proposal.runId)!.value, allocation);
+      assert.deepEqual(store.get('allocations', 'reviewer-parent')!.value, parent);
+      await assert.rejects(runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource), /already|revision|reservation|UNIQUE/i);
+      assert.equal(ledger.snapshot(request.proposal.runId).requests, expectedRequests, 'Replay cannot get a new physical attempt');
+      t.diagnostic(JSON.stringify({ variant: variant.name, candidate: candidate.manifest.id, originalPolicy: f.policy.policyDigest, oldControls: authority.controlRevision,
+        evaluatorDigest: resource.evaluatorDigest, planDigest: observation.planDigest, runnerDigest: observation.runnerDigest,
+        evidenceId: evidence.id, observationHash, verdict: evidence.verdict, probe: observation.physical,
+        sealedReviewer: ledger.request(reviewPhysicalId(current.requestId)) }));
+    }
+  } finally { store.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
 
 test('offline direct bounded review retains actual command evidence', { timeout: 60000, skip: process.env.AEON_OFFLINE_REVIEW_FIXTURE !== '1' }, async () => {
   const f = fixture(false, false, true), store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });

@@ -16,7 +16,7 @@ import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewOperationId, type ReviewResourceOptions } from './evaluation-resources.ts';
-import { loadOfflinePlan, offlineOperation, runOfflineCase, type OfflineObservation } from '../evaluations/offline-review/index.ts';
+import { loadOfflinePlan, offlinePlanMount, offlineOperation, runOfflineCase, type OfflineObservation } from '../evaluations/offline-review/index.ts';
 import { evaluationAcknowledgmentPending } from './evolution-continuation.ts';
 import { assertProbationLineage, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 
@@ -178,7 +178,7 @@ async function runSealedReview(config: ReviewerFile, host: HostBindings, request
 export async function runExternalReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
   policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal,
   dispatch?: (launch: () => void) => void, physicalAuthority = request.proposal.authority): Promise<ReviewResponse> {
-  invariant(!config.files.some(file => file.mount === '/reviewer/offline-validator-plan.json'), 'Behavioral reviewer requires original accounted candidate observations');
+  invariant(!config.files.some(file => file.mount === offlinePlanMount), 'Behavioral reviewer requires original accounted candidate observations');
   return runSealedReview(config, host, request, policy, acceptedCandidateId, assertAuthority, signal, dispatch, physicalAuthority);
 }
 
