@@ -25,7 +25,10 @@ function fixture() {
   const first = { candidateId: create('first'), policyDigest: 'a'.repeat(64) }, next = { candidateId: create('next'), policyDigest: 'b'.repeat(64) };
   const database = join(config.host.stateDirectory, 'release.sqlite'), db = new DatabaseSync(database); chmodSync(database, 0o600);
   db.exec('CREATE TABLE release_state(singleton INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-  const authority = { generation: 'fixture', epoch: 3, controlRevision: 'c'.repeat(64) };
+  const authority = { generation: 'fixture', epoch: 3, controlRevision: 'c'.repeat(64), artifactId: next.candidateId };
+  const ledgerPath = join(config.host.stateDirectory, 'authority.sqlite'), ledger = new DatabaseSync(ledgerPath); chmodSync(ledgerPath, 0o600);
+  ledger.exec('CREATE TABLE authority(singleton INTEGER PRIMARY KEY, epoch INTEGER, generation TEXT, control_revision TEXT, artifact_id TEXT)');
+  ledger.prepare('INSERT INTO authority VALUES(1,?,?,?,?)').run(authority.epoch, authority.generation, authority.controlRevision, authority.artifactId); ledger.close();
   const state = (phase: string, selected = next) => db.prepare('INSERT OR REPLACE INTO release_state VALUES(1,?)').run(JSON.stringify({ phase, accepted: selected, authority }));
   return { root, config, first, next, state, authority, dispose: () => { db.close(); rmSync(root, { recursive: true, force: true }); } };
 }
@@ -122,6 +125,20 @@ test('redirected bootstrap directory is refused before publication lease writes'
     assert.deepEqual(fs.readdirSync(outside), [], 'invalid boot path must not create an escaped lease');
     assert.throws(() => rotateBootstrapRescue(f.config, f.next));
     assert.deepEqual(fs.readdirSync(outside), []);
+  } finally { f.dispose(); }
+});
+
+test('rescue rotation rejects a witness whose authority was withdrawn after the last release record', () => {
+  const f = fixture();
+  try {
+    initializeBootstrap(f.config, f.first); f.state('accepted'); publishBootstrapSelection(f.config, f.next);
+    const boot = join(f.config.host.stateDirectory, 'boot'), path = join(boot, 'targets', f.next.candidateId);
+    const descriptor = JSON.parse(readFileSync(join(path, 'target.json'), 'utf8'));
+    writeFileSync(join(path, 'boot-ready.json'), JSON.stringify({ target: f.next, authority: f.authority, runtimeHash: descriptor.runtimeHash }), { mode: 0o600 });
+    const ledger = new DatabaseSync(join(f.config.host.stateDirectory, 'authority.sqlite'));
+    ledger.exec('UPDATE authority SET epoch=epoch+1,generation=NULL'); ledger.close();
+    assert.throws(() => rotateBootstrapRescue(f.config, f.next), /authority/i);
+    assert.equal(realpathSync(join(boot, 'rescue')), join(boot, 'targets', f.first.candidateId));
   } finally { f.dispose(); }
 });
 
