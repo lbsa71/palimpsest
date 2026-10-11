@@ -18,7 +18,7 @@ function fixture() {
   const resources = { maxRequests: 100, maxTokens: 10_000_000, maxCostUsd: 100, maxElapsedMs: 300_000, maxConcurrency: 8 };
   const config: ApplicationConfig = { stateDirectory, workspaceDirectory, applicationRoot: dirname(dirname(fileURLToPath(import.meta.url))), nodeBinary: process.execPath, workerEntrypoint: 'deployment/shell-worker.ts', artifactId: 'engineering-fixture', controlRevision: 'fixture-controls', promptFile, compactionPromptFile,
     model: { id: 'mistral-fixture-v1', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 2048, maxRequestsPerSlice: 12, timeoutMs: 10000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
-    scheduler: { windowMs: 60000, maxSlicesPerWindow: 8, maxLifetimeSlices: 32, quantumMs: 30000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 2, pollMs: 100,
+    bootstrapInitiative: false, scheduler: { windowMs: 60000, maxSlicesPerWindow: 8, maxLifetimeSlices: 32, quantumMs: 30000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 2, pollMs: 100,
     commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'operator', scope: { kind: 'restricted', principals: ['operator'] }, modificationEligible: true } };
   const authorityStore = new AuthorityStore(join(stateDirectory, 'authority.sqlite'));
   const authority = authorityStore.bootstrap('fixture-instance', config.controlRevision, config.artifactId);
@@ -256,4 +256,143 @@ test('an accounted consolidation cannot complete after its durable claim revisio
     const current = app.memory.jobs(f.config.direct.scope)[0]!; assert.equal(current.revision, replacement.job.revision); assert.equal(current.lease!.owner, 'replacement-worker'); assert.equal(current.outputIds.length, 0);
     assert.equal(app.memory.context({ audience: f.config.direct.scope, query: 'Stale output must not be adopted', maxRecords: 32, maxBytes: 65536 }).memories.some(m => m.kind === 'belief'), false); assert.equal(calls, 2);
   } finally { release?.(); await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('restart discovers committed steering even if the scheduling callback was lost', async () => {
+  const f = fixture();
+  let app: AutarkApplication | undefined; let calls = 0; let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const performRequest = async (payload: string, signal: AbortSignal) => {
+    calls++;
+    if (calls === 1) { entered(); await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); }
+    assert.match(payload, /new committed steering/);
+    return stop('Steering handled after restart.');
+  };
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest });
+    app.communications.options.onReady = undefined;
+    const run = receive(app, f, 'callback-first', 'first objective', '1', 'callback-conversation');
+    const controller = new AbortController(), active = app.resume(run.id, controller.signal);
+    await ready; controller.abort(); await active;
+    assert.equal(app.runtime.getRun(run.id)?.status, 'waiting');
+    receive(app, f, 'callback-second', 'new committed steering', '1', 'callback-conversation');
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest });
+    await app.start();
+    await eventually(() => calls, value => value === 2);
+    await eventually(() => app!.runtime.getRun(run.id), run => run?.status === 'completed');
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('report admission rolls back if durable destination registration fails', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async () => stop('No dispatch expected') });
+    app.obligations.owe({ id: 'atomic-report', inputId: 'input', audience: f.config.direct.scope, promisedOutcome: 'Report outcome', dueAt: null });
+    app.store.put('host.obligation-targets', 'atomic-report', { channel: 'report-channel', transport: 'direct', scope: f.config.direct.scope }, null);
+    const original = app.store.put.bind(app.store);
+    app.store.put = ((namespace: string, ...args: any[]) => { if (namespace === 'host.delivery-runs') throw new Error('injected destination commit failure'); return (original as any)(namespace, ...args); }) as typeof app.store.put;
+    await assert.rejects((app as any).deliverObligation('atomic-report', new AbortController().signal), /injected destination/);
+    assert.equal(app.store.list('runs').length, 0, 'No orphan runtime without a durable delivery owner');
+    assert.equal(app.store.list('host.run-grants').length, 0, 'No orphan destination grant');
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('a completed extension mutation with an unserializable receipt remains uncertain', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let calls = 0;
+  try {
+    app = new AutarkApplication({ ...f, secrets,
+      additionalTools: ({ store }) => [{ name: 'extension_mutate', description: 'Fixture mutation', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, async execute() { await Promise.resolve(); store.put('fixture.extension', 'mutation', true, null); const result: any = {}; result.circular = result; return result; } }],
+      performRequest: async () => { calls++; return calls === 1 ? tool('extension_mutate', {}) : stop('Must not reach another request while outcome is unknown'); },
+    });
+    const run = receive(app, f, 'extension-mutation');
+    await eventually(() => app!.runtime.getRun(run.id), run => ['blocked', 'completed', 'waiting'].includes(run?.status ?? ''));
+    assert.equal(app.store.get('fixture.extension', 'mutation')?.value, true);
+    assert.equal(app.runtime.getRun(run.id)?.status, 'blocked');
+    assert.equal(app.effects.unresolved(run.id).length, 1); assert.equal(calls, 1);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('fresh boot makes one accounted developmental start and a model-chosen follow-on goal without human input', async () => {
+  const f = fixture(); delete f.config.bootstrapInitiative; let app: AutarkApplication | undefined; let bootstrapCalls = 0, inquiryCalls = 0;
+  let chosenGoal: any;
+  const performRequest = async (payload: string) => {
+    const request = parsed(payload), frame = context(request);
+    const bootstrap = request.messages.some((message: any) => message.role === 'system' && typeof message.content === 'string' && message.content.includes('application.development-bootstrap'));
+    assert.equal(frame.target, null);
+    if (bootstrap) {
+      bootstrapCalls++;
+      assert.equal(frame.memory.self.length, 0);
+      assert.ok(frame.memory.memories.some((memory: any) => memory.id === 'host:development-bootstrap:v1' && memory.provenance.derivation === 'observed'));
+      if (bootstrapCalls === 1) return tool('initiative_goal_propose', { id: 'chosen-first-inquiry', purpose: 'Explore whether a measured local observation warrants a procedure.', successCriteria: ['Inspect an actual workspace result'], sourceIds: ['host:development-bootstrap:v1'], resources: f.config.scheduler.resources, priority: 1, nextAction: 'Discover the local workspace', reviewAt: new Date(Date.now() + 60000).toISOString() });
+      if (bootstrapCalls === 2) { chosenGoal = receipt(request); return tool('initiative_goal_accept', { id: chosenGoal.id, expectedRevision: chosenGoal.revision, reason: 'I choose this bounded question from the current operating opportunity.' }); }
+      return stop('First initiative chosen; no identity claim.');
+    }
+    inquiryCalls++;
+    if (inquiryCalls === 1) return tool('workspace_discover', {});
+    if (inquiryCalls === 2) { const goal = app!.goals.goal('chosen-first-inquiry')!; return tool('initiative_goal_progress', { id: goal.id, expectedRevision: goal.revision, decision: { kind: 'complete', reason: 'Actual bounded workspace discovery inspected.', evidenceIds: app!.runtime.observations(frame.runId).map(o => o.id) } }); }
+    return stop('Finite first inquiry complete.');
+  };
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest });
+    assert.equal(app.store.list('communications.inputs').length, 0);
+    await app.start();
+    await eventually(() => app!.goals.goal('chosen-first-inquiry'), goal => goal?.status === 'completed');
+    await eventually(() => app!.store.list<any>('runs'), rows => rows.every(row => row.value.status === 'completed'));
+    assert.equal(bootstrapCalls, 3); assert.equal(inquiryCalls, 3);
+    const marker = app.store.get<{ runId: string }>('host.bootstrap', 'development:v1')!;
+    const used = app.resources.snapshot('operating-envelope:v1'); assert.equal(used.requests, 10); assert.equal(used.tokens, 720);
+    assert.equal(app.store.list('development.self').length, 0);
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw new Error('Bootstrap must not repeat'); } });
+    await app.start(); await app.tick();
+    assert.deepEqual(app.store.get('host.bootstrap', 'development:v1'), marker);
+    assert.equal(app.resources.snapshot('operating-envelope:v1').requests, used.requests);
+    assert.equal(app.store.list('communications.inputs').length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('an extension that writes then throws an untyped error holds the physical outcome', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let calls = 0;
+  try {
+    app = new AutarkApplication({ ...f, secrets,
+      additionalTools: ({ store }) => [{ name: 'extension_partial', description: 'Fixture partial mutation', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, async execute() { store.put('fixture.extension', 'partial', true, null); throw new Error('untyped failure after mutation'); } }],
+      performRequest: async () => { calls++; return calls === 1 ? tool('extension_partial', {}) : stop('Must not retry unknown mutation'); },
+    });
+    const run = receive(app, f, 'extension-partial');
+    await eventually(() => app!.runtime.getRun(run.id), run => ['blocked', 'completed', 'waiting'].includes(run?.status ?? ''));
+    assert.equal(app.store.get('fixture.extension', 'partial')?.value, true);
+    assert.equal(app.runtime.getRun(run.id)?.status, 'blocked'); assert.equal(calls, 1);
+    assert.equal((await app.effects.reconcile(app.effects.unresolved(run.id)[0]!.id, f.authority)).status, 'uncertain');
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('fresh development admission preserves an exhausted allowance without provider calls or repeated runs', async () => {
+  const f = fixture(); delete f.config.bootstrapInitiative;
+  f.config.resources.maxRequests = 0; let app: AutarkApplication | undefined;
+  try {
+    const performRequest = async () => { throw new Error('Exhausted host must not dispatch a model'); };
+    app = new AutarkApplication({ ...f, secrets, performRequest });
+    await app.start(); const marker = app.store.get<{ runId: string }>('host.bootstrap', 'development:v1')!;
+    await eventually(() => app!.runtime.getRun(marker.value.runId), run => run?.status === 'blocked');
+    await app.tick(); assert.equal(app.store.list('runs').length, 1); assert.equal(app.resources.snapshot('operating-envelope:v1').requests, 0);
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest }); await app.start(); await app.tick();
+    assert.equal(app.store.list('runs').length, 1); assert.equal(app.runtime.getRun(marker.value.runId)?.status, 'blocked');
+    assert.ok(app.memory.get('host:development-bootstrap:v1', { kind: 'public' }));
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('child admission cannot leave an ordinary run when child authority registration fails', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async () => stop('No dispatch expected') });
+    app.communications.options.onReady = undefined;
+    const parent = receive(app, f, 'atomic-parent');
+    const prepared = (app as any).mindTools(parent.id).find((tool: any) => tool.name === 'delegation_prepare').execute({});
+    const task = { id: 'atomic-child', parentRunId: parent.id, parentGoalId: 'finite-fixture', objective: 'Read bounded workspace evidence', acceptanceCriteria: ['Actual read result'], inputs: [], writablePaths: [prepared.workspace], allowedEffects: ['workspace_read'], resources: prepared.grant.resources, modelPolicy: prepared.grant.modelProfiles[0], scope: prepared.grant.scope, provenance: { sourceIds: ['authenticated-fixture'], actorId: f.authority.generation, recordedAt: new Date().toISOString(), derivation: 'interpreted' as const }, outputLocation: 'result.txt', cancellationConditions: ['parent cancellation'], maxDepth: 1 };
+    app.delegation.create(task);
+    const original = app.store.put.bind(app.store);
+    app.store.put = ((namespace: string, ...args: any[]) => { if (namespace === 'host.child-runs') throw new Error('injected child grant failure'); return (original as any)(namespace, ...args); }) as typeof app.store.put;
+    await assert.rejects(app.delegation.options.executeChild(task, new AbortController().signal), /injected child grant/);
+    assert.deepEqual(app.store.list('runs').map(row => row.key), [parent.id]);
+    assert.deepEqual(app.store.list('host.run-grants').map(row => row.key), [parent.id]);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });

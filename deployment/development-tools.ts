@@ -31,6 +31,6 @@ export function mindDevelopmentTools(memory: DevelopmentalMemory, audience: Data
   }, {
     name: 'memory_forget', description: 'Forget visible experiences and dependent derived memories/self facets; operational execution evidence remains separately retained.',
     inputSchema: schema({ memoryIds: strings }, ['memoryIds']),
-    execute(args: JsonValue) { const a = object(args, ['memoryIds']); const selected = ids(a.memoryIds); selected.forEach(id => invariant(memory.get(id, scope), 'Memory unavailable')); return memory.forget(selected); },
+    execute(args: JsonValue) { const a = object(args, ['memoryIds']); const selected = ids(a.memoryIds); selected.forEach(id => invariant(memory.get(id, scope), 'Memory unavailable')); return memory.forget(selected, scope); },
   }];
 }

@@ -132,8 +132,8 @@ export class DevelopmentalMemory implements MemoryPort {
       .sort((a, b) => a.revision - b.revision);
   }
   /** Erase content and all descendants atomically, including self history and queued jobs. No raw payload is copied into audit events. */
-  forget(ids: string[]): string[] {
-    unique(ids);
+  forget(ids: string[], resultAudience?: DataScope): string[] {
+    unique(ids); if (resultAudience) validateScope(resultAudience);
     return this.store.transaction(() => {
       const entries = this.store.list<MemoryEntry>(MEMORIES); const forgotten = new Set(ids);
       for (const id of ids) invariant(entries.some(entry => entry.key === id), 'unknown memory to forget');
@@ -148,7 +148,7 @@ export class DevelopmentalMemory implements MemoryPort {
       }
       for (const entry of this.store.list<AdoptedSelf>(HISTORY)) if (entry.value.memoryIds.some(id => forgotten.has(id))) this.store.delete(HISTORY, entry.key, entry.revision);
       for (const entry of this.store.list<ConsolidationJob>(JOBS)) if (entry.value.sourceIds.some(id => forgotten.has(id))) this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source forgotten', outputIds: [] }, entry.revision);
-      return [...forgotten];
+      return [...forgotten].filter(id => !resultAudience || scopeAllows(entries.find(entry => entry.key === id)!.value.record.scope, resultAudience));
     });
   }
   expire(at = this.clock()): string[] {

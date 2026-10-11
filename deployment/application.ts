@@ -46,6 +46,7 @@ export class AutarkApplication {
   readonly prompt: PromptManifest;
   readonly directApi: ReturnType<typeof createDirectApi>;
   readonly slackIngress?: SlackIngress; readonly slackRecovery?: SlackRecovery; readonly slackSocket?: SlackSocketMode;
+  private bootstrapPrompt?: PromptManifest;
   private active = new Map<string, Promise<Run>>();
   private shutdown = new AbortController();
   private initiativeTask?: Promise<unknown>;
@@ -109,11 +110,14 @@ export class AutarkApplication {
       executeChild: async (task, signal) => {
         invariant(this.occupied() < config.maxConcurrentRuns, 'Application concurrency exhausted');
         invariant(task.writablePaths.length === 1, 'Current child runtime requires one exclusive workspace');
-        const child = this.runtime.admit({ id: `delegate:${task.id}`, source: 'delegation', externalId: task.id, externalRevision: '1', actorId: options.authority.generation, authenticated: true, scope: task.scope,
+        const child = this.store.transaction(() => {
+        const admitted = this.runtime.admit({ id: `delegate:${task.id}`, source: 'delegation', externalId: task.id, externalRevision: '1', actorId: options.authority.generation, authenticated: true, scope: task.scope,
           value: json({ objective: task.objective, acceptanceCriteria: task.acceptanceCriteria, inputs: task.inputs.map(ref => ({ ref, content: Buffer.from(this.store.readArtifact(ref)).toString('utf8') })), outputLocation: task.outputLocation, cancellationConditions: task.cancellationConditions }) }, options.authority, task.resources, task.parentRunId);
-        invariant(!this.store.get('host.run-grants', child.id), 'Child grant already assigned');
-        this.store.put('host.run-grants', child.id, { scope: task.scope, workspace: task.writablePaths[0] }, null);
-        this.store.put('host.child-runs', child.id, { taskId: task.id, depth: this.delegation.get(task.id)!.depth, allowedEffects: task.allowedEffects }, null);
+        invariant(!this.store.get('host.run-grants', admitted.id), 'Child grant already assigned');
+        this.store.put('host.run-grants', admitted.id, { scope: task.scope, workspace: task.writablePaths[0] }, null);
+        this.store.put('host.child-runs', admitted.id, { taskId: task.id, depth: this.delegation.get(task.id)!.depth, allowedEffects: task.allowedEffects }, null);
+        return admitted;
+        });
         const result = await this.resume(child.id, signal);
         invariant(result.status === 'completed', 'Child did not reach a complete runtime outcome');
         const artifact = this.store.putJsonArtifact(json({ run: result, observations: this.runtime.observations(child.id), checkpoint: this.store.get('execution', child.id)?.value ?? null }));
@@ -126,8 +130,12 @@ export class AutarkApplication {
         const descriptor = this.mindTools(effect.runId).find(tool => tool.name === effect.kind);
         if (!descriptor) return physical.dispatch(effect, signal);
         options.authorityStore.assert(effect.authority); signal?.throwIfAborted();
-        try { return { outcome: 'succeeded', receipt: this.store.putJsonArtifact(json(await descriptor.execute(effect.payload, signal))) }; }
-        catch (error) { return { outcome: error && typeof error === 'object' && 'mayHaveApplied' in error && error.mayHaveApplied === true ? 'uncertain' : 'failed', receipt: this.store.putJsonArtifact({ error: error instanceof Error ? error.message : 'Development action rejected' }) }; }
+        let executed = false;
+        try { const result = await descriptor.execute(effect.payload, signal); executed = true; return { outcome: 'succeeded', receipt: this.store.putJsonArtifact(json(result)) }; }
+        catch (error) {
+          const applied = error && typeof error === 'object' && 'mayHaveApplied' in error ? error.mayHaveApplied : undefined;
+          return { outcome: executed || applied === true || descriptor.extension && applied !== false ? 'uncertain' : 'failed', receipt: this.store.putJsonArtifact({ error: error instanceof Error ? error.message : 'Development action rejected' }) };
+        }
       },
       reconcile: effect => physical.reconcile(effect),
     };
@@ -166,11 +174,25 @@ export class AutarkApplication {
       this.slackSocket = new SlackSocketMode({ botApi, appApi: options.slackAppApi ?? new SlackClient({ token: options.secrets.slackAppToken! }), ingress: this.slackIngress, recovery: this.slackRecovery,
         onError: kind => this.store.append({ id: randomUUID(), stream: 'host', type: 'transport-error', data: { kind, at: new Date().toISOString() } }) });
     }
+    if (config.bootstrapInitiative !== false) this.bootstrapDevelopment(base.sha256);
     const interrupted = this.runtime.recover(); reconcileProviderReceipts(this.store, this.resources);
     for (const runId of interrupted) if (!this.managedElsewhere(runId)) this.enqueue(runId);
     for (const row of this.store.list<Run>('runs')) if (!['completed', 'cancelled'].includes(row.value.status)) this.runtime.adopt(row.key, options.authority);
     this.initiative.recover(); this.delegation.recover(); this.conversationObligations.confirm();
     } catch (error) { try { this.store?.close(); } finally { if (!options.lease) this.lease.close(); } throw error; }
+  }
+  private bootstrapDevelopment(baseDigest: string): void {
+    const artifact = this.store.putArtifact(readFileSync(join(this.config.applicationRoot, 'deployment/prompts/development-bootstrap.md'), 'utf8'));
+    this.bootstrapPrompt = { ...this.prompt, id: `bootstrap:${artifact.sha256}`, fragments: [...this.prompt.fragments, { id: 'application.development-bootstrap', owner: 'application', role: 'system', order: 1, artifact, scope: { kind: 'public' }, replaceable: true, derivedFrom: [baseDigest] }] };
+    if (this.store.get('host.bootstrap', 'development:v1')) return;
+    this.store.transaction(() => {
+      const scope = { kind: 'public' } as const, id = 'host:development-bootstrap:v1';
+      const event = { event: 'application.development-bootstrap', fact: 'The host has initialized a fresh developmental operating opportunity.', mission: 'Develop judgment, curiosity, code quality and capability through bounded self-chosen observations and later evidence. No prior lived experience, identity, preference or success is implied.', instructionArtifact: artifact };
+      const run = this.runtime.admit({ id, source: 'host.bootstrap', externalId: 'development:v1', externalRevision: '1', actorId: this.options.authority.generation, authenticated: true, scope, value: json(event) }, this.options.authority, this.config.scheduler.resources, 'initiative:ordinary');
+      this.memory.ingest({ id, runId: run.id, sourceId: id, actorId: this.options.authority.generation, channel: 'action', scope, at: new Date().toISOString(), content: json(event) });
+      this.store.put('host.ingested', id, true, null);
+      this.store.put('host.bootstrap', 'development:v1', { runId: run.id, sourceId: id, prompt: artifact }, null);
+    });
   }
   private grant(runId: string): GrantRecord {
     const old = this.store.get<GrantRecord>('host.run-grants', runId); if (old) return old.value;
@@ -188,7 +210,7 @@ export class AutarkApplication {
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
       actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
-  private mindTools(runId: string): ApplicationTool[] {
+  private mindTools(runId: string): (ApplicationTool & { extension?: true })[] {
     const scope = this.grant(runId).scope;
     if (this.store.get('host.child-runs', runId)) return [];
     if (this.consolidation?.claim(runId)) return this.consolidation.tools(runId);
@@ -207,9 +229,13 @@ export class AutarkApplication {
       name: 'delegation_judge', description: 'Record the parent judgment against every declared child acceptance criterion after artifact inspection; this is not independent product qualification.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, inspection: { type: 'object' }, checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, passed: { type: 'boolean' }, evidence: { type: 'object' } }, required: ['criterion', 'passed', 'evidence'], additionalProperties: false } } }, required: ['id', 'inspection', 'checks'], additionalProperties: false }, execute: (args: JsonValue) => {
         const task = childTask(args); const a = args as Record<string, JsonValue>; return this.delegation.judge(task.task.id, a.inspection as unknown as Parameters<DelegationCoordinator['judge']>[1], a.checks as unknown as Parameters<DelegationCoordinator['judge']>[2]);
       },
-    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...mindDevelopmentTools(this.memory, scope, this.options.authority.generation), ...initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }) ?? [])];
+    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...mindDevelopmentTools(this.memory, scope, this.options.authority.generation), ...initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
   }
   private enqueue(runId: string): void { const row = this.store.get('host.pending-runs', runId); this.store.put('host.pending-runs', runId, { requestedAt: Date.now() }, row?.revision ?? null); }
+  private hasPendingSteering(runId: string): boolean {
+    const sequence = this.store.get<{ messageSequence?: number }>('execution', runId)?.value.messageSequence ?? 0;
+    return this.store.events(runId, sequence).some(event => event.type === 'steering');
+  }
   private ingestCommunications(run: Run): void {
     const entries = this.store.list<CommunicationRecord>('communications.inputs').map(row => row.value).filter(value => value.runId === run.id);
     for (const record of entries) {
@@ -230,12 +256,13 @@ export class AutarkApplication {
     invariant(owed?.status === 'owed' && target, 'No registered owed conversation');
     const previous = this.store.get<{ runId: string }>('host.delivery-runs', id);
     let run = previous ? this.runtime.getRun(previous.value.runId) : undefined;
-    if (!run) {
-      run = this.runtime.admit({ id: `report:${id}`, source: 'obligation', externalId: id, externalRevision: String(owed.revision), actorId: this.options.authority.generation, authenticated: true, scope: owed.audience,
+    if (!run) run = this.store.transaction(() => {
+      const admitted = this.runtime.admit({ id: `report:${id}`, source: 'obligation', externalId: id, externalRevision: String(owed.revision), actorId: this.options.authority.generation, authenticated: true, scope: owed.audience,
         value: json({ obligation: owed, requirement: 'Investigate the owed outcome and report explicitly when ready. Progress leaves the promise owed. Unknown delivery cannot be retried.' }) }, this.options.authority, this.config.scheduler.resources, 'initiative:ordinary');
-      const grant = this.grant(run.id), row = this.store.get('host.run-grants', run.id)!; this.store.put('host.run-grants', run.id, { ...grant, target }, row.revision);
-      this.store.put('host.delivery-runs', id, { runId: run.id }, null);
-    }
+      const grant = this.grant(admitted.id), row = this.store.get('host.run-grants', admitted.id)!; this.store.put('host.run-grants', admitted.id, { ...grant, target }, row.revision);
+      this.store.put('host.delivery-runs', id, { runId: admitted.id }, null);
+      return admitted;
+    });
     // A failed/uncertain/terminal slice needs an explicit new decision, not an automatic physical retry.
     if (['completed', 'cancelled', 'blocked'].includes(run.status)) return;
     await this.runtime.resume(run.id, this.prompt, signal); this.conversationObligations.confirm();
@@ -255,7 +282,8 @@ export class AutarkApplication {
     const run = this.runtime.getRun(runId); invariant(run, 'Unknown run');
     if (this.occupied() >= this.config.maxConcurrentRuns || this.closing) { this.enqueue(runId); return run; }
     const queued = this.store.get('host.pending-runs', runId); if (queued) this.store.delete('host.pending-runs', runId, queued.revision);
-    const task = this.runtime.resume(runId, this.prompt, signal).then(result => {
+    const bootstrapRun = this.store.get<{ runId: string }>('host.bootstrap', 'development:v1')?.value.runId;
+    const task = this.runtime.resume(runId, bootstrapRun === runId && this.bootstrapPrompt ? this.bootstrapPrompt : this.prompt, signal).then(result => {
       for (const observation of this.runtime.observations(runId)) this.ingestObservation(observation);
       if (!this.closing) this.consolidation.finish(runId);
       return result;
@@ -279,7 +307,7 @@ export class AutarkApplication {
       this.conversationObligations.confirm();
       // Give development first access to a freed slot on alternating admissions.
       if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns) { this.developmentTurn = false; this.startDevelopment(); }
-      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key)))
+      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
         .sort((a, b) => (this.store.get<{ requestedAt: number }>('host.pending-runs', a.key)?.value.requestedAt ?? 0) - (this.store.get<{ requestedAt: number }>('host.pending-runs', b.key)?.value.requestedAt ?? 0) || a.key.localeCompare(b.key));
       for (const row of pending) {
         if (this.occupied() >= this.config.maxConcurrentRuns) break;

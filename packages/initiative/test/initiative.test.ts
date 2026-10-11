@@ -101,7 +101,7 @@ test('machine plan retains Aeon Lane Task ownership/evidence and rejects depende
 });
 
 test('model tool descriptors capture audience, enforce host resource ceiling and permit independent goal adoption', () => {
-  const f = fixture(); evidence(f); const tools = initiativeTools(f.goals, f.drives, f.plans, scope, authority.generation, resources, () => at); assert.ok(tools.every(t => /^[a-z0-9_]+$/.test(t.name))); const propose = tools.find(t => t.name === 'initiative_goal_propose')!;
+  const f = fixture(); evidence(f); const tools = initiativeTools(f.goals, f.drives, f.plans, scope, authority.generation, resources, 'r', () => at); assert.ok(tools.every(t => /^[a-z0-9_]+$/.test(t.name))); const propose = tools.find(t => t.name === 'initiative_goal_propose')!;
   const args = { id: 'model-goal', purpose: 'compare unexplained observed patterns', successCriteria: ['retain comparison'], sourceIds: ['episode'], resources: { ...resources, maxRequests: 31 }, priority: 1, nextAction: 'inspect artifacts', reviewAt: at }; assert.throws(() => propose.execute(args), /host grant/); const result = propose.execute({ ...args, resources: { ...resources } }) as Goal;
   const accepted = tools.find(t => t.name === 'initiative_goal_accept')!.execute({ id: result.id, expectedRevision: result.revision, reason: 'independent curiosity merits observation' }) as Goal; assert.equal(accepted.status, 'ready'); assert.throws(() => propose.execute({ ...args, resources: { ...resources }, scope: { kind: 'public' } }), /unknown/); f.store.close();
 });
@@ -158,8 +158,7 @@ test('progress callback retains owed outcome and backs off repeated delivery att
 
 test('model progress tool consumes actual current runtime observations and cannot fabricate completion evidence', async () => {
   const f = fixture(); evidence(f); ready(f, 'model-progress'); let toolDecision: Goal | undefined;
-  const tools = initiativeTools(f.goals, f.drives, f.plans, scope, authority.generation, resources, () => at), progress = tools.find(t => t.name === 'initiative_goal_progress')!;
-  const shell: ShellPort = { async run(input, bridge) { const frame = JSON.parse((input.messages[0] as { content: string }).content); assert.equal(frame.goal.revision, f.goals.goal('model-progress')!.revision); const obs = await bridge.execute({ id: 'measurement', runId: input.run.id, stepId: 's', name: 'measure', arguments: {} });
+  const shell: ShellPort = { async run(input, bridge) { const progress = initiativeTools(f.goals, f.drives, f.plans, scope, authority.generation, resources, input.run.id, () => at).find(t => t.name === 'initiative_goal_progress')!; const frame = JSON.parse((input.messages[0] as { content: string }).content); assert.equal(frame.goal.revision, f.goals.goal('model-progress')!.revision); const obs = await bridge.execute({ id: 'measurement', runId: input.run.id, stepId: 's', name: 'measure', arguments: {} });
     assert.throws(() => progress.execute({ id: 'model-progress', expectedRevision: frame.goal.revision, decision: { kind: 'complete', reason: 'imagined success', evidenceIds: ['fabricated'] } }), /successful observations/);
     toolDecision = progress.execute({ id: 'model-progress', expectedRevision: frame.goal.revision, decision: { kind: 'complete', reason: 'measured outcome satisfies accepted finite criteria', evidenceIds: [obs.id] } }) as Goal; return { status: 'completed', observations: [obs] }; } };
   const r = runtime(f, shell, () => Date.parse(at)), scheduler = new FairScheduler(f.store, f.goals, f.obligations, 'model-progress', policy(), Date.parse(at)), runner = new InitiativeRunner({ scheduler, runtime: r.runtime, memory: f.memory, authority, prompt: () => prompt, decide: () => { throw Error('model progress already revised agenda'); } });
