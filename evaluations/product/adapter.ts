@@ -38,7 +38,7 @@ export function assertPrivateRoot(privateRoot: string, roots: string[]): void {
   invariant(isAbsolute(privateRoot) && realpathSync(privateRoot) === privateRoot, 'Canonical evaluator-private directory required');
   for (const root of roots) invariant(!beneath(root, privateRoot) && !beneath(privateRoot, root), 'Evaluator-private files must be disjoint from candidate mounts and state');
 }
-function artifactReader(workspace: string) {
+export function artifactReader(workspace: string) {
   return (name: string) => {
     invariant(name.length > 0 && !isAbsolute(name), 'Relative artifact path required');
     const path = resolve(workspace, name);
@@ -49,7 +49,7 @@ function artifactReader(workspace: string) {
     return readFileSync(path, 'utf8');
   };
 }
-function observe(app: AutarkApplication, runId: string, outputs: unknown[]): Omit<CaseObservation, 'readArtifact'> {
+export function observe(app: AutarkApplication, runId: string, outputs: unknown[]): Omit<CaseObservation, 'readArtifact'> {
   const runs = new Set([runId, ...app.resources.descendants(runId)]);
   const requests = app.store.list<{ request: PhysicalRequest }>('requests').map(row => row.value.request).filter(request => runs.has(request.runId));
   const promptIds = new Set(requests.map(request => request.promptManifestId));
