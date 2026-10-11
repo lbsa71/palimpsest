@@ -14,6 +14,7 @@ import { OperationalStore } from '../packages/storage/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
+import { hostSelection, requestHostSuccessor } from './host-successor.ts';
 import { controlSocket, requestControl, serveControls } from './cli.ts';
 import { contentAddressedEvidence, loadHostPolicy, type HostPolicyFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
@@ -152,6 +153,40 @@ test('accepted but unbootable coordinator restores the retained host without eva
     assert.ok(errors.includes('deliberately unbootable accepted host'));
     assert.ok(recovered.ready.authority.epoch > first.ready.authority.epoch);
   } finally {
+    if (child && child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGTERM'); await exited; }
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('a broken accepted launcher falls back through the retained bootstrap on restart without a surviving old coordinator', { timeout: 120000 }, async () => {
+  const f = fixture(); let supervisor: ServiceSupervisor | undefined, child: ChildProcess | undefined;
+  const launcher = join(f.writableSource, 'deployment/host-successor.ts');
+  writeFileSync(launcher, "throw new Error('accepted launcher failed before startup');\n" + readFileSync(launcher, 'utf8'));
+  const candidate = freezeApplication(f.writableSource, f.host.artifactStore, f.inputs);
+  const fields = { ...f.policy, controlRevision: candidate.manifest.controls }, nextPolicy = { ...fields, policyDigest: admissionPolicyIdentity(fields) };
+  const config = { host: f.host, mode: 'engineering' as const, evidenceDirectory: f.evidenceDirectory, policyFiles: [] as [string, string][] };
+  const configPath = join(f.root, 'host.json'); writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
+  function start() {
+    child = spawn(process.execPath, [fileURLToPath(new URL('./cli.ts', import.meta.url)), 'launch', configPath], { env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1', MISTRAL_API_KEY: 'unavailable-provider', AUTARK_DIRECT_TOKEN: 'token' }, stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr!.resume(); return child;
+  }
+  try {
+    supervisor = await ServiceSupervisor.open({ ...f.options, getPolicy: digest => digest === nextPolicy.policyDigest ? nextPolicy : f.options.getPolicy(digest) });
+    const stage = await supervisor.stageControl(f.proof(candidate, f.initial), nextPolicy.policyDigest);
+    await supervisor.activateControl(stage); await supervisor.acceptProbation(f.proof(candidate, f.initial));
+    requestHostSuccessor(config, supervisor.status().release!.accepted, { candidateId: f.incumbent.manifest.id, policyDigest: f.policy.policyDigest });
+    await supervisor.close(); supervisor = undefined;
+    rmSync(f.evidenceDirectory, { recursive: true, force: true });
+    const failed = start(); const code = await new Promise(resolve => failed.once('exit', resolve));
+    assert.equal(code, 1); assert.equal(hostSelection(config)?.phase, 'booting');
+    start();
+    const deadline = Date.now() + 45000; let recovered: any;
+    while (Date.now() < deadline) { try { const s = await requestControl(f.host.stateDirectory, { kind: 'status' }) as any; if (s.running) { recovered = s; break; } } catch {} await new Promise(resolve => setTimeout(resolve, 30)); }
+    assert.ok(recovered, 'retained bootstrap must recover failed launcher');
+    assert.ok(recovered.coordinator.module.includes(f.incumbent.manifest.id));
+    assert.equal(recovered.release.accepted.candidateId, f.incumbent.manifest.id);
+  } finally {
+    await supervisor?.close();
     if (child && child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGTERM'); await exited; }
     rmSync(f.root, { recursive: true, force: true });
   }
