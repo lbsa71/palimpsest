@@ -5,6 +5,7 @@ import type { ApplicationConfig } from '../../deployment/config.ts';
 import { identity, invariant, type Authority, type PhysicalRequest } from '../../packages/contracts/index.ts';
 import { AuthorityStore } from '../../packages/supervisor/authority.ts';
 import { LocalLostReplyReceiver, lifecycleTransport, lifecycleWorkload, preparePublicFiles, type LifecycleCase, type LifecycleControl } from './lifecycle-fixtures.ts';
+import { hash } from './adapter.ts';
 
 interface Boot { config: ApplicationConfig; authority: Authority; caseId: LifecycleCase; control: LifecycleControl; phase: 0 | 1; receiverPath: string; attemptId: string }
 /** Dedicated fixed public process fixture, with no arbitrary operation or callback accepted over IPC. */
@@ -14,9 +15,15 @@ async function child() {
   const authorityStore = new AuthorityStore(join(boot.config.stateDirectory, 'authority.sqlite'));
   const receiver = boot.caseId === 'S11' ? new LocalLostReplyReceiver(boot.receiverPath) : undefined;
   const notify = (value: unknown) => process.send!(value as object);
-  const app = new AutarkApplication({ config: boot.config, authorityStore, authority: boot.authority, secrets: { mistralApiKey: 'PUBLIC-fixture-no-provider', directToken: 'PUBLIC-fixture-no-listener' },
+  const transport = lifecycleTransport({ ...boot, model: boot.config.model.id, actorId: boot.authority.generation, boundary: runId => notify({ type: 'boundary', runId, pid: process.pid, at: new Date().toISOString() }) });
+  let app: AutarkApplication;
+  app = new AutarkApplication({ config: boot.config, authorityStore, authority: boot.authority, secrets: { mistralApiKey: 'PUBLIC-fixture-no-provider', directToken: 'PUBLIC-fixture-no-listener' },
     ...(receiver ? { slackBotApi: receiver, slackAppApi: { async call<T>(): Promise<T> { throw new Error('Local lifecycle fixture forbids socket API'); } } } : {}),
-    performRequest: lifecycleTransport({ ...boot, model: boot.config.model.id, actorId: boot.authority.generation, boundary: runId => notify({ type: 'boundary', runId, pid: process.pid, at: new Date().toISOString() }) }) });
+    performRequest: async (payload, signal) => {
+      const response = await transport(payload, signal);
+      app.store.put('screen.lifecycle-provider-responses', hash(payload), { requestSha256: hash(payload), response: app.store.putArtifact(response.body), httpStatus: response.status, recordedAt: new Date().toISOString(), actor: 'host-public-fixture-transport' }, null);
+      return response;
+    } });
   const receive = (externalId: string, revision: string, prompt: string) => app.communications.receive({ source: 'direct', externalId, conversation: externalId, revision, text: prompt, actor: { id: boot.config.direct.actorId, scope: boot.config.direct.scope, modificationEligible: false } }).run;
   let closing = false;
   process.on('message', message => { void (async () => {

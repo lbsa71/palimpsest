@@ -18,25 +18,40 @@ import { fixtureConfiguration } from './fixture.ts';
 function fixtureWitness(): LifecycleWitness {
   const now = Date.now(), runId = 'pure-run', root = 'operating-envelope:v1';
   const snapshot: Snapshot = { at: new Date(now + 30).toISOString(), documents: {}, events: [], artifacts: [], files: {}, ledger: { requests: 1, tokens: 17, costUsd: 0, elapsedMs: 10000, concurrent: 1, cancelled: false } };
-  for (const name of ['allocations', 'budgets', 'requests', 'runs', 'execution', 'observations', 'effects', 'prompts', 'host-transport', 'host.run-grants', 'delegations', 'screen.lifecycle-reconciliation']) snapshot.documents[name] = [];
+  for (const name of ['allocations', 'budgets', 'requests', 'runs', 'execution', 'observations', 'effects', 'prompts', 'host-transport', 'host.run-grants', 'delegations', 'screen.lifecycle-reconciliation', 'communications.direct-outbox', 'screen.lifecycle-provider-responses']) snapshot.documents[name] = [];
   const put = (name: string, key: string, value: any) => snapshot.documents[name]!.push({ key, revision: 1, value });
   const retain = (value: unknown) => { const content = JSON.stringify(value), ref = { uri: `aeon:artifact:${hash(content)}`, sha256: hash(content) }; snapshot.artifacts.push({ ref, content, bytes: Buffer.byteLength(content) }); return ref; };
   const allocation = { rootId: root, envelope: lifecycleEnvelope, startedAt: now, cancelled: false };
   put('allocations', root, allocation); put('allocations', runId, { ...allocation, parentRunId: root }); put('budgets', root, { envelope: lifecycleEnvelope, startedAt: now, cancelled: false });
-  put('runs', runId, { id: runId, status: 'completed', authority: { epoch: 1 } });
+  const authority = { epoch: 1, generation: 'pure', controlRevision: 'pure' };
+  put('runs', runId, { id: runId, status: 'completed', authority }); put('host.run-grants', runId, { workspace: '/pure-workspace', scope: { kind: 'public' } });
   const requestArtifact = retain({ messages: [{ role: 'system', content: 'public' }] });
   put('prompts', 'held-prompt', { artifact: requestArtifact, manifest: { requestDigest: requestArtifact.sha256, fragments: [] } });
   const request = { id: 'held-request', runId, provider: 'mistral', model: 'fixture', promptManifestId: 'held-prompt', requestDigest: requestArtifact.sha256, status: 'uncertain' };
   put('requests', request.id, { rootId: root, request, ceiling: { tokens: 17, costUsd: 0, elapsedMs: 10000 }, charged: { tokens: 17, costUsd: 0, elapsedMs: 10000 } });
   put('host-transport', request.id, { requestId: request.id, dispatched: true, responseDigest: null });
   put('execution', runId, { checkpoint: { runId, observationIds: ['first-read'], artifact: retain({ messages: [], compactions: [] }) } });
-  const readReceipt = retain({ content: '{"value":9}\n' });
-  put('effects', 'read', { id: 'read', runId, kind: 'workspace_read', status: 'succeeded', payload: { path: 'state.json' }, receipt: readReceipt });
-  put('effects', 'write', { id: 'write', runId, kind: 'workspace_write', status: 'succeeded', payload: { path: 'state.json', expectedSha256: 'a'.repeat(64) } });
-  snapshot.files[runId] = { 'state.json': '{"value":9}\n' }; snapshot.events.push({ stream: runId, type: 'steering', data: { authenticated: true, value: 'value9' } });
+  const effect = (id: string, kind: string, payload: unknown, receipt: unknown, sequence: number) => {
+    put('effects', id, { id, runId, kind, status: 'succeeded', payload, receipt: retain(receipt), reservationId: id });
+    const observation = { id, runId, kind: 'result', value: receipt }; put('observations', id, observation); snapshot.events.push({ stream: runId, type: 'observation', sequence, data: observation });
+    put('requests', id, { rootId: root, request: { id, runId, provider: 'effect-receiver', model: kind, status: 'succeeded' }, ceiling: { tokens: 0, costUsd: 0, elapsedMs: 10000 }, charged: { tokens: 0, costUsd: 0, elapsedMs: 0 } });
+  };
+  effect('first-read', 'workspace_read', { path: 'state.json' }, { content: '{"value":4}\n', sha256: hash('{"value":4}\n') }, 1);
+  snapshot.events.push({ stream: runId, type: 'checkpoint', sequence: 2, data: snapshot.documents.execution![0]!.value.checkpoint });
+  snapshot.events.push({ stream: runId, type: 'steering', sequence: 3, data: { authenticated: true, value: 'value9' } });
+  effect('write', 'workspace_write', { path: 'state.json', content: '{"value":9}\n', expectedSha256: hash('{"value":4}\n') }, { sha256: hash('{"value":9}\n') }, 4);
+  effect('read', 'workspace_read', { path: 'state.json' }, { content: '{"value":9}\n' }, 5);
+  const speech = { transport: 'direct', text: 'verified', delivered: true, clientMsgId: 'pure-delivery' };
+  effect('speech', 'speech_send', { channel: 'pure', text: 'verified' }, speech, 6); put('communications.direct-outbox', 'speech', { runId, receipt: speech });
+  snapshot.ledger.requests = snapshot.documents.requests!.length; snapshot.files[runId] = { 'state.json': '{"value":9}\n' };
   const initial = structuredClone(snapshot), boundary = structuredClone(snapshot);
   boundary.documents.requests![0]!.value.request.status = 'dispatched'; boundary.documents.runs![0]!.value.status = 'running';
-  const process = (pid: number, time: number): ProcessReceipt => ({ identity: { pid, start: String(pid), state: 'S' }, artifactId: 'fixture', spawnedAt: new Date(time).toISOString(), ready: {}, descendantsAtStop: [], requestedStop: 'SIGKILL', exitedAt: new Date(time + 1).toISOString(), exitCode: null, exitSignal: 'SIGKILL', predecessorGone: true, stderr: '' });
+  boundary.events = boundary.events.filter(event => event.sequence <= 2); boundary.documents.effects = boundary.documents.effects!.filter(row => row.key === 'first-read'); boundary.documents.observations = boundary.documents.observations!.filter(row => row.key === 'first-read'); boundary.documents.requests = boundary.documents.requests!.filter(row => ['held-request', 'first-read'].includes(row.key)); boundary.documents['communications.direct-outbox'] = []; boundary.files[runId] = { 'state.json': '{"value":4}\n' };
+  for (const namespace of Object.keys(initial.documents)) if (!['allocations', 'budgets'].includes(namespace)) initial.documents[namespace] = [];
+  initial.documents.allocations = initial.documents.allocations!.filter(row => row.key === root); initial.events = []; initial.artifacts = []; initial.files = {}; initial.ledger = { requests: 0, tokens: 0, costUsd: 0, elapsedMs: 30, concurrent: 0, cancelled: false };
+  const host = { readerProcess: { pid: 303, start: '303', state: 'S' }, servingProcess: { pid: 101, start: '101', state: 'S' }, authority: { ...authority, artifactId: 'fixture' } };
+  initial.hostObservation = structuredClone(host); boundary.hostObservation = structuredClone(host); snapshot.hostObservation = structuredClone(host);
+  const process = (pid: number, time: number): ProcessReceipt => ({ identity: { pid, start: String(pid), state: 'S' }, artifactId: 'fixture', spawnedAt: new Date(time).toISOString(), ready: { authority, artifactId: 'fixture' }, descendantsAtStop: [], requestedStop: 'SIGKILL', exitedAt: new Date(time + 1).toISOString(), exitCode: null, exitSignal: 'SIGKILL', predecessorGone: true, stderr: '' });
   return { caseId: 'S08', runId, initial, boundary, final: snapshot, processes: [process(101, now), process(202, now + 2)], receiver: null, transition: null, plainOldRun: null, plainCurrentRun: null };
 }
 function check(witness: LifecycleWitness, id: string) { return assessLifecycle(witness).checks.find(check => check.id === id)!; }
@@ -57,11 +72,30 @@ test('restart cannot reset original root allowance, clock or uncertain reservati
 });
 test('correct final artifact without retained initial observation or authenticated steering is insufficient', () => {
   const witness = fixtureWitness(); witness.final.documents.execution![0]!.value.checkpoint.observationIds = []; assert.equal(check(witness, 'checkpoint-and-authenticated-correction-retained').passed, false);
-  const corrected = fixtureWitness(); corrected.final.events[0]!.data.authenticated = false; assert.equal(check(corrected, 'checkpoint-and-authenticated-correction-retained').passed, false);
+  const corrected = fixtureWitness(); corrected.final.events.find(event => event.type === 'steering')!.data.authenticated = false; assert.equal(check(corrected, 'checkpoint-and-authenticated-correction-retained').passed, false);
 });
 test('artifact tampering and missing physical payload/transport are rejected', () => {
   const witness = fixtureWitness(); witness.final.artifacts[0]!.content += ' '; assert.equal(check(witness, 'retained-artifact-bytes-authentic').passed, false);
   const missing = fixtureWitness(); missing.final.documents['host-transport'] = []; assert.equal(check(missing, 'physical-payload-and-transport-bound').passed, false);
+});
+test('targeted restart controls have a passing baseline before removing the actual read4 or inventing the write digest', () => {
+  const missing = fixtureWitness(); assert.equal(check(missing, 'checkpoint-and-authenticated-correction-retained').passed, true); missing.boundary!.documents.observations = []; assert.equal(check(missing, 'checkpoint-and-authenticated-correction-retained').passed, false);
+  const digest = fixtureWitness(); assert.equal(check(digest, 'real-corrected-artifact-readback').passed, true); digest.final.documents.effects!.find(row => row.key === 'write')!.value.payload.expectedSha256 = 'a'.repeat(64); assert.equal(check(digest, 'real-corrected-artifact-readback').passed, false);
+});
+test('changed boundary grants, enlarged existing allocations and switched workspaces fail continuity against a valid baseline', () => {
+  for (const mutation of ['boundary-grant', 'run-allocation', 'workspace']) {
+    const witness = fixtureWitness(); assert.equal(check(witness, 'original-grant-clock-retained').passed, true);
+    if (mutation === 'boundary-grant') witness.boundary!.documents.budgets![0]!.value.envelope.maxRequests = 999;
+    if (mutation === 'run-allocation') witness.final.documents.allocations![1]!.value.envelope = { ...lifecycleEnvelope, maxTokens: 720000 };
+    if (mutation === 'workspace') witness.final.documents['host.run-grants']![0]!.value.workspace = '/switched';
+    assert.equal(check(witness, 'original-grant-clock-retained').passed, false, mutation);
+  }
+});
+test('private final text or a claimed outbox cannot replace an actual delivered speech effect/receipt', () => {
+  const witness = fixtureWitness(); assert.equal(check(witness, 'explicit-real-delivered-output').passed, true); witness.final.documents.effects = witness.final.documents.effects!.filter(row => row.key !== 'speech'); assert.equal(check(witness, 'explicit-real-delivered-output').passed, false);
+});
+test('every observed effect must retain its original physical reservation, including local sends', () => {
+  const witness = fixtureWitness(); assert.equal(check(witness, 'all-effects-have-original-physical-receipts').passed, true); witness.final.documents.requests = witness.final.documents.requests!.filter(row => row.key !== 'write'); assert.equal(check(witness, 'all-effects-have-original-physical-receipts').passed, false);
 });
 test('a short history and a claimed summary cannot establish threshold compaction', () => {
   const witness = fixtureWitness(); witness.caseId = 'S09'; witness.final.files[witness.runId] = { 'answer.json': '{"origin":"indigo","notes":32}\n' };
