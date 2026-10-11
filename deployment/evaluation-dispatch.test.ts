@@ -458,7 +458,7 @@ test('ordinary governance proposal uses old physical judges before accepted rest
     assert.deepEqual(store.get('fixture.governance-latest', 'lived'), latest); assert.equal(physicalRequests().length, 2);
     const futureRun = await admit('source-governance-future', 'fixture-future-evaluation: exercise the newly accepted reviewer.');
     const futureJob = await eventually(() => {
-      const job = store.list<any>('host.evolution-jobs').map(row => row.value).find(job => job.kind === 'evaluation' && job.runId === futureRun);
+      const job = store.list<any>('host.evolution-jobs').map(row => row.value).find(job => job.kind === 'evaluation' && store.readJsonArtifact<EvaluationRequest>(job.request).proposal.runId === futureRun);
       if (job?.status === 'uncertain') throw Error(JSON.stringify({ future: job, host: supervisor!.status().evaluation }));
       return job;
     }, value => value?.status === 'completed');
@@ -468,7 +468,7 @@ test('ordinary governance proposal uses old physical judges before accepted rest
     for (const evidence of futureResult.evidence as EvaluationEvidence[]) {
       assert.equal(evidence.evaluatorArtifact.sha256, f.futureReviewerDigest); assert.equal(evidence.controlRevision, record.review.candidate.manifest.controls);
       assert.deepEqual(evidence.caseResults.map(result => result.id), ['governance-future-source']);
-      const observed = JSON.parse(contentAddressedEvidence(f.evidenceDirectory)(evidence.artifact.uri).toString());
+      const observed = store.readJsonArtifact<any>({ ...evidence.artifact, uri: `aeon:artifact:${evidence.artifact.sha256}` });
       assert.equal(observed.reviewerGeneration, 'source-owned-future-reviewer-v2'); assert.equal(observed.inheritedKeys, false);
     }
     const futureProfile = store.list<any>('observations').map(row => row.value).find(observation => observation.runId === futureRun && observation.value?.proposalPath === 'deployment/governance-proposal.json')?.value;
