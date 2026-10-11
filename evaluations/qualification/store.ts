@@ -86,10 +86,10 @@ export class QualificationStore {
     invariant(value instanceof Uint8Array, 'Private evidence byte array required');
     invariant(value.byteLength <= this.capacityBytes, 'Private evidence capacity exhausted');
     const bytes = Buffer.from(value), sha256 = hashBytes(bytes);
-    try { invariant(this.read(sha256).equals(bytes), 'Existing immutable artifact changed'); return { uri: `sha256:${sha256}`, sha256 }; }
+    try { invariant(this.read(sha256, bytes.byteLength).equals(bytes), 'Existing immutable artifact changed'); return { uri: `sha256:${sha256}`, sha256 }; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     try { this.write(sha256, bytes); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; invariant(this.read(sha256).equals(bytes), 'Existing immutable artifact changed'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; invariant(this.read(sha256, bytes.byteLength).equals(bytes), 'Existing immutable artifact changed'); }
     return { uri: `sha256:${sha256}`, sha256 };
   }
   readArtifact(ref: ArtifactRef, maxBytes = this.capacityBytes): Buffer {
