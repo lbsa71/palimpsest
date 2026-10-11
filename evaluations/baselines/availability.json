@@ -33,10 +33,10 @@
     },
     {
       "id": "claude-code",
-      "executable": null,
-      "version": null,
-      "installed": false,
-      "installationScope": "not found on current PATH; not proof of absence everywhere",
+      "executable": "/home/palimpsest/migration/aeon-1-20261011/claude-native-feasibility/claude-2.1.296",
+      "version": "2.1.296 (Claude Code)",
+      "installed": true,
+      "installationScope": "Pinned standalone comparator artifact only; no global installation or account configuration",
       "configuredModel": null,
       "configuredEffort": null,
       "configurationUsedForRuns": null,
@@ -46,7 +46,11 @@
       "authentication": "unverified",
       "authorizedResourceGrant": null,
       "sameModelFeasibility": "unavailable",
-      "bestSystemRun": "unavailable"
+      "bestSystemRun": "unavailable",
+      "binarySha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
+      "binaryBytes": 257068216,
+      "manifestSignature": "Verified against documented release key 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+      "engineeringTransport": "in progress; first synthetic trial failed; no paid requests"
     }
   ],
   "parity": "unavailable"
