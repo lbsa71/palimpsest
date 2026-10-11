@@ -42,5 +42,5 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Branch / worktree | `codex/a1-contracts-20261011` / `/home/palimpsest/migration/aeon-1-20261011/contracts` |
 | Base source / contract revision | `14c742041270bb2acb15b4903a970394a140493c`; C1 draft v1 |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Implemented draft C1 v1; 17/17 conformance tests and strict TypeScript check pass; see ../evidence/A1-L01/implementation.md |
-| Blockers / next eligible task | Draft implementation complete; L03–L07 acknowledgements, final L02/L09 integration and independent review required for C1 acceptance |
+| Last handoff / evidence | First handoff `f11a25bfc6583d9e20af629e2a0a46f776ebb15e`; implemented draft C1 v1; 17/17 conformance tests and strict TypeScript check pass; see ../evidence/A1-L01/implementation.md |
+| Blockers / next eligible task | Draft implementation complete; L03–L07 acknowledgements, final L09 integration and independent review required for C1 acceptance |

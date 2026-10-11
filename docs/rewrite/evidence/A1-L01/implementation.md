@@ -19,3 +19,5 @@ Observed on 2026-10-11:
 Exit 0, no diagnostics. Uses already installed development tooling for validation only. Node 24 native stripping executes source directly; no emitted artifacts or linked node_modules added to this lane.
 
 Limitations: typed validators are not general untrusted decoders; authenticated admission, required evaluation workload, durable compare-and-swap, scope authentication, cancellation propagation, receipts and receiver fencing belong to consumers. No full C1, integration, live competence, autonomous use, H1 or deployment claim. L09 should integrate this exact revision, route L03–L07 acknowledgement, and obtain fresh review; L01 remains owner of requested contract adaptations.
+
+L02 acknowledged its strict adapter compilation against the final C1 ShellBridge shape. Checkpoint content hashing is canonical `identity(content)`; observation ID projections must agree. First handoff: `f11a25bfc6583d9e20af629e2a0a46f776ebb15e`. The follow-up also adds a data-only bounded `DelegationTask` descriptor for L06.

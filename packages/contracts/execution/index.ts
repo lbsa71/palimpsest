@@ -1,5 +1,5 @@
 import { assertAuthority, identity, integer, invariant, nonempty, validateArtifact, validateAuthority, validateProvenance, validateScope } from '../common.ts';
-import type { ArtifactRef, Authority, DataScope, JsonValue, Provenance } from '../common.ts';
+import type { ArtifactRef, Authority, DataScope, JsonValue, Provenance, ResourceEnvelope } from '../common.ts';
 import type { PhysicalRequest, PromptManifest } from '../control/index.ts';
 
 export type RunStatus = 'ready' | 'running' | 'waiting' | 'blocked' | 'completed' | 'cancelled';
@@ -80,4 +80,22 @@ export interface ShellBridge {
   settle(receipt: PhysicalRequest): Promise<void>;
 }
 export interface ShellPort { run(input: ShellInput, bridge: ShellBridge, signal?: AbortSignal): Promise<ShellResult> }
+/** A child receives only artifacts and authority within this bounded parent allocation. */
+export interface DelegationTask {
+  id: string;
+  parentRunId: string;
+  parentGoalId: string;
+  objective: string;
+  inputs: ArtifactRef[];
+  provenance: Provenance;
+  scope: DataScope;
+  acceptanceCriteria: string[];
+  writablePaths: string[];
+  allowedEffects: string[];
+  resources: ResourceEnvelope;
+  modelPolicy: { provider: string; model: string; effort: string | null };
+  outputLocation: string;
+  cancellationConditions: string[];
+  maxDepth: number;
+}
 export interface EffectReceiver { dispatch(effect: Effect, signal?: AbortSignal): Promise<{ outcome: 'succeeded' | 'failed' | 'uncertain'; receipt?: ArtifactRef }>; reconcile(effect: Effect): Promise<{ outcome: 'succeeded' | 'not-applied' | 'unresolved'; receipt: ArtifactRef }> }
