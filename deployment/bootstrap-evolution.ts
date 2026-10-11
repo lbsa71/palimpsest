@@ -81,6 +81,7 @@ export function initializeBootstrap(config: SupervisorFile, selected: ReleaseTar
 export function publishBootstrapSelection(config: SupervisorFile, selected: ReleaseTarget): void {
   const boot = bootstrapDirectory(config.host.stateDirectory);
   if (!existsSync(boot)) return; // Explicitly uninstalled engineering hosts have no process-manager slot.
+  assertPrivateHostDirectory(boot);
   const lease = new ProcessLease(join(boot, 'publication.sqlite'));
   try {
     accepted(config, selected); const path = prepare(config, selected);
@@ -92,7 +93,9 @@ export function publishBootstrapSelection(config: SupervisorFile, selected: Rele
 }
 /** Separate post-accept operation; rotation cannot be part of candidate admission or publication. */
 export function rotateBootstrapRescue(config: SupervisorFile, selected: ReleaseTarget): void {
-  const boot = bootstrapDirectory(config.host.stateDirectory), lease = new ProcessLease(join(boot, 'publication.sqlite'));
+  const boot = bootstrapDirectory(config.host.stateDirectory);
+  assertPrivateHostDirectory(boot);
+  const lease = new ProcessLease(join(boot, 'publication.sqlite'));
   try {
     const state = accepted(config, selected);
     invariant(!existsSync(join(boot, 'failed')), 'Cannot rotate rescue while rescue is latched');
