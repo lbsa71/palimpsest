@@ -29,6 +29,37 @@ function runtime(f: ReturnType<typeof fixture>, shell: ShellPort, now: () => num
   return { effects, ledger, runtime: new DurableRuntime({ store: f.store, shell, effects, resources: ledger, now }) };
 }
 
+test('host-deferred initiative start rolls back its slice and preserves unrelated work and original author', async () => {
+  let now = Date.parse(at), held = false, staleSelection = true, heldRunId = '', calls = 0;
+  const f = fixture(undefined, () => new Date(now).toISOString()); ready(f, 'held');
+  const r = runtime(f, { async run() { calls++; return { status: 'checkpointed', observations: [] }; } }, () => now);
+  const guarded = new DurableRuntime({ store: f.store, effects: r.effects, resources: r.ledger, shell: r.runtime.shell, now: () => now,
+    canResume: run => !held || run.id !== heldRunId });
+  const scheduler = new FairScheduler(f.store, f.goals, f.obligations, 'host-gate', policy(), now, goal => {
+    if (goal.id !== 'held' || !held) return true;
+    // One selection uses a stale host observation; the runtime must independently gate it.
+    if (staleSelection) { staleSelection = false; return true; }
+    return false;
+  });
+  const runner = new InitiativeRunner({ scheduler, runtime: guarded, memory: f.memory, authority, prompt: () => prompt,
+    decide: () => { throw Error('No new observation may be graded'); } });
+  try {
+    await runner.tick(); heldRunId = f.store.get<{ runId: string }>('initiative.execution', 'held')!.value.runId;
+    now += 1000; held = true;
+    const goalBefore = f.goals.goal('held'), runBefore = guarded.getRun(heldRunId), executionBefore = f.store.get('initiative.execution', 'held');
+    const budgetBefore = f.store.list('allocations'), slicesBefore = scheduler.snapshot();
+    assert.equal((await runner.tick()).kind, 'idle'); assert.equal(calls, 1);
+    assert.deepEqual(scheduler.snapshot(), slicesBefore); assert.deepEqual(f.goals.goal('held'), goalBefore);
+    assert.deepEqual(guarded.getRun(heldRunId), runBefore); assert.deepEqual(f.store.get('initiative.execution', 'held'), executionBefore);
+    assert.deepEqual(f.store.list('allocations'), budgetBefore); assert.equal(r.ledger.snapshot(heldRunId).requests, 0);
+    ready(f, 'unrelated'); assert.equal((await runner.tick()).kind, 'selected'); assert.equal(calls, 2);
+    assert.equal(scheduler.snapshot().lifetimeSlices, slicesBefore.lifetimeSlices + 1);
+    const unrelated = f.goals.goal('unrelated')!; f.goals.revise(unrelated.id, unrelated.revision, { status: 'paused' }, 'Fixture work waits');
+    held = false; now += 1000; assert.equal((await runner.tick()).kind, 'selected'); assert.equal(calls, 3);
+    assert.equal(f.store.get<{ runId: string }>('initiative.execution', 'held')!.value.runId, heldRunId);
+  } finally { f.store.close(); }
+});
+
 test('goal revisions/dependencies/reasons survive reopen; terminal evidence and allowance cannot disappear', async () => {
   const file = filename(); let f = fixture(file); const a = ready(f, 'a'), b = ready(f, 'b', { dependencyIds: ['a'] });
   assert.deepEqual((await f.goals.ready(at)).map(g => g.id), ['a']);

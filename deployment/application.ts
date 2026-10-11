@@ -164,7 +164,8 @@ export class AutarkApplication {
       const result = await broker.run({ ...input, messages: [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
       return this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result));
     } };
-    this.runtime = new DurableRuntime({ store: this.store, shell, effects: this.effects, resources: this.resources });
+    this.runtime = new DurableRuntime({ store: this.store, shell, effects: this.effects, resources: this.resources,
+      canResume: run => this.controls.eligibleRun(run.id, this.hasPendingSteering(run.id)) });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);

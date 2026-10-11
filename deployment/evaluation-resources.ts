@@ -11,6 +11,8 @@ export interface ReviewResourceOptions {
   store: OperationalStore; request: EvaluationRequest; evaluatorDigest: string; evaluatorId: string;
   maxElapsedMs: number; assertAuthority(authority: Authority): void;
   dispatchAuthority(authority: Authority, operation: () => void): void; signal?: AbortSignal; now?: () => number;
+  /** Synchronous host state committed atomically with the original reservation, under both locks. */
+  commitReservation?: () => void;
 }
 export function reviewPhysicalId(jobId: string): string { return `external-review:${jobId}`; }
 /** Caller holds the operational transaction when accepting a result or launching a child. */
@@ -39,6 +41,7 @@ export function prepareReview(options: ReviewResourceOptions): void {
     usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs } };
   options.dispatchAuthority(request.proposal.authority, () => store.transaction(() => {
     options.signal?.throwIfAborted(); options.assertAuthority(request.proposal.authority); assertReviewLineage(store, request, now);
+    options.commitReservation?.();
     new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now).reserve(physical);
     store.put(preparationNamespace, id, { physical, startedAt: now(), maxElapsedMs: options.maxElapsedMs }, null);
   }));

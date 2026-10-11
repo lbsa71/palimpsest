@@ -8,6 +8,7 @@ import type { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { SubmissionRequest, SubmissionReceipt } from './evolution-tools.ts';
 
 const namespace = 'host.control-continuations';
+class ActivationDeferred extends Error {}
 export interface ControlActivationRequest {
   id: string; submissionId: string; stageId: string; proposalId: string; runId: string; scope: DataScope; authority: Authority;
 }
@@ -45,6 +46,17 @@ function boundRun(store: OperationalStore, request: ControlActivationRequest): v
   invariant(run && run.status !== 'cancelled' && identity(run.authority) === identity(request.authority) &&
     identity(run.scope) === identity(request.scope), 'Control activation author is cancelled, absent, stale or outside its audience');
 }
+/** Under authority then operational write locks, immediately around actual withdrawal. */
+export function assertControlActivationClaim(store: OperationalStore, stageId: string, review: ProbationReviewRequest): void {
+  const record = store.get<ControlContinuationRecord>(namespace, review.activationId)?.value;
+  invariant(record?.status === 'activating' && identity(record.review) === identity(review) && record.request.stageId === stageId &&
+    record.request.id === review.activationId && review.id === `probation:${identity(record.request)}` &&
+    record.request.runId === review.proposal.runId && record.request.proposalId === review.proposal.id &&
+    identity(record.request.scope) === identity(review.proposal.scope) && identity(record.request.authority) === identity(review.judgeAuthority),
+  'Exact activating control reservation required');
+  boundRun(store, record.request); assertProbationLineage(store, review);
+  invariant(store.get<Run>('runs', record.request.runId)?.value.status !== 'running', 'Control producer is still running');
+}
 /** Ordinary tools may enqueue this exact binding after their own effect acknowledgement.
  * The trusted host independently resolves the staged submission before any activation. */
 export function enqueueControlActivation(store: OperationalStore, request: ControlActivationRequest, signal?: AbortSignal): ControlContinuationRecord {
@@ -72,11 +84,11 @@ export interface ControlContinuationOptions {
   /** Check external reviewer availability and the activation tool's completed local ack. */
   readyToActivate?(request: ControlActivationRequest): boolean;
   /** Reserve once BEFORE withdrawal, under the existing author lineage. Never allocate a new budget. */
-  reserveProbation(request: ProbationReviewRequest): void;
+  reserveProbation(request: ProbationReviewRequest, commitReservation: () => void): void;
   /** Release only this exact logical reservation; preserve uncertain physical outcomes. */
   finishProbation?(request: ProbationReviewRequest): void;
   reviewProbation(request: RunningProbationReview, signal: AbortSignal): Promise<ReleaseProof>;
-  activate(stageId: string): Promise<Authority>; acceptProbation(proof: ReleaseProof, review: RunningProbationReview): Promise<void>;
+  activate(stageId: string, review: ProbationReviewRequest): Promise<Authority>; acceptProbation(proof: ReleaseProof, review: RunningProbationReview): Promise<void>;
 }
 /** Finite host continuation. Caller withdrawal cannot cancel an accepted activation request.
  * Interrupted activation/review is retained uncertain and never repeated on restart. */
@@ -143,13 +155,23 @@ export class ControlContinuation {
         return review;
       });
       // The reviewer obtains authority then operational write locks. Never invert that order
-      // by calling it from our operational transaction. A crash in this gap leaves a used
-      // reservation: recovery cannot replay it, and no authority transfer has occurred.
+      // by calling it from our operational transaction. Its callback and reservation commit
+      // together, excluding a concurrent producer start without holding locks across awaits.
       reservedReview = review;
-      this.options.reserveProbation(review);
-      this.#update(request.id, { status: 'activating', review });
+      this.options.reserveProbation(review, () => {
+        // The reservation owner holds authority then operational write locks here. The
+        // runtime checks its host gate under this same operational lock before running.
+        this.#resolve(request); this.#abort.signal.throwIfAborted(); assertProbationLineage(this.options.store, review);
+        if (this.options.store.get<Run>('runs', request.runId)?.value.status === 'running' ||
+          this.options.readyToActivate && !this.options.readyToActivate(request)) throw new ActivationDeferred();
+        const current = controlActivationStatus(this.options.store, request.id, request.runId, request.scope);
+        invariant(current?.status === 'pending' && identity(current.request) === identity(request), 'Exact pending activation required');
+        this.#update(request.id, { status: 'activating', review });
+      });
+      const claimed = controlActivationStatus(this.options.store, request.id, request.runId, request.scope);
+      invariant(claimed?.status === 'activating' && identity(claimed.review) === identity(review), 'Atomic activation reservation claim required');
       started = true;
-      const physicalAuthority = await this.options.activate(request.stageId);
+      const physicalAuthority = await this.options.activate(request.stageId, review);
       const state = this.options.status();
       invariant(state.phase === 'probation' && state.active.candidateId === review.candidate.manifest.id &&
         identity(state.probationJudge?.authority && { generation: state.probationJudge.authority.generation, epoch: state.probationJudge.authority.epoch, controlRevision: state.probationJudge.authority.controlRevision }) === identity(review.judgeAuthority) &&
@@ -164,7 +186,8 @@ export class ControlContinuation {
       this.options.assertAuthority(physicalAuthority);
       await this.options.acceptProbation(proof, { ...review, physicalAuthority });
       this.#update(request.id, { status: 'accepted' });
-    } catch {
+    } catch (error) {
+      if (error instanceof ActivationDeferred) return;
       this.#update(pending.request.id, { status: started ? 'uncertain' : 'rejected', diagnosis: started ?
         'Control activation or probation did not complete; inspect retained controller/review evidence and reconcile this ID' :
         'Control activation rejected before authority transfer; inspect the exact stage, author and remaining allowance' });

@@ -131,7 +131,7 @@ export class ReleaseController {
     this.#event('control-staged', { id, receipt, nextPolicy: descriptor, nextPolicyDigest: nextPolicy.policyDigest });
     return id;
   }
-  async activateStagedControl(id: string, generation: string): Promise<Authority> {
+  async activateStagedControl(id: string, generation: string, withdrawGuard?: (commit: () => void) => void): Promise<Authority> {
     this.#idle(); this.#busy = true;
     try {
       const state = this.#ready();
@@ -142,7 +142,7 @@ export class ReleaseController {
       const receipt = this.#admit(stage.proof, state.authority, this.#policy(state.active.policyDigest), 'control-upgrade', state.accepted.candidateId);
       if (nextPolicy.controlRevision !== stage.proof.proposal.candidate.controls) throw new Error('Staged control identity changed');
       return await this.#activate({ ...state, probationJudge: { authority: state.authority, policyDigest: state.active.policyDigest, change: 'control-upgrade' } },
-        { candidateId: receipt.candidateId, policyDigest: nextPolicy.policyDigest }, generation, receipt.evidenceIds, 'transfer');
+        { candidateId: receipt.candidateId, policyDigest: nextPolicy.policyDigest }, generation, receipt.evidenceIds, 'transfer', withdrawGuard);
     } finally { this.#busy = false; }
   }
   /** Fresh probation evidence targets the original admission authority and original judging policy,
@@ -188,11 +188,14 @@ export class ReleaseController {
       return await this.#activate({ ...state, authority: current }, state.accepted, generation, state.admissionEvidenceIds, 'recovery');
     } finally { this.#busy = false; }
   }
-  async #activate(state: ReleaseState, target: ReleaseTarget, generation: string, evidenceIds: string[], kind: 'transfer' | 'recovery'): Promise<Authority> {
+  async #activate(state: ReleaseState, target: ReleaseTarget, generation: string, evidenceIds: string[], kind: 'transfer' | 'recovery', withdrawGuard?: (commit: () => void) => void): Promise<Authority> {
     if (!generation.trim() || generation === state.authority.generation) throw new Error('A distinct successor generation is required');
     verifyCandidate(this.#options.artifactStore, target.candidateId);
-    this.#save(`${kind}-intent`, { ...state, phase: kind, active: target, admissionEvidenceIds: evidenceIds });
-    const withdrawn = state.authority.generation ? this.#options.authorityStore.withdraw(this.#grant(state.authority)) : state.authority;
+    const intent = () => this.#save(`${kind}-intent`, { ...state, phase: kind, active: target, admissionEvidenceIds: evidenceIds });
+    const withdrawn = state.authority.generation ? this.#options.authorityStore.withdraw(this.#grant(state.authority), commit => {
+      const transfer = () => { intent(); commit(); };
+      if (withdrawGuard) return withdrawGuard(transfer); else transfer();
+    }) : (intent(), state.authority);
     this.#save('withdrawn', { ...this.#state(), authority: withdrawn });
     await this.#options.hooks.stopAndDrain(state.authority);
     this.#options.exclusiveProcessLease.assertHeld();

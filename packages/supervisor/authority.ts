@@ -48,13 +48,24 @@ export class AuthorityStore {
     if (!state || !state.generation || state.epoch !== grant.epoch || state.generation !== grant.generation ||
       state.controlRevision !== grant.controlRevision) throw new Error('Stale or withdrawn serving authority');
   }
-  withdraw(grant: ServingAuthority): AuthorityState {
+  withdraw(grant: ServingAuthority, guard?: (commit: () => void) => void): AuthorityState {
     return this.#transaction(() => {
       this.assert(grant);
-      const old = this.current()!;
-      const state = { ...old, epoch: old.epoch + 1, generation: null };
-      this.#write('withdraw', state);
-      return state;
+      let withdrawn: AuthorityState | undefined, open = true;
+      const commit = () => {
+        if (!open) throw new Error('Authority withdrawal guard has ended');
+        if (withdrawn) throw new Error('Authority withdrawal already committed');
+        const old = this.current()!;
+        withdrawn = { ...old, epoch: old.epoch + 1, generation: null };
+        this.#write('withdraw', withdrawn);
+      };
+      // The host may take the operational lock after this authority lock and retain
+      // both through the actual write. No asynchronous guard or skipped commit.
+      let result: unknown;
+      try { result = guard ? guard(commit) : commit(); } finally { open = false; }
+      if (result && typeof result === 'object' && 'then' in result) throw new Error('Withdrawal guard must be synchronous');
+      if (!withdrawn) throw new Error('Withdrawal guard did not commit');
+      return withdrawn;
     });
   }
   /** Caller must drain/reconcile already dispatched effects before activating a successor. */

@@ -42,3 +42,20 @@ test('recovery can grant retained code a newer authority without a model', () =>
     assert.throws(() => store.assert(successor), /withdrawn/);
   } finally { store.close(); rmSync(path, { recursive: true, force: true }); }
 });
+
+test('withdrawal guards cannot skip, duplicate, defer or retain the authority write', () => {
+  const path = mkdtempSync(join(tmpdir(), 'aeon-withdraw-guard-')), store = new AuthorityStore(join(path, 'authority.sqlite'));
+  try {
+    const original = store.bootstrap('one', 'control-v1', 'retained-rescue');
+    let retained!: () => void;
+    assert.throws(() => store.withdraw(original, commit => { retained = commit; }), /did not commit/);
+    assert.throws(() => retained(), /guard has ended/); store.assert(original);
+    assert.throws(() => store.withdraw(original, commit => { commit(); commit(); }), /already committed/); store.assert(original);
+    assert.throws(() => store.withdraw(original, commit => { commit(); throw Error('Cancelled guarded operation'); }), /Cancelled/); store.assert(original);
+    assert.throws(() => store.withdraw(original, commit => { retained = commit; return Promise.resolve(); }), /synchronous/);
+    assert.throws(() => retained(), /guard has ended/); store.assert(original);
+    assert.deepEqual(store.history().map(event => event.kind), ['bootstrap']);
+    const withdrawn = store.withdraw(original, commit => commit()); assert.equal(withdrawn.generation, null);
+    assert.deepEqual(store.history().map(event => event.kind), ['bootstrap', 'withdraw']);
+  } finally { store.close(); rmSync(path, { recursive: true, force: true }); }
+});

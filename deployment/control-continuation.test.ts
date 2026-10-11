@@ -13,7 +13,9 @@ import { OperationalStore } from '../packages/storage/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
-import { assertProbationLineage, ControlContinuation, controlActivationStatus, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ProbationReviewRequest } from './control-continuation.ts';
+import { DurableRuntime } from '../packages/runtime/index.ts';
+import { EffectJournal } from '../packages/effects/index.ts';
+import { assertControlActivationClaim, assertProbationLineage, ControlContinuation, controlActivationStatus, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ProbationReviewRequest } from './control-continuation.ts';
 import { accountedReview, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { EvaluationRequest, SubmissionRequest } from './evolution-tools.ts';
@@ -73,7 +75,10 @@ async function fixture() {
   const asEvaluation = (review: ProbationReviewRequest): EvaluationRequest => ({ requestId: review.id, proposal: review.proposal, candidate: review.candidate, policyDigest: review.policyDigest });
   const resources = (review: ProbationReviewRequest) => ({ store, request: asEvaluation(review), evaluatorDigest: evaluator.sha256, evaluatorId: 'independent-fixture', maxElapsedMs: 1000, assertAuthority: (grant: Authority) => authority.assert(grant), dispatchAuthority: (grant: Authority, operation: () => void) => authority.dispatch(grant, operation) });
   const options: ControlContinuationOptions = { store, mailbox, status: () => controller.status()!, stagedControl: id => controller.stagedControl(id), assertAuthority: grant => authority.assert(grant),
-    reserveProbation: review => prepareReview(resources(review)), activate: id => controller.activateStagedControl(id, `successor-${++generation}`),
+    reserveProbation: (review, commitReservation) => prepareReview({ ...resources(review), commitReservation }),
+    activate: (id, review) => controller.activateStagedControl(id, `successor-${++generation}`, commit => store.transaction(() => {
+      assertControlActivationClaim(store, id, review); commit();
+    })),
     reviewProbation: async (review, signal) => accountedReview({ ...resources(review), prepared: true, physicalAuthority: review.physicalAuthority, signal }, async gate => {
       let reviewer: ChildProcess | undefined;
       try {
@@ -126,6 +131,32 @@ test('binding tampering, stale author and pending cancellation cannot activate o
   }
 });
 
+test('producer winning the reservation race keeps activation pending without spending a reviewer request', async () => {
+  const f = await fixture(); let finishProducer!: () => void, producer: Promise<Run> | undefined, raced = false;
+  const done = new Promise<void>(resolve => { finishProducer = resolve; });
+  const effects = new EffectJournal(f.store, f.authority, { async dispatch() { throw Error('No effects expected'); }, async reconcile() { throw Error('No effects expected'); } });
+  const runtime = new DurableRuntime({ store: f.store, resources: f.ledger, effects,
+    canResume: () => f.status().status === 'pending',
+    shell: { async run() { await done; return { status: 'checkpointed', observations: [] }; } } });
+  const continuation = new ControlContinuation({ ...f.options,
+    readyToActivate: () => f.store.get<Run>('runs', 'author')?.value.status !== 'running',
+    reserveProbation: (review, commitReservation) => {
+      if (!raced) { raced = true; producer = runtime.resume('author', { id: 'producer', requestDigest: '0'.repeat(64), fragments: [] }); }
+      f.options.reserveProbation(review, commitReservation);
+    },
+  });
+  try {
+    enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+    assert.equal(f.store.get<Run>('runs', 'author')?.value.status, 'running');
+    assert.equal(f.status().status, 'pending'); assert.deepEqual(f.starts, []);
+    assert.equal(f.ledger.snapshot('author').requests, 0); assert.equal(f.ledger.snapshot('author').concurrent, 0);
+    assert.deepEqual(f.store.list('host.external-review-reservations'), []);
+    finishProducer(); assert.equal((await producer)?.status, 'waiting');
+    await continuation.processPending(); assert.equal(f.status().status, 'accepted'); assert.deepEqual(f.starts, [2]);
+    assert.equal(f.ledger.snapshot('author').requests, 1);
+  } finally { finishProducer(); await producer; await continuation.close(); await f.dispose(); }
+});
+
 test('cancelled caller before enqueue leaves no durable request; caller cancellation after enqueue does not revoke host continuation', async () => {
   const f = await fixture(), continuation = new ControlContinuation(f.options);
   try {
@@ -150,6 +181,47 @@ test('cancellation after fresh review but before actual acceptance cannot accept
     await f.controller.recover('offline-rescue'); assert.deepEqual(f.starts, [2, 1]);
     assert.equal(f.store.get<Run>('runs', 'author')?.value.status, 'cancelled');
     await continuation.processPending(); assert.deepEqual(f.starts, [2, 1]);
+  } finally { await continuation.close(); await f.dispose(); }
+});
+
+test('cancellation after reservation but before guarded withdrawal leaves the incumbent authority and controller accepted', async () => {
+  const f = await fixture(); let reviews = 0;
+  const continuation = new ControlContinuation({ ...f.options,
+    activate: async (id, review) => { f.ledger.cancel('author'); return f.options.activate(id, review); },
+    reviewProbation: async (review, signal) => { reviews++; return f.options.reviewProbation(review, signal); },
+  });
+  try {
+    enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+    assert.equal(f.status().status, 'uncertain'); assert.equal(reviews, 0); assert.deepEqual(f.starts, []);
+    assert.equal(f.controller.status()?.phase, 'accepted'); assert.equal(f.controller.status()?.accepted.candidateId, f.incumbent.manifest.id);
+    assert.doesNotThrow(() => f.authority.assert(f.binding.authority));
+    assert.equal(f.controller.history().filter(event => event.kind === 'transfer-intent').length, 0);
+    assert.equal(f.ledger.snapshot('author').requests, 1, 'The original reservation remains accounted until exact cleanup');
+  } finally { await continuation.close(); await f.dispose(); }
+});
+
+test('guarded withdrawal holds authority and author write locks through the actual authority write', async () => {
+  const f = await fixture(), continuation = new ControlContinuation(f.options);
+  const withdraw = f.authority.withdraw.bind(f.authority); let observed = 0;
+  f.authority.withdraw = (grant, guard) => withdraw(grant, commit => {
+    assert.ok(guard, 'Ordinary activation must guard its withdrawal');
+    guard(() => {
+      const observer = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+        import { DatabaseSync } from 'node:sqlite';
+        const locks = process.argv.slice(1).map(path => {
+          const db = new DatabaseSync(path); db.exec('PRAGMA busy_timeout=1');
+          try { db.exec('BEGIN IMMEDIATE'); db.exec('ROLLBACK'); return false; }
+          catch (error) { if (!/locked/.test(error.message)) throw error; return true; }
+          finally { db.close(); }
+        }); process.stdout.write(JSON.stringify(locks));
+      `, join(f.root, 'state', 'authority.sqlite'), f.store.filename], { encoding: 'utf8', env: {} });
+      assert.equal(observer.status, 0, observer.stderr); assert.deepEqual(JSON.parse(observer.stdout), [true, true]);
+      observed++; commit();
+    });
+  });
+  try {
+    enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+    assert.equal(observed, 1); assert.equal(f.status().status, 'accepted'); assert.deepEqual(f.starts, [2]);
   } finally { await continuation.close(); await f.dispose(); }
 });
 
@@ -182,8 +254,8 @@ test('probation reservation ownership is finished after partial reserve or lost 
   for (const failure of ['reserve', 'activate'] as const) {
     const f = await fixture(); let reserved: ProbationReviewRequest | undefined, finished = 0, reviews = 0;
     const continuation = new ControlContinuation({ ...f.options,
-      reserveProbation: review => { reserved = review; f.options.reserveProbation(review); if (failure === 'reserve') throw Error('Lost reservation response'); },
-      activate: async id => { await f.options.activate(id); throw Error('Lost activation response'); },
+      reserveProbation: (review, commitReservation) => { reserved = review; f.options.reserveProbation(review, commitReservation); if (failure === 'reserve') throw Error('Lost reservation response'); },
+      activate: async (id, review) => { await f.options.activate(id, review); throw Error('Lost activation response'); },
       reviewProbation: async (review, signal) => { reviews++; return f.options.reviewProbation(review, signal); },
       finishProbation: review => { assert.deepEqual(review, reserved); finished++; },
     });
@@ -201,7 +273,7 @@ test('probation reservation ownership is finished after partial reserve or lost 
 test('lost activation response and interrupted journal retain uncertainty and never re-dispatch', async () => {
   const f = await fixture(); let physicalReviews = 0;
   const continuation = new ControlContinuation({ ...f.options,
-    activate: async id => { await f.options.activate(id); throw Error('Actual activation response lost'); },
+    activate: async (id, review) => { await f.options.activate(id, review); throw Error('Actual activation response lost'); },
     reviewProbation: async (request, signal) => { physicalReviews++; return f.options.reviewProbation(request, signal); } });
   try {
     enqueueControlActivation(f.store, f.binding); await continuation.processPending();
@@ -231,8 +303,8 @@ test('self-judging or reused admission evidence fails probation and preserves ac
 
 test('reservation persisted before a lost journal write remains consumed and cannot re-activate after restart', async () => {
   const f = await fixture(); let reservations = 0;
-  const continuation = new ControlContinuation({ ...f.options, reserveProbation: request => {
-    f.options.reserveProbation(request); reservations++;
+  const continuation = new ControlContinuation({ ...f.options, reserveProbation: (request, commitReservation) => {
+    f.options.reserveProbation(request, commitReservation); reservations++;
     // Represents death after the authoritative reservation commit and before journal acceptance.
     throw Error('Host died before continuation journal write');
   } });
@@ -255,8 +327,8 @@ test('reservation persisted before a lost journal write remains consumed and can
 
 test('cancellation between accepted activation and fresh physical review cannot launch a reviewer', async () => {
   const f = await fixture();
-  const continuation = new ControlContinuation({ ...f.options, activate: async id => {
-    const grant = await f.options.activate(id);
+  const continuation = new ControlContinuation({ ...f.options, activate: async (id, review) => {
+    const grant = await f.options.activate(id, review);
     const row = f.store.get<Run>('runs', 'author')!; f.store.put('runs', 'author', { ...row.value, status: 'cancelled' }, row.revision); f.ledger.cancel('author'); return grant;
   } });
   try {

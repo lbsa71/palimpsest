@@ -7,6 +7,7 @@ import { applyProgress } from '../planning/index.ts';
 import type { ProgressDecision } from '../planning/index.ts';
 import { FairScheduler } from './index.ts';
 import type { SchedulingDecision } from './index.ts';
+class StartDeferred extends Error {}
 interface GoalExecution { runId: string; step: number; observationIds: string[]; stalls: number }
 export interface InitiativeRunnerOptions {
   scheduler: FairScheduler; runtime: DurableRuntime; memory: DevelopmentalMemory; authority: Authority;
@@ -49,33 +50,44 @@ export class InitiativeRunner {
     const timer = setTimeout(() => controller.abort(new Error('scheduler quantum elapsed')), scheduler.policy.quantumMs);
     try {
       const at = new Date(runtime.now()).toISOString(); memory.expire(at);
-      const selected = scheduler.select(at, this.options.deliver !== undefined); if (selected.kind !== 'selected') return selected;
-      if (selected.selection.kind === 'obligation') {
-        const id = selected.selection.obligation.id;
-        try { await this.options.deliver!(id, controller.signal); } finally {
-          const old = runtime.store.get('initiative.delivery-backoff', id);
-          runtime.store.put('initiative.delivery-backoff', id, { at: runtime.now() + scheduler.policy.idleRetryMs }, old?.revision ?? null);
+      const prepared = runtime.store.transaction(() => {
+        const selected = scheduler.select(at, this.options.deliver !== undefined);
+        if (selected.kind !== 'selected' || selected.selection.kind !== 'goal') return { selected };
+        let goal = selected.selection.goal;
+        if (goal.status === 'waiting') goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'declared wakeup reached');
+        goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'running' }, 'selected finite runtime slice');
+        const context = memory.context({ audience: goal.scope, query: goal.purpose, maxRecords: 16, maxBytes: 32768 });
+        let row = runtime.store.get<GoalExecution>('initiative.execution', goal.id), execution = row?.value;
+        let run = execution ? runtime.getRun(execution.runId) : undefined;
+        if (!run || ['completed', 'cancelled'].includes(run.status)) {
+          const budgetId = `initiative-goal:${goal.id}`;
+          if (!runtime.store.get('allocations', budgetId)) runtime.resources.allocate(budgetId, goal.resources, this.rootAllocation);
+          const step = (execution?.step ?? 0) + 1;
+          const frame: JsonValue = { goal: { id: goal.id, revision: goal.revision, purpose: goal.purpose, successCriteria: goal.successCriteria, nextAction: goal.nextAction, evidenceIds: goal.evidenceIds }, context: JSON.parse(JSON.stringify(context)) as JsonValue };
+          run = runtime.admit({ id: `initiative:${goal.id}:${step}`, source: 'initiative', externalId: goal.id, externalRevision: String(step), actorId: authority.generation, authenticated: true, scope: goal.scope, value: frame }, authority, goal.resources, budgetId);
+          execution = { runId: run.id, step, observationIds: execution?.observationIds ?? [], stalls: execution?.stalls ?? 0 };
+          runtime.store.put('initiative.execution', goal.id, execution, row?.revision ?? null); row = runtime.store.get('initiative.execution', goal.id);
+        }
+        invariant(execution && run, 'missing execution');
+        if (identity(run.authority) !== identity(authority)) runtime.adopt(run.id, authority);
+        const claim = runtime.prepareResume(run.id);
+        if (claim.deferred) throw new StartDeferred();
+        return { selected, goal, execution, run: claim.run, claim, prompt: this.options.prompt(goal, context), context };
+      });
+      const { selected } = prepared;
+      if (!prepared.claim) {
+        if (selected.kind === 'selected' && selected.selection.kind === 'obligation') {
+          const id = selected.selection.obligation.id;
+          try { await this.options.deliver!(id, controller.signal); } finally {
+            const old = runtime.store.get('initiative.delivery-backoff', id);
+            runtime.store.put('initiative.delivery-backoff', id, { at: runtime.now() + scheduler.policy.idleRetryMs }, old?.revision ?? null);
+          }
         }
         return selected;
       }
-      let goal = selected.selection.goal; selectedGoalId = goal.id;
-      if (goal.status === 'waiting') goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'declared wakeup reached');
-      goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'running' }, 'selected finite runtime slice');
-      const context = memory.context({ audience: goal.scope, query: goal.purpose, maxRecords: 16, maxBytes: 32768 });
-      let row = runtime.store.get<GoalExecution>('initiative.execution', goal.id), execution = row?.value;
-      let run = execution ? runtime.getRun(execution.runId) : undefined;
-      if (!run || ['completed', 'cancelled'].includes(run.status)) {
-        const budgetId = `initiative-goal:${goal.id}`;
-        if (!runtime.store.get('allocations', budgetId)) runtime.resources.allocate(budgetId, goal.resources, this.rootAllocation);
-        const step = (execution?.step ?? 0) + 1;
-        const frame: JsonValue = { goal: { id: goal.id, revision: goal.revision, purpose: goal.purpose, successCriteria: goal.successCriteria, nextAction: goal.nextAction, evidenceIds: goal.evidenceIds }, context: JSON.parse(JSON.stringify(context)) as JsonValue };
-        run = runtime.admit({ id: `initiative:${goal.id}:${step}`, source: 'initiative', externalId: goal.id, externalRevision: String(step), actorId: authority.generation, authenticated: true, scope: goal.scope, value: frame }, authority, goal.resources, budgetId);
-        execution = { runId: run.id, step, observationIds: execution?.observationIds ?? [], stalls: execution?.stalls ?? 0 };
-        runtime.store.put('initiative.execution', goal.id, execution, row?.revision ?? null); row = runtime.store.get('initiative.execution', goal.id);
-      }
-      invariant(execution && run, 'missing execution');
-      if (identity(run.authority) !== identity(authority)) runtime.adopt(run.id, authority);
-      const result = await runtime.resume(run.id, this.options.prompt(goal, context), controller.signal);
+      const { goal, run, context } = prepared; let { execution } = prepared;
+      selectedGoalId = goal.id;
+      const result = await prepared.claim.execute(prepared.prompt, controller.signal);
       const fresh = runtime.observations(run.id).filter(o => !execution!.observationIds.includes(o.id));
       for (const observation of fresh) {
         const id = `initiative-observation:${observation.id}`;
@@ -95,6 +107,7 @@ export class InitiativeRunner {
       else applyProgress(scheduler.goals, goal, fresh, this.options.decide(goal, fresh, context));
       return selected;
     } catch (error) {
+      if (error instanceof StartDeferred) return { kind: 'idle', reason: 'host execution hold retained; no scheduler slice consumed', nextWakeup: null };
       // Errors in selection/judgment must preserve truthful resumable state, not leave an agenda running forever.
       const goal = selectedGoalId ? scheduler.goals.goal(selectedGoalId) : undefined;
       if (goal?.status === 'running') scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, `initiative slice failed: ${error instanceof Error ? error.message : String(error)}`);

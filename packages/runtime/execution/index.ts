@@ -11,12 +11,21 @@ import { BudgetExceeded, ResourceLedger } from '../resources/index.ts';
 export class UncertainEffect extends Error { override name='UncertainEffect'; }
 interface InboxEntry { input: InboundInput; runId: string }
 interface ExecutionState { checkpoint?: ShellCheckpoint; lastResult?: ShellResult; failure?: string; messageSequence?: number }
-export interface RuntimeOptions { store: OperationalStore; shell: ShellPort; effects: EffectJournal; resources: ResourceLedger; now?: ()=>number }
+export interface RuntimeOptions { store: OperationalStore; shell: ShellPort; effects: EffectJournal; resources: ResourceLedger; now?: ()=>number;
+  /** Host eligibility, checked under the same operational write lock as the running claim. */
+  canResume?: (run: Run) => boolean;
+}
+export interface PreparedResume {
+  run: Run; deferred: boolean;
+  /** Invoke once after the claim transaction commits; never execute a shell inside a write lock. */
+  execute(prompt: PromptManifest, signal?: AbortSignal): Promise<Run>;
+}
 /** Durable host orchestration; the selected shell retains cognition, while this owns effects and receipts. */
 export class DurableRuntime {
   readonly store: OperationalStore; readonly shell: ShellPort; readonly effects: EffectJournal; readonly resources: ResourceLedger; readonly now: ()=>number;
   private active = new Map<string,AbortController>();
-  constructor(options: RuntimeOptions) { this.store=options.store;this.shell=options.shell;this.effects=options.effects;this.resources=options.resources;this.now=options.now??Date.now; }
+  readonly canResume?: (run: Run) => boolean;
+  constructor(options: RuntimeOptions) { this.store=options.store;this.shell=options.shell;this.effects=options.effects;this.resources=options.resources;this.now=options.now??Date.now;this.canResume=options.canResume; }
   getRun(id: string): Run | undefined { return this.store.get<Run>('runs',id)?.value; }
   admit(input: InboundInput, authority: Authority, envelope: ResourceEnvelope, parentRunId?: string): Run {
     invariant(input.authenticated,'input requires authenticated principal');
@@ -94,14 +103,32 @@ export class DurableRuntime {
       async readCheckpoint(checkpoint:ShellCheckpoint):Promise<JsonValue> {allowed();invariant(checkpoint.runId===runId,'foreign checkpoint');const saved=runtime.execution(runId).checkpoint;invariant(saved && canonicalJson(saved.artifact)===canonicalJson(checkpoint.artifact) && saved.shell===checkpoint.shell && canonicalJson(saved.observationIds)===canonicalJson(checkpoint.observationIds),'checkpoint is not assigned to this run');return runtime.store.readJsonArtifact(checkpoint.artifact);},
     };
   }
+  /** A scheduler may commit its selection and this claim in one synchronous transaction. */
+  prepareResume(runId:string):PreparedResume {
+    const claim = this.store.transaction(() => {
+      let run=this.getRun(runId);invariant(run,'missing run');invariant(!this.active.has(runId),'run already active');this.effects.fence.assert(run.authority);
+      if(['completed','cancelled'].includes(run.status))return {run,started:false,deferred:false};
+      if(this.canResume && !this.canResume(run))return {run,started:false,deferred:true};
+      if(this.effects.unresolved(runId).length) {if(run.status==='waiting')run=this.status(runId,'blocked');return {run,started:false,deferred:false};}
+      if(run.status==='waiting'||run.status==='blocked')run=this.status(runId,'ready');
+      invariant(run.status==='ready','run owned by another execution');return {run:this.status(runId,'running'),started:true,deferred:false};
+    });
+    let executed=false;
+    return {run:claim.run,deferred:claim.deferred,execute:async(prompt,signal)=>{
+      invariant(!executed,'prepared runtime claim already executed');executed=true;
+      return claim.started?this.executeClaim(claim.run,prompt,signal):claim.run;
+    }};
+  }
   async resume(runId:string,prompt:PromptManifest,signal?:AbortSignal):Promise<Run> {
-    let run=this.getRun(runId);invariant(run,'missing run');invariant(!this.active.has(runId),'run already active');this.effects.fence.assert(run.authority);
-    if(['completed','cancelled'].includes(run.status))return run;
-    if(this.effects.unresolved(runId).length) {if(run.status==='waiting')run=this.status(runId,'blocked');return run;}
-    if(run.status==='waiting'||run.status==='blocked')run=this.status(runId,'ready');
-    invariant(run.status==='ready','run owned by another execution');run=this.status(runId,'running');
+    return this.prepareResume(runId).execute(prompt,signal);
+  }
+  private async executeClaim(run:Run,prompt:PromptManifest,signal?:AbortSignal):Promise<Run> {
+    const runId=run.id,current=this.getRun(runId);invariant(current,'missing claimed run');
+    if(['completed','cancelled'].includes(current.status))return current;
+    invariant(current.status==='running' && current.revision===run.revision && identity(current.authority)===identity(run.authority),'runtime claim changed before execution');
     const controller=new AbortController();this.active.set(runId,controller);const abort=()=>controller.abort(signal?.reason);signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     try {
+      this.effects.fence.assert(run.authority);signal?.throwIfAborted();
       const state=this.execution(runId);
       const entries=this.store.events<InboundInput>(runId,state.messageSequence??0).filter(e=>e.type==='admitted'||e.type==='steering');
       const messageSequence=entries.at(-1)?.sequence??state.messageSequence??0;
