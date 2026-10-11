@@ -42,7 +42,7 @@ export interface ScreenWitness {
 }
 export interface ScreenOptions {
   application: ApplicationOptions; caseId: ScreenCaseId; attempt: 1 | 2 | 3; attemptId: string;
-  mode: 'synthetic-application' | 'live-public-screen'; observer: AdapterOptions['observer']; manifest: AdapterOptions['manifest'];
+  mode: 'synthetic-application' | 'synthetic-host-composition' | 'live-public-screen'; observer: AdapterOptions['observer']; manifest: AdapterOptions['manifest'];
   privatePacketPath: string; timeoutMs: number; liveSeal?: AdapterOptions['liveSeal'];
 }
 function orderedTools(app: AutarkApplication, runId: string): ToolWitness[] {
@@ -185,7 +185,7 @@ export function seedBeforeDispatch(app: AutarkApplication, caseId: ScreenCaseId,
   return { runId: run.id, workspace, publicPreparation: { actor: 'host-evaluator', phase: 'before-first-dispatch', version: screenVersion, files, digest: hash(JSON.stringify(workload)), preparedAt: new Date().toISOString() } };
 }
 export async function runScreenCase(options: ScreenOptions) {
-  if (options.mode === 'live-public-screen') assertHostScreenInvocation(options);
+  if (options.mode === 'live-public-screen' || options.mode === 'synthetic-host-composition') assertHostScreenInvocation(options);
   const config = options.application.config;
   invariant(supportedCases.includes(options.caseId) && [1, 2, 3].includes(options.attempt) && options.attemptId, 'Fixed supported case/initial attempt required');
   assertPrivateRoot(options.observer.privateRoot, [config.applicationRoot, config.workspaceDirectory, config.stateDirectory]);
@@ -195,7 +195,7 @@ export async function runScreenCase(options: ScreenOptions) {
   invariant(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 900000, 'Finite screen deadline required');
   for (const digest of [options.observer.evaluatorDigest, options.observer.taskDigest, ...Object.values(options.manifest)]) invariant(/^[a-f0-9]{64}$/.test(digest), 'Frozen artifact digests required');
   if (options.mode === 'synthetic-application') invariant(options.application.performRequest, 'Synthetic mode requires declared bounded transport fixture');
-  else invariant(options.mode === 'live-public-screen', 'Unknown public screen execution mode');
+  else invariant(options.mode === 'live-public-screen' || options.mode === 'synthetic-host-composition', 'Unknown public screen execution mode');
   const packetBytes = readFileSync(options.privatePacketPath, 'utf8'); invariant(Buffer.byteLength(packetBytes) <= 65536 && hash(packetBytes) === options.observer.taskDigest, 'Frozen private packet digest mismatch');
   const packet = JSON.parse(packetBytes) as PrivateScreenPacket; validateProbes(options.caseId, packet);
   // Durable evaluator receipt is written before admission. Same attempt cannot be reset after failure.
@@ -214,7 +214,7 @@ export async function runScreenCase(options: ScreenOptions) {
     app = new AutarkApplication(options.application);
     // Deliberately no await/start before this fixed synchronous barrier.
     preparation = seedBeforeDispatch(app, options.caseId, options.attemptId);
-    if (options.mode === 'live-public-screen') liveTurn = app.resume(preparation.runId);
+    if (options.mode === 'live-public-screen' || options.mode === 'synthetic-host-composition') liveTurn = app.resume(preparation.runId);
     const signal = AbortSignal.timeout(options.timeoutMs);
     while (true) {
       signal.throwIfAborted(); const run = app.runtime.getRun(preparation.runId); invariant(run, 'Screen run disappeared');
@@ -267,6 +267,6 @@ export async function runScreenCase(options: ScreenOptions) {
     identities: { ...options.manifest, evaluator: options.observer.evaluatorDigest, privatePacket: options.observer.taskDigest, screen: hash(readFileSync(new URL(import.meta.url), 'utf8')), configuration: hash(JSON.stringify(config)), prompt: hash(readFileSync(config.promptFile, 'utf8')), compactionPrompt: hash(readFileSync(config.compactionPromptFile, 'utf8')) },
     candidateModel: config.model, configuration: { resources: config.resources, conversationResources: config.conversationResources, resourceLimits: config.resourceLimits ?? null, scheduler: config.scheduler, maxConcurrentRuns: config.maxConcurrentRuns, commands: config.commands }, originalResources, privateCommands: boundedPrivateCommands, environment: { node: process.version, platform: process.platform, architecture: process.arch }, preparation, observation, witness, payloads, checkpoints, operatingLedger, assessment, failure,
     verdict: !failure && assessment?.quality === 3 ? 'case-pass' : 'criterion-unmet', unavailable: unavailableCases,
-    claims: { twelveCaseCompletion: false, Q3: 'unavailable', parity: 'unavailable', H1: 'unaccepted', modelCompetence: options.mode === 'synthetic-application' ? 'unavailable' : 'unqualified-public-screen' },
+    claims: { twelveCaseCompletion: false, Q3: 'unavailable', parity: 'unavailable', H1: 'unaccepted', modelCompetence: options.mode !== 'live-public-screen' ? 'unavailable' : 'unqualified-public-screen' },
     limitations: ['Public retained engineering screen; no held-out benchmark or independent acceptance.', 'One original application resource ledger per initial attempt; failure and uncertain usage remain charged.', 'S08/S09/S11/S12 lifecycle driver is unavailable; no simulated restart, compaction, delivery reconciliation or prompt transition.', 'Fresh independent evaluator/host integrity review and externally issued live authority remain required.'] });
 }

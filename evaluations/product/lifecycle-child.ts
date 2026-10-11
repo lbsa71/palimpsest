@@ -6,14 +6,14 @@ import { identity, invariant, type Authority, type PhysicalRequest } from '../..
 import { AuthorityStore } from '../../packages/supervisor/authority.ts';
 import { LocalLostReplyReceiver, lifecycleTransport, lifecycleWorkload, preparePublicFiles, type LifecycleCase, type LifecycleControl } from './lifecycle-fixtures.ts';
 import { hash } from './adapter.ts';
-import { publicScreenGateway } from './public-screen-host.ts';
+import { publicScreenGateway, assertPublicAcquisitionAllowance, retainPublicResponse } from './public-screen-host.ts';
 import { verifyApplication } from '../../deployment/candidate.ts';
 import { materializeConfiguration, type HostBindings } from '../../deployment/materialize.ts';
 import type { ApplicationSecrets } from '../../deployment/config.ts';
 import { inertSnapshot } from '../qualification/manifest.ts';
 
 interface Boot { config: ApplicationConfig; authority: Authority; caseId: LifecycleCase; control: LifecycleControl; phase: 0 | 1; receiverPath: string; attemptId: string }
-interface LiveBoot extends Boot { kind: 'live-public-screen'; host: HostBindings; secrets: ApplicationSecrets; limits: { maxArtifactBytes: number; maxEvidenceBytes: number; grantId: string } }
+interface LiveBoot extends Boot { kind: 'live-public-screen' | 'synthetic-host-composition'; host: HostBindings; secrets: ApplicationSecrets; limits: import('./public-screen-host.ts').PublicGatewayBounds }
 /** Join the real turn, then execute an as-yet-unconsumed fixed correction once. */
 export async function joinLifecycleCorrection(app: AutarkApplication, runId: string, correctionSequence: number) {
   await app.resume(runId);
@@ -27,20 +27,24 @@ async function child() {
   const live = process.argv[2] === '--host-live';
   const boot = live ? inertSnapshot(await new Promise<LiveBoot>(resolve => process.once('message', value => resolve(value as LiveBoot)))) : JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as Boot;
   if (live) {
-    const startup = boot as LiveBoot; invariant(startup.kind === 'live-public-screen' && startup.control === 'normal', 'Incomplete concrete protected host startup');
+    const startup = boot as LiveBoot; invariant(['live-public-screen', 'synthetic-host-composition'].includes(startup.kind) && startup.control === 'normal', 'Incomplete concrete protected host startup');
     const candidate = verifyApplication(startup.host.artifactStore, startup.config.artifactId, startup.host.nodeBinary), actual = materializeConfiguration(candidate, startup.host);
     invariant(identity(JSON.parse(JSON.stringify(actual))) === identity(startup.config) && candidate.manifest.controls === startup.authority.controlRevision && actual.resourceLimits, 'Protected startup differs from accepted candidate/configuration/kernel profile');
   }
+  const production = live && (boot as LiveBoot).kind === 'live-public-screen';
+  if (live && !production) invariant(boot.caseId === 'S08' && (boot as LiveBoot).secrets.mistralApiKey === 'PUBLIC-fixture-no-provider' && (boot as LiveBoot).secrets.directToken === 'PUBLIC-fixture-no-listener', 'Protected synthetic startup only admits the fixed public S08 fixture');
   const authorityStore = new AuthorityStore(join(boot.config.stateDirectory, 'authority.sqlite'));
   const receiver = boot.caseId === 'S11' ? new LocalLostReplyReceiver(boot.receiverPath) : undefined;
   const notify = (value: unknown) => process.send!(value as object);
-  const transport = live ? publicScreenGateway(boot.config, (boot as LiveBoot).secrets, (boot as LiveBoot).limits) : lifecycleTransport({ ...boot, model: boot.config.model.id, actorId: boot.authority.generation, boundary: runId => notify({ type: 'boundary', runId, pid: process.pid, at: new Date().toISOString() }) });
+  const transport = production ? publicScreenGateway(boot.config, (boot as LiveBoot).secrets, (boot as LiveBoot).limits) : lifecycleTransport({ ...boot, model: boot.config.model.id, actorId: boot.authority.generation, boundary: runId => notify({ type: 'boundary', runId, pid: process.pid, at: new Date().toISOString() }) });
   let app: AutarkApplication;
   authorityStore.assert(boot.authority);
   app = new AutarkApplication({ config: boot.config, authorityStore, authority: boot.authority, secrets: live ? (boot as LiveBoot).secrets : { mistralApiKey: 'PUBLIC-fixture-no-provider', directToken: 'PUBLIC-fixture-no-listener' },
     ...(receiver ? { slackBotApi: receiver, slackAppApi: { async call<T>(): Promise<T> { throw new Error('Local lifecycle fixture forbids socket API'); } } } : {}),
-    performRequest: live ? transport : async (payload, signal) => {
+    performRequest: production ? transport : async (payload, signal) => {
+      if (live) assertPublicAcquisitionAllowance(boot.config, (boot as LiveBoot).limits);
       const response = await transport(payload, signal);
+      if (live) { retainPublicResponse(boot.config, (boot as LiveBoot).secrets, (boot as LiveBoot).limits, payload, response); return response; }
       app.store.put('screen.lifecycle-provider-responses', hash(payload), { requestSha256: hash(payload), response: app.store.putArtifact(response.body), httpStatus: response.status, recordedAt: new Date().toISOString(), actor: 'host-public-fixture-transport' }, null);
       return response;
     } });

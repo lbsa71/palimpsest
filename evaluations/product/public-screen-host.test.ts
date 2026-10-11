@@ -18,7 +18,7 @@ import { observerImplementation, type QualificationTrust } from '../qualificatio
 import { publicRehearsalPacket, runHostAuthorizedLiveCase } from './screen-driver.ts';
 import { runScreenCase } from './screen.ts';
 import { runLifecycleCase } from './lifecycle.ts';
-import { publicInterventions, publicScreenCases, publicScreenDomain, publicWorkloadIdentity, preparePublicScreen, retainPublicReport, retainedOperationalEvidence, verifyPublicScreenPlan, type PublicScreenPlan, type PublicScreenHostOptions } from './public-screen-host.ts';
+import { publicInterventions, publicScreenCases, publicScreenDomain, syntheticCompositionDomain, verifySyntheticCompositionPlan, publicScreenGateway, publicWorkloadIdentity, preparePublicScreen, retainPublicReport, retainedOperationalEvidence, verifyPublicScreenPlan, type PublicScreenPlan, type PublicScreenHostOptions } from './public-screen-host.ts';
 
 // Manufactured host keys and envelopes below verify offline mechanics only. No account,
 // genuine issuer, kernel confinement, provider transport, process or application is used.
@@ -190,6 +190,11 @@ test('actual frozen twelve-case preflight rejects causal source/profile/private-
       const original = f.plan.cases[0]!.attempts[0]!; f.replace('S01', e => { e.maxEvidenceBytes = 1000; e.maxArtifactBytes = 1000; });
       try { assert.throws(() => preparePublicScreen(f.options()), /bounded failure receipt/); } finally { f.plan.cases[0]!.attempts[0] = original; }
     });
+    await t.test('individually affordable failure receipt cannot conceal combined original claim exhaustion', () => {
+      const original = f.plan.cases[0]!.attempts[0]!, usage = f.store.usage();
+      f.replace('S01', e => { e.maxEvidenceBytes = 80000; e.maxArtifactBytes = 80000; });
+      try { assert.throws(() => preparePublicScreen(f.options()), /Known original claims/); assert.deepEqual(f.store.usage(), usage); } finally { f.plan.cases[0]!.attempts[0] = original; }
+    });
     await t.test('recreated claim store rejects despite unchanged canonical path', () => {
       renameSync(f.store.directory, `${f.store.directory}-retained`); mkdirSync(f.store.directory, { mode: 0o700 }); const other = new QualificationStore(f.store.directory);
       try { assert.throws(() => preparePublicScreen({ ...f.options(), store: other }), /claim store/); } finally { other.close(); rmSync(f.store.directory, { recursive: true }); renameSync(`${f.store.directory}-retained`, f.store.directory); }
@@ -240,4 +245,46 @@ test('recreated claim-store directory and replays reject while pinned evidence s
     try { assert.notEqual(identity(replacement.identity()), original); assert.equal(identity(store.identity()), original); } finally { replacement.close(); }
     store.close(); store = new QualificationStore(`${path}-retained`); assert.throws(() => store.claim('same-attempt', 'same-grant', {}), /EEXIST/);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('separate synthetic composition signature and engineering grants can never enter the paid route', () => {
+  const f = planFixture();
+  f.plan.cases = f.plan.cases.filter(item => item.caseId === 'S01' || item.caseId === 'S08');
+  f.trust.policy = { ...f.trust.policy, kind: 'engineering' };
+  f.trust.policy.policyDigest = admissionPolicyIdentity(f.trust.policy);
+  f.plan.resources = { maxRequests: 280, maxTokens: 480000, maxCostUsd: 0, maxElapsedMs: 180000, maxConcurrency: 3 };
+  f.plan.expiresAt = new Date(Date.parse(f.plan.issuedAt) + 180000).toISOString();
+  for (const caseId of ['S01', 'S08']) f.replace(caseId, e => {
+    e.kind = 'integration'; e.priorPolicyDigest = f.trust.policy.policyDigest;
+    e.resources = caseId === 'S01' ? { maxRequests: 100, maxTokens: 120000, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 2 } : { maxRequests: 180, maxTokens: 360000, maxCostUsd: 0, maxElapsedMs: 180000, maxConcurrency: 3 };
+    e.expiresAt = new Date(Date.parse(e.issuedAt) + e.resources.maxElapsedMs).toISOString();
+  });
+  const document = signDocument(syntheticCompositionDomain, f.plan, issuer, key);
+  assert.equal(canonicalJson(verifySyntheticCompositionPlan(document, f.trust)), canonicalJson(f.plan));
+  assert.throws(() => verifyPublicScreenPlan(document, f.trust), /signature/);
+  assert.throws(() => verifySyntheticCompositionPlan(f.sign(), f.trust), /signature/);
+  f.replace('S08', e => { e.kind = 'live-product'; });
+  assert.throws(() => verifySyntheticCompositionPlan(signDocument(syntheticCompositionDomain, f.plan, issuer, key), f.trust), /integration/);
+});
+
+test('original claims, private packet and authority evidence refuse another acquisition before mocked fetch', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-acquisition-known-')), stateDirectory = join(root, 'state'), privateRoot = join(root, 'private');
+  mkdirSync(stateDirectory, { mode: 0o700 }); mkdirSync(privateRoot, { mode: 0o700 });
+  const authorityPath = join(stateDirectory, 'authority.sqlite'), authority = new AuthorityStore(authorityPath);
+  authority.bootstrap('offline', fixed, fixed); authority.close();
+  const packetFile = join(privateRoot, 'packet.json'); writeFileSync(packetFile, 'P'.repeat(500), { mode: 0o600 });
+  let calls = 0; t.mock.method(globalThis, 'fetch', async () => { calls++; return new Response('OFFLINE harmless', { status: 200 }); });
+  const configuration = { stateDirectory, applicationRoot: dirname(dirname(dirname(fileURLToPath(import.meta.url)))) } as any;
+  const manufactured = { mistralApiKey: 'OFFLINE manufactured key', directToken: 'OFFLINE manufactured token' };
+  const auxiliary = { claimBytes: 450, packetFile, packetSha256: hashBytes('P'.repeat(500)), privateRoot, authorityPath, caseId: 'S01' as const, attempt: 1, experimentId: 'offline' };
+  try {
+    const generous = publicScreenGateway(configuration, manufactured, { grantId: 'original', maxArtifactBytes: 2000, maxEvidenceBytes: 10000, auxiliary });
+    await generous('offline-first', AbortSignal.timeout(1000)); assert.equal(calls, 1);
+    const exhausted = publicScreenGateway(configuration, manufactured, { grantId: 'original', maxArtifactBytes: 2000, maxEvidenceBytes: 1000, auxiliary });
+    await assert.rejects(exhausted('offline-next', AbortSignal.timeout(1000)), /allowance/); assert.equal(calls, 1);
+    const before = retainedOperationalEvidence(stateDirectory);
+    writeFileSync(packetFile, 'P'.repeat(2001), { mode: 0o600 });
+    await assert.rejects(generous('offline-too-large', AbortSignal.timeout(1000)), /bound|size|limit|large/i); assert.equal(calls, 1);
+    assert.deepEqual(retainedOperationalEvidence(stateDirectory), before);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
