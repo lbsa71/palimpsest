@@ -1,5 +1,15 @@
 # Current progress and evidence
 
+## 2026-10-11 — host/runtime succession and recovery visibility
+
+The actual host launcher, coordinator and service can now activate candidate-bound source and a different frozen Node executable, then recover retained code with the latest lived state after failure. Separate bounded ext4 volumes contain host data and workspaces. Fresh review repaired launcher-start interruption, malformed boot selection, and a reproduced privileged systemd log-path escape. Provider continuation and H1 admission were also reviewed: H1 now requires the actual accepted release/controller/policy, and pending OpenAI tool calls are validated before any effect dispatch.
+
+A read-only probe against the real Slack workspace recovered the user's referenced message, admitted 16 messages, retained them across SQLite reopen and deduplicated repeated delivery. No message was sent. Recovery limits and conversation-scoped gaps now reach ordinary reasoning and a read-only status tool; its restart/disclosure regression and all 25 application plus 23 communication tests passed. See [service receipts](rewrite/evidence/A1-L09/service-wave.md) and [communication visibility](rewrite/evidence/A1-L09/communication-visibility.md).
+
+The most recent root aggregate is **356 passing tests, one explicit skip, strict check and build at `50c3c24`**. Later provider, host, installation, runtime and communication work has targeted evidence and still needs a new joined run. Current parallel goals implement external evaluator dispatch and replaceable installed bootstrap, with fresh runtime review next. [Execution](rewrite/execution.md) tracks the exact scope.
+
+**Aeon 1 and H1 remain unaccepted.** Live competence, both comparator results, elapsed developmental transfer and a model-authored independently accepted improvement remain unverified. API budget and Claude access are pending. No paid generation, external Slack send, push or rewrite deployment has occurred.
+
 ## 2026-10-11 — frozen service, recovery and ordinary evolution tools
 
 The ordinary service now includes the accounted Pi action loop, developmental initiative, source-editing tools and durable external evaluation/release requests. The coordinator can transfer, stage controls and recover retained accepted code with current operational state; fresh reviews repaired repeated rescue loops, host I/O boundaries and authenticated proposal lineage. Installation rendering and disposable resource/mount checks pass. Authenticated health separates a living process from action admission held by authority, capacity or resources.
