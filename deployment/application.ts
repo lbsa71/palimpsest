@@ -21,6 +21,7 @@ import { AccountedConsolidation } from './consolidation.ts';
 import { ConversationObligations } from './obligation-tools.ts';
 import { bindGoalOrigins } from './proposal-origin.ts';
 import { EvolutionContinuations } from './evolution-continuation.ts';
+import { ControlAuthorContinuations } from './control-tools.ts';
 import { communicationState, communicationTools } from './communication-state.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
@@ -48,6 +49,7 @@ export class AutarkApplication {
   readonly scheduler: FairScheduler; readonly initiative: InitiativeRunner;
   readonly prompt: PromptManifest;
   readonly evolution: EvolutionContinuations;
+  readonly controls: ControlAuthorContinuations;
   readonly directApi: ReturnType<typeof createDirectApi>;
   readonly slackIngress?: SlackIngress; readonly slackRecovery?: SlackRecovery; readonly slackSocket?: SlackSocketMode;
   private bootstrapPrompt?: PromptManifest;
@@ -160,10 +162,11 @@ export class AutarkApplication {
         performRequest: options.performRequest ?? providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, options.secrets), maxResponseBytes: 2_000_000 }), recordTransport: transportRecorder(this.store) });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.goals.all(input.run.scope), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
       const result = await broker.run({ ...input, messages: [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
-      return this.evolution.preserveWaiting(input.run.id, result);
+      return this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result));
     } };
     this.runtime = new DurableRuntime({ store: this.store, shell, effects: this.effects, resources: this.resources });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
+    this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);
     this.communications = new CommunicationsCore({ store: this.store, runtime: this.runtime,
       grant: () => ({ authority: options.authority, resources: config.conversationResources, parentRunId: this.rootAllocation }),
@@ -174,7 +177,7 @@ export class AutarkApplication {
         if (!this.closing) { this.ingestCommunications(run); this.enqueue(run.id); void this.tick().catch(() => undefined); }
       } });
     if (!this.store.get('allocations', 'initiative:ordinary')) this.resources.allocate('initiative:ordinary', config.scheduler.resources, this.rootAllocation);
-    this.scheduler = new FairScheduler(this.store, this.goals, this.obligations, 'ordinary', config.scheduler, Date.now(), goal => this.evolution.eligibleGoal(goal));
+    this.scheduler = new FairScheduler(this.store, this.goals, this.obligations, 'ordinary', config.scheduler, Date.now(), goal => this.evolution.eligibleGoal(goal) && this.controls.eligibleGoal(goal));
     this.initiative = new InitiativeRunner({ scheduler: this.scheduler, runtime: this.runtime, memory: this.memory, authority: options.authority,
       prompt: () => this.prompt, deliver: (id, signal) => this.deliverObligation(id, signal), decide: () => ({ kind: 'block', reason: 'The accounted mind did not record an observation-grounded progress decision.' }) });
     this.directApi = createDirectApi({ core: this.communications, authenticate: bearerAuthenticator([{ token: options.secrets.directToken, principal: { id: config.direct.actorId, scope: config.direct.scope, modificationEligible: config.direct.modificationEligible } }]), outputForRun: runId => this.output(runId), health: () => this.health() });
@@ -314,6 +317,7 @@ export class AutarkApplication {
   async resume(runId: string, signal: AbortSignal = this.shutdown.signal): Promise<Run> {
     const existing = this.active.get(runId); if (existing) return existing;
     const run = this.runtime.getRun(runId); invariant(run, 'Unknown run');
+    if (!this.controls.eligibleRun(runId, this.hasPendingSteering(runId))) return run;
     if (!this.providerAvailable()) { if (!['completed', 'cancelled'].includes(run.status)) this.enqueue(runId); return run; }
     if (this.occupied() >= this.config.maxConcurrentRuns || this.closing) { this.enqueue(runId); return run; }
     const queued = this.store.get('host.pending-runs', runId); if (queued) this.store.delete('host.pending-runs', runId, queued.revision);
@@ -339,13 +343,13 @@ export class AutarkApplication {
   async tick(): Promise<void> {
     if (this.ticking || this.closing) return; this.ticking = true;
     try {
-      this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake();
+      this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
       // Offline recovery retains intake and known local reconciliation. Missing credentials
       // must not consume scheduler slices or physical reservations on repeated polling.
       if (!this.providerAvailable()) return;
       // Give development first access to a freed slot on alternating admissions.
       if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns) { this.developmentTurn = false; this.startDevelopment(); }
-      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
+      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && this.controls.eligibleRun(row.key, this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
         .sort((a, b) => (this.store.get<{ requestedAt: number }>('host.pending-runs', a.key)?.value.requestedAt ?? 0) - (this.store.get<{ requestedAt: number }>('host.pending-runs', b.key)?.value.requestedAt ?? 0) || a.key.localeCompare(b.key));
       for (const row of pending) {
         if (this.occupied() >= this.config.maxConcurrentRuns) break;
