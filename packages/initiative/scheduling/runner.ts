@@ -77,7 +77,13 @@ export class InitiativeRunner {
       if (identity(run.authority) !== identity(authority)) runtime.adopt(run.id, authority);
       const result = await runtime.resume(run.id, this.options.prompt(goal, context), controller.signal);
       const fresh = runtime.observations(run.id).filter(o => !execution!.observationIds.includes(o.id));
-      for (const observation of fresh) if (!memory.get(`initiative-observation:${observation.id}`, goal.scope)) memory.ingest({ id: `initiative-observation:${observation.id}`, runId: run.id, sourceId: observation.id, channel: 'tool', actorId: observation.provenance.actorId, scope: goal.scope, at: observation.provenance.recordedAt, content: { kind: observation.kind, value: observation.value } });
+      for (const observation of fresh) {
+        const id = `initiative-observation:${observation.id}`;
+        if (!runtime.store.get('initiative.ingested', id)) runtime.store.transaction(() => {
+          if (!memory.get(id, goal.scope)) memory.ingest({ id, runId: run.id, sourceId: observation.id, channel: 'tool', actorId: observation.provenance.actorId, scope: goal.scope, at: observation.provenance.recordedAt, content: { kind: observation.kind, value: observation.value } });
+          runtime.store.put('initiative.ingested', id, true, null);
+        });
+      }
       execution = { ...execution, observationIds: [...new Set([...execution.observationIds, ...fresh.map(o => o.id)])], stalls: fresh.some(o => o.kind === 'result') ? 0 : execution.stalls + 1 };
       const currentRow = runtime.store.get('initiative.execution', goal.id)!; runtime.store.put('initiative.execution', goal.id, execution, currentRow.revision);
       // A concurrent cancellation/revision owns the current agenda; never resurrect it with stale output.

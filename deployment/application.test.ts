@@ -65,3 +65,195 @@ test('ordinary authenticated conversation uses actual confined tools and explici
     assert.equal(calls, 4);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
+
+function parsed(payload: string): any { return JSON.parse(payload); }
+function context(request: any): any { return request.messages.filter((m: any) => m.role === 'user').map((m: any) => { try { return JSON.parse(m.content); } catch { return {}; } }).findLast((m: any) => m.hostContext)?.hostContext; }
+function receipt(request: any): any { return JSON.parse(request.messages.findLast((m: any) => m.role === 'tool').content); }
+function receive(app: AutarkApplication, f: ReturnType<typeof fixture>, id: string, text = id, revision = '1', conversation = id) { return app.communications.receive({ source: 'direct', externalId: id, revision, conversation, text, actor: { id: f.config.direct.actorId, scope: f.config.direct.scope, modificationEligible: true } }).run; }
+const secrets = { mistralApiKey: 'private-fixture-key', directToken: 'direct-test' };
+
+test('ordinary delegation runs a real bounded child, inspects actual artifacts and accounts every request', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let parentCalls = 0, childCalls = 0; let packet: any, childResult: any, inspection: any;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async payload => {
+      const request = parsed(payload), frame = context(request);
+      if (!frame.target) {
+        childCalls++; assert.equal(request.tools.some((t: any) => t.function.name === 'speech_send' || t.function.name === 'memory_derive'), false);
+        if (childCalls === 1) return tool('workspace_write', { path: 'child.txt', content: 'Observed child evidence', expectedSha256: null });
+        return stop('Child finished its finite task.');
+      }
+      parentCalls++;
+      if (parentCalls === 1) return tool('delegation_prepare', {});
+      if (parentCalls === 2) {
+        const prepared = receipt(request); packet = { id: 'actual-child', parentRunId: frame.runId, parentGoalId: 'finite-fixture', objective: 'Write actual evidence to child.txt.', acceptanceCriteria: ['Actual child.txt write succeeded'], inputs: [], writablePaths: [prepared.workspace], allowedEffects: ['workspace_write'], resources: prepared.grant.resources, modelPolicy: prepared.grant.modelProfiles[0], scope: prepared.grant.scope, provenance: { sourceIds: ['authenticated-fixture'], actorId: f.authority.generation, recordedAt: new Date().toISOString(), derivation: 'interpreted' }, outputLocation: 'child.txt', cancellationConditions: ['parent cancellation'], maxDepth: 1 };
+        return tool('delegation_start', packet);
+      }
+      if (parentCalls === 3) { childResult = receipt(request); assert.equal(childResult.status, 'completed'); return tool('delegation_inspect', { id: packet.id }); }
+      if (parentCalls === 4) { inspection = receipt(request); assert.match(inspection.artifacts[0].content, /Observed child evidence/); return tool('delegation_judge', { id: packet.id, inspection: inspection.receipt, checks: [{ criterion: packet.acceptanceCriteria[0], passed: true, evidence: childResult.result.artifacts[0] }] }); }
+      assert.equal(receipt(request).status, 'accepted'); return stop('Private parent judgment.');
+    } });
+    await app.start(); const run = receive(app, f, 'delegation', 'Delegate a finite coding task.');
+    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed' || value?.status === 'blocked' || value?.status === 'waiting');
+    assert.equal(app.runtime.getRun(run.id)?.status, 'completed', JSON.stringify(app.store.get('execution', run.id)));
+    assert.equal(app.delegation.get('actual-child')?.status, 'accepted'); assert.equal(parentCalls, 5); assert.equal(childCalls, 2);
+    assert.equal(readFileSync(join(packet.writablePaths[0], 'child.txt'), 'utf8'), 'Observed child evidence');
+    assert.equal(app.output(run.id).length, 0);
+    const requests = app.store.list<any>('requests').map(row => row.value.request); assert.equal(requests.filter(r => r.provider === 'mistral').length, 7); assert.equal(requests.filter(r => r.provider === 'effect-receiver').length, 5);
+    assert.equal(app.resources.snapshot(run.id).requests, 12);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('queued consolidation executes under the shared ledger with one scoped completion capability and survives restart', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let conversationCalls = 0, consolidationCalls = 0; let sourceId = '';
+  const performRequest = async (payload: string) => {
+    const request = parsed(payload), frame = context(request); assert.equal(payload.includes('foreign-private-memory'), false);
+    if (request.tools.some((t: any) => t.function.name === 'memory_consolidation_complete')) {
+      consolidationCalls++; assert.deepEqual(request.tools.map((t: any) => t.function.name), ['memory_consolidation_complete']);
+      if (consolidationCalls === 1) return tool('memory_consolidation_complete', { outputs: [{ kind: 'belief', content: 'The operator supplied a continuity question; its answer remains uncertain.', confidence: 0.4 }] });
+      assert.equal(receipt(request).state, 'completed'); return stop('Internal consolidation text.');
+    }
+    conversationCalls++; sourceId = frame.memory.memories[0].id;
+    if (conversationCalls === 1) return tool('memory_schedule_consolidation', { id: 'continuity', sourceIds: [sourceId], dueAt: new Date().toISOString() });
+    return stop('Schedule recorded.');
+  };
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest });
+    app.memory.ingest({ id: 'foreign', runId: 'foreign-run', sourceId: 'foreign-source', actorId: 'other', channel: 'speech', scope: { kind: 'restricted', principals: ['other'] }, at: new Date().toISOString(), content: 'foreign-private-memory' });
+    await app.start(); const run = receive(app, f, 'continuity', 'Consider continuity from an attributed question.');
+    const jobs = await eventually(() => app!.memory.jobs(f.config.direct.scope), value => value.some(job => job.state === 'completed'));
+    await eventually(() => app!.store.list<any>('runs').map(row => row.value.status), statuses => statuses.every(status => status === 'completed'));
+    assert.equal(jobs.length, 1); assert.equal(jobs[0]!.attempts, 1); assert.equal(consolidationCalls, 2); assert.equal(conversationCalls, 2);
+    const belief = app.memory.get(jobs[0]!.outputIds[0]!, f.config.direct.scope)!; assert.equal(belief.provenance.derivation, 'summarized'); assert.deepEqual(belief.provenance.sourceIds, [sourceId]);
+    assert.equal(app.memory.get(belief.id, { kind: 'restricted', principals: ['other'] }), undefined); assert.equal(app.output(run.id).length, 0);
+    const used = app.resources.snapshot(run.id); assert.equal(used.requests, 6);
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest });
+    assert.equal(app.memory.jobs(f.config.direct.scope)[0]!.state, 'completed'); assert.equal(app.resources.snapshot(run.id).requests, used.requests); assert.equal(consolidationCalls, 2);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('immediate tool memory permits same-run derivation; forgetting does not resurrect on restart', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let calls = 0; let rememberedId = '';
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async payload => {
+      calls++; const request = parsed(payload);
+      if (calls === 1) return tool('workspace_write', { path: 'fact.txt', content: 'actual fact', expectedSha256: null });
+      if (calls === 2) return tool('memory_retrieve', { query: 'actual fact', maxRecords: 20 });
+      if (calls === 3) { rememberedId = receipt(request).memories.find((m: any) => m.kind === 'observation').id; return tool('memory_derive', { id: 'observed-write', kind: 'belief', sourceIds: [rememberedId], content: 'The write was observed.', confidence: 0.8 }); }
+      assert.equal(receipt(request).provenance.derivation, 'interpreted'); return stop('Private final text.');
+    } });
+    await app.start(); const run = receive(app, f, 'immediate', 'Observe a real write and derive from it.');
+    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed' || value?.status === 'waiting'); assert.equal(app.runtime.getRun(run.id)?.status, 'completed'); assert.equal(calls, 4);
+    app.memory.forget([rememberedId]); await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest: async () => stop('unused') });
+    assert.equal(app.memory.get(rememberedId, f.config.direct.scope), undefined); assert.equal(app.store.get('host.ingested', rememberedId)?.value, true); assert.equal(app.output(run.id).length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('shared application slots admit inquiry under queued conversations and keep direct status responsive', async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 1; let app: AutarkApplication | undefined; let release!: () => void; let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; }); const order: string[] = []; let inquiryCalls = 0;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async payload => {
+      const request = parsed(payload), frame = context(request), input = request.messages.findLast((m: any) => m.role === 'user' && !m.content.includes('hostContext'))?.content ?? '';
+      if (frame.target && input.includes('hold-first')) { order.push('first'); entered(); await held; return stop('First done.'); }
+      if (!frame.target && input.includes('\"goal\"')) {
+        inquiryCalls++;
+        if (inquiryCalls === 1) { order.push('inquiry'); return tool('workspace_write', { path: 'inquiry.txt', content: 'new observation', expectedSha256: null }); }
+        if (inquiryCalls === 2) return tool('memory_retrieve', { query: 'new observation', maxRecords: 32 });
+        if (inquiryCalls === 3) { const observed = receipt(request).memories.find((memory: any) => memory.id.startsWith('initiative-observation:')); return tool('memory_forget', { memoryIds: [observed.id] }); }
+        if (inquiryCalls === 4) { const goal = app!.goals.goal('inquiry')!; return tool('initiative_goal_progress', { id: goal.id, expectedRevision: goal.revision, decision: { kind: 'complete', reason: 'Actual operational write observed; selected developmental memory intentionally forgotten.', evidenceIds: app!.runtime.observations(frame.runId).map(o => o.id) } }); }
+        return stop('Inquiry complete.');
+      }
+      order.push('second'); return stop('Second done.');
+    } });
+    await app.start(); const first = receive(app, f, 'first', 'hold-first'); await ready; const second = receive(app, f, 'second', 'queued-second');
+    const goal = app.goals.propose({ id: 'inquiry', origin: { kind: 'self' }, purpose: 'Gather a finite curious observation.', scope: f.config.direct.scope, successCriteria: ['Actual write'], evidenceIds: [], dependencyIds: [], resources: f.config.scheduler.resources, priority: 1, nextAction: 'Write inquiry.txt', reviewAt: new Date(Date.now() + 60000).toISOString() }, { sourceIds: ['fixture-observation'], actorId: f.authority.generation, recordedAt: new Date().toISOString(), derivation: 'interpreted' }); app.goals.accept(goal.id, goal.revision, 'Self-chosen finite inquiry.');
+    const port = (app.directApi.address() as AddressInfo).port; const before = Date.now(); const status = await fetch(`http://127.0.0.1:${port}/runs/${encodeURIComponent(first.id)}`, { headers: { authorization: 'Bearer direct-test' } }); assert.equal(status.status, 200); assert(Date.now() - before < 1000); assert.equal(app.runtime.getRun(second.id)?.status, 'ready');
+    release(); await eventually(() => app!.runtime.getRun(second.id), run => run?.status === 'completed'); assert.equal(app.goals.goal('inquiry')?.status, 'completed', JSON.stringify({ order, goal: app.goals.goal('inquiry'), execution: app.store.list('execution'), observations: app.store.list('observations') })); assert.deepEqual(order, ['first', 'inquiry', 'second']); assert(app.store.list<any>('development.memories').some(row => row.key.startsWith('initiative-observation:') && row.value.record.status === 'forgotten'));
+  } finally { release?.(); await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('steering an active conversation reschedules its durable correction without automatic speech', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let entered!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; }); let calls = 0;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async (payload, signal) => {
+      calls++; if (calls === 1) { entered(); await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); }
+      assert.match(payload, /corrected objective/); return stop('Internal corrected outcome.');
+    } }); await app.start(); const run = receive(app, f, 'steered', 'original objective'); await ready;
+    receive(app, f, 'steered', 'corrected objective', '2');
+    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, 2); assert.equal(app.output(run.id).length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('graceful close persists unfinished work before abort and restart resumes it', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let entered!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; }); let calls = 0;
+  const performRequest = async (payload: string, signal: AbortSignal) => {
+    calls++; if (calls === 1) { entered(); await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); }
+    assert.match(payload, /unfinished objective/); return stop('Internal restarted outcome.');
+  };
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest }); await app.start(); const run = receive(app, f, 'restart', 'unfinished objective'); await ready;
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest }); assert.ok(app.store.get('host.pending-runs', run.id)); assert.equal(app.runtime.getRun(run.id)?.status, 'waiting');
+    await app.start(); await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, 2); assert.equal(app.output(run.id).length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary promise keeps progress owed and wakes an accounted report run with a confirmed receipt', async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 1; let app: AutarkApplication | undefined; let conversationCalls = 0, reportCalls = 0; let owed: any;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async payload => {
+      const request = parsed(payload), frame = context(request); const input = request.messages.findLast((m: any) => m.role === 'user' && !m.content.includes('hostContext'))?.content ?? '';
+      if (input.includes('"obligation":')) {
+        reportCalls++; assert.equal(frame.target.channel, 'promise'); assert.equal(frame.obligations[0].id, owed.id);
+        if (reportCalls === 1) return tool('speech_send', { channel: frame.target.channel, text: 'The verified outcome report.', kind: 'report', obligationId: owed.id, obligationRevision: owed.revision });
+        assert.equal(app!.obligations.obligation(owed.id)?.status, 'delivered'); return stop('Private report reasoning.');
+      }
+      conversationCalls++;
+      if (conversationCalls === 1) return tool('obligation_owe', { id: 'result', promisedOutcome: 'A verified outcome report.', dueAt: null });
+      if (conversationCalls === 2) { owed = receipt(request); return tool('speech_send', { channel: frame.target.channel, text: 'Work has started.', kind: 'progress' }); }
+      assert.equal(app!.obligations.obligation(owed.id)?.status, 'owed'); return stop('Internal planning completed.');
+    } }); await app.start(); const run = receive(app, f, 'promise', 'Please report the eventual result.');
+    await eventually(() => app!.obligations.all(), values => values.some(value => value.status === 'delivered'));
+    await eventually(() => app!.store.list<any>('runs').map(row => row.value.status), statuses => statuses.every(status => status === 'completed'));
+    assert.equal(conversationCalls, 3); assert.equal(reportCalls, 2); assert.equal(app.output(run.id).length, 1); assert.equal((app.output(run.id)[0] as any).kind, 'progress');
+    const delivery = app.store.get<{ runId: string }>('host.delivery-runs', owed.id)!.value; assert.equal(app.output(delivery.runId).length, 1); assert.match(JSON.stringify(app.output(delivery.runId)), /verified outcome report/); assert.equal(app.resources.snapshot(run.id).requests, 8);
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw new Error('No terminal report replay'); } }); assert.equal(app.obligations.obligation(owed.id)?.status, 'delivered');
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary Slack report with a lost receipt remains delivering until reconciliation and never resends', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let calls = 0, posts = 0; let clientId = '', owed: any;
+  f.config.slack = { teamId: 'T1', botUserId: 'BOT', channels: [{ channel: 'C1', scope: f.config.direct.scope }], eligibleHumanIds: ['U1'], coverageStart: '1', lookbackSeconds: 60, allowSpeech: true };
+  const slackBotApi = { async call<T>(method: string, args: Record<string, string>): Promise<T> {
+    if (method === 'chat.postMessage') { posts++; clientId = args.client_msg_id!; throw new Error('Receipt lost after remote commit'); }
+    return { messages: [{ ts: '12', thread_ts: '10', user: 'BOT', text: 'Verified Slack report.', client_msg_id: clientId }] } as T;
+  } };
+  try {
+    app = new AutarkApplication({ ...f, secrets, slackBotApi, slackAppApi: { async call<T>() { return {} as T; } }, performRequest: async payload => {
+      calls++; const request = parsed(payload), frame = context(request);
+      if (calls === 1) return tool('obligation_owe', { id: 'lost-result', promisedOutcome: 'Verified Slack report.', dueAt: new Date(Date.now() + 60000).toISOString() });
+      owed = receipt(request); return tool('speech_send', { channel: frame.target.channel, threadTs: frame.target.threadTs, text: 'Verified Slack report.', kind: 'report', obligationId: owed.id, obligationRevision: owed.revision });
+    } });
+    const run = app.slackIngress!.acceptHistory('C1', { ts: '10', user: 'U1', text: '<@BOT> report the result' })!.run;
+    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'blocked'); assert.equal(posts, 1); assert.equal(app.obligations.obligation(owed.id)?.status, 'delivering');
+    const effect = app.effects.unresolved(run.id)[0]!; assert.equal(effect.status, 'uncertain'); assert.equal((await app.effects.reconcile(effect.id, f.authority)).status, 'succeeded');
+    await app.tick(); assert.equal(app.obligations.obligation(owed.id)?.status, 'delivered'); assert.equal(posts, 1); assert.equal(calls, 2);
+    await app.close(); app = new AutarkApplication({ ...f, secrets, slackBotApi, slackAppApi: { async call<T>() { return {} as T; } }, performRequest: async () => { throw new Error('No uncertain report replay'); } }); assert.equal(app.obligations.obligation(owed.id)?.status, 'delivered'); assert.equal(posts, 1);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('an accounted consolidation cannot complete after its durable claim revision is replaced', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let entered!: () => void, release!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; }); let calls = 0;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async payload => {
+      calls++; const request = parsed(payload);
+      if (calls === 1) { entered(); await held; return tool('memory_consolidation_complete', { outputs: [{ kind: 'belief', content: 'Stale output must not be adopted.', confidence: 0.5 }] }); }
+      assert.match(JSON.stringify(receipt(request)), /stale consolidation lease/); return stop('Old claim rejected.');
+    } });
+    app.memory.ingest({ id: 'claim-source', runId: 'fixture-source', sourceId: 'attributed-source', actorId: 'operator', channel: 'speech', scope: f.config.direct.scope, at: new Date().toISOString(), content: 'A source requiring cautious interpretation.' });
+    const job = app.memory.scheduleConsolidation('claim-job', ['claim-source'], f.config.direct.scope, new Date().toISOString()); await app.start(); await ready;
+    const replacement = app.memory.claimConsolidation('replacement-worker', 60000, new Date(Date.now() + 62000).toISOString())!; assert(replacement.job.revision > job.revision); release();
+    await eventually(() => app!.store.list<any>('runs').map(row => row.value.status), statuses => statuses.every(status => status === 'completed'));
+    const current = app.memory.jobs(f.config.direct.scope)[0]!; assert.equal(current.revision, replacement.job.revision); assert.equal(current.lease!.owner, 'replacement-worker'); assert.equal(current.outputIds.length, 0);
+    assert.equal(app.memory.context({ audience: f.config.direct.scope, query: 'Stale output must not be adopted', maxRecords: 32, maxBytes: 65536 }).memories.some(m => m.kind === 'belief'), false); assert.equal(calls, 2);
+  } finally { release?.(); await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
