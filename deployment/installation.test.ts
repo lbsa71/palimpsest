@@ -22,7 +22,9 @@ test('renders a complete systemd-verifiable new installation with a persistent o
     assert.match(units[input.unitName]!, /Delegate=cpu memory pids\nMemoryMax=1073741824\nMemorySwapMax=0\nTasksMax=128\nCPUQuota=200%/);
     assert.match(units[input.unitName]!, /KillMode=control-group/);
     assert.ok(units[input.unitName]!.includes(`Requires=${mount} ${dataMount}\nAfter=${mount} ${dataMount}`));
-    assert.ok(units[input.unitName]!.includes(`/artifacts/${input.coordinatorCandidateId}/payload/deployment/cli.ts launch`));
+    assert.ok(units[input.unitName]!.includes(`--chdir=${input.stateDirectory}/boot/active ./node payload/deployment/bootstrap-evolution.ts run`));
+    assert.ok(units[input.unitName]!.includes('ExecStopPost=/bin/sh'));
+    assert.ok(!units[input.unitName]!.includes('ExecStartPre='));
     assert.ok(units[input.unitName]!.includes(`ReadWritePaths=${input.stateDirectory} ${input.artifactStore} ${join(hostDataPath(input), 'logs')} ${workspacePath(input)}`));
     assert.ok(units[input.unitName]!.includes(`StandardOutput=append:${join(hostDataPath(input), 'logs/coordinator.log')}`));
     assert.ok(units[dataMount]!.includes(`Where=${hostDataPath(input)}`));

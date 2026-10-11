@@ -12,6 +12,7 @@ import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import type { SupervisorFile } from './cli.ts';
 import { assertPrivateHostDirectory, contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-policy.ts';
 import { validateHostBindings } from './supervisor.ts';
+import { publishBootstrapSelection } from './bootstrap-evolution.ts';
 
 export interface HostSelection {
   selected: ReleaseTarget;
@@ -53,6 +54,26 @@ export function hostSelection(config: SupervisorFile): HostSelection | undefined
 function save(config: SupervisorFile, value: HostSelection): void {
   journal(config, db => db.prepare('INSERT INTO selection VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET value=excluded.value').run(JSON.stringify(value)));
 }
+/** Called only by the independent process-manager rescue after its failed cgroup was drained. */
+export function restoreHostBootstrap(config: SupervisorFile, selected: ReleaseTarget): void {
+  const launcher = new ProcessLease(join(config.host.stateDirectory, 'host-launcher-lease.sqlite'));
+  let coordinator: ProcessLease | undefined;
+  try {
+    coordinator = new ProcessLease(join(config.host.stateDirectory, 'supervisor-lease.sqlite'));
+    const path = join(config.host.stateDirectory, 'release.sqlite');
+    if (!existsSync(path)) return; // Initial admission has not yet committed; bootstrap proof remains required.
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const retained = db.prepare('SELECT value FROM release_events').all().some(row => {
+        const state = JSON.parse(String(row.value)) as Partial<ReleaseState>;
+        return state.phase === 'accepted' && identity(state.accepted) === identity(selected);
+      });
+      invariant(retained, 'Independent bootstrap rescue was never accepted');
+    } finally { db.close(); }
+    verifyApplication(config.host.artifactStore, selected.candidateId, config.host.nodeBinary);
+    save(config, { selected, rescue: selected, phase: 'rescue' });
+  } finally { coordinator?.close(); launcher.close(); }
+}
 /** Called synchronously by the incumbent coordinator only after its old-policy probation verdict. */
 export function requestHostSuccessor(config: SupervisorFile, selected: ReleaseTarget, rescue: ReleaseTarget): void {
   const db = new DatabaseSync(join(config.host.stateDirectory, 'release.sqlite'), { readOnly: true });
@@ -63,6 +84,7 @@ export function requestHostSuccessor(config: SupervisorFile, selected: ReleaseTa
   } finally { db.close(); }
   verifyApplication(config.host.artifactStore, selected.candidateId, config.host.nodeBinary);
   verifyApplication(config.host.artifactStore, rescue.candidateId, config.host.nodeBinary);
+  publishBootstrapSelection(config, selected);
   save(config, { selected, rescue, phase: 'requested' });
 }
 function rescue(config: SupervisorFile, current: HostSelection): HostSelection {
@@ -71,7 +93,7 @@ function rescue(config: SupervisorFile, current: HostSelection): HostSelection {
 }
 /** A non-serving bootstrap enters here; every accepted launcher replaces this process with execve.
  * A pending boot after an OS restart chooses old code. No ancestor coordinator remains in memory. */
-export async function launchHost(configPath: string, selectedBoot?: string): Promise<void> {
+export async function launchHost(configPath: string, selectedBoot?: string, onReady?: () => void): Promise<void> {
   const config = JSON.parse(readHostFile(configPath).toString('utf8')) as SupervisorFile;
   validateHostBindings(config.host);
   const lease = new ProcessLease(join(config.host.stateDirectory, 'host-launcher-lease.sqlite'));
@@ -143,6 +165,7 @@ export async function launchHost(configPath: string, selectedBoot?: string): Pro
         ready = true; clearTimeout(timer);
         const latest = hostSelection(config)!;
         if (latest.phase !== 'requested') save(config, { ...latest, phase: 'ready' });
+        onReady?.();
       });
     }).finally(() => { clearTimeout(timer); if (shutdownTimer) clearTimeout(shutdownTimer); process.off('SIGTERM', stop); process.off('SIGINT', stop); });
     if (stopping) return;

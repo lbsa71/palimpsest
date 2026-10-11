@@ -7,6 +7,7 @@ import { invariant } from '../packages/contracts/index.ts';
 import { verifyApplication, type DeploymentInputs } from './candidate.ts';
 import { beneath, environmentSecrets, selectedProviderKey } from './config.ts';
 import type { SupervisorFile } from './cli.ts';
+import { bootstrapCommands } from './bootstrap-evolution.ts';
 
 /** Operator input, outside all candidate workspaces. No credentials are placed here. */
 export interface Installation {
@@ -62,9 +63,10 @@ export function hostDataMountUnitName(value: Installation): string { return esca
 const installedManifest = (value: Installation) => `/etc/systemd/system/${value.unitName}.installation.json`;
 const payloadPath = (value: Installation) => join(value.artifactStore, value.coordinatorCandidateId, 'payload');
 export function renderInstallation(input: Installation): Record<string, string> {
-  const value = validateInstallation(input), mount = mountUnitName(value), dataMount = hostDataMountUnitName(value), payload = payloadPath(value);
+  const value = validateInstallation(input), mount = mountUnitName(value), dataMount = hostDataMountUnitName(value);
+  const boot = bootstrapCommands(value.stateDirectory, installedManifest(value));
   return {
-    [value.unitName]: `[Unit]\nDescription=Aeon frozen coordinator ${value.coordinatorCandidateId}\nRequires=${mount} ${dataMount}\nAfter=${mount} ${dataMount} network-online.target\nWants=network-online.target\nBindsTo=${mount} ${dataMount}\nRequiresMountsFor=${value.stateDirectory} ${value.artifactStore}\nStartLimitIntervalSec=300\nStartLimitBurst=3\n\n[Service]\nType=exec\nUser=${value.uid}\nGroup=${value.gid}\nSlice=system.slice\nWorkingDirectory=${payload}\nEnvironmentFile=${value.environmentFile}\nEnvironment=PATH=/usr/bin:/bin\nUMask=0077\nExecStartPre=${value.nodeBinary} ${payload}/deployment/installation.ts check-service ${installedManifest(value)}\nExecStart=${value.nodeBinary} ${payload}/deployment/cli.ts launch ${value.hostConfigFile}\nDelegate=cpu memory pids\nMemoryMax=${value.outerMemoryBytes}\nMemorySwapMax=0\nTasksMax=${value.outerTasks}\nCPUQuota=${value.outerCpuPercent}%\nKillMode=control-group\nLimitCORE=0\nTimeoutStopSec=45\nSendSIGKILL=yes\nRestart=on-failure\nRestartSec=10\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=${value.stateDirectory} ${value.artifactStore} ${join(hostDataPath(value), 'logs')} ${workspacePath(value)}\nProtectControlGroups=no\nStandardOutput=append:${join(hostDataPath(value), 'logs/coordinator.log')}\nStandardError=append:${join(hostDataPath(value), 'logs/coordinator.log')}\n\n[Install]\nWantedBy=multi-user.target\n`,
+    [value.unitName]: `[Unit]\nDescription=Aeon frozen coordinator ${value.coordinatorCandidateId}\nRequires=${mount} ${dataMount}\nAfter=${mount} ${dataMount} network-online.target\nWants=network-online.target\nBindsTo=${mount} ${dataMount}\nRequiresMountsFor=${value.stateDirectory} ${value.artifactStore}\nStartLimitIntervalSec=300\nStartLimitBurst=3\n\n[Service]\nType=exec\nUser=${value.uid}\nGroup=${value.gid}\nSlice=system.slice\nWorkingDirectory=${value.stateDirectory}\nEnvironmentFile=${value.environmentFile}\nEnvironment=PATH=/usr/bin:/bin\nUMask=0077\nExecStart=${boot.start}\nExecStopPost=${boot.stopPost}\nDelegate=cpu memory pids\nMemoryMax=${value.outerMemoryBytes}\nMemorySwapMax=0\nTasksMax=${value.outerTasks}\nCPUQuota=${value.outerCpuPercent}%\nKillMode=control-group\nLimitCORE=0\nTimeoutStopSec=45\nSendSIGKILL=yes\nRestart=on-failure\nRestartSec=10\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=${value.stateDirectory} ${value.artifactStore} ${join(hostDataPath(value), 'logs')} ${workspacePath(value)}\nProtectControlGroups=no\nStandardOutput=append:${join(hostDataPath(value), 'logs/coordinator.log')}\nStandardError=append:${join(hostDataPath(value), 'logs/coordinator.log')}\n\n[Install]\nWantedBy=multi-user.target\n`,
     [mount]: `[Unit]\nDescription=Aeon fixed persistent workspace\nBefore=${value.unitName}\nRequiresMountsFor=${value.workspaceProvisionDirectory}\n\n[Mount]\nWhat=${join(value.workspaceProvisionDirectory, 'workspace.ext4')}\nWhere=${workspacePath(value)}\nType=ext4\nOptions=loop,nodev,nosuid\nTimeoutSec=30\n`,
     [dataMount]: `[Unit]\nDescription=Aeon fixed persistent host data\nBefore=${value.unitName}\nRequiresMountsFor=${value.hostDataProvisionDirectory}\n\n[Mount]\nWhat=${join(value.hostDataProvisionDirectory, 'workspace.ext4')}\nWhere=${hostDataPath(value)}\nType=ext4\nOptions=loop,nodev,nosuid\nTimeoutSec=30\n`,
     'installation.json': JSON.stringify(value, null, 2) + '\n',
@@ -126,17 +128,18 @@ export function validateEnvironmentFile(bytes: Buffer): NodeJS.ProcessEnv {
 }
 /** No authority or main-journal mutation; SQLite may create same-owner WAL/SHM reader bookkeeping.
  * The supervisor separately probes actual delegated leaf limits after its lease. */
-export function checkInstallation(input: Installation, context: 'admin' | 'service', mounted = true): SupervisorFile {
+export function checkInstallation(input: Installation, context: 'admin' | 'service', mounted = true, boot?: { candidateId: string; nodeBinary: string }): SupervisorFile {
   const value = validateInstallation(input);
+  const executable = boot?.nodeBinary ?? value.nodeBinary, candidateId = boot?.candidateId ?? value.coordinatorCandidateId;
   invariant(process.platform === 'linux', 'Linux installation required');
   if (context === 'admin') invariant(process.getuid?.() === 0, 'Administrator operation required');
-  for (const executable of [value.nodeBinary, '/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit', '/usr/bin/findmnt', '/usr/bin/systemctl']) { canonical(executable); accessSync(executable, constants.X_OK); }
-  invariant(/^v24\.\d+\.\d+$/.test(run(value.nodeBinary, ['--version']).trim()), 'Pinned Node 24 executable required');
+  for (const path of [executable, '/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit', '/usr/bin/findmnt', '/usr/bin/systemctl']) { canonical(path); accessSync(path, constants.X_OK); }
+  invariant(/^v24\.\d+\.\d+$/.test(run(executable, ['--version']).trim()), 'Pinned Node 24 executable required');
   for (const executable of ['/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit']) run(executable, ['--version']);
   if (mounted) checkHostData(value);
-  const candidate = verifyApplication(value.artifactStore, value.coordinatorCandidateId, value.nodeBinary);
+  const candidate = verifyApplication(value.artifactStore, candidateId, executable);
   const runtime = (candidate.inputs.controls as unknown as { runtime: DeploymentInputs['runtime'] }).runtime;
-  invariant(run(value.nodeBinary, ['--version']).trim() === runtime.nodeVersion, 'Pinned Node version differs from frozen coordinator');
+  invariant(run(executable, ['--version']).trim() === runtime.nodeVersion, 'Pinned Node version differs from frozen coordinator');
   invariant(candidate.files.some(file => file.path === 'deployment/installation.ts') && candidate.files.some(file => file.path === 'deployment/cli.ts') && candidate.files.some(file => file.path === 'deployment/host-successor.ts'), 'Frozen coordinator must include installation, CLI and host-launcher entrypoints');
   const config = JSON.parse(privateFile(value.hostConfigFile, value.uid).toString('utf8')) as SupervisorFile & { evaluationDispatcher?: string };
   const configFields = ['evidenceDirectory', 'host', 'mode', 'policyFiles', ...(config.bootstrap ? ['bootstrap'] : []), ...(config.evaluationDispatcher !== undefined ? ['evaluationDispatcher'] : [])].sort().join(',');
@@ -161,8 +164,8 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   const controllers = readFileSync('/sys/fs/cgroup/cgroup.controllers', 'utf8').split(/\s+/);
   invariant(['cpu', 'memory', 'pids'].every(controller => controllers.includes(controller)), 'Linux cgroup v2 cpu/memory/pids controllers required');
   const secrets = environmentSecrets(context === 'admin' ? validateEnvironmentFile(privateFile(value.environmentFile, 0)) : process.env);
-  const selected = selectedProviderCandidate(value);
-  const selectedCandidate = selected === value.coordinatorCandidateId ? candidate : verifyApplication(value.artifactStore, selected, value.nodeBinary);
+  const selected = boot?.candidateId ?? selectedProviderCandidate(value);
+  const selectedCandidate = selected === candidateId ? candidate : verifyApplication(value.artifactStore, selected, executable);
   selectedProviderKey((selectedCandidate.inputs.configuration as unknown as DeploymentInputs['configuration']).model, secrets);
   if (context === 'admin') invariant(process.getuid?.() === 0, 'Administrator operation required');
   else {
@@ -224,6 +227,7 @@ function ownedUnitFile(path: string, content: string): void {
 /** Explicit administrator command. It installs files only; enable/start remains a separate operation. */
 export function applyInstallation(input: Installation, bundle: string): void {
   const value = validateInstallation(input); checkHostData(value); checkInstallation(value, 'admin', false); const units = renderInstallation(value);
+  invariant(existsSync(join(payloadPath(value), 'deployment/bootstrap-evolution.ts')), 'A freshly frozen evolvable-bootstrap candidate is required');
   canonical(bundle);
   for (const [name, content] of Object.entries(units)) invariant(readFileSync(join(bundle, name), 'utf8') === content, 'Review bundle changed or differs from installation');
   for (const name of [value.unitName, mountUnitName(value), hostDataMountUnitName(value), basename(installedManifest(value))]) invariant(!existsSync(join('/etc/systemd/system', name)), 'Installation already exists; refusing overwrite');
@@ -246,6 +250,7 @@ export function applyInstallation(input: Installation, bundle: string): void {
   writeFileSync(join('/etc/systemd/system', mountUnitName(value)), units[mountUnitName(value)]!, { flag: 'wx', mode: 0o644 });
   writeFileSync(join('/etc/systemd/system', hostDataMountUnitName(value)), units[hostDataMountUnitName(value)]!, { flag: 'wx', mode: 0o644 });
   writeFileSync(installedManifest(value), units['installation.json']!, { flag: 'wx', mode: 0o644 });
+  run('/usr/bin/setpriv', ['--reuid', String(value.uid), '--regid', String(value.gid), '--clear-groups', value.nodeBinary, join(payloadPath(value), 'deployment/bootstrap-evolution.ts'), 'initialize', installedManifest(value)]);
   run('/usr/bin/systemctl', ['daemon-reload']);
 }
 export function stopInstallation(input: Installation, uninstall = false): void {

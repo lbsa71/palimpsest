@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs, { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { freezeCandidate, hashBytes } from '../packages/release/artifacts.ts';
+import { bootstrapCommands, initializeBootstrap, publishBootstrapSelection, rotateBootstrapRescue } from './bootstrap-evolution.ts';
+import type { SupervisorFile } from './cli.ts';
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-boot-fixture-'));
+  const config = { host: { stateDirectory: join(root, 'state'), artifactStore: join(root, 'artifacts'), workspaceDirectory: join(root, 'work'), nodeBinary: process.execPath }, mode: 'engineering', policyFiles: [], evidenceDirectory: join(root, 'evidence') } as SupervisorFile;
+  for (const path of [config.host.stateDirectory, config.host.artifactStore, config.host.workspaceDirectory]) mkdirSync(path, { mode: 0o700 });
+  const create = (text: string) => {
+    const source = join(root, `source-${text}`); mkdirSync(join(source, 'deployment'), { recursive: true });
+    writeFileSync(join(source, 'deployment/bootstrap-evolution.ts'), text); writeFileSync(join(source, 'package-lock.json'), '{}');
+    const files = [{ path: 'deployment/bootstrap-evolution.ts', sha256: hashBytes(text) }, { path: 'package-lock.json', sha256: hashBytes('{}') }];
+    const runtime = { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch };
+    return freezeCandidate(source, config.host.artifactStore, ['deployment', 'package-lock.json'], { createdBy: 'boot-fixture', model: {}, prompts: {}, configuration: {}, controls: { classifier: 'host-execution-closure-v1', files, runtime, policy: {} }, dependencies: { installedRuntime: [], lockfile: hashBytes('{}'), retainedForks: [], checkBuildToolchain: [], runtime } }).manifest.id;
+  };
+  const first = { candidateId: create('first'), policyDigest: 'a'.repeat(64) }, next = { candidateId: create('next'), policyDigest: 'b'.repeat(64) };
+  const database = join(config.host.stateDirectory, 'release.sqlite'), db = new DatabaseSync(database); chmodSync(database, 0o600);
+  db.exec('CREATE TABLE release_state(singleton INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+  const authority = { generation: 'fixture', epoch: 3, controlRevision: 'c'.repeat(64) };
+  const state = (phase: string, selected = next) => db.prepare('INSERT OR REPLACE INTO release_state VALUES(1,?)').run(JSON.stringify({ phase, accepted: selected, authority }));
+  return { root, config, first, next, state, authority, dispose: () => { db.close(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+test('old-policy acceptance publishes one boot snapshot without changing retained rescue', () => {
+  const f = fixture();
+  try {
+    initializeBootstrap(f.config, f.first); const boot = join(f.config.host.stateDirectory, 'boot');
+    initializeBootstrap(f.config, f.first); // Preserved reinstall does not replace existing selections.
+    f.state('probation'); assert.throws(() => publishBootstrapSelection(f.config, f.next), /completed incumbent-policy/);
+    assert.equal(realpathSync(join(boot, 'active')), realpathSync(join(boot, 'rescue')));
+    writeFileSync(join(boot, 'failed'), ''); f.state('accepted'); publishBootstrapSelection(f.config, f.next);
+    assert.equal(realpathSync(join(boot, 'active')), join(boot, 'targets', f.next.candidateId));
+    assert.equal(realpathSync(join(boot, 'rescue')), join(boot, 'targets', f.first.candidateId));
+    initializeBootstrap(f.config, f.first);
+    assert.equal(realpathSync(join(boot, 'active')), join(boot, 'targets', f.next.candidateId), 'reinstallation retains the accepted successor');
+    assert.equal(existsSync(join(boot, 'failed')), false);
+    assert.equal(hashBytes(readFileSync(join(boot, 'rescue/node'))), hashBytes(readFileSync(process.execPath)));
+    assert.throws(() => rotateBootstrapRescue(f.config, f.first), /completed incumbent-policy/);
+    writeFileSync(join(boot, 'failed'), ''); assert.throws(() => rotateBootstrapRescue(f.config, f.next), /latched/);
+    rmSync(join(boot, 'failed')); assert.throws(() => rotateBootstrapRescue(f.config, f.next), /ENOENT/);
+    const path = join(boot, 'targets', f.next.candidateId), descriptor = JSON.parse(readFileSync(join(path, 'target.json'), 'utf8'));
+    // Explicit engineering fixture record; this test does not claim to have booted the full application.
+    writeFileSync(join(path, 'boot-ready.json'), JSON.stringify({ target: f.next, authority: { ...f.authority, epoch: 2 }, runtimeHash: descriptor.runtimeHash }), { mode: 0o600 });
+    assert.throws(() => rotateBootstrapRescue(f.config, f.next), /boot-ready under current authority/);
+    writeFileSync(join(path, 'boot-ready.json'), JSON.stringify({ target: f.next, authority: f.authority, runtimeHash: descriptor.runtimeHash }));
+    rotateBootstrapRescue(f.config, f.next);
+    assert.equal(realpathSync(join(boot, 'rescue')), join(boot, 'targets', f.next.candidateId));
+    assert.ok(existsSync(join(boot, 'targets', f.first.candidateId, 'node')), 'rotation retains previous independent snapshot');
+  } finally { f.dispose(); }
+});
+
+test('changed retained runtime is refused before selection publication', () => {
+  const f = fixture();
+  try {
+    initializeBootstrap(f.config, f.first); f.state('accepted', f.first);
+    const node = join(f.config.host.stateDirectory, 'boot/targets', f.first.candidateId, 'node'); chmodSync(node, 0o700); writeFileSync(node, 'malformed');
+    assert.throws(() => publishBootstrapSelection(f.config, f.first), /Retained bootstrap target changed/);
+  } finally { f.dispose(); }
+});
+
+test('interruption after active rename preserves latched independent rescue and latest state', () => {
+  const f = fixture(), original = fs.renameSync;
+  try {
+    initializeBootstrap(f.config, f.first); f.state('accepted');
+    const boot = join(f.config.host.stateDirectory, 'boot');
+    writeFileSync(join(boot, 'failed'), ''); writeFileSync(join(f.config.host.stateDirectory, 'latest'), 'memory and uncertain effects');
+    fs.renameSync = ((source, destination) => {
+      original(source, destination);
+      if (destination === join(boot, 'active')) throw new Error('interrupted after atomic active rename');
+    }) as typeof fs.renameSync;
+    syncBuiltinESMExports();
+    assert.throws(() => publishBootstrapSelection(f.config, f.next), /interrupted after atomic/);
+    assert.equal(realpathSync(join(boot, 'active')), join(boot, 'targets', f.next.candidateId));
+    assert.equal(realpathSync(join(boot, 'rescue')), join(boot, 'targets', f.first.candidateId));
+    assert.equal(existsSync(join(boot, 'failed')), true, 'process manager still selects independent rescue');
+    assert.equal(readFileSync(join(f.config.host.stateDirectory, 'latest'), 'utf8'), 'memory and uncertain effects');
+    fs.renameSync = original; syncBuiltinESMExports();
+    publishBootstrapSelection(f.config, f.next); assert.equal(existsSync(join(boot, 'failed')), false);
+  } finally { fs.renameSync = original; syncBuiltinESMExports(); f.dispose(); }
+});
+
+const administrator = (binary: string, args: string[]) => execFileSync('/usr/bin/sudo', ['-n', binary, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+test('real systemd drains failed detached descendants before latched rescue, and clean stop does not latch', { skip: process.env.AEON_BOOTSTRAP_SYSTEMD !== '1', timeout: 60000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-boot-os-')), unitName = `aeon-bootstrap-probe-${process.pid}.service`, unitPath = `/run/systemd/system/${unitName}`;
+  const boot = join(root, 'boot'), marker = join(root, 'rescue-ready'), manifest = join(root, 'manifest.json');
+  writeFileSync(manifest, '{}');
+  for (const slot of ['active', 'rescue']) {
+    const directory = join(boot, slot); mkdirSync(join(directory, 'payload/deployment'), { recursive: true, mode: 0o700 });
+    copyFileSync(process.execPath, join(directory, 'node')); chmodSync(join(directory, 'node'), 0o500);
+  }
+  const rescue = `import {readFileSync,writeFileSync} from 'node:fs'; const root=${JSON.stringify(root)}; let child; try {child=Number(readFileSync(root+'/child','utf8'));} catch {} if(child) {try {const stat=readFileSync('/proc/'+child+'/stat','utf8').split(') ')[1]; if(stat[0]!=='Z') throw Error('failed child still running');} catch(e) {if(e.code!=='ENOENT') throw e;}} writeFileSync(root+'/rescue-ready',readFileSync(root+'/lived','utf8')); setInterval(()=>{},1000);`;
+  writeFileSync(join(boot, 'rescue/payload/deployment/bootstrap-evolution.ts'), rescue);
+  writeFileSync(join(boot, 'active/payload/deployment/bootstrap-evolution.ts'), `import {spawn} from 'node:child_process'; import {writeFileSync} from 'node:fs'; const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'}); writeFileSync(${JSON.stringify(join(root, 'child'))},String(child.pid)); process.exit(42);`);
+  writeFileSync(join(root, 'lived'), JSON.stringify({ epoch: 9, memory: 'latest', uncertain: 'do not retry' }));
+  const commands = bootstrapCommands(root, manifest);
+  const unit = `[Unit]\nStartLimitIntervalSec=60\nStartLimitBurst=8\n[Service]\nType=exec\nUser=${process.getuid!()}\nGroup=${process.getgid!()}\nDelegate=cpu memory pids\nMemoryMax=268435456\nTasksMax=64\nCPUQuota=100%\nKillMode=control-group\nTimeoutStopSec=3\nRestart=on-failure\nRestartSec=1\nExecStart=${commands.start}\nExecStopPost=${commands.stopPost}\nStandardOutput=null\nStandardError=null\n`;
+  const source = join(root, unitName); writeFileSync(source, unit);
+  const waitReady = async () => { const deadline = Date.now() + 12000; while (!existsSync(marker) && Date.now() < deadline) await delay(50); assert.ok(existsSync(marker), 'independent rescue must start after failure'); assert.equal(readFileSync(marker, 'utf8'), readFileSync(join(root, 'lived'), 'utf8')); };
+  try {
+    administrator('/usr/bin/install', ['-o', 'root', '-g', 'root', '-m', '644', source, unitPath]); administrator('/usr/bin/systemctl', ['daemon-reload']); administrator('/usr/bin/systemctl', ['start', unitName]); await waitReady();
+    assert.equal(administrator('/usr/bin/systemctl', ['show', unitName, '-p', 'NRestarts', '--value']).trim(), '1');
+    administrator('/usr/bin/systemctl', ['stop', unitName]); rmSync(marker); rmSync(join(boot, 'failed'));
+    // A malformed executable cannot run any application fallback; systemd still selects rescue.
+    chmodSync(join(boot, 'active/node'), 0o700); writeFileSync(join(boot, 'active/node'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2]));
+    administrator('/usr/bin/systemctl', ['start', unitName]); await waitReady();
+    administrator('/usr/bin/systemctl', ['stop', unitName]); rmSync(marker); rmSync(join(boot, 'failed'));
+    copyFileSync(process.execPath, join(boot, 'active/node')); chmodSync(join(boot, 'active/node'), 0o500);
+    writeFileSync(join(boot, 'active/payload/deployment/bootstrap-evolution.ts'), 'setInterval(()=>{},1000);');
+    administrator('/usr/bin/systemctl', ['start', unitName]); await delay(200); administrator('/usr/bin/systemctl', ['stop', unitName]);
+    assert.equal(existsSync(join(boot, 'failed')), false, 'ordinary systemd stop must not spuriously select rescue');
+    assert.equal(existsSync(marker), false);
+  } finally {
+    try { administrator('/usr/bin/systemctl', ['stop', unitName]); } catch {}
+    administrator('/usr/bin/rm', ['-f', unitPath]); administrator('/usr/bin/systemctl', ['daemon-reload']);
+    try { administrator('/usr/bin/systemctl', ['reset-failed', unitName]); } catch {}
+    rmSync(root, { recursive: true, force: true });
+  }
+});
