@@ -169,15 +169,60 @@ function accounting(actual: Accounting, states: readonly DevelopmentRequestState
 }
 function profiles(states: readonly DevelopmentRequestState[], roles: ReadonlyMap<string, DevelopmentRoleBinding>) { return new Map(states.map(s => [s.request.id, { configurationDigest: s.configurationDigest, model: roles.get(s.roleId)!.profile }])); }
 
+function budgets(states: readonly DevelopmentRequestState[], roles: ReadonlyMap<string, DevelopmentRoleBinding>, m: DevelopmentAttempt): void {
+  const check = (items: readonly DevelopmentRequestState[], limit: ResourceEnvelope) => {
+    const used = sum(items, m.grant.id, 0), concurrent = items.filter(s => ['reserved', 'dispatched', 'uncertain'].includes(s.request.status)).length;
+    invariant(used.usage.requests <= limit.maxRequests && used.chargedTokens <= limit.maxTokens && used.chargedCostUsd <= limit.maxCostUsd && used.chargedElapsedMs <= limit.maxElapsedMs && concurrent <= limit.maxConcurrency, 'Observable original/role budget or concurrency exceeded');
+  };
+  check(states, m.grant.resources);
+  for (const role of roles.values()) check(states.filter(s => s.roleId === role.id), role.resources);
+}
+function replay(transitions: readonly DevelopmentAccountingTransition[], initial: readonly DevelopmentRequestState[], phase: 'behavior' | 'review', startAt: string, endAt: string, r: DevelopmentRegistration, m: DevelopmentAttempt, roles: ReadonlyMap<string, DevelopmentRoleBinding>, trust: DevelopmentEnvelopeTrust, read: BoundedArtifactReader) {
+  const latest = new Map(initial.map(s => [s.request.id, s])); let previousTime = at(startAt);
+  budgets([...latest.values()], roles, m);
+    for (const event of transitions) {
+      exact(event, 'beforeDigest,state,settlement'); const s = event.state, prior = latest.get(s.request.id), role = roles.get(s.roleId); invariant(role, 'Foreign tail role');
+      invariant(at(s.observedAt) >= previousTime && at(s.observedAt) <= at(endAt), 'Tail ordering/deadline changed'); previousTime = at(s.observedAt);
+      invariant(at(s.observedAt) >= at(m.grant.issuedAt), 'Physical transition precedes original grant');
+      if (phase === 'behavior' && role.kind !== 'observer') invariant(at(s.observedAt) >= at(m.notBefore), 'Candidate/control transition before behavior start');
+      if (!prior) invariant(event.beforeDigest === null && s.request.status === 'reserved' && (phase === 'review' ? ['reviewer', 'observer'].includes(role.kind) : role.kind !== 'reviewer') && event.settlement === null, 'Duplicate/unregistered post-freeze physical request');
+      else {
+        invariant(event.beforeDigest === identity(prior), 'Missing exact authenticated request transition');
+        const immutable = (v: DevelopmentRequestState) => ({ ...v, observedAt: '', request: developmentRequestIdentity(v.request), charged: null }); equal(immutable(prior), immutable(s), 'Transition changed immutable physical request/role/root');
+        invariant((prior.request.status === 'reserved' && ['dispatched', 'failed'].includes(s.request.status)) || (['dispatched', 'uncertain'].includes(prior.request.status) && ['succeeded', 'failed', 'uncertain'].includes(s.request.status)), 'Settled request mutation or unauthorized replay');
+        if (s.request.status === 'dispatched') invariant((phase === 'review' ? ['reviewer', 'observer'].includes(role.kind) : role.kind !== 'reviewer'), 'Candidate/control dispatch continued after B');
+      }
+      let release = false;
+      if (event.settlement) {
+        const receipt = authenticate(reviewEnvelopeDomains.settlement, event.settlement, trust.transports); exact(receipt, 'version,registrationDigest,requestIdentityDigest,observedAt,dispatched,status,usage,response'); validateUsage(receipt.usage);
+        invariant(receipt.version === 2 && receipt.registrationDigest === identity(r) && receipt.requestIdentityDigest === developmentRequestIdentity(s.request) && receipt.status === s.request.status && at(receipt.observedAt) >= (prior ? at(prior.observedAt) : at(startAt)) && at(receipt.observedAt) <= at(s.observedAt), 'Forged/substituted transport settlement');
+        equal(receipt.usage, s.request.usage, 'Settlement usage changed');
+        release = prior?.request.status === 'reserved' && receipt.status === 'failed' && receipt.dispatched === false;
+        invariant(release || receipt.dispatched === true && prior && ['dispatched', 'uncertain'].includes(prior.request.status), 'Settlement forged dispatch ordering');
+        if (receipt.status === 'succeeded') invariant(receipt.response, 'Successful settlement lacks retained response bytes');
+        if (release) invariant(receipt.usage.inputTokens === 0 && receipt.usage.outputTokens === 0 && receipt.usage.costUsd === 0 && receipt.usage.elapsedMs === 0, 'Unlaunched release claims physical usage');
+        if (receipt.response) read(receipt.response, m.limits.maxArtifactBytes);
+      } else if (prior) {
+        if (s.request.status === 'dispatched') equal(s.request.usage, prior.request.usage, 'Dispatch forged raw provider usage');
+        else invariant(s.request.status === 'uncertain' && ['inputTokens', 'outputTokens', 'costUsd'].every(k => s.request.usage[k as 'inputTokens'] === null) && s.request.usage.elapsedMs >= prior.request.usage.elapsedMs, 'Settlement requires authenticated transport receipt');
+      }
+      state(s, r, roles, read, release); latest.set(s.request.id, s); budgets([...latest.values()], roles, m);
+      if (s.request.parentRequestId) invariant(latest.has(s.request.parentRequestId), 'Foreign/missing parent physical request');
+    }
+  return { latest, previousTime };
+}
+
 /** Host collector returns an unsigned B; the qualified observer signs these exact bytes. */
-export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], requests: DevelopmentRequestState[], frozenAt: string, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now()): DevelopmentBehavior {
-  const input = inertSnapshot({ document, manifest, observations, requests, frozenAt });
+export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], requests: DevelopmentRequestState[], transitions: DevelopmentAccountingTransition[], frozenAt: string, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now()): DevelopmentBehavior {
+  const input = inertSnapshot({ document, manifest, observations, requests, transitions, frozenAt });
   const { r, m, roles } = registration(input.document, input.manifest, trust, now), storage = retained(reader, m.limits);
   unique([...r.originalRequests, ...input.requests].map(s => s.request.id));
-  invariant(input.observations.length + r.originalRequests.length + input.requests.length <= m.limits.maxRecords, 'Behavior record allowance exceeded');
-  for (const s of r.originalRequests) { state(s, r, roles, storage.read); invariant(at(s.observedAt) <= at(r.registeredAt), 'Original inventory contains later physical work'); }
+  invariant(input.observations.length + r.originalRequests.length + input.requests.length + input.transitions.length <= m.limits.maxRecords, 'Behavior record allowance exceeded');
+  for (const s of r.originalRequests) { state(s, r, roles, storage.read); invariant(at(s.observedAt) >= at(m.grant.issuedAt) && at(s.observedAt) <= at(r.registeredAt), 'Original inventory outside original clock anchor'); }
   accounting(m.grant.originalAccounting, r.originalRequests, m, m.registeredAt);
   for (const s of input.requests) { const role = state(s, r, roles, storage.read); invariant(role.kind !== 'reviewer' && at(s.observedAt) <= at(input.frozenAt), 'Reviewer work or late request inside B'); }
+  const history = replay(input.transitions, r.originalRequests, 'behavior', r.registeredAt, input.frozenAt, r, m, roles, trust, storage.read);
+  equal([...history.latest.values()].sort((a, b) => a.request.id.localeCompare(b.request.id)), [...r.originalRequests, ...input.requests].sort((a, b) => a.request.id.localeCompare(b.request.id)), 'Missing/incomplete behavioral physical transition history');
   const recorded = input.observations.filter(o => o.value.data.kind === 'request');
   equal(recorded.map(o => o.value.data.kind === 'request' ? o.value.data.request.id : '').sort(), input.requests.map(s => s.request.id).sort(), 'Behavior physical request inventory omitted or duplicated');
   for (const o of recorded) {
@@ -188,8 +233,8 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
   const evidence = collectDevelopmentEvidenceProjection(input.manifest, input.observations, trust.behavior, storage.read, profiles(input.requests, roles), now).evidence;
   const end = input.observations.filter(o => o.value.data.kind === 'end'); invariant(end.length === 1 && at(end[0]!.value.observedAt) === at(input.frozenAt) && at(input.frozenAt) <= at(m.deadlineAt), 'B freeze must equal original behavioral stopping point');
   invariant(evidence.finalAccounting, 'Missing freeze-time A0'); accounting(evidence.finalAccounting, [...r.originalRequests, ...input.requests], m, input.frozenAt);
-  storage.scan({ manifest: input.manifest, observations: input.observations, requests: input.requests, originalRequests: r.originalRequests });
-  const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, evidence, artifactIndex: storage.index() };
+  storage.scan({ manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, originalRequests: r.originalRequests });
+  const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, evidence, artifactIndex: storage.index() };
   invariant(Buffer.byteLength(canonicalJson(behavior)) + behavior.artifactIndex.reduce((n, a) => n + a.bytes, 0) <= m.limits.maxEvidenceBytes, 'Behavior evidence allowance exceeded');
   return behavior;
 }
@@ -201,10 +246,10 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
   try {
     exact(envelope, 'version,registration,behavior,reviews,accountingTail,closure'); invariant(envelope.version === 2, 'Unsupported envelope version');
     const observer = new Map([[trust.behavior.observer.id, trust.behavior.observer.key]]);
-    const b = authenticate(reviewEnvelopeDomains.behavior, envelope.behavior, observer); exact(b, 'version,registrationDigest,frozenAt,manifest,observations,requests,evidence,artifactIndex'); invariant(b.version === 2, 'Unsupported B version');
+    const b = authenticate(reviewEnvelopeDomains.behavior, envelope.behavior, observer); exact(b, 'version,registrationDigest,frozenAt,manifest,observations,requests,transitions,evidence,artifactIndex'); invariant(b.version === 2, 'Unsupported B version');
     const { r, m, roles } = registration(envelope.registration, b.manifest, trust, now);
     const storage = retained(reader, m.limits, Buffer.byteLength(canonicalJson(envelope)));
-    const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.frozenAt, trust, storage.read, now); equal(b, collected, 'Changed immutable B/evidence/artifact index');
+    const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now); equal(b, collected, 'Changed immutable B/evidence/artifact index');
     const behaviorDigest = identity(b), reviews: Signed<DevelopmentReview>[] = []; invariant(envelope.reviews.length <= 2, 'At most two independent review bindings'); unique(envelope.reviews.map(v => v.signer));
     for (const signed of envelope.reviews) {
       const reviewer = trust.behavior.reviewers.get(signed.signer); invariant(reviewer, 'Unqualified reviewer'); const v = authenticate(reviewEnvelopeDomains.review, signed, new Map([[signed.signer, reviewer.key]]));
@@ -216,31 +261,8 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     findings.push(...behavioralReview.findings);
     const tail = authenticate(reviewEnvelopeDomains.tail, envelope.accountingTail, observer); exact(tail, 'version,registrationDigest,behaviorDigest,transitions');
     invariant(tail.version === 2 && tail.registrationDigest === identity(r) && tail.behaviorDigest === behaviorDigest, 'Tail changed registration/B');
-    invariant(b.observations.length + r.originalRequests.length + b.requests.length + tail.transitions.length + envelope.reviews.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
-    const latest = new Map([...r.originalRequests, ...b.requests].map(s => [s.request.id, s])); let previousTime = at(b.frozenAt);
-    for (const event of tail.transitions) {
-      exact(event, 'beforeDigest,state,settlement'); const s = event.state, prior = latest.get(s.request.id), role = roles.get(s.roleId); invariant(role, 'Foreign tail role');
-      invariant(at(s.observedAt) >= previousTime && at(s.observedAt) <= at(r.reviewDeadlineAt), 'Tail ordering/deadline changed'); previousTime = at(s.observedAt);
-      if (!prior) invariant(event.beforeDigest === null && s.request.status === 'reserved' && ['reviewer', 'observer'].includes(role.kind) && event.settlement === null, 'Duplicate/unregistered post-freeze physical request');
-      else {
-        invariant(event.beforeDigest === identity(prior), 'Missing exact authenticated request transition');
-        const immutable = (v: DevelopmentRequestState) => ({ ...v, observedAt: '', request: developmentRequestIdentity(v.request), charged: null }); equal(immutable(prior), immutable(s), 'Transition changed immutable physical request/role/root');
-        invariant((prior.request.status === 'reserved' && ['dispatched', 'failed'].includes(s.request.status)) || (['dispatched', 'uncertain'].includes(prior.request.status) && ['succeeded', 'failed', 'uncertain'].includes(s.request.status)), 'Settled request mutation or unauthorized replay');
-        if (s.request.status === 'dispatched') invariant(['reviewer', 'observer'].includes(role.kind), 'Candidate/control dispatch continued after B');
-      }
-      let release = false;
-      if (event.settlement) {
-        const receipt = authenticate(reviewEnvelopeDomains.settlement, event.settlement, trust.transports); exact(receipt, 'version,registrationDigest,requestIdentityDigest,observedAt,dispatched,status,usage,response'); validateUsage(receipt.usage);
-        invariant(receipt.version === 2 && receipt.registrationDigest === identity(r) && receipt.requestIdentityDigest === developmentRequestIdentity(s.request) && receipt.status === s.request.status && at(receipt.observedAt) >= (prior ? at(prior.observedAt) : at(b.frozenAt)) && at(receipt.observedAt) <= at(s.observedAt), 'Forged/substituted transport settlement');
-        equal(receipt.usage, s.request.usage, 'Settlement usage changed');
-        release = prior?.request.status === 'reserved' && receipt.status === 'failed' && receipt.dispatched === false;
-        invariant(release || receipt.dispatched === true && prior && ['dispatched', 'uncertain'].includes(prior.request.status), 'Settlement forged dispatch ordering');
-        if (receipt.status === 'succeeded') invariant(receipt.response, 'Successful settlement lacks retained response bytes');
-        if (release) invariant(receipt.usage.inputTokens === 0 && receipt.usage.outputTokens === 0 && receipt.usage.costUsd === 0 && receipt.usage.elapsedMs === 0, 'Unlaunched release claims physical usage');
-        if (receipt.response) storage.read(receipt.response);
-      } else if (prior && s.request.status !== 'dispatched') invariant(s.request.status === 'uncertain' && ['inputTokens', 'outputTokens', 'costUsd'].every(k => s.request.usage[k as 'inputTokens'] === null), 'Settlement requires authenticated transport receipt');
-      state(s, r, roles, storage.read, release); latest.set(s.request.id, s);
-    }
+    invariant(b.observations.length + r.originalRequests.length + b.requests.length + b.transitions.length + tail.transitions.length + envelope.reviews.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
+    const { latest, previousTime } = replay(tail.transitions, [...r.originalRequests, ...b.requests], 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
     storage.scan(envelope);
     if (!envelope.closure) findings.push({ code: 'closure', status: 'unavailable', detail: 'Missing final original-grant closure' });
     else {
