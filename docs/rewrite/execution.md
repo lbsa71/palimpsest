@@ -35,11 +35,13 @@ Current exclusive finite goals, all created through the goal tool without an arb
 
 | Session / worktree | Ownership | Acceptance and limits |
 |---|---|---|
-| `/root/a1_real_screen`; `public-screen-live` | Host-authorized twelve-case live-screen preparation | New finite goal under [fixed specification](evidence/A1-L08/public-screen-live-specification.md); explicit source/grant/secret boundaries, offline verification only |
-| `/root/a1_public_screen_review`; `public-screen-live-review` | Fresh host-entry and actual evidence review | Actual finite goal; governing-source review starts while author finishes, then causal tests against a clean exact checkpoint; no physical window yet |
+| `/root/a1_real_screen`; `public-screen-live` | Host-authorized twelve-case live-screen preparation | New finite goal under [fixed specification](evidence/A1-L08/public-screen-live-specification.md); explicit source/grant/secret boundaries; first bounded synthetic S01/S08 composition stopped at failed S01, repairs in progress |
+| `/root/a1_public_screen_review`; `public-screen-live-review` | Fresh host-entry and actual evidence review | Actual finite goal; governing-source review starts while author finishes, then causal source tests and independent audit of the preserved first composition; corrected trial still requires source/procedure clearance |
 | `/root/a1_native_recovery`; `native-recovery` | Quiescent native persistent continuation | Actual finite goal under the [fixed recovery specification](evidence/A1-L08/native-recovery-specification.md); original ledger/clock, exact native identity and checkpoint ownership; pure implementation and fresh source review precede bounded acquisition |
-| `/root/a1_native_recovery_review`; `native-recovery-review` | Independent quiescence, original-ledger and native checkpoint review | Fresh actual goal from author `be5bec8`; causal source review before any native acquisition; author turn yields while its goal remains active |
+| `/root/a1_native_recovery_review`; `native-recovery-review` | Independent quiescence, original-ledger and native checkpoint review | Fresh actual goal from author `be5bec8`; initial source accepted; turn interrupted while goal remains active, ready to review the author's concrete acquisition driver |
 | `/root`; integration checkout | Shared integration/configuration, joined verification, central evidence/status and final qualification | Source-frozen aggregate, independently reviewed handoffs and actual empirical gates; paid runs require the pending grant |
+
+The first host-entry composition at clean `f61964a` failed S01 and stopped before S08. Independent review traced the missing final response to direct resume before ordinary ingress bound the reply destination; the fourth request remains uncertain with its full charge. Review also reproduced an order-dependent assessment hash after canonical report retention. Both original 64 MiB workspace images are retained outside the checkout, unmounted and loop-free, with no surviving cgroup; original exit one and cleanup zero are recorded. The author is repairing only the new host admission path and assessment identity. A distinct corrected trial requires new frozen provenance and fresh clearance; no original grant or failed evidence is reset.
 
 Latest completed engineering gates and integrations:
 
