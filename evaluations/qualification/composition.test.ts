@@ -49,7 +49,8 @@ test('authenticated synthetic observer invokes actual confined application and p
       calls++;
       try {
         assert.equal(payload.includes('hidden-positive'), false, 'Private check ID entered model payload');
-        assert.equal(payload.includes('9999'), false, 'Private numeric input entered model payload');
+        // Match the private integer, not coincidental digits in timing decimals or digests.
+        assert.equal(/(?<![\w.])9999(?![\w.])/u.test(payload), false, 'Private numeric input entered model payload');
         assert.equal(payload.includes(privateRoot), false, 'Private directory entered model payload');
         signal.throwIfAborted(); return await transport(payload);
       } catch (error) { transportFailure = error instanceof Error ? error.stack ?? error.message : String(error); throw error; }
