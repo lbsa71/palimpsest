@@ -204,14 +204,36 @@ test('a broken accepted launcher falls back through the retained bootstrap on re
 });
 
 
-test('coordinator observes launcher loss during asynchronous startup and releases authority', { timeout: 60000 }, async () => {
-  const f = fixture(); let child: ChildProcess | undefined; let coordinator: number | undefined;
-  const cli = join(f.writableSource, 'deployment/cli.ts'), marker = join(f.root, 'starting');
-  // Pause inside startup before the service returns, after the coordinator has entered supervise.
-  writeFileSync(cli, readFileSync(cli, 'utf8').replace('      supervisor = await ServiceSupervisor.open(',
-    `    await import('node:fs').then(fs => fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid)));
-    await new Promise(resolve => setTimeout(resolve, 1500));
-      supervisor = await ServiceSupervisor.open(`));
+test('coordinator observes launcher loss during asynchronous startup and releases authority', { timeout: 60000 }, async t => {
+  const f = fixture(); let child: ChildProcess | undefined; let coordinator: number | undefined; let stderr = '';
+  const cli = join(f.writableSource, 'deployment/cli.ts'), supervisor = join(f.writableSource, 'deployment/supervisor.ts');
+  const marker = join(f.root, 'starting'), disconnected = join(f.root, 'disconnected'), resume = join(f.root, 'resume');
+  const exitedMarker = join(f.root, 'coordinator-exited'), controls = join(f.root, 'controls-published');
+  function instrument(path: string, anchor: string, replacement: string) {
+    const source = readFileSync(path, 'utf8');
+    assert.equal(source.split(anchor).length, 2, `Unique lifecycle fixture seam required: ${anchor}`);
+    writeFileSync(path, source.replace(anchor, replacement));
+  }
+  // Hold real initialization after the child is ready, before open() can return to the CLI.
+  // This proves the leases and authority were actually acquired before launcher loss.
+  const ready = '    this.#ready = await this.#service.start(candidateId, prior, this.#evolutionMetadata(policy.policyDigest));';
+  instrument(supervisor, ready, `${ready}
+    {
+      const fs = await import('node:fs');
+      fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ coordinator: process.pid, service: this.#service.processId, at: Date.now() }));
+      const deadline = Date.now() + 10000;
+      while (!fs.existsSync(${JSON.stringify(resume)})) {
+        if (Date.now() > deadline) throw new Error('Fixture startup gate was not released');
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    }`);
+  const observer = "    if (launched) process.once('disconnect', stop);";
+  instrument(cli, observer, `${observer}
+    const fixtureFs = await import('node:fs');
+    process.once('disconnect', () => fixtureFs.writeFileSync(${JSON.stringify(disconnected)}, String(Date.now())));
+    process.once('exit', code => fixtureFs.writeFileSync(${JSON.stringify(exitedMarker)}, JSON.stringify({ code, at: Date.now() })));`);
+  const publish = '        server = await serveControls(supervisor, config.host.stateDirectory);';
+  instrument(cli, publish, `        fixtureFs.writeFileSync(${JSON.stringify(controls)}, 'unexpected control publication');\n${publish}`);
   const candidate = freezeApplication(f.writableSource, f.host.artifactStore, f.inputs);
   const fields = { ...f.policy, controlRevision: candidate.manifest.controls }, policy = { ...fields, policyDigest: admissionPolicyIdentity(fields) };
   const authority = { ...f.initial, controlRevision: candidate.manifest.controls };
@@ -223,22 +245,36 @@ test('coordinator observes launcher loss during asynchronous startup and release
   writeFileSync(proofPath, JSON.stringify(proof), { mode: 0o600 });
   writeFileSync(configPath, JSON.stringify({ host: f.host, mode: 'engineering', evidenceDirectory: f.evidenceDirectory, policyFiles: [[policy.policyDigest, policyPath]], bootstrap: { proofFile: proofPath, policyDigest: policy.policyDigest } }), { mode: 0o600 });
   try {
-    child = spawn(process.execPath, [fileURLToPath(new URL('./cli.ts', import.meta.url)), 'launch', configPath], { env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1', MISTRAL_API_KEY: 'unavailable', AUTARK_DIRECT_TOKEN: 'token' }, stdio: 'ignore' });
-    await eventually(() => existsSync(marker)); coordinator = Number(readFileSync(marker, 'utf8'));
+    child = spawn(process.execPath, [fileURLToPath(new URL('./cli.ts', import.meta.url)), 'launch', configPath], { env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1', MISTRAL_API_KEY: 'unavailable', AUTARK_DIRECT_TOKEN: 'token' }, stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr!.on('data', data => { stderr += data.toString(); });
+    await eventually(() => existsSync(marker));
+    const startup = JSON.parse(readFileSync(marker, 'utf8')) as { coordinator: number; service: number; at: number };
+    coordinator = startup.coordinator;
+    assert.ok(Number.isSafeInteger(startup.service));
+    for (const name of ['supervisor-lease.sqlite', 'process-lease.sqlite']) assert.throws(() => new ProcessLease(join(f.host.stateDirectory, name)), /holds the instance lease/);
+    const active = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+    try { assert.equal(active.current()?.generation, authority.generation); } finally { active.close(); }
+    assert.equal(existsSync(controlSocket(f.host.stateDirectory)), false);
     const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGKILL'); await exited;
-    await new Promise(resolve => setTimeout(resolve, 6000));
-    let serving = false;
-    try { serving = Boolean((await requestControl(f.host.stateDirectory, { kind: 'status' }) as any).running); } catch {}
-    assert.equal(serving, false, 'orphan coordinator must not remain serving after launcher disappears during startup');
-    const lease = new ProcessLease(join(f.host.stateDirectory, 'supervisor-lease.sqlite')); lease.close();
-    if (existsSync(join(f.host.stateDirectory, 'authority.sqlite'))) {
-      const ledger = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
-      try { assert.ok(!ledger.current()?.generation); } finally { ledger.close(); }
-    }
+    await eventually(() => existsSync(disconnected));
+    assert.equal(existsSync(exitedMarker), false, 'startup remains pending until the fixture releases it');
+    writeFileSync(resume, 'continue initialization');
+    await eventually(() => existsSync(exitedMarker) || existsSync(controls));
+    assert.equal(existsSync(controls), false, 'orphan coordinator must never publish controls after startup');
+    const exit = JSON.parse(readFileSync(exitedMarker, 'utf8')) as { code: number; at: number };
+    assert.equal(exit.code, 0, stderr);
+    for (const name of ['supervisor-lease.sqlite', 'process-lease.sqlite']) { const lease = new ProcessLease(join(f.host.stateDirectory, name)); lease.close(); }
+    const ledger = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+    try { assert.ok(ledger.current()); assert.ok(!ledger.current()!.generation, 'serving authority was withdrawn'); } finally { ledger.close(); }
+    assert.throws(() => process.kill(startup.service, 0), /ESRCH/);
+    const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+    try { assert.equal(store.list('physical-requests').length, 0); } finally { store.close(); }
+    t.diagnostic(JSON.stringify({ startup, disconnectedAt: Number(readFileSync(disconnected, 'utf8')), exit, stderr }));
   } finally {
+    writeFileSync(resume, 'release gate during cleanup');
     if (coordinator) { try { process.kill(coordinator, 'SIGTERM'); } catch {} }
-    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (child && child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGKILL'); await exited; }
+    if (coordinator) await eventually(() => existsSync(exitedMarker));
     rmSync(f.root, { recursive: true, force: true });
   }
 });
