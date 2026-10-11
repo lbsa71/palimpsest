@@ -18,6 +18,9 @@ const files = ['packages', 'deployment', 'evaluations', 'experiments/agent-shell
 if (!files.length) throw new Error('No rewrite tests found; an empty suite is not acceptance.');
 // The host-broker regressions mock the worker module and require this Node flag.
 // Keep those pure checks in the ordinary suite rather than silently skipping them.
-const result = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--test', ...files], { stdio: 'inherit' });
+// Each file may copy a complete candidate and launch bounded process fixtures.
+// Serialize files so unrelated suites do not consume each other's deadlines;
+// concurrency exercised inside a fixture remains unchanged.
+const result = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--test', '--test-concurrency=1', ...files], { stdio: 'inherit' });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
