@@ -184,3 +184,22 @@ test('review: preattempt anchors must stay unchanged through B and may reconcile
   assert.deepEqual(accepted.findings.map(f => f.code), ['unknown-usage', 'synthetic']);
   assert.deepEqual(accepted.finalAccounting!.unknownRequestIds, []);
 });
+test('review R3: root overrun also blocks dispatch of another already reserved request', () => {
+  const g = fixture(), [ar, ad, as, br, bd, bs] = g.transitions;
+  br!.state.observedAt = g.f.at(183.5);
+  as!.state.request.usage.inputTokens = 200; as!.state.charged.tokens = 201;
+  g.envelope.accountingTail.value.transitions = [ar!, ad!, br!, as!, bd!, bs!];
+  rebuildTailLinks(g);
+  requireBlocked(g, 'Reviewer B was reserved before overrun but cannot dispatch afterward');
+});
+test('review: physical overrun retains accounting and permits settlement of other work already dispatched', () => {
+  const g = fixture(), [ar, ad, as, br, bd, bs] = g.transitions;
+  br!.state.observedAt = g.f.at(183.25); bd!.state.observedAt = g.f.at(183.5);
+  as!.state.request.usage.inputTokens = 200; as!.state.charged.tokens = 201;
+  g.envelope.accountingTail.value.transitions = [ar!, ad!, br!, bd!, as!, bs!];
+  rebuildTailLinks(g);
+  const result = g.prepare();
+  assert.deepEqual(result.findings.map(f => f.code), ['synthetic']);
+  assert.equal(result.finalAccounting!.chargedTokens, 212);
+  assert.equal(result.automaticReleaseEligible, false); assert.equal(result.h1Eligible, false);
+});

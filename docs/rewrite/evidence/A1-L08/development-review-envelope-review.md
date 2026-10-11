@@ -60,3 +60,7 @@ This narrowing leaves ordinary within-attempt candidate/control uncertainty at B
 ## Pending handoff
 
 Root has received the exact reproductions and requested an immutable failure/specification checkpoint before author repair. R1–R3 are unresolved at this checkpoint. After exclusive-author repair, this reviewer must inspect the exact repair diff, adapt only fixture construction for legitimate frozen-interface changes, and rerun the unchanged rejection predicates plus directly affected valid cases. Root owns integration, serialized aggregate checks and downstream recorder/bridge/model-review reservations. No native workload, real process/clock boundary, provider/account/network operation, Slack message, deployment, push or broad materialization/hash sweep was performed.
+
+### R3 cancellation boundary follow-up
+
+After initial immutable checkpoint `4ce1f653cbeb3fc938b821f597a7714db87e9f2e`, two narrow cases distinguish cancellation from loss of settlement authority. With reviewer B reserved before A's overrun but dispatched afterward, the expected rejection still fails (same sole synthetic finding). With B both reserved and dispatched before A's overrun, B's later authenticated settlement correctly succeeds and preserves all 212 charged tokens. A repair must keep the second case retainable. Targeted Node command `node --test --test-name-pattern='root overrun also|physical overrun retains' evaluations/development/review-envelope-review.test.ts` returned 2 tests, 1 passed, 1 failed, exit 1. This is the same R3 finding, not a fourth defect.
