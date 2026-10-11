@@ -62,7 +62,9 @@ for (const kind of ['codex', 'claude'] as const) test(`physical pinned ${kind} n
             return kind === 'codex' ? responses(model, [{ type: 'custom_tool_call', id: `fc_child_${child}`, call_id: `call_child_${child}`, name: 'exec', namespace: 'functions', input: `text(await tools.exec_command(${JSON.stringify({ cmd: command(child), max_output_tokens: 1000, yield_time_ms: 1000 })}));` }], id)
               : messages(model, [{ type: 'tool_use', id: `tool_child_${child}`, name: 'Bash', input: { command: command(child), description: 'Write and inspect the public child artifact', timeout: 5000 } }], id);
           }
-          assert.ok(payload.includes(`child-${child + 1}-observed`), 'actual child tool continuation required');
+          const childResults = kind === 'codex' ? request.input.filter((item: any) => item.type === 'custom_tool_call_output' && item.call_id === `call_child_${child}`)
+            : request.messages.filter((item: any) => item.role === 'user').flatMap((item: any) => Array.isArray(item.content) ? item.content : []).filter((part: any) => part.type === 'tool_result' && part.tool_use_id === `tool_child_${child}`);
+          assert.ok(childResults.some((result: any) => JSON.stringify(kind === 'codex' ? result.output : result.content).includes(`child-${child + 1}-observed`)), 'attributed actual child tool result required; task text is not evidence');
           return kind === 'codex' ? responses(model, [{ type: 'message', id: `msg_child_${child}`, status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: `child-${child + 1}-observed`, annotations: [] }] }], id) : messages(model, [{ type: 'text', text: `child-${child + 1}-observed` }], id);
         }
         if (++parent === 1) {
@@ -77,6 +79,11 @@ for (const kind of ['codex', 'claude'] as const) test(`physical pinned ${kind} n
         if (kind === 'codex' && childTurns.some(turns => turns < 2)) return responses(model, [{ type: 'function_call', id: `fc_wait_${id}`, call_id: `call_wait_${id}`, namespace: 'collaboration', name: 'wait_agent', arguments: JSON.stringify({ timeout_ms: 10000 }) }], id);
         for (let index = 0; index < 2; index++) { assert.ok(existsSync(join(workspace, `child-${index + 1}.txt`))); assert.equal(readFileSync(join(workspace, `child-${index + 1}.txt`), 'utf8'), `child-${index + 1}-observed`); }
         assert.ok(childTurns.every(turns => turns >= 2));
+        for (let index = 0; index < 2; index++) {
+          const parentResults = kind === 'codex' ? request.input.filter((item: any) => item.role === 'user' || (item.type === 'function_call_output' && String(item.call_id).startsWith('call_wait_')))
+            : request.messages.filter((item: any) => item.role === 'user').flatMap((item: any) => Array.isArray(item.content) ? item.content : []).filter((part: any) => part.type === 'tool_result' && part.tool_use_id === `tool_spawn_${index}`);
+          assert.ok(parentResults.some((result: any) => JSON.stringify(result).includes(`child-${index + 1}-observed`)), 'actual parent receipt of both native child results required');
+        }
         return kind === 'codex' ? responses(model, [{ type: 'message', id: 'msg_parent', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'native-concurrency-parent-complete', annotations: [] }] }], id) : messages(model, [{ type: 'text', text: 'native-concurrency-parent-complete' }], id);
       } catch (error) { refusal = error; throw error; } finally { active--; }
     } } };

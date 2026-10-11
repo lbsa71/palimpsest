@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm';
 import { OperationalStore } from '../../packages/storage/index.ts';
 import { BaselineObserver, validateObserverGrant } from './observer.ts';
 import type { BaselineTransport, ObserverGrant } from './observer.ts';
+import type { PhysicalRequest } from '../../packages/contracts/control/index.ts';
 
 const payload = JSON.stringify({ model: 'synthetic-text-model', reasoning: { effort: 'high' }, input: [{ role: 'user', content: 'Public synthetic concurrency fixture.' }] });
 const attempt = { method: 'POST', path: '/v1/responses', payload };
@@ -114,6 +115,23 @@ test('one timeout aborts every simultaneous outstanding attempt without syntheti
   } finally { f.dispose(); }
 });
 
+test('worker loss reopens two original dispatched identities as unknown without reopening allocation or resetting time', async () => {
+  let now = 100; const g = grant(); const f = fixture(async () => response(), g, () => now);
+  try {
+    const before = f.store.putArtifact(payload);
+    for (let index = 0; index < 2; index++) {
+      const id = `interrupted-native-${index}`;
+      const request: PhysicalRequest = { id, runId: g.id, provider: g.profile.provider, model: g.profile.model, purpose: 'reasoning', promptManifestId: `native:${id}`, reservationId: id, requestDigest: before.sha256, status: 'reserved', usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
+      f.observer.ledger.reserve(request); f.store.put('baseline-attempts', id, { requestId: id, before, after: before }, null); f.observer.ledger.dispatched({ ...request, status: 'dispatched' });
+    }
+    now = 5100; let entered = false;
+    const reopened = new BaselineObserver({ store: f.store, grant: g, now: () => now, transport: async () => { entered = true; return response(); } });
+    const snapshot = reopened.ledger.snapshot(g.id); assert.equal(snapshot.tokens, 240); assert.equal(snapshot.costUsd, 0.00052); assert.equal(snapshot.elapsedMs, 5000); assert.equal(snapshot.cancelled, true);
+    for (const record of reopened.evidence()) { assert.equal(record.outcome, 'unknown'); assert.equal(reopened.ledger.request(record.requestId)!.status, 'uncertain'); }
+    await assert.rejects(reopened.handle(attempt), /budget|allocation/); assert.equal(entered, false);
+  } finally { f.dispose(); }
+});
+
 // Execute the real worker source against injected process/HTTP/native boundaries.
 // This is a deterministic bridge policy check, not an actual CLI/native child claim.
 function worker(kind: 'codex' | 'claude', maxConcurrency: number) {
@@ -126,8 +144,8 @@ function worker(kind: 'codex' | 'claude', maxConcurrency: number) {
     claudeInvocation: () => ({ args: [], environment: {} }), spawn: () => child,
     createServer(handler: typeof serve) { serve = handler; return { on() {}, once() {}, listen(_port: number, _host: string, ready: () => void) { ready(); }, address: () => ({ port: 12345 }), closeAllConnections() {}, close(done: () => void) { done(); } }; } });
   input.emit('line', JSON.stringify({ kind: 'start', value: { prompt: 'synthetic fixture', model: 'synthetic-text-model', effort: kind === 'codex' ? 'high' : 'low', maxRequestBytes: 128, maxOutputBytes: 1024, maxConcurrency } }));
-  const request = (body = '{}') => {
-    const request = Readable.from([Buffer.from(body)]) as any; request.method = 'POST'; request.url = kind === 'codex' ? '/v1/responses' : '/v1/messages'; request.headers = {};
+  const request = (body: string | AsyncIterable<Buffer> = '{}') => {
+    const request = Readable.from(typeof body === 'string' ? [Buffer.from(body)] : body) as any; request.method = 'POST'; request.url = kind === 'codex' ? '/v1/responses' : '/v1/messages'; request.headers = {};
     const response = { status: 0, body: '', writeHead(status: number) { this.status = status; return this; }, end(body = '') { this.body = body; return this; } };
     return { response, completed: serve(request, response) };
   };
@@ -163,5 +181,12 @@ for (const kind of ['codex', 'claude'] as const) {
     w.reply(w.records[0]); await first.completed; w.reply(w.records[0]);
     const replacement = w.request(); await replacement.completed; assert.equal(replacement.response.status, 403); assert.equal(w.processStub.exitCode, 1);
     w.finish(); await tick();
+  });
+  test(`${kind} a body still being read cannot emit RPC after a sibling stops the bridge`, { timeout: 1000 }, async () => {
+    const w = worker(kind, 2); await tick();
+    let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+    const slow = w.request((async function* () { await held; yield Buffer.from('{}'); })());
+    const bad = w.request('x'.repeat(129)); await bad.completed; release(); await tick();
+    assert.equal(w.records.length, 0); await slow.completed; assert.equal(slow.response.status, 502); w.finish(); await tick();
   });
 }

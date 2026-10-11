@@ -27,6 +27,7 @@ async function main(start) {
     inFlight++; let bytes = 0; const chunks = [];
     try {
       for await (const chunk of request) { bytes += chunk.length; if (bytes > start.maxRequestBytes) throw new Error('Oversized baseline request'); chunks.push(chunk); }
+      if (stopped) throw new Error('Baseline bridge stopped while reading request');
       const payload = Buffer.concat(chunks).toString('utf8');
       const reply = await rpc('baseline.provider', { method: request.method, path: request.url, payload });
       if (!reply || !Number.isInteger(reply.status) || typeof reply.body !== 'string' || typeof reply.contentType !== 'string') throw new Error('Invalid host response');

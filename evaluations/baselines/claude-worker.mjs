@@ -33,6 +33,7 @@ async function main(start) {
     inFlight++; let bytes = 0; const chunks = [];
     try {
       for await (const chunk of request) { bytes += chunk.length; if (bytes > start.maxRequestBytes) throw new Error('Oversized baseline request'); chunks.push(chunk); }
+      if (stopped) throw new Error('Baseline bridge stopped while reading request');
       const payload = Buffer.concat(chunks).toString('utf8');
       const reply = await rpc('baseline.provider', { method: request.method, path: '/v1/messages', payload,
         nativeHttp: { path: request.url, headers: request.headers } });
