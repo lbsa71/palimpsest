@@ -11,6 +11,8 @@ import type { InboundMessage, LocalServer } from './communications.ts';
 import { createSlackServer } from './slack-service.ts';
 import type { SlackServer } from './slack-service.ts';
 import { SlackSocketClient } from './slack-socket.ts';
+import { SlackHistoryClient } from './slack-history.ts';
+import { SlackRecovery } from './slack-recovery.ts';
 import { MistralProvider, CodexProvider, ProviderError } from './providers.ts';
 import type { Provider } from './providers.ts';
 import { Store } from './store.ts';
@@ -95,6 +97,7 @@ async function main(): Promise<void> {
   let localServer: LocalServer | undefined;
   let slackServer: SlackServer | undefined;
   let slackSocket: SlackSocketClient | undefined;
+  let slackRecovery: SlackRecovery | undefined;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let hostTick: Promise<void> | undefined;
   let backgroundTick: Promise<void> | undefined;
@@ -239,14 +242,19 @@ async function main(): Promise<void> {
       void growth?.tick().catch(() => {});
       drain(); return task;
     };
+    if (slack) slackRecovery = new SlackRecovery({ store, submit,
+      client: new SlackHistoryClient({ token: config.slackBotToken! }), allowedTeamIds: config.slackTeamIds,
+      ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
     localServer = await createLocalServer({ submit, status: id => {const task=host!.runtime.status(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;},
-      cancel: id => {const task=host!.runtime.cancel(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;}, events: after => host!.runtime.events(after) }, { token: paths.apiToken, peerToken: paths.peerApiToken, port });
+      cancel: id => {const task=host!.runtime.cancel(id);return task ? {...task,selfModificationStatus:actions.status(id)} : undefined;}, events: after => host!.runtime.events(after),
+      slackStatus: () => ({ socket: slackSocket?.status() ?? null, recovery: slackRecovery?.status() ?? null }) }, { token: paths.apiToken, peerToken: paths.peerApiToken, port });
     if (slack === 'http') slackServer = await createSlackServer({ submit }, { signingSecret: config.slackSigningSecret!,
       hasJoinedThread: id => store!.hasSlackThread(id),
       hasAcceptedEvent: id => store!.hasSlackEvent(id),
       allowedTeamIds: config.slackTeamIds, ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
     if (slack === 'socket') {
       slackSocket = new SlackSocketClient({ submit }, { appToken: config.slackAppToken!, allowedTeamIds: config.slackTeamIds,
+        onConnected: () => slackRecovery?.wake(),
         hasJoinedThread: id => store!.hasSlackThread(id),
         hasAcceptedEvent: id => store!.hasSlackEvent(id),
         ...(config.slackChannelIds.length ? { allowedChannelIds: config.slackChannelIds } : {}) });
@@ -280,7 +288,8 @@ async function main(): Promise<void> {
       growthCallsPerDay: config.growthCallsPerDay, evolutionCallsPerDay: config.evolutionCallsPerDay,
       planProposalCallsPerDay:config.planProposalCallsPerDay,planEvolutionCallsPerDay:config.planEvolutionCallsPerDay,
       planCadence:config.planCadence,planProposalCallsPerHour:config.planProposalCallsPerHour,planEvolutionCallsPerHour:config.planEvolutionCallsPerHour,
-      slackUrl: slackServer?.url ?? null, slackSocket: slackSocket?.status() ?? null }));
+      slackUrl: slackServer?.url ?? null, slackSocket: slackSocket?.status() ?? null, slackRecovery: slackRecovery?.status() ?? null }));
+    slackRecovery?.start();
     resumeGrowth();
     evolution.start();
     const tick = () => {
@@ -317,7 +326,7 @@ async function main(): Promise<void> {
     stopped = true;
     process.off('SIGINT', requestStop); process.off('SIGTERM', requestStop);
     if (tickTimer) clearInterval(tickTimer);
-    await Promise.allSettled([growth?.stop(), development?.stop(), localServer?.close(), slackServer?.close(), slackSocket?.close(), evolution?.stop()]);
+    await Promise.allSettled([growth?.stop(), development?.stop(), localServer?.close(), slackServer?.close(), slackSocket?.close(), slackRecovery?.close(), evolution?.stop()]);
     await (ready ? host?.runtime.stop().catch(() => {}) : undefined);
     await Promise.allSettled([hostTick, backgroundTick]);
     try { await host?.close(); } finally { try { store?.close(); } finally { lock.close(); } }

@@ -9,6 +9,11 @@ export type { ConversationOutcome, ConversationReflection, ConversationTopic } f
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type TaskState = 'queued' | 'running' | 'waiting_for_provider' | 'succeeded' | 'failed' | 'cancelled';
 export interface SlackAuthor { teamId: string; userId: string }
+export interface SlackRecoveryCheckpoint {
+  conversationId: string; oldest: string; latest?: string; scanOldest?: string; cursor?: string;
+  lastAttemptAt?: number; lastCompletedAt?: number; retryAt?: number; error?: string;
+  bootstrap: 'canonical' | 'legacy';
+}
 export interface Task {
   id: string; conversationId: string; input: string; source: string; eventId?: string;
   state: TaskState; checkpoint: Json; output: Json; error: string | null;
@@ -87,6 +92,33 @@ function decode<T>(row: unknown): T | undefined {
   return row === undefined ? undefined : JSON.parse((row as { record: string }).record) as T;
 }
 
+function slackTimestamp(value: unknown): bigint | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(\d{1,12})\.(\d{1,6})$/.exec(value);
+  return match ? BigInt(match[1]!) * 1_000_000n + BigInt(match[2]!.padEnd(6, '0')) : undefined;
+}
+function slackRecoveryRoute(value: unknown): RegExpExecArray | null {
+  return typeof value === 'string' ? /^slack:([A-Za-z0-9]{1,64}):([A-Za-z0-9]{1,64}):(\d{1,12}\.\d{1,6})$/.exec(value) : null;
+}
+function validateSlackRecoveryCheckpoint(value: SlackRecoveryCheckpoint): void {
+  const fail = () => { throw new Error('Invalid Slack recovery checkpoint'); };
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(key => !['conversationId', 'oldest', 'latest', 'scanOldest', 'cursor',
+      'lastAttemptAt', 'lastCompletedAt', 'retryAt', 'error', 'bootstrap'].includes(key))) fail();
+  const route = slackRecoveryRoute(value.conversationId), oldest = slackTimestamp(value.oldest);
+  const latest = slackTimestamp(value.latest), scanOldest = slackTimestamp(value.scanOldest);
+  if (!route || oldest === undefined || oldest < slackTimestamp(route[3])!
+    || !['canonical', 'legacy'].includes(value.bootstrap)) fail();
+  if (value.latest !== undefined && (latest === undefined || latest < oldest!)) fail();
+  if (value.scanOldest !== undefined && (scanOldest === undefined || scanOldest > oldest! || scanOldest < slackTimestamp(route![3])!)) fail();
+  if (value.cursor !== undefined && (typeof value.cursor !== 'string' || !/^[\x21-\x7e]{1,2048}$/.test(value.cursor)
+    || latest === undefined || scanOldest === undefined)) fail();
+  for (const timestamp of [value.lastAttemptAt, value.lastCompletedAt, value.retryAt]) {
+    if (timestamp !== undefined && (!Number.isSafeInteger(timestamp) || timestamp < 0)) fail();
+  }
+  if (value.error !== undefined && (typeof value.error !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(value.error))) fail();
+}
+
 /** Durable local state. This component is deliberately not an authorization boundary:
  * its owner must enforce generation capabilities before calling its mutators.
  * Every compound write and its journal entry commit together. No constructor
@@ -158,6 +190,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS conversation_reflections (id TEXT PRIMARY KEY, record TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS conversation_topic_intents (task_id TEXT NOT NULL, topic_id TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(task_id, topic_id));
       CREATE TABLE IF NOT EXISTS background_reservations (id TEXT PRIMARY KEY, window_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS slack_recovery (conversation_id TEXT PRIMARY KEY, record TEXT NOT NULL);
     `);
   }
 
@@ -280,6 +313,68 @@ export class Store {
 
   hasSlackEvent(eventId: string): boolean {
     return this.#db.prepare("SELECT 1 FROM tasks WHERE source = 'slack' AND event_id = ? LIMIT 1").get(eventId) !== undefined;
+  }
+
+  slackRecoveryCheckpoint(conversationId: string): SlackRecoveryCheckpoint | undefined {
+    if (!slackRecoveryRoute(conversationId)) throw new Error('Invalid Slack recovery conversation');
+    const checkpoint = decode<SlackRecoveryCheckpoint>(this.#db.prepare('SELECT record FROM slack_recovery WHERE conversation_id = ?').get(conversationId));
+    if (checkpoint !== undefined) {
+      validateSlackRecoveryCheckpoint(checkpoint);
+      if (checkpoint.conversationId !== conversationId) throw new Error('Slack recovery conversation mismatch');
+    }
+    return checkpoint;
+  }
+
+  /** The caller may include page admission in a Store transaction. Live ingress
+   * never advances this independent watermark or its fixed pagination bounds. */
+  saveSlackRecoveryCheckpoint(checkpoint: SlackRecoveryCheckpoint): void {
+    validateSlackRecoveryCheckpoint(checkpoint);
+    this.transaction(() => {
+      if (!this.hasSlackThread(checkpoint.conversationId)) throw new Error('Slack recovery requires a joined thread');
+      this.#db.prepare('INSERT INTO slack_recovery(conversation_id, record) VALUES (?, ?) ON CONFLICT(conversation_id) DO UPDATE SET record=excluded.record')
+        .run(checkpoint.conversationId, encode(checkpoint));
+      // Opaque cursors belong only in the checkpoint, never in diagnostics.
+      this.appendEvent('slack.recovery.checkpoint', { conversationId: checkpoint.conversationId,
+        oldest: checkpoint.oldest, scanOldest: checkpoint.scanOldest ?? null, latest: checkpoint.latest ?? null,
+        bootstrap: checkpoint.bootstrap, paginating: checkpoint.cursor !== undefined,
+        lastAttemptAt: checkpoint.lastAttemptAt ?? null, lastCompletedAt: checkpoint.lastCompletedAt ?? null,
+        retryAt: checkpoint.retryAt ?? null, error: checkpoint.error ?? null });
+    });
+  }
+
+  /** Only retained inbound identities establish a history floor. Synthetic Slack
+   * reports/controls cannot enroll recovery or move its legacy migration bound.
+   * Discovery is read-only; newer live messages never replace a saved cursor. */
+  slackRecoveryThreads(): Array<{ conversationId: string; oldest: string; bootstrap: 'canonical' | 'legacy' }> {
+    const threads = new Map<string, { root: string; canonical?: string; legacy?: string; invalidLegacy?: boolean }>();
+    const rows = this.#db.prepare(`SELECT conversation_id, event_id, json_extract(record, '$.createdAt') AS created_at
+      FROM tasks WHERE source = 'slack' AND (event_id LIKE 'slack-message:%' OR event_id GLOB 'Ev*') ORDER BY rowid`).all();
+    for (const row of rows) {
+      const conversationId = String(row.conversation_id), eventId = String(row.event_id), route = slackRecoveryRoute(conversationId);
+      if (!route) continue;
+      const canonical = /^slack-message:([A-Za-z0-9]{1,64}):([A-Za-z0-9]{1,64}):(\d{1,12}\.\d{1,6})$/.exec(eventId);
+      if (canonical && canonical[1] === route[1] && canonical[2] === route[2]
+        && slackTimestamp(canonical[3])! >= slackTimestamp(route[3])!) {
+        const thread = threads.get(conversationId) ?? { root: route[3]! };
+        if (!thread.canonical || slackTimestamp(canonical[3])! < slackTimestamp(thread.canonical)!) thread.canonical = canonical[3]!;
+        threads.set(conversationId, thread);
+      } else if (eventId.length <= 512 && /^Ev[A-Za-z0-9]+$/.test(eventId)) {
+        const thread = threads.get(conversationId) ?? { root: route[3]! };
+        const milliseconds = typeof row.created_at === 'string' ? Date.parse(row.created_at) : NaN;
+        const timestamp = `${Math.floor(milliseconds / 1000)}.${String((milliseconds % 1000) * 1000).padStart(6, '0')}`;
+        if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || slackTimestamp(timestamp) === undefined) thread.invalidLegacy = true;
+        else if (!thread.legacy || slackTimestamp(timestamp)! > slackTimestamp(thread.legacy)!) thread.legacy = timestamp;
+        threads.set(conversationId, thread);
+      }
+    }
+    return [...threads].flatMap(([conversationId, thread]) => {
+      // An unreadable legacy acceptance time cannot safely become known coverage.
+      if (thread.invalidLegacy) return [];
+      let oldest = thread.canonical ?? thread.legacy!;
+      if (thread.legacy && slackTimestamp(thread.legacy)! > slackTimestamp(oldest)!) oldest = thread.legacy;
+      if (slackTimestamp(thread.root)! > slackTimestamp(oldest)!) oldest = thread.root;
+      return [{ conversationId, oldest, bootstrap: thread.legacy ? 'legacy' as const : 'canonical' as const }];
+    });
   }
 
   /** Commit a response and its episode together, avoiding duplicate memory on restart. */

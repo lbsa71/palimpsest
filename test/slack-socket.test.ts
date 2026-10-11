@@ -75,6 +75,17 @@ test('socket reconnect and client restart preserve durable event deduplication',
   assert.equal(store.listTasks().length, 1);
 });
 
+test('each established connection wakes history recovery without coupling its failure to socket delivery', async (t) => {
+  let connected = 0;
+  const f = fixture({ onConnected: () => { connected++; throw new Error('private recovery hook failure'); } });
+  const client = new SlackSocketClient({ submit: async () => {} }, f.options);
+  t.after(() => client.close()); await client.start(); assert.equal(connected, 1);
+  f.sockets[0]!.message({ type: 'disconnect', reason: 'refresh_requested' });
+  await until(() => connected === 2);
+  assert.equal(client.status().state, 'connected');
+  f.sockets[1]!.message(frame()); await until(() => f.sockets[1]!.sent.length === 1);
+});
+
 test('connection credentials never follow redirects or non-Slack URLs and failures are bounded', async () => {
   for (const url of ['ws://wss.slack.com/path', 'wss://slack.com.evil.invalid/path', 'wss://user:password@wss.slack.com/path', 'wss://wss.slack.com:444/path', 'wss://wss.slack.com/path#secret']) {
     let connections = 0;

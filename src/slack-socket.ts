@@ -17,6 +17,8 @@ export interface SlackSocketOptions extends SlackAllowlistOptions {
   submitTimeoutMs?: number;
   maxReconnectAttempts?: number;
   reconnectDelayMs?: number;
+  /** Nonblocking host notification, independent of durable event acknowledgement. */
+  onConnected?: () => void;
 }
 
 export interface SlackSocketStatus {
@@ -179,6 +181,7 @@ export class SlackSocketClient {
         const lost = () => this.#lost(connection);
         socket.addEventListener('message', message); socket.addEventListener('close', lost); socket.addEventListener('error', lost);
         this.#connection = connection; this.#opening = undefined; this.#state = 'connected';
+        try { this.#options.onConnected?.(); } catch { /* Host diagnostics/recovery cannot break live ingress. */ }
       }, this.#lifetime.signal, this.#connectionTimeout);
     } catch {
       this.#opening = undefined;

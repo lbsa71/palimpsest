@@ -44,4 +44,6 @@ These records preserve the decisions and proposals recoverable from the [referen
 | [0028](0028-prepared-linux-isolation.md) | Native prerequisite, copied-state recovery and sealed service worker confinement accepted; wider portability/quotas open | Prepared kernel isolation and manifest-bound native helper inputs |
 | [0029](0029-autark-deliberation-and-explicit-speech.md) | Source implemented, reviewed and merged; exact installation and configured-model acceptance remain open | The continuing autark's deliberative perspective, attributed observations, scoped self-description and explicit speech actions |
 
+| [0030](0030-slack-history-recovery.md) | Accepted recovery requirement; source implemented, validation in progress, installation pending | Independent durable history reconciliation for joined Slack threads with visible coverage limits |
+
 Use [requirements](../../REQUIREMENTS.md) for acceptance obligations and [plan](../../PLAN.md) for work sequencing. [Architecture](../architecture.md) and [Skin Shed](../protocols/skin-shed.md) develop these records. Future decisions should identify the evidence, alternatives, affected requirements, and changed status; do not silently turn an open question into an accepted dependency.

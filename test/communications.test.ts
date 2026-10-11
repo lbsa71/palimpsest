@@ -7,6 +7,20 @@ import type { InboundMessage, OutboundMessage } from '../src/communications.ts';
 const message: InboundMessage = { id: 'request-1', conversationId: 'alice', text: 'Hello', source: 'direct' };
 const output: OutboundMessage = { conversationId: 'alice', taskId: 'task-1', text: 'Working', kind: 'progress' };
 
+test('Slack recovery diagnostics require the operator role and remain callable while work is pending', async (t) => {
+  let calls = 0;
+  const local = await createLocalServer({ submit: async () => {}, status: () => undefined, cancel: () => undefined, events: () => [],
+    slackStatus: () => { calls++; return { socket: { state: 'connected' }, recovery: { state: 'degraded', pending: 1 } }; } },
+  { token: 'operator-slack-status-token', peerToken: 'ordinary-peer-status-token' });
+  t.after(() => local.close());
+  for (const [path, token, expected] of [['/slack/status', '', 401], ['/slack/status', 'ordinary-peer-status-token', 401], ['/peer/slack/status', 'ordinary-peer-status-token', 404]]) {
+    const response = await fetch(local.url + path, { headers: { authorization: `Bearer ${token}` } }); assert.equal(response.status, expected);
+  }
+  assert.equal(calls, 0);
+  const response = await fetch(local.url + '/slack/status', { headers: { authorization: 'Bearer operator-slack-status-token' } });
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { socket: { state: 'connected' }, recovery: { state: 'degraded', pending: 1 } });
+});
+
 test('direct transport reaches shared ingress and returns isolated output snapshots', async () => {
   const direct = new DirectCommunications();
   assert.equal(direct.name, 'direct');

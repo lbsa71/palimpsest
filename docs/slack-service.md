@@ -1,6 +1,6 @@
 # Slack signed ingress (P04)
 
-Status: minimal signed ingress implemented. This service connects the existing verified Slack parser to the shared durable runtime ingress. It adds no task state machine or application memory. Slack remains an optional configured transport; direct calls and the local operator API remain usable without Slack credentials.
+Status: minimal signed ingress implemented. This service connects the existing verified Slack parser to the shared durable runtime ingress. It adds no task state machine or application memory. Slack remains an optional configured transport; direct calls and the local operator API remain usable without Slack credentials. The 2026-10-11 [history recovery integration](work-items/slack-history-recovery.md) is implemented in source; its installation and live recovered-message delivery remain pending.
 
 ## Specification
 
@@ -23,6 +23,8 @@ Options are `signingSecret`, `allowedTeamIds`, optional `allowedChannelIds`, opt
 The timeout bounds acknowledgement, not durable storage completion. A timed-out submission may subsequently commit; Slack may retry it. The runtime must keep stable event-ID deduplication and must not execute an acknowledged event twice. No in-memory seen-ID cache can substitute for that journal. This endpoint returns retryable HTTP 503 if the durable callback rejects or exceeds its deadline; it does not cancel or replay a possibly committing callback.
 
 No incoming body, signing secret, or runtime exception is logged by this service. Ingress content reaches the same external durable store as direct transport. Normal external Slack/provider retention still applies; this is not temporary conversation mode.
+
+Slack-enabled `serve` also enables the separate [joined-thread history reconciler](communications.md#automatic-joined-thread-recovery-2026-10-11) by default, using the existing bot token and history scopes. Signed ingress keeps its current acknowledgement deadline. Recovery runs at startup and periodically, authenticates its own Web API reads, and submits through the same durable ingress; it never substitutes a history response for a signed HTTP event. Operator-authenticated `GET /slack/status` on the local API exposes recovery progress; its `socket` field is null in HTTP mode. No new environment setting is required.
 
 ## Verification
 

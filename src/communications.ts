@@ -132,6 +132,8 @@ export interface LocalApi {
   status(id: string): unknown;
   cancel(id: string): unknown;
   events(after: number): unknown;
+  /** Operator diagnostics only; never exposed through the peer role. */
+  slackStatus?(): unknown;
 }
 
 export interface LocalServerOptions {
@@ -233,6 +235,10 @@ export async function createLocalServer(api: LocalApi, options: LocalServerOptio
         const after = Number(cursor);
         if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(after)) throw new HttpError(400, 'invalid_cursor');
         respond(response, 200, await api.events(after));
+        return;
+      }
+      if (!peer && request.method === 'GET' && url.pathname === '/slack/status' && api.slackStatus) {
+        respond(response, 200, await api.slackStatus());
         return;
       }
       const taskRoute = (peer ? /^\/peer\/tasks\/([^/]+)(\/cancel)?$/ : /^\/tasks\/([^/]+)(\/cancel)?$/).exec(url.pathname);
