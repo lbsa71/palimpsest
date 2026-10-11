@@ -16,6 +16,16 @@
       "authentication": "file-present-validity-unverified",
       "authorizedResourceGrant": null,
       "sameModelFeasibility": "unverified",
+      "engineeringTransport": {
+        "revision": "78b5ce6",
+        "evidence": "docs/rewrite/evidence/A1-L08/codex-transport-fixture.md",
+        "kind": "isolated-native-cli-with-synthetic-responses",
+        "physicalFixtureRequests": 2,
+        "actualCommandTool": "passed",
+        "providerRequests": 0,
+        "credentialsMounted": false,
+        "liveBudgetObserver": "not-implemented"
+      },
       "bestSystemRun": "not-run",
       "notes": "Ambient danger-full-access/never settings are observed, not adopted by evaluation. Auth contents were not read."
     },
