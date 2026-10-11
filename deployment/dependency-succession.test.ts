@@ -30,7 +30,7 @@ const fixtureTransport = String.raw`
         const request = JSON.parse(payload);
         const frame = request.messages.filter((m: any) => m.role === 'user').map((m: any) => { try { return JSON.parse(m.content); } catch { return {}; } }).findLast((m: any) => m.hostContext)?.hostContext;
         const last = request.messages.findLast((m: any) => m.role === 'tool');
-        const name = !last ? 'workspace_read' : last.content.includes('Validation failed for tool') ? 'workspace_write' : undefined;
+        const name = !last ? 'workspace_read' : last.name === 'workspace_read' && last.content.includes('Validation failed for tool') ? 'workspace_write' : undefined;
         const args = !last ? { path: 7 } : { path: 'schema-witness.json', content: JSON.stringify({ diagnostic: last.content, hostContext: frame }), expectedSha256: null };
         return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: name ? 'tool_calls' : 'stop', message: name ? { role: 'assistant', content: null, tool_calls: [{ id: name === 'workspace_read' ? 'invalid01' : 'witness01', type: 'function', function: { name, arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Finite synthetic schema witness complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
       },
@@ -84,6 +84,9 @@ test('edited retained validator is built, admitted under old controls and invoke
       assert.equal(response.status, 202, await response.clone().text()); const { run } = await response.json() as { run: Run };
       const completed = await eventually(() => store!.get<Run>('runs', run.id)?.value, value => value !== undefined && ['completed', 'blocked', 'waiting'].includes(value.status));
       assert.equal(completed!.status, 'completed', JSON.stringify(store!.get('execution', run.id)));
+      const writes = store!.list<{ runId: string; kind: string; status: string }>('effects').filter(row => row.value.runId === run.id);
+      assert.equal(writes.length, 1, 'only the valid witness write may reach the actual effect receiver');
+      assert.equal(writes[0]!.value.kind, 'workspace_write'); assert.equal(writes[0]!.value.status, 'succeeded');
       const workspace = store!.get<{ workspace: string }>('host.run-grants', run.id)!.value.workspace;
       const bytes = readFileSync(join(workspace, 'schema-witness.json'));
       return { runId: run.id, bytes, value: JSON.parse(bytes.toString()) as { diagnostic: string; hostContext: { target: ObligationTarget; memory: { memories: { id: string }[] }; agenda: { id: string; nextAction: string }[]; obligations: { id: string }[] } } };
