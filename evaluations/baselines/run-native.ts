@@ -23,7 +23,7 @@ export interface NativeBaselineRun {
   native: { version: string; files: { path: string; name: string; sha256: string }[] };
   prompt: string; grant: ObserverGrant; maxCliOutputBytes: number;
   claudeOptions?: ClaudeNativeOptions;
-  provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits } | { kind: 'openai' | 'anthropic'; apiKey: string; resourceLimits: ResourceLimits };
+  provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits; maxRequestsPerLaunch?: number } | { kind: 'openai' | 'anthropic'; apiKey: string; resourceLimits: ResourceLimits };
   recovery?: NativeRecoveryRequest;
   signal?: AbortSignal;
 }
@@ -45,7 +45,7 @@ function sourceIdentity(): { files: { path: string; sha256: string }[]; sha256: 
     .sort((a, b) => a.path.localeCompare(b.path));
   return { files, sha256: createHash('sha256').update(canonicalJson(files)).digest('hex') };
 }
-function validate(input: NativeBaselineRun): void {
+function validate(input: NativeBaselineRun, fixtureMaxRequestsPerLaunch: number | undefined): void {
   invariant(input.kind === 'codex' || input.kind === 'claude', 'concrete supported native baseline required');
   validateObserverGrant(input.grant); input.signal?.throwIfAborted();
   if (input.recovery) {
@@ -65,6 +65,7 @@ function validate(input: NativeBaselineRun): void {
   for (const hash of input.native.files.map(file => file.sha256)) invariant(/^[a-f0-9]{64}$/.test(hash), 'pinned native digest required');
   invariant(Number.isSafeInteger(input.maxCliOutputBytes) && input.maxCliOutputBytes > 0 && input.maxCliOutputBytes <= 2_000_000, 'finite CLI output ceiling required');
   invariant(input.provider?.kind === 'fixture' || input.provider?.kind === 'openai' || input.provider?.kind === 'anthropic', 'explicit provider fixture or host credential required');
+  if ('maxRequestsPerLaunch' in input.provider) invariant(input.provider.kind === 'fixture' && Number.isSafeInteger(fixtureMaxRequestsPerLaunch) && fixtureMaxRequestsPerLaunch! > 0 && fixtureMaxRequestsPerLaunch! <= input.grant.resources.maxRequests, 'positive fixture-only per-launch cap cannot enlarge original grant');
   invariant(input.kind === 'codex' ? input.grant.profile.provider === 'openai' && input.provider.kind !== 'anthropic' : (input.grant.profile.provider === 'anthropic-fixture' && input.provider.kind === 'fixture') || (input.grant.profile.provider === 'anthropic' && input.provider.kind !== 'openai'), 'native protocol/profile mismatch');
   if (input.grant.profile.codexNativeProtocol) {
     const protocol = input.grant.profile.codexNativeProtocol;
@@ -94,7 +95,8 @@ function validate(input: NativeBaselineRun): void {
 export async function runNativeBaseline(input: NativeBaselineRun): Promise<NativeBaselineResult> {
   // Snapshot invocation options before the asynchronous native launch.
   input = { ...input, ...(input.recovery ? { recovery: structuredClone(input.recovery) } : {}), ...(input.claudeOptions ? { claudeOptions: structuredClone(input.claudeOptions) } : {}) };
-  validate(input);
+  const fixtureMaxRequestsPerLaunch = input.provider?.kind === 'fixture' ? input.provider.maxRequestsPerLaunch : undefined;
+  validate(input, fixtureMaxRequestsPerLaunch);
   const checkout = realpathSync(input.checkoutRoot), workspace = realpathSync(input.workspace);
   // Create private storage only after checking its nearest existing parent through realpath.
   const nearest = (path: string): string => {
@@ -139,6 +141,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       hostTools: ['/usr/bin/bash', '/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit'].map(path => ({ path, sha256: sha256(realpathSync(path)) })),
       maxCliOutputBytes: input.maxCliOutputBytes, workerLimits: { maxConcurrency: observer.grant.resources.maxConcurrency, maxRequestBytes: observer.grant.maxRequestBytes }, protectedPaths: input.protectedPaths.map(path => realpathSync(path)),
       providerTransport: input.provider.kind,
+      ...(fixtureMaxRequestsPerLaunch !== undefined ? { fixtureMaxRequestsPerLaunch } : {}),
       qualification: input.provider.resourceLimits ? 'kernel-profile' as const : 'namespace-fixture' as const,
       kernelLimits: input.provider.resourceLimits ?? null,
       nativeInvocation: input.kind === 'claude' ? claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}), ...(input.recovery ? { nativeRecovery: { mode: 'start', sessionId: initialSessionId! } } : {}) }, 0) : null,
@@ -178,6 +181,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
     invariant(remainingMs > 0, 'baseline grant elapsed during staging');
     // The protocol cap includes JSON escaping of bounded payloads and full CLI diagnostics.
     const maxMessageBytes = 6 * Math.max(input.grant.maxRequestBytes, input.grant.maxResponseBytes, input.maxCliOutputBytes) + 100_000;
+    let attemptedThisLaunch = 0;
     const outcome = await runWorker({
       command: { workspace, applicationRoot: image, nodeBinary: process.execPath, protectedPaths: [stateRoot, ...specification.protectedPaths],
         executable: '/runtime/node', args: [`/app/${workerName}`], timeoutMs: remainingMs,
@@ -191,6 +195,10 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       async handle(method, args, signal) {
         invariant(method === 'baseline.provider' && args.length === 1, 'only native provider attempts permitted');
         const attempt = args[0] as unknown as ProviderAttempt;
+        if (fixtureMaxRequestsPerLaunch !== undefined && ++attemptedThisLaunch > fixtureMaxRequestsPerLaunch) {
+          store!.put('baseline-refusals', randomUUID(), { grantId: input.grant.id, generation, request: store!.putArtifact(Buffer.from(typeof attempt.payload === 'string' ? attempt.payload : '').subarray(0, input.grant.maxRequestBytes)), reason: 'Fixture per-launch request cap reached before observer dispatch' }, null);
+          observer!.cancel(); throw new Error('Fixture per-launch request cap reached before observer dispatch');
+        }
         if (nativeSession) {
           try {
             invariant(attempt.nativeSession, 'Native startup identity missing before provider dispatch');

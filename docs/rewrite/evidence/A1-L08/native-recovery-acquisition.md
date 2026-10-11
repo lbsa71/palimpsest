@@ -54,3 +54,23 @@ env -i AEON_NATIVE_RECOVERY_ACQUIRE=codex AEON_NATIVE_RECOVERY_CLEARANCE=/absolu
 ```
 
 Claude needs its own clearance/window and command with `claude`; Codex outcome cannot clear it. Unknown persistence/ordering/effective instructions are unresolved acquisition gates. The actual finite engineering goal stays ACTIVE for review and acquisition audit.
+
+## Source preparation handoff
+
+The runnable driver is now `evaluations/baselines/native-recovery-physical.test.ts`; all native opt-ins stayed absent. Latest serial targeted check: **6 passed, zero failed, 2 physical acquisitions skipped**, 3.729s, including real store/observer/module-mock controls for valid two-phase use of the lower cap, changed-cap continuation refusal, third-attempt refusal, and caller cap mutation after first dispatch. The cap is read into one primitive before awaits and the identical validated primitive binds manifest and enforcement. Earlier targeted worker 8/8 and runner 9/9 controls passed; no broad baseline rerun was performed. Latest strict TypeScript passes. Whitespace passes.
+
+Exact verification commands:
+
+```sh
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 evaluations/baselines/native-recovery-physical.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+git diff --check
+```
+
+Retained preparation directory: `/home/palimpsest/migration/aeon-1-20261011/native-recovery-author-evidence`. `acquisition-bound-cap-focused.log` and `acquisition-bound-cap-strict.log` are final checks; `acquisition-evidence-index.json` records exact source/log/plan hashes. Earlier first failures remain: omitted required parser constructor arguments in initial strict; widened provider union in cap test strict; cap test incorrectly expected the private diagnostic through the intentionally generic public error; then the test incorrectly expected cancellation on budget rather than original allocation. These were author fixture/compiler mistakes, repaired without changing the public error/cancellation contracts or discarding logs. Original reviewer failures remain unchanged elsewhere.
+
+Frozen public bytes are also exported before launch as `acquisition-codex-declared-plan.json` and `acquisition-claude-declared-plan.json` in that directory. `publicPlan(kind)` deterministically reproduces them. `acquisitionFreeze(kind)` is the read-only manifest builder for the future clean joined checkout; its binary hashing is left to root outside competing physical work. Root clearance shape is `{freeze: acquisitionFreeze(kind), reviewRevision: "<full reviewed commit>", windowId: "<root allocated window>"}`. Preserve that JSON before enabling the selected physical test. The two fixed attempt directories remain unconsumed; no clearance/window is assigned by this document.
+
+`acquisition-frame-provenance.log` reopens original databases read-only and rehashes complete request artifacts before comparing the unchanged embedded result frame byte serialization. Codex request SHA256 `d1f1847997a383b01f7f8f2f5d27f897adf7ac3f948e9bb26befd2d7ede68f95`, source `/home/palimpsest/migration/aeon-1-20261011/baseline-kernel-evidence/aeon-baseline-runner-dYnKPr/state/observer.sqlite`; result frame SHA256 `55b0a1e94cf0e6bc1071c43ff04eaeb9debda0655774ca957d0f30b1ff7af210`. Claude request SHA256 `0034890fef03f51fdb22f5ace84c039eee068adb84a7f86f50ad7391a2e63572`, source `/home/palimpsest/migration/aeon-1-20261011/claude-handback-physical-evidence/claude-handback-followup-1-8PosR0/state/observer.sqlite`; result frame SHA256 `a8bf3590124e5295a3706b6762fee4fe26928aa0bbed3a28e8495aa760745c39`. These are previous command/delegation result witnesses, not recovery evidence. The separate constructed history controls are explicitly synthetic and do not establish native resume serialization.
+
+Fresh review must cover the new driver/procedure, fixture cap and observed native PID-namespace/close metadata. Actual native store format/auxiliary bytes/flush, exact resumed startup ordering, effective instruction/control differences and native historical tool/final serialization remain unacquired. The driver refuses unsupported acquired behavior and preserves its first failure; no alternative history schema, normalization or extra request is authorized to obtain a pass. No actual host interruption, context reduction, kernel resource qualification, live competence, parity, growth or H1 is established. Source is frozen for review; the finite goal remains ACTIVE.

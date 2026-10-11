@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readlinkSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 // This bridge runs inside the host's network/PID/mount namespace. It receives no
@@ -81,7 +81,10 @@ async function main(start) {
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (pending.size) throw new Error('Baseline exited with a physical observation pending');
   if (gate && !recoveryError) try { gate.finish(); } catch (error) { recoveryError = error.message; }
-  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, ...(gate ? { recoveryError: recoveryError ?? null } : {}), invocation: { executable: '/app/codex', args, environment: { PATH: '/runtime:/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home, CODEX_HOME: `${home}/codex`, AEON_OBSERVER_TOKEN: 'no-provider-authority' }, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
+  // Diagnostic process identity is not the host's cleanup/admission authority.
+  let pidNamespace = null, namespaceObservationError;
+  if (gate) try { pidNamespace = readlinkSync('/proc/self/ns/pid'); } catch (error) { namespaceObservationError = String(error); }
+  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, ...(gate ? { recoveryError: recoveryError ?? null, nativeProcess: { pid: child.pid ?? null, pidScope: 'isolated-native-namespace', pidNamespace, closeObserved: true, ...(namespaceObservationError ? { namespaceObservationError } : {}) } } : {}), invocation: { executable: '/app/codex', args, environment: { PATH: '/runtime:/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home, CODEX_HOME: `${home}/codex`, AEON_OBSERVER_TOKEN: 'no-provider-authority' }, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
 }
 const input = createInterface({ input: process.stdin });
 input.on('line', line => {
