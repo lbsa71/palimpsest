@@ -45,12 +45,20 @@ export class InitiativeRunner {
     invariant(!this.active, 'initiative slice already active'); this.active = true;
     const { scheduler, runtime, memory, authority } = this.options;
     const controller = new AbortController(); const abort = () => controller.abort(signal?.reason); signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
+    let selectedGoalId: string | undefined;
     const timer = setTimeout(() => controller.abort(new Error('scheduler quantum elapsed')), scheduler.policy.quantumMs);
     try {
       const at = new Date(runtime.now()).toISOString(); memory.expire(at);
       const selected = scheduler.select(at, this.options.deliver !== undefined); if (selected.kind !== 'selected') return selected;
-      if (selected.selection.kind === 'obligation') { await this.options.deliver!(selected.selection.obligation.id, controller.signal); return selected; }
-      let goal = selected.selection.goal;
+      if (selected.selection.kind === 'obligation') {
+        const id = selected.selection.obligation.id;
+        try { await this.options.deliver!(id, controller.signal); } finally {
+          const old = runtime.store.get('initiative.delivery-backoff', id);
+          runtime.store.put('initiative.delivery-backoff', id, { at: runtime.now() + scheduler.policy.idleRetryMs }, old?.revision ?? null);
+        }
+        return selected;
+      }
+      let goal = selected.selection.goal; selectedGoalId = goal.id;
       if (goal.status === 'waiting') goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'declared wakeup reached');
       const context = memory.context({ audience: goal.scope, query: goal.purpose, maxRecords: 16, maxBytes: 32768 });
       let row = runtime.store.get<GoalExecution>('initiative.execution', goal.id), execution = row?.value;
@@ -77,12 +85,13 @@ export class InitiativeRunner {
       if (result.status === 'cancelled') scheduler.goals.revise(goal.id, goal.revision, { status: 'abandoned' }, 'runtime cancellation retained spent usage');
       else if (result.status === 'blocked') scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, 'runtime resource or unresolved-effect gate; reconcile before reconsideration');
       else if (execution.stalls >= scheduler.policy.maxStalls) scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, 'no new successful observation; bounded stall limit requires a revised approach');
-      else if (result.status !== 'completed' || fresh.length === 0) scheduler.goals.revise(goal.id, goal.revision, { status: 'waiting', wakeup: { at: new Date(runtime.now() + scheduler.policy.idleRetryMs * 2 ** (execution.stalls - 1)).toISOString(), condition: 'resume checkpoint after declared backoff' } }, 'checkpoint or absent observation; no immediate critique loop');
+      else if (result.status !== 'completed' || fresh.length === 0) scheduler.goals.revise(goal.id, goal.revision, { status: 'waiting', wakeup: { at: new Date(runtime.now() + scheduler.policy.idleRetryMs * 2 ** Math.min(16, Math.max(0, execution.stalls - 1))).toISOString(), condition: 'resume checkpoint after declared backoff' } }, 'checkpoint or absent observation; no immediate critique loop');
       else applyProgress(scheduler.goals, goal, fresh, this.options.decide(goal, fresh, context));
       return selected;
     } catch (error) {
       // Errors in selection/judgment must preserve truthful resumable state, not leave an agenda running forever.
-      for (const goal of scheduler.goals.all().filter(g => g.status === 'running')) scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, `initiative slice failed: ${error instanceof Error ? error.message : String(error)}`);
+      const goal = selectedGoalId ? scheduler.goals.goal(selectedGoalId) : undefined;
+      if (goal?.status === 'running') scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, `initiative slice failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); this.active = false; }
   }

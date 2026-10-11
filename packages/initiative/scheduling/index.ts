@@ -30,7 +30,8 @@ export class FairScheduler {
       const service: ServiceClass = dueGoals.has(goal.id) ? 'commitment' : goal.origin.kind === 'request' ? 'conversation' : 'inquiry'; candidates.set(`goal:${goal.id}`, { kind: 'goal', service, goal });
     }
     if (deliveries) for (const obligation of due.sort((a, b) => Date.parse(a.dueAt ?? at) - Date.parse(b.dueAt ?? at) || a.id.localeCompare(b.id))) {
-      if (!obligation.goalId || ['completed', 'abandoned'].includes(this.goals.goal(obligation.goalId)?.status ?? '')) candidates.set(`obligation:${obligation.id}`, { kind: 'obligation', service: 'commitment', obligation });
+      const retryAt = this.store.get<{ at: number }>('initiative.delivery-backoff', obligation.id)?.value.at ?? 0;
+      if (retryAt <= Date.parse(at) && (!obligation.goalId || ['completed', 'abandoned'].includes(this.goals.goal(obligation.goalId)?.status ?? ''))) candidates.set(`obligation:${obligation.id}`, { kind: 'obligation', service: 'commitment', obligation });
     }
     return candidates;
   }
@@ -58,7 +59,7 @@ export class FairScheduler {
           if (selection) { state.windowSlices++; state.lifetimeSlices++; decision = { kind: 'selected', selection, sequence: state.lifetimeSlices }; }
           else {
             const wakeups = this.goals.all().flatMap(g => g.status === 'waiting' ? [Date.parse(g.wakeup!.at)] : []).filter(t => t > now);
-            const obligations = deliveries ? this.obligations.all().flatMap(o => o.status === 'owed' && o.dueAt ? [Date.parse(o.dueAt)] : []).filter(t => t > now) : [];
+            const obligations = deliveries ? this.obligations.all().flatMap(o => o.status === 'owed' ? [Math.max(o.dueAt ? Date.parse(o.dueAt) : 0, this.store.get<{ at: number }>('initiative.delivery-backoff', o.id)?.value.at ?? 0)] : []).filter(t => t > now) : [];
             const next = [...wakeups, ...obligations].sort((a, b) => a - b)[0];
             decision = { kind: 'idle', reason: 'no eligible observation or delivery; await input, evidence, dependency or wakeup', nextWakeup: next === undefined ? null : new Date(next).toISOString() };
           }

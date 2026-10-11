@@ -38,7 +38,10 @@ export class ObligationRegistry implements ObligationPort {
       const intent = this.store.get<{ obligationRevision: number }>('initiative.delivery-intents', `${id}:${old.revision}`)?.value;
       invariant(intent && payload.kind === 'report' && receipt.kind === 'report' && receipt.delivered === true, 'progress acknowledgement is not an outcome report');
       invariant(payload.obligationId === id && receipt.obligationId === id && payload.obligationRevision === intent.obligationRevision && receipt.obligationRevision === intent.obligationRevision, 'report does not match obligation revision');
-      for (const key of ['channel', 'threadTs', 'clientMsgId']) invariant(typeof payload[key] === 'string' && receipt[key] === payload[key], 'report receipt target mismatch');
+      nonempty(payload.channel, 'report channel'); invariant(receipt.channel === payload.channel && receipt.threadTs === payload.threadTs, 'report receipt target mismatch');
+      nonempty(payload.text, 'report text'); invariant(receipt.text === payload.text && receipt.reportRevision === payload.reportRevision, 'report receipt content/revision mismatch');
+      nonempty(receipt.clientMsgId, 'host generated delivery identity');
+      if (payload.clientMsgId !== undefined) invariant(receipt.clientMsgId === payload.clientMsgId, 'report receipt identity mismatch');
       nonempty(receipt.messageTs, 'delivered message timestamp');
       return this.save({ ...old, revision: expected + 1, status: 'delivered', resolution: `confirmed receipt ${effect.receipt.sha256}` }, expected);
     });
