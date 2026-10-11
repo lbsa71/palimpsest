@@ -96,6 +96,61 @@ if (process.env.AEON_RESOURCE_WORKSPACE) {
     assert.ok(!readdirSync(workspace).includes('escaped'));
   });
 
+  for (const pause of ['gate', 'before-parent-death-setup']) test(`host death at ${pause} cannot start orphaned untrusted execution`, async () => {
+    const crashCommand = { ...base, executable: '/bin/sh', args: ['-c', 'echo escaped > /work/gate-escaped'] };
+    const resourceModule = new URL('./resource-limits.ts', import.meta.url).href;
+    const confinementModule = new URL('./confinement.ts', import.meta.url).href;
+    // Pause the trusted gate before its first instruction: this deterministically widens a real scheduling window.
+    const host = spawn(process.execPath, ['--input-type=module', '-e', `
+      import childProcess from 'node:child_process';
+      import {syncBuiltinESMExports} from 'node:module';
+      const original = childProcess.spawn;
+      childProcess.spawn = (file, args, options) => {
+        if (${JSON.stringify(pause)} === 'before-parent-death-setup') {
+          return original('/bin/sh', ['-c', 'kill -STOP $$; exec "$@"', 'aeon-review-pause', file, ...args], options);
+        }
+        args = [...args]; const script = args.indexOf('-c') + 1;
+        if (script > 0) args[script] = 'kill -STOP $$; ' + args[script];
+        return original(file, args, options);
+      };
+      syncBuiltinESMExports();
+      const {spawnBounded} = await import(${JSON.stringify(resourceModule)});
+      const {confinementArguments} = await import(${JSON.stringify(confinementModule)});
+      const command = ${JSON.stringify(crashCommand)};
+      const confined = await spawnBounded(confinementArguments(command), {...command, input: 'ignore'});
+      process.send({pid: confined.child.pid});
+      setInterval(() => {}, 1000);
+    `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const exited = new Promise<void>(resolve => host.once('exit', () => resolve()));
+    let gatePid: number | undefined;
+    try {
+      gatePid = await new Promise<number>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Launch gate did not start')), 5000);
+        host.once('message', message => { clearTimeout(timeout); resolve((message as {pid: number}).pid); });
+      });
+      const stoppedDeadline = performance.now() + 3000;
+      while (!/^State:\s+T/m.test(readFileSync(`/proc/${gatePid}/status`, 'utf8'))) {
+        assert.ok(performance.now() < stoppedDeadline, 'Launch gate did not stop');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      host.kill('SIGKILL'); await exited;
+      try { process.kill(gatePid, 'SIGCONT'); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+      const deadline = performance.now() + 3000;
+      while (groups().some(group => !readFileSync(join(cgroupRoot, group, 'cgroup.events'), 'utf8').includes('populated 0'))) {
+        assert.ok(performance.now() < deadline, 'Launch gate survived its host');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.ok(!readdirSync(workspace).includes('gate-escaped'), 'Untrusted command ran after its host died');
+    } finally {
+      host.kill('SIGKILL'); await exited;
+      if (gatePid) { try { process.kill(gatePid, 'SIGKILL'); } catch {} }
+      await initializeResourceDelegation(cgroupRoot);
+      rmSync(join(workspace, 'gate-escaped'), { force: true });
+    }
+  });
+
   test('a real host SIGKILL leaves no live descendants and restart reaps its empty cgroup', async () => {
     const crashCommand = { ...base, executable: '/bin/sh', args: ['-c',
       "echo started > /work/crash-started; setsid /bin/sh -c 'sleep 1; echo escaped > /work/crash-escaped' & sleep 10"] };

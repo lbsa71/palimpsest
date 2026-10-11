@@ -124,7 +124,9 @@ export interface ConfinedProcess {
   cleanup(): Promise<ResourceObservation | undefined>;
 }
 
-/** The trusted shell blocks on fd 3 until the host installs its cgroup membership; no untrusted instruction can win a placement race. */
+/** Establish parent-death handling before the gate; only release after cgroup placement.
+ * Checking the expected parent also closes death before setpriv installed PR_SET_PDEATHSIG.
+ */
 export async function spawnBounded(args: string[], options: { workspace: string; timeoutMs: number; resourceLimits?: ResourceLimits; input: 'ignore' | 'pipe' }): Promise<ConfinedProcess> {
   const limits = options.resourceLimits;
   let group: string | undefined;
@@ -132,10 +134,14 @@ export async function spawnBounded(args: string[], options: { workspace: string;
     assertResourceConfinement(options.workspace, limits);
     group = makeGroup(rootPath(limits.cgroupRoot), limits);
   }
-  const executable = limits ? '/bin/sh' : '/usr/bin/bwrap';
-  const arguments_ = limits ? ['-c', 'read -r ready <&3 || exit 125; exec 3<&-; exec "$@"', 'aeon-resource-gate', '/usr/bin/prlimit',
+  const executable = '/usr/bin/setpriv';
+  const bounded = limits ? ['/usr/bin/prlimit',
     `--fsize=${limits.maxFileBytes}:${limits.maxFileBytes}`, `--nofile=${limits.maxOpenFiles}:${limits.maxOpenFiles}`, '--core=0:0', '--memlock=0:0',
-    `--cpu=${Math.ceil(options.timeoutMs / 1000)}:${Math.ceil(options.timeoutMs / 1000)}`, '--', '/usr/bin/bwrap', ...args] : args;
+    `--cpu=${Math.ceil(options.timeoutMs / 1000)}:${Math.ceil(options.timeoutMs / 1000)}`, '--', '/usr/bin/bwrap', ...args] : ['/usr/bin/bwrap', ...args];
+  const gateScript = '[ "$PPID" = "$1" ] || exit 125; shift; ' +
+    (limits ? 'read -r ready <&3 || exit 125; exec 3<&-; ' : '') + 'exec "$@"';
+  const arguments_ = ['--pdeathsig', 'SIGKILL', '--no-new-privs', '/bin/sh', '-c', gateScript,
+    'aeon-resource-gate', String(process.pid), ...bounded];
   let child: ConfinedProcess['child'];
   try { child = spawn(executable, arguments_, { detached: true, stdio: [options.input, 'pipe', 'pipe', ...(limits ? ['pipe' as const] : [])], env: {} }) as unknown as ConfinedProcess['child']; }
   catch (error) { if (group) rmdirSync(group); throw error; }
