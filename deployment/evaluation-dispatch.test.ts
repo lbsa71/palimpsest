@@ -267,7 +267,9 @@ test('offline direct bounded review retains actual command evidence', { timeout:
     const response = await runAccountedExternalReview(f.reviewer, f.host, request, f.policy, f.incumbent.manifest.id,
       { store, request, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId, maxElapsedMs: f.reviewer.maxElapsedMs,
         assertAuthority: a => assert.deepEqual(a, authority), dispatchAuthority: (a, run) => { assert.deepEqual(a, authority); run(); } });
-    assert.equal(response.result.receipt.evidence[0]!.verdict, 'pass');
+    const observationDigest = response.result.receipt.evidence[0]!.caseResults[0]!.observations.sha256;
+    const diagnostic = JSON.parse(Buffer.from(response.artifacts.find(a => a.sha256 === observationDigest)!.base64, 'base64').toString('utf8')) as OfflineObservation;
+    assert.equal(response.result.receipt.evidence[0]!.verdict, 'pass', JSON.stringify(diagnostic.command));
     assert.equal(ledger.snapshot(request.proposal.runId).requests, 2);
     assert.equal(ledger.snapshot(request.proposal.runId).concurrent, 0);
     // A real initializer attack would hide the regression if inputs were read after import.
