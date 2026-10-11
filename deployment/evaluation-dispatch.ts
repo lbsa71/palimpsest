@@ -202,7 +202,7 @@ export async function runAccountedExternalReview(config: ReviewerFile, host: Hos
   if (offline) {
     invariant(offline.plan.cases.every(c => policy.requiredCases.includes(c.id)), 'Offline cases must be declared in the original policy');
     for (const [index, c] of offline.plan.cases.entries()) {
-      const observed = await runOfflineCase({ config, host, request,
+      const observed = await runOfflineCase({ config, host, request, policy,
         plan: offline.plan, planDigest: offline.digest, case: c, resourceLimits,
         resource: { ...resource, continuedFrom, prepared: !!resource.prepared && index === 0 } });
       observations.push(observed); continuedFrom = observed.physical.id;

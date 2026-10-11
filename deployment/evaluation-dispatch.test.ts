@@ -21,6 +21,8 @@ import type { SubmissionRequest } from './evolution-tools.ts';
 import { contentAddressedEvidence } from './host-policy.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceSupervisor } from './supervisor.ts';
+import { ReviewerRegistry, governanceProposalPath } from './reviewer-registry.ts';
+import { reviewerCoreSource } from '../evaluations/offline-review/selection.ts';
 import { reviewPhysicalId } from './evaluation-resources.ts';
 import { governanceCase } from '../evaluations/offline-review/governance.test.ts';
 import { loadOfflinePlan, offlinePlanMount, offlineRunnerDigest, type OfflineObservation, type OfflinePlan } from '../evaluations/offline-review/index.ts';
@@ -279,11 +281,12 @@ test('governance reviewer probes reject actual weakened implementations under th
     const privatePaths = ['/reviewer-key', offlinePlanMount, '/app/deployment/evaluation-dispatch.test.ts', '/app/evaluations/offline-review/plan.test.ts', '/app/evaluations/offline-review/governance.test.ts', f.reviewer.keyFile,
       ...f.reviewer.files.filter(file => file.mount === offlinePlanMount).map(file => file.path)];
     const privacy = `import { readFileSync as probeRead } from 'node:fs';
-for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try { probeRead(path); exposed = true; } catch {} if (exposed) throw Error('private reviewer input exposed'); }
+if (process.argv[1] === '/work/runner.mjs') for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try { probeRead(path); exposed = true; } catch {} if (exposed) throw Error('private reviewer input exposed'); }
 `;
     const variants = [
       { name: 'good-private-isolation', code: privacy + original, verdict: 'pass' },
       { name: 'changed-entrypoint', code: original, verdict: 'fail' },
+      { name: 'undeclared-dependency', code: "import './undeclared.mjs';\n" + original, verdict: 'fail' },
       { name: 'always-refusing', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nexport function reviewOfflinePacket() { throw Object.assign(Error("always refuse"), { code: "OFFLINE_REVIEW_REFUSED" }); }\n', verdict: 'fail' },
       { name: 'always-accepting', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nlet first; export function reviewOfflinePacket(...args) { return first ??= originalReview(...args); }\n', verdict: 'fail' },
       { name: 'ignores-request-binding', code: original.replace('observation.requestId === r.requestId && ', ''), verdict: 'fail' },
@@ -294,29 +297,53 @@ for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try {
       if (variant.name !== 'changed-entrypoint') assert.notEqual(variant.code, original);
       writeFileSync(corePath, variant.code);
       writeFileSync(adapterPath, variant.name === 'changed-entrypoint' ? "process.stdout.write('always accept');\n" : adapterOriginal);
-      const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs);
+      writeFileSync(join(f.source, 'evaluations/offline-review/undeclared.mjs'), 'export const undeclared = true;\n');
+      const coreHash = hashBytes(Buffer.from(variant.code));
+      const selected = { evaluatorId: f.reviewer.evaluatorId, executable: f.reviewer.executable, args: f.reviewer.args,
+        files: f.reviewer.files.map(({ mount, sha256 }) => mount === '/reviewer/review-core.ts' ? { mount, sha256: coreHash, source: reviewerCoreSource } : { mount, sha256, inherit: true as const }) };
+      const selectedDigest = hashBytes(reviewerDescriptor({ ...f.reviewer, ...selected, files: selected.files.map(file => ({ ...file, path: '' })) }));
+      const nextFields = { ...f.policy, evaluatorArtifacts: new Map(f.policy.evaluatorArtifacts).set(f.reviewer.evaluatorId, selectedDigest) };
+      const proposal = { version: 1, policy: policyDescriptor(nextFields), reviewer: selected };
+      writeFileSync(join(f.source, governanceProposalPath), canonicalJson(proposal));
+      const candidate = freezeApplication(f.source, f.host.artifactStore, { ...f.inputs, policy: proposal.policy });
+      const next = { ...nextFields, controlRevision: candidate.manifest.controls, policyDigest: admissionPolicyIdentity({ ...nextFields, controlRevision: candidate.manifest.controls }) };
       assert.notEqual(candidate.manifest.controls, authority.controlRevision, 'Proposed concrete reviewer is a control change');
       const current = { ...request, requestId: variant.name, candidate };
       retain(`${variant.name}-request.json`, current);
       retain(`${variant.name}-candidate-sources.json`, { core: variant.code, adapter: readFileSync(adapterPath, 'utf8') });
       const resource = { store, request: current, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId,
         maxElapsedMs: f.reviewer.maxElapsedMs, assertAuthority: (a: Authority) => assert.deepEqual(a, authority), dispatchAuthority: (a: Authority, run: () => void) => { assert.deepEqual(a, authority); run(); } };
+      if (variant.name === 'changed-entrypoint') {
+        await assert.rejects(runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource), /unchanged prior CLI adapter/);
+        assert.equal(ledger.snapshot(request.proposal.runId).requests, expectedRequests);
+        retain(`${variant.name}-refusal.json`, { reason: 'unchanged prior CLI adapter required', physicalRequests: expectedRequests });
+        t.diagnostic('Changed entrypoint refused before any new physical reservation or candidate import');
+        continue;
+      }
       const response = await runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource);
       retain(`${variant.name}-response.json`, response);
       retain(`${variant.name}-physical-ledger.json`, store.list('requests'));
       const evidence = response.result.receipt.evidence[0]!, observationHash = evidence.caseResults[0]!.observations.sha256;
       const observation = JSON.parse(Buffer.from(response.artifacts.find(a => a.sha256 === observationHash)!.base64, 'base64').toString('utf8')) as OfflineObservation;
-      assert.equal(observation.command.exitCode, variant.name === 'changed-entrypoint' ? 1 : 0, JSON.stringify(observation.command));
-      if (variant.name === 'changed-entrypoint') assert.match(observation.command.stderr, /adapter differs/);
+      assert.equal(observation.command.exitCode, variant.name === 'undeclared-dependency' ? 1 : 0, JSON.stringify(observation.command));
+      if (variant.name === 'undeclared-dependency') assert.match(observation.command.stderr, /ERR_MODULE_NOT_FOUND/);
       assert.equal(observation.command.stoppedFor, undefined);
       assert.equal(evidence.verdict, variant.verdict, JSON.stringify(observation.command));
-      const outputs = variant.name === 'changed-entrypoint' ? [] : JSON.parse(observation.command.stdout);
+      const outputs = variant.name === 'undeclared-dependency' ? [] : JSON.parse(observation.command.stdout);
       if (variant.name === 'good-private-isolation') assert.deepEqual(outputs.slice(0, 3).map((r: any) => r.response.result.receipt.evidence[0].verdict), ['pass', 'fail', 'fail']);
       if (variant.name === 'ignores-request-binding') assert.equal(outputs[3].kind, 'result', 'Seed actually accepts a wrong request observation');
       if (variant.name === 'promotes-failed-command') assert.equal(outputs[1].response.result.receipt.evidence[0].verdict, 'pass', 'Seed actually promotes failed behavior');
       const artifacts = new Map(response.artifacts.map(a => [a.sha256, Buffer.from(a.base64, 'base64')]));
       const admit = () => admitCandidate(f.host.artifactStore, response.result.proof.proposal, authority, f.policy, response.result.proof.signed, uri => artifacts.get(uri.slice(7))!, 'control-upgrade');
-      if (variant.verdict === 'pass') { const admission = admit(); assert.equal(admission.controlChange, true); retain(`${variant.name}-admission.json`, admission); } else assert.throws(admit, /passing evidence/);
+      if (variant.verdict === 'pass') { const admission = admit(); assert.equal(admission.controlChange, true); retain(`${variant.name}-admission.json`, admission);
+        const registry = new ReviewerRegistry({ store, host: f.host, directory: join(f.root, 'selected-reviewer-snapshots'), configuredReviewer: f.reviewer });
+        registry.prepare(f.policy, next, candidate);
+        const prepared = registry.get(next);
+        assert.equal(hashBytes(reviewerDescriptor(prepared)), selectedDigest);
+        assert.equal(hashBytes(readFileSync(prepared.files.find(file => file.mount === '/reviewer/review-core.ts')!.path)), coreHash);
+        retain(`${variant.name}-selected-descriptor.json`, JSON.parse(reviewerDescriptor(prepared)));
+        retain(`${variant.name}-next-policy.json`, { policy: policyDescriptor(next), policyDigest: next.policyDigest, controlRevision: next.controlRevision });
+      } else assert.throws(admit, /passing evidence/);
       expectedRequests += 2;
       assert.equal(ledger.snapshot(request.proposal.runId).requests, expectedRequests);
       assert.equal(ledger.snapshot('reviewer-parent').requests, expectedRequests);

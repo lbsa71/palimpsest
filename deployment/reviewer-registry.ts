@@ -41,7 +41,7 @@ export function sourceReviewer(value: unknown): SourceReviewer {
   for (const file of reviewer.files) {
     exact(file, 'source' in file ? ['mount', 'sha256', 'source'] : ['mount', 'sha256', 'inherit']);
     invariant(digest(file.sha256) && typeof file.mount === 'string' && isAbsolute(file.mount) && resolve(file.mount) === file.mount && ['/reviewer', '/lib', '/lib64', '/usr/lib'].some(root => beneath(root, file.mount) && file.mount !== root), 'Declared reviewer mount and hash required');
-    if ('source' in file) invariant(typeof file.source === 'string' && file.source.startsWith('deployment/') && !file.source.endsWith('.test.ts') && file.source.split('/').every(part => part && part !== '.' && part !== '..') && file.source.length <= 4096, 'Reviewer source must name a bounded control-owned deployment file');
+    if ('source' in file) invariant(typeof file.source === 'string' && (file.source.startsWith('deployment/') || file.source === 'evaluations/offline-review/review-core.ts') && !file.source.endsWith('.test.ts') && file.source.split('/').every(part => part && part !== '.' && part !== '..') && file.source.length <= 4096, 'Reviewer source must name a bounded control-owned deployment file or the concrete offline core');
     else invariant(file.inherit === true, 'Reviewer inheritance must be explicit');
   }
   invariant(reviewer.files.some(file => file.mount === reviewer.executable) && Array.isArray(reviewer.args) && reviewer.args.length <= 32 && reviewer.args.every(arg => typeof arg === 'string' && arg.length <= 4096), 'Declared reviewer executable and bounded arguments required');

@@ -218,3 +218,15 @@ test('reviewer source in the frozen payload must also belong to the immutable co
     assert.equal(f.store.list('host.derived-policies').length, 0);
   } finally { f.close(); }
 });
+
+test('source reviewer permits the one concrete control-owned offline core, not arbitrary evaluation files', () => {
+  const reviewer: SourceReviewer = { evaluatorId: 'old-judge', executable: '/reviewer/node', args: [], files: [
+    { mount: '/reviewer/node', sha256: identity('node'), inherit: true },
+    { mount: '/reviewer/review-core.ts', sha256: identity('core'), source: 'evaluations/offline-review/review-core.ts' },
+  ] };
+  assert.deepEqual(sourceReviewer(reviewer), reviewer);
+  for (const source of ['evaluations/offline-review/reviewer.mjs', 'evaluations/offline-review/governance.test.ts', 'evaluations/other.ts', 'evaluations/offline-review/../review-core.ts']) {
+    const changed = structuredClone(reviewer); changed.files[1] = { ...changed.files[1]!, source };
+    assert.throws(() => sourceReviewer(changed), /control-owned/);
+  }
+});

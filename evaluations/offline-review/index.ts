@@ -11,6 +11,9 @@ import type { EvaluationRequest } from '../../deployment/evolution-tools.ts';
 import type { HostBindings } from '../../deployment/materialize.ts';
 import { accountedReview, reviewOperationId, type ReviewResourceOptions } from '../../deployment/evaluation-resources.ts';
 import { commandPassed, type ReviewPacket } from './review-core.ts';
+import type { AdmissionPolicy } from '../../packages/release/admission.ts';
+import { governanceProposalPath } from '../../deployment/reviewer-registry.ts';
+import { reviewerCoreSource, reviewerAdapterSource, verifyReviewerSelection } from './selection.ts';
 import { ResourceLedger } from '../../packages/runtime/resources/index.ts';
 
 export const offlinePlanMount = '/reviewer/offline-plan.json';
@@ -94,9 +97,17 @@ export function assessOffline(c: OfflineCase, command: CommandReceipt): boolean 
 }
 /** Runs candidate imports only inside the sibling namespace, never in the judge process. */
 export async function runOfflineCase(options: { config: ReviewerFile; host: HostBindings; request: EvaluationRequest;
-  plan: OfflinePlan; planDigest: string; case: OfflineCase; resource: ReviewResourceOptions & { prepared?: boolean }; resourceLimits?: ResourceLimits }): Promise<OfflineObservation> {
+  policy: AdmissionPolicy; plan: OfflinePlan; planDigest: string; case: OfflineCase; resource: ReviewResourceOptions & { prepared?: boolean }; resourceLimits?: ResourceLimits }): Promise<OfflineObservation> {
   const { config, host, request, plan, planDigest, case: c } = options;
   invariant(plan.runnerDigest === offlineRunnerDigest(), 'Offline runner changed before invocation');
+  const payload = join(host.artifactStore, request.candidate.manifest.id, 'payload');
+  if (c.kind === 'reviewer-behavior') {
+    const entry = request.candidate.files.find(file => file.path === governanceProposalPath);
+    invariant(entry, 'Reviewer behavioral case requires an actual selected governance proposal');
+    const bytes = readHostFile(join(payload, governanceProposalPath), 65536);
+    invariant(hashBytes(bytes) === entry.sha256, 'Frozen reviewer selection changed');
+    verifyReviewerSelection(request.candidate, JSON.parse(bytes.toString('utf8')), config, options.policy, c.adapterDigest);
+  }
   const workspace = mkdtempSync(join(host.workspaceDirectory, 'offline-review-'));
   try {
     // Only the invocation inputs and runner are exposed. No private expected array/plan/key.
@@ -105,13 +116,19 @@ export async function runOfflineCase(options: { config: ReviewerFile; host: Host
     if (c.kind === 'reviewer-behavior') {
       invariant(c.adapterDigest === offlineAdapterDigest(), 'Reviewer adapter changed before invocation');
       writeFileSync(join(workspace, 'adapter.sha256'), c.adapterDigest, { mode: 0o400 });
+      // No whole application mount: relative imports must exist in this selected closure.
+      for (const [source, target] of [[reviewerCoreSource, 'review-core.ts'], [reviewerAdapterSource, 'reviewer.mjs']] as const) {
+        const bytes = readHostFile(join(payload, source), config.maxClosureBytes);
+        invariant(hashBytes(bytes) === request.candidate.files.find(file => file.path === source)?.sha256, 'Selected reviewer source changed');
+        writeFileSync(join(workspace, target), bytes, { mode: 0o400 });
+      }
     }
     // A pre-transfer reservation includes activation time; do not reset its original clock.
     const resource = { ...options.resource, operation: offlineOperation(planDigest, c), maxElapsedMs: options.resource.prepared ? config.maxElapsedMs : c.timeoutMs };
     const command = await accountedReview(resource, async gate => {
       let pending: Promise<CommandReceipt> | undefined;
       gate.dispatch(() => { pending = runConfined({ workspace, protectedPaths: [host.stateDirectory, config.keyFile, ...config.files.map(f => f.path)],
-        applicationRoot: join(host.artifactStore, request.candidate.manifest.id, 'payload'), nodeBinary: process.execPath,
+        ...(c.kind === 'validator-string-length' ? { applicationRoot: payload } : {}), nodeBinary: process.execPath,
         executable: '/runtime/node', args: ['--disable-proto=throw', '/work/runner.mjs'], timeoutMs: c.timeoutMs,
         maxOutputBytes: c.maxOutputBytes, signal: gate.signal, resourceLimits: options.resourceLimits }); });
       invariant(pending, 'Offline candidate command was not dispatched');
