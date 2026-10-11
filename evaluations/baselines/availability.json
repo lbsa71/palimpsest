@@ -58,12 +58,25 @@
         "actualBashTool": "passed",
         "providerRequests": 0,
         "credentialsMounted": false,
-        "accounting": "zero-price synthetic fixture only; live Anthropic accounting unavailable",
+        "accounting": "original zero-price fixture unchanged; separate first-party codec implemented and offline-reviewed, native/live compatibility unqualified",
         "reviewEvidence": "docs/rewrite/evidence/A1-L08/claude-transport-review.md",
         "reviewedRepair": "a83fccc",
-        "kernelQualification": "unavailable"
+        "kernelQualification": "bounded native synthetic composition passed; no paid or best-system qualification",
+        "kernelEvidence": "docs/rewrite/evidence/A1-L08/claude-kernel.md",
+        "kernelSource": "793ab4124a7d26a3f1eb7f00c2aac64f76873ff5"
       },
-      "globalInstallation": false
+      "globalInstallation": false,
+      "firstPartyAccounting": {
+        "kind": "offline-codec-and-fake-transport-evidence",
+        "source": "5d5798e",
+        "evidence": "docs/rewrite/evidence/A1-L08/anthropic-accounting.md",
+        "reviewEvidence": "docs/rewrite/evidence/A1-L08/anthropic-accounting-review.md",
+        "focusedReviewPassed": 128,
+        "explicitNativeSkips": 3,
+        "providerRequests": 0,
+        "nativeProtocolCompatibility": "in-progress; pinned native betas not yet qualified",
+        "liveQualification": "unavailable"
+      }
     }
   ],
   "parity": "unavailable"
