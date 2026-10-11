@@ -163,7 +163,7 @@ function observation(o: DevelopmentObservation): void {
 
 /** Offline deterministic collection. Reject untrusted manifests before using their limits.
  * Invalid submitted records remain in the proposed evidence, with explicit failed findings. */
-export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, now = Date.now()): CollectedDevelopment {
+function collectEvidence(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, now: number, requestProfiles?: DevelopmentRequestProfiles): CollectedDevelopment {
   manifest = inertSnapshot(manifest); observations = inertSnapshot(observations);
   const m = verifyAttempt(manifest, trust); invariant(observations.length <= m.limits.maxRecords, 'Too many developmental records');
   const bytes = Buffer.byteLength(canonicalJson({ manifest, observations })); invariant(bytes <= m.limits.maxEvidenceBytes, 'Submitted evidence exceeds byte allowance');
@@ -190,7 +190,9 @@ export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>,
   for (const document of observations) {
     try {
       const o = authenticate(domains.observation, document, new Map([[trust.observer.id, trust.observer.key]])); observation(o);
-      invariant(o.attemptDigest === identity(m) && o.configurationDigest === m.candidate.configuration && o.candidateId === m.candidate.id, 'Cross-attempt/source/configuration observation');
+      const binding = o.data.kind === 'request' ? requestProfiles?.get(o.data.request.id) : undefined;
+      if (requestProfiles && o.data.kind === 'request') invariant(binding, 'Missing exact v2 physical request binding');
+      invariant(o.attemptDigest === identity(m) && o.configurationDigest === (binding?.configurationDigest ?? m.candidate.configuration) && o.candidateId === m.candidate.id, 'Cross-attempt/source/configuration observation');
       invariant(time(o.observedAt) >= time(m.notBefore) && time(o.observedAt) <= time(m.deadlineAt) && time(o.observedAt) <= now, 'Observation outside original window/deadline');
       invariant(!seen.has(o.id), 'Duplicate observation identity'); seen.add(o.id);
       // Missing payload/prompt/source bytes cannot erase authenticated physical accounting.
@@ -202,7 +204,8 @@ export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>,
         const d = o.data; invariant(d.payload.sha256 === d.request.requestDigest, 'Physical payload binding mismatch'); const payload = read(d.payload);
         if (d.request.provider === 'effect-receiver') invariant(d.prompt === null, 'Effect receivers have no model prompt');
         else {
-          invariant(model && d.request.provider === (model.provider ?? 'mistral') && d.request.model === model.id && d.prompt !== null, 'Physical request changed configured provider/model or lacks captured prompt');
+          const configuredModel = binding ? binding.model : model;
+          invariant(configuredModel && d.request.provider === (configuredModel.provider ?? 'mistral') && d.request.model === configuredModel.id && d.prompt !== null, 'Physical request changed configured provider/model or lacks captured prompt');
           const captured = JSON.parse(Buffer.from(read(d.prompt)).toString('utf8')) as { manifest: PromptManifest; artifact: ArtifactRef };
           exact(captured, 'manifest,artifact'); invariant(captured.manifest.id === d.request.promptManifestId && captured.artifact.sha256 === d.request.requestDigest, 'Captured prompt/request identity mismatch');
           validateCapturedPrompt(captured.manifest, Buffer.from(payload).toString('utf8')); read(captured.artifact); for (const fragment of captured.manifest.fragments) read(fragment.artifact);
@@ -278,7 +281,10 @@ export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>,
 /** Collect first, give identity(evidence) and artifact access to the two accepted fresh reviewers,
  * then prepare using their separately signed dispositions. This never signs release evidence. */
 export function prepareDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], reviews: Signed<DevelopmentReview>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, now = Date.now()): ProposedDevelopment {
-  const evidence = collectDevelopmentEvidence(manifest, observations, trust, reader, now), m = evidence.manifest.value, evidenceDigest = identity(evidence);
+  return prepareEvidence(collectDevelopmentEvidence(manifest, observations, trust, reader, now), reviews, trust, reader, now);
+}
+function prepareEvidence(evidence: CollectedDevelopment, reviews: Signed<DevelopmentReview>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, now: number): ProposedDevelopment {
+  const m = evidence.manifest.value, evidenceDigest = identity(evidence);
   reviews = inertSnapshot(reviews); invariant(reviews.length <= 2, 'At most two fixed reviewer dispositions');
   const findings = [...evidence.findings];
   const fail = (code: string, detail: string, status: Finding['status'] = 'failed') => findings.push({ status, code, detail });
@@ -320,4 +326,19 @@ export function prepareDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>,
   }
   if (m.evidenceKind === 'synthetic') fail('synthetic', 'Synthetic fixture is permanently ineligible as live developmental evidence', 'unavailable');
   return { kind: 'proposed-development-review', evidence, evidenceDigest, reviews, findings, status: findings.some(f => f.status === 'failed') ? 'failed' : findings.length ? 'unavailable' : 'mechanically-prepared', automaticReleaseEligible: false, h1Eligible: false };
+}
+
+/** Original v1 semantics remain fixed to the candidate configuration and profile. */
+export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, now = Date.now()): CollectedDevelopment {
+  return collectEvidence(manifest, observations, trust, reader, now);
+}
+export type DevelopmentRequestProfiles = ReadonlyMap<string, { configurationDigest: string; model: ModelProfile | null }>;
+/** Derived view only: callers must first authenticate exact role/config/profile bindings in v2.
+ * Original signed observation bytes are retained and never rewritten as candidate observations. */
+export function collectDevelopmentEvidenceProjection(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, requestProfiles: DevelopmentRequestProfiles, now = Date.now()) {
+  return { kind: 'development-v2-behavior-projection' as const, evidence: collectEvidence(manifest, observations, trust, reader, now, requestProfiles) };
+}
+export function prepareDevelopmentEvidenceProjection(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], reviews: Signed<DevelopmentReview>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, requestProfiles: DevelopmentRequestProfiles, now = Date.now()) {
+  const projection = collectDevelopmentEvidenceProjection(manifest, observations, trust, reader, requestProfiles, now);
+  return { kind: projection.kind, result: prepareEvidence(projection.evidence, reviews, trust, reader, now) };
 }
