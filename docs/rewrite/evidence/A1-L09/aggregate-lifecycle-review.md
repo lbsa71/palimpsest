@@ -2,7 +2,7 @@
 
 Status: **fixture-verified bounded review complete**. Owner `/root/a1_aggregate_lifecycle_review`, branch `codex/a1-aggregate-lifecycle-review-20261011`, isolated worktree `/home/palimpsest/src/aggregate-lifecycle-review`, base `bfab2f073308668a360bd637af87985e0eac7f84`. Task: A1-L09-T02/T04/T05, requirements RW10, RW15, RW16, RW19. The actual finite tool goal was to diagnose the aggregate launcher-loss failure, independently review two root fixture corrections, preserve failures, prove the lifecycle, and commit the bounded result. Inherited model/effort was used; no provider was invoked.
 
-Exclusive writes were `deployment/host-successor.test.ts` and this record. Root also allowed necessary minimal CLI/supervisor repair and review repair of the two fixtures; neither was needed. Source correction: **`81bfd41ae5e96ca471c4f2313a3b0964573a8f2e`**. Root retains lane/central status integration and fresh inspection of this test correction.
+Exclusive writes were `deployment/host-successor.test.ts` and this record. Root also allowed necessary minimal CLI/supervisor repair and review repair of the two fixtures; neither was needed. Initial fixture correction: **`81bfd41ae5e96ca471c4f2313a3b0964573a8f2e`**; final source including the fresh-review correction: **`fcf9b4389461a47e493740bdfb4d72d9b4da61a7`**. Root independently inspected the synchronization and negative control and found the resource namespace issue corrected below. Root retains lane/central status integration.
 
 ## Failure disposition
 
@@ -18,7 +18,9 @@ Only the temporary candidate contains phase markers and the startup gate. The pr
 
 A disposable candidate mutation removed only `if (launched) process.once('disconnect', stop);`, retaining the observing listener. The corrected test **failed 0/1** in 15.639 seconds with `orphan coordinator must never publish controls after startup`, actual `true`, expected `false`. This establishes that the observer does not accidentally repair the behavior it tests. The normal SIGTERM handler cleaned the negative-control coordinator and service; the mutation was removed before the final run and is not committed.
 
-The first positive run passed 1/1 in 20.371 seconds; it preceded the extra pre-kill authority assertion. The final exact test source passed **1/1, zero skips**, 14.642 seconds. Its retained diagnostic records coordinator PID 821212, service PID 821243, startup timestamp 1791750666468, disconnect 1791750666496, and normal exit code 0 at 1791750666580: **84 ms after observed disconnect**, with empty stderr. This is a local fixture observation, not a universal shutdown latency bound. No remaining matching fixture coordinator/service process was observed after the selected runs.
+The first positive run passed 1/1 in 20.371 seconds; it preceded the extra pre-kill authority assertion. The next positive run passed **1/1, zero skips**, 14.642 seconds. Its retained diagnostic records coordinator PID 821212, service PID 821243, startup timestamp 1791750666468, disconnect 1791750666496, and normal exit code 0 at 1791750666580: **84 ms after observed disconnect**, with empty stderr. This is a local fixture observation, not a universal shutdown latency bound. No remaining matching fixture coordinator/service process was observed after the selected runs.
+
+Root's fresh inspection caught a vacuous zero-request assertion: the initial correction queried `physical-requests`, whereas `ResourceLedger` persists reservations in `requests` (`packages/runtime/resources/index.ts`). Earlier positive runs establish the stated lifecycle assertions but **do not establish zero physical requests** through that incorrect check. The one-line correction uses the actual `requests` namespace; the final exact source at `fcf9b43` passed **1/1, zero skips**, 16.460 seconds. Final diagnostics: coordinator 821532, service 821567, startup 1791750734313, disconnect 1791750734350, exit code 0 at 1791750734419 (**69 ms** after disconnect), empty stderr. That run verifies the actual request ledger is empty as well as all lifecycle assertions. Final strict TypeScript checking also passed. No other cases were broadened.
 
 ## Independent review of the root repairs
 
@@ -38,7 +40,7 @@ From this worktree, with Node 24.13.0 at the exact absolute path shown:
 git diff --check
 ```
 
-The selected lifecycle command ran first positive, then negative control, then final restored positive as described above. Final strict TypeScript and whitespace checks passed. No full aggregate or unrelated test suite was repeated. The compiler closure was consumed through a worktree symlink to the existing root `node_modules`; fixture source copies resolve it into real files before freezing. No dependencies were installed or changed. Node binary SHA-256 is `53fb205ae78805130177e24bcb459a69a1518c8d98f8965f31d85aae7ea840fc`; lockfile SHA-256 is `cc2956d305c7bbb1be7d58bde7b1d257ff8329ca73d55d1cfb8ee92d2712efc0`.
+The selected lifecycle command ran first positive, then negative control, then restored positive, and finally the actual-resource-namespace correction as described above. Final strict TypeScript and whitespace checks passed. No full aggregate or unrelated test suite was repeated. The compiler closure was consumed through a worktree symlink to the existing root `node_modules`; fixture source copies resolve it into real files before freezing. No dependencies were installed or changed. Node binary SHA-256 is `53fb205ae78805130177e24bcb459a69a1518c8d98f8965f31d85aae7ea840fc`; lockfile SHA-256 is `cc2956d305c7bbb1be7d58bde7b1d257ff8329ca73d55d1cfb8ee92d2712efc0`.
 
 Logs remain outside source at `/home/palimpsest/migration/aeon-1-20261011/integration-evidence/`:
 
@@ -51,6 +53,8 @@ Logs remain outside source at `/home/palimpsest/migration/aeon-1-20261011/integr
 | `lifecycle-barrier-final.log` | `a607c23c61e7dba2b3230b557af652d512cfd52d9bebdfffddc289624c26f79d` |
 | `aggregate-fixture-fresh-review.log` | `01efc127b361703491614218c8182b170499f799eff149eb3f60786fc01fe805` |
 | `aggregate-lifecycle-typecheck.log` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+
+Additional final-source transcript: `lifecycle-barrier-resource-namespace.log`, SHA-256 `b83b3a9f63b8f7a70ce7617e356867a4026f2d4f664f171ab0e2a643c6392096`.
 
 ## Handoff limits
 
