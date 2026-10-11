@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -162,12 +163,15 @@ function fixture(activate = false, governance = false, offline = false) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-external-dispatch-'));
   const source = join(root, 'source'); mkdirSync(source);
   for (const entry of rewriteSourceEntries) if (existsSync(join(repository, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(join(repository, entry), join(source, entry), { recursive: true }); }
+  // This fixture's concrete private packet must not also be readable as candidate test source.
+  // Production source freezing is unchanged; only this disposable fixture input is trimmed.
+  if (offline) for (const file of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts']) rmSync(join(source, file));
   cpSync(realpathSync(join(repository, 'node_modules')), join(source, 'node_modules'), { recursive: true });
   const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
   const evidenceDirectory = join(root, 'evidence'), reviewerRoot = join(root, 'external-reviewer');
   for (const path of [host.stateDirectory, host.workspaceDirectory, host.artifactStore, evidenceDirectory, reviewerRoot]) mkdirSync(path, { mode: 0o700 });
   const blob = (bytes: string | Uint8Array): ArtifactRef => { const sha256 = hashBytes(Buffer.from(bytes)); writeFileSync(join(evidenceDirectory, sha256), bytes, { mode: 0o600 }); return { uri: `sha256:${sha256}`, sha256 }; };
-  const key = Buffer.alloc(32, 78), keyFile = join(reviewerRoot, 'key'); writeFileSync(keyFile, key, { mode: 0o600 });
+  const key = randomBytes(32), keyFile = join(reviewerRoot, 'key'); writeFileSync(keyFile, key, { mode: 0o600 });
   const files: ReviewerFile['files'] = [];
   const retain = (path: string, mount: string) => { const bytes = readFileSync(realpathSync(path)), retained = join(reviewerRoot, `file-${files.length}`); writeFileSync(retained, bytes, { mode: 0o600 }); files.push({ path: retained, mount, sha256: hashBytes(bytes) }); };
   retain(process.execPath, '/reviewer/node');
@@ -232,6 +236,7 @@ function fixtureGovernance(profile) {
     configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
       scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture-operator', scope: { kind: 'public' }, modificationEligible: true } } };
   const incumbent = freezeApplication(source, host.artifactStore, inputs);
+  if (offline) for (const path of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts']) assert.equal(incumbent.files.some(file => file.path === path), false);
   const policy = { ...fields, controlRevision: incumbent.manifest.controls, policyDigest: admissionPolicyIdentity({ ...fields, controlRevision: incumbent.manifest.controls }) };
   const initial: Authority = { generation: 'initial-dispatch-fixture', epoch: 1, controlRevision: incumbent.manifest.controls };
   const observation = blob('Bootstrap engineering fixture only; no H1 acceptance.');
@@ -265,6 +270,14 @@ test('offline direct bounded review retains actual command evidence', { timeout:
     assert.equal(response.result.receipt.evidence[0]!.verdict, 'pass');
     assert.equal(ledger.snapshot(request.proposal.runId).requests, 2);
     assert.equal(ledger.snapshot(request.proposal.runId).concurrent, 0);
+    // A real initializer attack would hide the regression if inputs were read after import.
+    writeFileSync(join(f.source, markerPath), "import { readFileSync, writeFileSync, chmodSync } from 'node:fs'; const inputs = JSON.parse(readFileSync('/work/inputs.json', 'utf8')); for (const input of inputs) if (typeof input.value === 'string') input.value = [...input.value].map(() => 'a').join(''); chmodSync('/work/inputs.json', 0o600); writeFileSync('/work/inputs.json', JSON.stringify(inputs)); export function ucs2length(s: string): number { return s.length; }\n");
+    const attacked: EvaluationRequest = { ...request, requestId: 'initializer-input-rewrite', candidate: freezeApplication(f.source, f.host.artifactStore, f.inputs) };
+    const failed = await runAccountedExternalReview(f.reviewer, f.host, attacked, f.policy, f.incumbent.manifest.id,
+      { store, request: attacked, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId, maxElapsedMs: f.reviewer.maxElapsedMs,
+        assertAuthority: a => assert.deepEqual(a, authority), dispatchAuthority: (a, run) => { assert.deepEqual(a, authority); run(); } });
+    assert.equal(failed.result.receipt.evidence[0]!.verdict, 'fail', 'Input rewrite must not hide the actual Unicode regression');
+    assert.equal(ledger.snapshot(request.proposal.runId).requests, 4);
   } finally { store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -324,7 +337,8 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
       assert.equal(physical().length, count);
     });
     await t.test('candidate attempts to read reviewer namespace and original private files fail while behavior still passes', async () => {
-      const privatePaths = ['/reviewer-key', offlinePlanMount, f.reviewer.keyFile, ...f.reviewer.files.filter(x => x.mount === offlinePlanMount).map(x => x.path)];
+      const privatePaths = ['/reviewer-key', offlinePlanMount, '/app/deployment/evaluation-dispatch.test.ts', '/app/evaluations/offline-review/plan.test.ts',
+        f.reviewer.keyFile, ...f.reviewer.files.filter(x => x.mount === offlinePlanMount).map(x => x.path)];
       const attack = `import { readFileSync } from 'node:fs'; for (const path of ${JSON.stringify(privatePaths)}) { let read = false; try { readFileSync(path); read = true; } catch {} if (read) throw Error('Private judge material exposed'); }\nexport function ucs2length(s: string): number { return [...s].length; }\n`;
       writeFileSync(join(f.source, markerPath), attack);
       const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs), r = resource('private-isolation', candidate);
