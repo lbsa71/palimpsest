@@ -1,0 +1,54 @@
+# A1-L08 first native recovery acquisition
+
+Status: pre-code preparation claim, no native launch authorized or performed. Owner `/root/a1_native_recovery`, existing ACTIVE finite goal from [native-recovery-specification.md](native-recovery-specification.md). Additional exclusive files: this procedure and `evaluations/baselines/native-recovery-physical.test.ts`. Existing assigned worker files may gain observed child-close metadata only. Review basis: repaired source `6b51c3c`, independent acceptance `8500652`, acquired-positive provenance `653aed5`; root joined through `eea7ef6`. Reviewer owns its tests/evidence. Shared runtime, store, ledger, confinement and historical records remain read-only.
+
+This bounded unit prepares **one acquisition per product**, Codex first and Claude independently cleared afterward. It consumes neither the later interruption positive nor negative. Root expressly selected the existing namespace fixture route and excluded a new help process. Existing pinned argv/source support an attempt; unsupported flags, startup ordering, persistence, profiles or history are retained failures. Claude's existing help may be rehashed read-only. No retry, replacement grant, fallback, extra request, protocol change or enlarged cap follows from failure.
+
+## Frozen acquisition protocol
+
+The driver will be opt-in only, selected with `AEON_NATIVE_RECOVERY_ACQUIRE=codex` or `claude`, never both in one invocation. A root-owned clearance JSON path is supplied through `AEON_NATIVE_RECOVERY_CLEARANCE`. Before any preflight/native process, an exclusive, fsynced `attempt.json` consumes the fixed attempt directory. Existing directory/marker is refusal, never a new temporary attempt. Clearance must bind product, clean joined source revision, driver/procedure/full baseline-package source hashes, Node hash/version, actual OS platform/architecture/release/version, host-tool hashes, native closure, public-plan hash, reviewer revision and root window ID. It is a freeze check; root still assigns the physical window. No clearance exists at this preparation checkpoint.
+
+Fixed evidence roots:
+
+- `/home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence/codex-acquisition-1`
+- `/home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence/claude-acquisition-1`
+
+Each contains initially blank `workspace/`, blank `checkout/`, private `state/`, `protected/sentinel`, and retained evidence outside the workload. Both phases use that same persistent workspace, unchanged checkout/source/configuration and one original grant. The fixed native-created public file is `recovery-observed.txt`, containing `native-recovery-write-observed` with no newline. Phase 1 prompt asks one local write and observation; phase 2 prompt is exactly `Read recovery-observed.txt with one local command, report its observed contents and finish. Do not create agents or use external services.` It omits the previous task, marker, final and command result.
+
+Phase 1 emits exactly one command through the acquired Codex `functions.exec`/`exec_command` or Claude `Bash` surface:
+
+```text
+/runtime/node -e 'require("node:fs").writeFileSync("recovery-observed.txt","native-recovery-write-observed");console.log("native-recovery-write-observed")'
+```
+
+Phase 2 emits exactly one command:
+
+```text
+/runtime/node -e 'console.log(require("node:fs").readFileSync("recovery-observed.txt","utf8"))'
+```
+
+Command IDs are `call_recovery_write` / `call_recovery_read` (Codex item IDs `fc_recovery_write` / `fc_recovery_read`), or `tool_recovery_write` / `tool_recovery_read` (Claude). Codex uses acquired `text(await tools.exec_command(...));`, max output 1000 and yield 1000; Claude uses acquired Bash input `{command,description:"Observe the public recovery artifact",timeout:5000}`. Second request in each phase must contain exactly that attributed successful result, in the acquired result envelope and after its actual command. Only then is public terminal `native-recovery-write-complete` or `native-recovery-read-complete` emitted. Exact SSE bytes, usage, IDs, tool arguments, prompts, responses and SHA256s are written in `declared-plan.json` before phase 1. Response formats are the unchanged acquired synthetic Responses/Messages formats; no tool/session/storage schema is invented.
+
+Phase 1 must return exit zero, no signal/output overflow/recovery error, exactly two known successful requests, actual completed turn, drained RPCs and awaited confinement cleanup, nonempty actual native files and a durable ready checkpoint. Phase 2 consumes its exact ready reference and must expose the identical UUID before its first provider dispatch. Its first request must retain the phase-1 actual tool call/result and terminal message; the prompt cannot supply them. Absence or change of acquired history stops transport. Phase 2 requests exactly twice, observes the same file, and publishes a second quiescent checkpoint for an after-store seal; acquisition then ends without a third launch. This does not claim host interruption recovery. Ready allocation stays under its original finite deadline; no continuation beyond the frozen procedure is authorized.
+
+## Original envelope and confinement
+
+Both: original grant `original-{product}-native-recovery-acquisition-1`, requests 8, concurrency 4, elapsed 60000 ms, request timeout 10000 ms, output allowance 4096, cost USD100 synthetic accounting, request/response/CLI bytes 1000000. Driver independently refuses request 3 in either phase and any overlapping/child request: four total maximum, with no new ledger/framework. Codex reserves original input context 200000 (tokens 1632768), model `gpt-6-astra`, high, acquired agent-message protocol/native-helper hashes. Claude reserves original input context 1000000 (tokens 8032768), model `claude-opus-5-5`, high/adaptive, standard/global/standard, acquired native delegation beta, safe isolated mode, same-model haiku/sonnet/opus/subagent roles and original tools `Agent,Bash,Read,Write`. Prices stay input4/cached0.2/output20 per million, Claude cache-write5m5/hour8; these are synthetic fixture categories, no paid provider rates. Four known replies each bill input100/output10; exact real measured elapsed is retained.
+
+Existing `--unshare-all` user/PID/mount/network namespace, disabled nested user namespaces, dropped capabilities, die-with-parent/new-session, read-only `/usr`, pinned Node and application closure, isolated 64MiB `/tmp`, same persistent `/work`, and clear environment/dummy bridge token apply unchanged. Private observer/lease/evidence/protected sentinel are outside. **No cgroup, CPU, memory or runtime disk enforcement claim**: 16MiB/256file/512entry native/workspace seal is bounded post-exit admission, not runtime storage enforcement. Actual kernel and host-tool identities are observed and frozen, not caller labels. Kernel-qualified comparator/recovery remains separate. Native stdout metadata may retain the actual namespace child PID and its observed close event, never infer surviving-host absence from a PID guess or lease alone.
+
+## Evidence and failure retention
+
+The driver preserves raw `request-N.json` and exact emitted `response-N.sse` before response dispatch, original native HTTP/session attribution from observer rows, complete effective instruction/system/tool/input bytes, manifests, native invocation/environment/stdout/stderr/exit, cleanup artifacts, original allocation/grant/budget/request revisions/charges/events, checkpoint/native/workspace byte manifests, and raw artifact bytes rehashed on export. `before.json`, `ready.json`, `resumed-ready.json` and `failure-state.json` describe each boundary with host PID/start ticks/namespaces/cgroup, lease owner rows, store rows, and opaque native/workspace files with modes/hashes/base64 bytes. The original SQLite files and any sidecars are retained and copied only while closed; audit opens databases read-only. Unsupported links/special/hardlinked files are reported without following or inventing content. Partial native bytes remain on disk when admission fails. Export failures get separate retained diagnostics and do not replace the first acquisition failure.
+
+`instruction-audit.json` compares full raw phase-1 and resumed initial instruction/tool/control fields and retains both complete objects. Differences are never silently normalized or approved: unknown instruction differences fail acquisition. Only native historical conversation content, prompt, observed UUID/startup bytes, generation and loopback endpoint are expected launch differences; no transcript edit, restoration, effect replay, synthetic compaction or host-written substitute file is allowed. Result checks bind original grant row, one allocation, unchanged original budget start/envelope/deadline, unchanged first request rows and known actual charges, exact checkpoint revision transitions, distinct observed native launches and unchanged protected sentinel. `result.json` records either acquisition evidence ready for independent audit or the exact first failure; it is not parity/qualification acceptance.
+
+## Preparation and launch gates
+
+Pure checks will exercise acquired command-result envelopes and causal wrong-ID/failed-exit/history omissions, two-phase request ceiling/concurrency, and one-shot marker refusal. They use no native opt-in. Strict TypeScript and whitespace checks follow serially. Source, protocol/response bytes and this procedure are frozen in a small commit, then sent to root and the fresh reviewer. Root supplies the concrete clearance and serialized window only after review. Example **future** command, never run at this checkpoint:
+
+```sh
+env -i AEON_NATIVE_RECOVERY_ACQUIRE=codex AEON_NATIVE_RECOVERY_CLEARANCE=/absolute/root-owned/codex-acquisition-clearance.json /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 evaluations/baselines/native-recovery-physical.test.ts
+```
+
+Claude needs its own clearance/window and command with `claude`; Codex outcome cannot clear it. Unknown persistence/ordering/effective instructions are unresolved acquisition gates. The actual finite engineering goal stays ACTIVE for review and acquisition audit.
