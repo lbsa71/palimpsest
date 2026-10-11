@@ -33,8 +33,8 @@ export function confinementArguments(command: ConfinedCommand): string[] {
   const workspace = realpathSync(command.workspace);
   if (!statSync(workspace).isDirectory()) throw new Error('Workspace must be a directory');
   if (command.protectedPaths.length === 0) throw new Error('Protected control/state/rescue paths must be declared');
-  for (const path of command.protectedPaths) {
-    const protectedPath = realpathSync(path);
+  const protectedPaths = command.protectedPaths.map(path => realpathSync(path));
+  for (const protectedPath of protectedPaths) {
     if (contains(workspace, protectedPath) || contains(protectedPath, workspace)) {
       throw new Error(`Workspace overlaps protected storage: ${protectedPath}`);
     }
@@ -51,6 +51,12 @@ export function confinementArguments(command: ConfinedCommand): string[] {
     }
   };
   inspect(workspace);
+  const assertMount = (mount: string) => {
+    for (const protectedPath of protectedPaths) {
+      if (contains(mount, protectedPath) || contains(protectedPath, mount)) throw new Error('Runtime mount overlaps protected storage');
+    }
+  };
+  assertMount(realpathSync('/usr'));
   if (!Number.isSafeInteger(command.timeoutMs) || command.timeoutMs < 1 ||
     !Number.isSafeInteger(command.maxOutputBytes) || command.maxOutputBytes < 1) throw new Error('Finite command limits required');
   if (!isAbsolute(command.executable)) throw new Error('Sandbox executable must have an absolute path');
@@ -59,13 +65,17 @@ export function confinementArguments(command: ConfinedCommand): string[] {
     '--symlink', 'usr/lib64', '/lib64', '--proc', '/proc', '--dev', '/dev', '--size', '67108864', '--tmpfs', '/tmp',
     '--bind', workspace, '/work', '--chdir', '/work', '--clearenv', '--setenv', 'PATH', '/runtime:/usr/bin:/bin',
     '--setenv', 'LANG', 'C.UTF-8'];
-  if (command.nodeBinary) args.push('--ro-bind', realpathSync(command.nodeBinary), '/runtime/node');
+  if (command.nodeBinary) {
+    const binary = realpathSync(command.nodeBinary);
+    assertMount(binary);
+    const stat = lstatSync(binary);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error('Runtime binary must be an ordinary file without hardlinks');
+    args.push('--ro-bind', binary, '/runtime/node');
+  }
   if (command.applicationRoot) {
     const application = realpathSync(command.applicationRoot);
-    for (const path of command.protectedPaths) {
-      const protectedPath = realpathSync(path);
-      if (contains(application, protectedPath) || contains(protectedPath, application)) throw new Error('Application image overlaps protected storage');
-    }
+    assertMount(application);
+    inspect(application);
     args.push('--ro-bind', application, '/app');
   }
   // No host network, sockets, home, credentials, state or control mounts. Research uses a separate receiver.

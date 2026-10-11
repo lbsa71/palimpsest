@@ -1,0 +1,184 @@
+TAP version 13
+# (node:727478) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: actual successor probation and offline rescue retain latest memory and uncertain effects, with durable proof
+ok 1 - actual successor probation and offline rescue retain latest memory and uncertain effects, with durable proof
+  ---
+  duration_ms: 661.434734
+  type: 'test'
+  ...
+# Subtest: fresh signed probation judgment pins rescue; changed payload is rejected after drain before execution
+ok 2 - fresh signed probation judgment pins rescue; changed payload is rejected after drain before execution
+  ---
+  duration_ms: 570.222777
+  type: 'test'
+  ...
+# Subtest: evaluator/control replacement is separately staged under previous controls and can recover old controls
+ok 3 - evaluator/control replacement is separately staged under previous controls and can recover old controls
+  ---
+  duration_ms: 524.638045
+  type: 'test'
+  ...
+# Subtest: failed child startup is fenced and recovery does not need provider access
+ok 4 - failed child startup is fenced and recovery does not need provider access
+  ---
+  duration_ms: 406.71554
+  type: 'test'
+  ...
+# Subtest: new controls cannot judge their own probation; subsequent release uses the accepted new evaluator
+ok 5 - new controls cannot judge their own probation; subsequent release uses the accepted new evaluator
+  ---
+  duration_ms: 720.201809
+  type: 'test'
+  ...
+# Subtest: failed drain prevents successor authority; changed state path and closed lease are rejected
+ok 6 - failed drain prevents successor authority; changed state path and closed lease are rejected
+  ---
+  duration_ms: 264.933846
+  type: 'test'
+  ...
+# Subtest: SIGKILL controller during drain recovers accepted artifact with latest state
+ok 7 - SIGKILL controller during drain recovers accepted artifact with latest state
+  ---
+  duration_ms: 526.134004
+  type: 'test'
+  ...
+# Subtest: SIGKILL controller during start recovers accepted artifact with latest state
+ok 8 - SIGKILL controller during start recovers accepted artifact with latest state
+  ---
+  duration_ms: 577.591495
+  type: 'test'
+  ...
+# Subtest: artifact identity survives source edits while frozen payload tampering invalidates admission
+ok 9 - artifact identity survives source edits while frozen payload tampering invalidates admission
+  ---
+  duration_ms: 55.598682
+  type: 'test'
+  ...
+# Subtest: self-report, forged authentication, changed evidence and stale authority cannot admit
+ok 10 - self-report, forged authentication, changed evidence and stale authority cannot admit
+  ---
+  duration_ms: 37.545167
+  type: 'test'
+  ...
+# Subtest: the candidate cannot replace controls judging the same transaction
+ok 11 - the candidate cannot replace controls judging the same transaction
+  ---
+  duration_ms: 72.14678
+  type: 'test'
+  ...
+# Subtest: frozen required cases cannot silently change and recovery bytes must be retained
+ok 12 - frozen required cases cannot silently change and recovery bytes must be retained
+  ---
+  duration_ms: 46.138213
+  type: 'test'
+  ...
+# Subtest: hardlinks and escaping paths cannot smuggle mutable external files into a candidate
+ok 13 - hardlinks and escaping paths cannot smuggle mutable external files into a candidate
+  ---
+  duration_ms: 38.283588
+  type: 'test'
+  ...
+# Subtest: explicit nested entries cannot freeze bytes through a symlinked parent outside the source
+ok 14 - explicit nested entries cannot freeze bytes through a symlinked parent outside the source
+  ---
+  duration_ms: 29.643644
+  type: 'test'
+  ...
+# (node:727482) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: independent receivers fence an old worker and persist withdrawal across restart
+ok 15 - independent receivers fence an old worker and persist withdrawal across restart
+  ---
+  duration_ms: 83.27056
+  type: 'test'
+  ...
+# Subtest: recovery can grant retained code a newer authority without a model
+ok 16 - recovery can grant retained code a newer authority without a model
+  ---
+  duration_ms: 105.422515
+  type: 'test'
+  ...
+# Subtest: real confined process can edit workspace but cannot see private state, host env or host processes
+ok 17 - real confined process can edit workspace but cannot see private state, host env or host processes
+  ---
+  duration_ms: 72.813441
+  type: 'test'
+  ...
+# Subtest: overlapping state mount is refused before spawning
+ok 18 - overlapping state mount is refused before spawning
+  ---
+  duration_ms: 2.252585
+  type: 'test'
+  ...
+# Subtest: a preexisting hardlink into protected state is refused before spawning
+ok 19 - a preexisting hardlink into protected state is refused before spawning
+  ---
+  duration_ms: 1.238034
+  type: 'test'
+  ...
+# Subtest: a read-only application image cannot disclose protected state through a hardlink
+ok 20 - a read-only application image cannot disclose protected state through a hardlink
+  ---
+  duration_ms: 1.992542
+  type: 'test'
+  ...
+# Subtest: protected paths cannot be exposed through system or selected runtime mounts
+ok 21 - protected paths cannot be exposed through system or selected runtime mounts
+  ---
+  duration_ms: 1.744576
+  type: 'test'
+  ...
+# Subtest: timeout terminates the namespace including a child that creates a new process group
+ok 22 - timeout terminates the namespace including a child that creates a new process group
+  ---
+  duration_ms: 1431.856212
+  type: 'test'
+  ...
+# Subtest: stream output and cancellation limits stop real commands
+ok 23 - stream output and cancellation limits stop real commands
+  ---
+  duration_ms: 127.914441
+  type: 'test'
+  ...
+# (node:727513) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: exclusive supervisor lease rejects overlap and recovers after actual process death
+ok 24 - exclusive supervisor lease rejects overlap and recovers after actual process death
+  ---
+  duration_ms: 140.51312
+  type: 'test'
+  ...
+# Subtest: isolated worker receives only host-approved RPC results
+ok 25 - isolated worker receives only host-approved RPC results
+  ---
+  duration_ms: 53.922852
+  type: 'test'
+  ...
+# Subtest: duplicate RPC IDs and malformed protocol cannot bypass the host
+ok 26 - duplicate RPC IDs and malformed protocol cannot bypass the host
+  ---
+  duration_ms: 55.930997
+  type: 'test'
+  ...
+# Subtest: worker refusal is redacted and cancellation reaches an in-flight handler
+ok 27 - worker refusal is redacted and cancellation reaches an in-flight handler
+  ---
+  duration_ms: 76.254615
+  type: 'test'
+  ...
+# Subtest: synchronous host refusal becomes a redacted reply without escaping the worker boundary
+ok 28 - synchronous host refusal becomes a redacted reply without escaping the worker boundary
+  ---
+  duration_ms: 57.551041
+  type: 'test'
+  ...
+1..28
+# tests 28
+# suites 0
+# pass 28
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4564.095711

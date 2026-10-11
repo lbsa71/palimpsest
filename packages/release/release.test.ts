@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -98,5 +98,15 @@ test('hardlinks and escaping paths cannot smuggle mutable external files into a 
     linkSync(join(f.source, 'main.ts'), join(f.source, 'alias.ts'));
     assert.throws(() => freezeCandidate(f.source, f.store, ['alias.ts'], f.candidate.inputs), /unlinked files/);
     assert.throws(() => freezeCandidate(f.source, f.store, ['../source/main.ts'], f.candidate.inputs), /normalized relative/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('explicit nested entries cannot freeze bytes through a symlinked parent outside the source', () => {
+  const f = fixture();
+  try {
+    const outside = join(f.root, 'host-private'); mkdirSync(outside);
+    writeFileSync(join(outside, 'secret'), 'host-private bytes must not enter candidate artifacts');
+    symlinkSync(outside, join(f.source, 'alias'));
+    assert.throws(() => freezeCandidate(f.source, f.store, ['alias/secret'], f.candidate.inputs), /symlink|directory/i);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

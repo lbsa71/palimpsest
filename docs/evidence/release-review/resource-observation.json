@@ -1,0 +1,12 @@
+{
+  "base": "043c1b9ddb431c12bd2877d32a107845d6d541f6",
+  "node": "v24.13.0",
+  "observation": "Read-only /proc/self/limits inside actual bwrap worker; no allocation/fork/disk exhaustion attempted",
+  "receipt": {
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "Limit                     Soft Limit           Hard Limit           Units     \nMax cpu time              unlimited            unlimited            seconds   \nMax file size             unlimited            unlimited            bytes     \nMax data size             unlimited            unlimited            bytes     \nMax stack size            8388608              unlimited            bytes     \nMax core file size        0                    0                    bytes     \nMax resident set          unlimited            unlimited            bytes     \nMax processes             30441                30441                processes \nMax open files            1048576              1048576              files     \nMax locked memory         1026371584           1026371584           bytes     \nMax address space         unlimited            unlimited            bytes     \nMax file locks            unlimited            unlimited            locks     \nMax pending signals       30441                30441                signals   \nMax msgqueue size         819200               819200               bytes     \nMax nice priority         0                    0                    \nMax realtime priority     0                    0                    \nMax realtime timeout      unlimited            unlimited            us        \n",
+    "stderr": "",
+    "elapsedMs": 41.27431899999999
+  }
+}

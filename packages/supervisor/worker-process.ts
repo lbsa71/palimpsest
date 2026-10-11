@@ -55,7 +55,8 @@ export async function runWorker(options: WorkerOptions): Promise<JsonValue> {
     }
     if (++requests > options.maxRequests || pending >= 8) { stop(new Error('Worker request budget exceeded')); return; }
     ids.add(value.id); pending++;
-    void options.handle(value.method, value.args as JsonValue[], controller.signal).then(
+    // Host refusals may throw before returning a promise. Keep both forms inside the protocol boundary.
+    void (async () => options.handle(value.method as string, value.args as JsonValue[], controller.signal))().then(
       response => { if (!controller.signal.aborted) send({ kind: 'reply', id: value.id, ok: true, value: response }); },
       () => { if (!controller.signal.aborted) send({ kind: 'reply', id: value.id, ok: false, error: 'Host operation refused or unavailable' }); },
     ).catch(() => stop(new Error('Worker reply failed'))).finally(() => pending--);

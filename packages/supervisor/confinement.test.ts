@@ -46,6 +46,25 @@ test('a preexisting hardlink into protected state is refused before spawning', (
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a read-only application image cannot disclose protected state through a hardlink', async () => {
+  const { root, command, secret } = fixture();
+  try {
+    const application = join(root, 'application'); mkdirSync(application);
+    linkSync(secret, join(application, 'alias'));
+    await assert.rejects(runConfined({ ...command, applicationRoot: application,
+      args: ['-e', "console.log(require('node:fs').readFileSync('/app/alias','utf8'))"] }), /hardlink/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('protected paths cannot be exposed through system or selected runtime mounts', () => {
+  const { root, command } = fixture();
+  try {
+    for (const protectedPath of ['/usr', process.execPath]) {
+      assert.throws(() => confinementArguments({ ...command, protectedPaths: [protectedPath] }), /overlaps protected/);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('timeout terminates the namespace including a child that creates a new process group', async () => {
   const { root, command } = fixture();
   try {

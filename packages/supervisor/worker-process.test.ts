@@ -52,3 +52,19 @@ test('worker refusal is redacted and cancellation reaches an in-flight handler',
     assert.equal(interrupted, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('synchronous host refusal becomes a redacted reply without escaping the worker boundary', async () => {
+  const { root, command } = setup(`
+    import {createInterface} from 'node:readline';
+    createInterface({input:process.stdin}).on('line',line=>{
+      const message=JSON.parse(line);
+      if(message.kind==='start') console.log(JSON.stringify({kind:'request',id:'one',method:'refuse',args:[]}));
+      else console.log(JSON.stringify({kind:'done',value:message}));
+    });
+  `);
+  try {
+    const result = await runWorker({ command, initial: null, maxRequests: 1, maxMessageBytes: 4096,
+      handle() { throw new Error('private host diagnostic'); } });
+    assert.deepEqual(result, { kind: 'reply', id: 'one', ok: false, error: 'Host operation refused or unavailable' });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

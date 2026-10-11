@@ -1,0 +1,18 @@
+{
+  "base": "043c1b9ddb431c12bd2877d32a107845d6d541f6",
+  "runtime": {
+    "path": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+    "version": "v24.13.0",
+    "sha256": "53fb205ae78805130177e24bcb459a69a1518c8d98f8965f31d85aae7ea840fc"
+  },
+  "files": {
+    "packages/release/artifacts.ts": "37ce05ec1d1918b044f0aaf5479aebe9a76306871833c12def6e1ba2fea724c5",
+    "packages/release/release.test.ts": "13f957b25f7a404ee11191a4de4f354e70bf6715007a3d1e9ec9d9e50e14bfa5",
+    "packages/supervisor/confinement.ts": "93bc3dbbf2c5ab67c76072e237c3362f034f6cc9351d6ef3a3938bcf459953b8",
+    "packages/supervisor/confinement.test.ts": "a701488d9f229e349ffc0db89c9e16c1d8728418ddc546f29c326ddd455e96ea",
+    "packages/supervisor/worker-process.ts": "d92003518a80b75e6af60ba19af344e9ce0281c12ab517168bc0144662db4c49",
+    "packages/supervisor/worker-process.test.ts": "5ff42db7d9bea51aa87af367f19dd77c8db61f1aa93ca3e5daca7f9b14672c96",
+    "package.json": "8be435055d54941b4504dd4db9235c9c65faf9796beab24a0c54b6a2e3a30ade",
+    "package-lock.json": "30546744a774b59be07d0a4084c9435e3531919f18c402e891c4e3caa016e10f"
+  }
+}

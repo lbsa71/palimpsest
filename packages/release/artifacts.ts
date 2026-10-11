@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { canonicalJson, candidateIdentity, identity, validateCandidate, type CandidateManifest, type JsonValue } from '../contracts/index.ts';
 
@@ -26,16 +26,45 @@ function localPath(path: string): void {
   }
 }
 
+/** Linux descriptor-relative traversal pins each parent and refuses symlinks at every component.
+ * Checking lstat/realpath and subsequently reopening by pathname leaves a replacement race.
+ */
+function openLocal(root: string, path: string): number {
+  localPath(path);
+  if (process.platform !== 'linux') throw new Error('Descriptor-relative artifact traversal requires Linux');
+  let fd = openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const parts = path.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const next = openSync(`/proc/self/fd/${fd}/${parts[i]}`, constants.O_RDONLY | constants.O_NOFOLLOW |
+        (i < parts.length - 1 ? constants.O_DIRECTORY : constants.O_NONBLOCK));
+      closeSync(fd); fd = next;
+    }
+    return fd;
+  } catch (cause) {
+    closeSync(fd); throw new Error(`Candidate symlink or invalid directory/file: ${path}`, { cause });
+  }
+}
+
+function readLocal(root: string, path: string): Uint8Array {
+  const fd = openLocal(root, path);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error(`Candidate must contain ordinary unlinked files: ${path}`);
+    return readFileSync(fd);
+  } finally { closeSync(fd); }
+}
+
 function enumerate(root: string, entries: readonly string[]): FrozenFile[] {
   const files = new Map<string, FrozenFile>();
   const visit = (path: string) => {
-    localPath(path);
-    const full = join(root, path);
-    const stat = lstatSync(full);
-    if (stat.isSymbolicLink()) throw new Error(`Candidate symlink not admitted: ${path}`);
-    if (stat.isDirectory()) { readdirSync(full).sort().forEach(name => visit(`${path}/${name}`)); return; }
-    if (!stat.isFile() || stat.nlink !== 1) throw new Error(`Candidate must contain ordinary unlinked files: ${path}`);
-    files.set(path, { path, sha256: hashBytes(readFileSync(full)), executable: (stat.mode & 0o111) !== 0 });
+    const fd = openLocal(root, path);
+    try {
+      const stat = fstatSync(fd);
+      if (stat.isDirectory()) { readdirSync(`/proc/self/fd/${fd}`).sort().forEach(name => visit(`${path}/${name}`)); return; }
+      if (!stat.isFile() || stat.nlink !== 1) throw new Error(`Candidate must contain ordinary unlinked files: ${path}`);
+      files.set(path, { path, sha256: hashBytes(readFileSync(fd)), executable: (stat.mode & 0o111) !== 0 });
+    } finally { closeSync(fd); }
   };
   entries.forEach(visit);
   return [...files.values()].sort((a, b) => a.path.localeCompare(b.path, 'en'));
@@ -61,7 +90,7 @@ export function freezeCandidate(sourceRoot: string, storeRoot: string, entries: 
   try {
     const directories = new Set<string>([staging]);
     for (const file of files) {
-      const bytes = readFileSync(join(source, file.path));
+      const bytes = readLocal(source, file.path);
       if (hashBytes(bytes) !== file.sha256) throw new Error('Source changed during freeze');
       const target = join(staging, 'payload', file.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
