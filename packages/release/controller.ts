@@ -9,6 +9,7 @@ import { hashBytes, verifyCandidate, type FrozenCandidate } from './artifacts.ts
 
 export interface ReleaseProof { proposal: ReleaseProposal; signed: readonly SignedEvaluation[] }
 export interface ReleaseTarget { candidateId: string; policyDigest: string }
+export interface StagedControl { proof: ReleaseProof; nextPolicyDigest: string; priorAuthority: AuthorityState }
 export interface ReleaseState {
   phase: 'accepted' | 'transfer' | 'probation' | 'recovery';
   operationalStatePath: string;
@@ -82,6 +83,11 @@ export class ReleaseController {
     const row = this.#db.prepare('SELECT value FROM release_proofs WHERE id=?').get(id);
     return row ? JSON.parse(String(row.value)) : undefined;
   }
+  /** Host-only exact stage binding; reading a stage confers no activation authority. */
+  stagedControl(id: string): StagedControl | undefined {
+    const row = this.#db.prepare('SELECT value FROM release_stages WHERE id=?').get(id);
+    return row ? JSON.parse(String(row.value)) as StagedControl : undefined;
+  }
   evidenceArtifact(digest: string): Uint8Array | undefined {
     const row = this.#db.prepare('SELECT bytes FROM release_blobs WHERE digest=?').get(digest);
     return row ? new Uint8Array(row.bytes as Uint8Array) : undefined;
@@ -129,9 +135,8 @@ export class ReleaseController {
     this.#idle(); this.#busy = true;
     try {
       const state = this.#ready();
-      const row = this.#db.prepare('SELECT value FROM release_stages WHERE id=?').get(id);
-      if (!row) throw new Error('Unknown staged control upgrade');
-      const stage = JSON.parse(String(row.value)) as { proof: ReleaseProof; nextPolicyDigest: string; priorAuthority: AuthorityState };
+      const stage = this.stagedControl(id);
+      if (!stage) throw new Error('Unknown staged control upgrade');
       if (identity(stage.priorAuthority) !== identity(state.authority)) throw new Error('Staged control upgrade has stale authority');
       const nextPolicy = this.#policy(stage.nextPolicyDigest);
       const receipt = this.#admit(stage.proof, state.authority, this.#policy(state.active.policyDigest), 'control-upgrade', state.accepted.candidateId);
