@@ -1,6 +1,6 @@
 # Next finite governance behavior slice
 
-Status: **specified; implementation unclaimed**. 2026-10-11, root integration owner. A1-L09-T03/T05 with A1-L08-T03/T06; RW14–RW16/RW19/RW20. This extends the [changed-host readiness finding](changed-host-readiness.md), after the first Validator behavioral checker and its independent review. It does not replace the existing admission, registry, probation or recovery mechanisms.
+Status: **implementing under a new finite goal**, owned by `/root/a1_changed_host_readiness` in the isolated `governance-behavior` worktree. 2026-10-11, root integration owner. A1-L09-T03/T05 with A1-L08-T03/T06; RW14–RW16/RW19/RW20. This extends the [changed-host readiness finding](changed-host-readiness.md), after the first Validator behavioral checker and its independent review. It does not replace the existing admission, registry, probation or recovery mechanisms.
 
 ```text
 /goal Implement and independently verify prior-owned behavioral evaluation of a proposed replacement of the concrete offline reviewer, using bounded synthetic observation packets and a nonauthority probe key in sibling confinement. Demonstrate valid pass, genuine negative verdict, binding refusals and rejection of seeded weakened reviewers; feed exact-candidate results through the existing original-judge admission path. Preserve original resources, fresh probation and retained recovery evidence, and record the difference between this engineering capability and model-authored improvement.
