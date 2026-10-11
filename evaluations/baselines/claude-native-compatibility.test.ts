@@ -79,7 +79,10 @@ for (const [label, change] of Object.entries({
   missingHttp: (a: ProviderAttempt): unknown => delete a.nativeHttp,
 })) test(`${label} refuses dispatch and preserves the original grant`, async () => {
   const f = fixture(); try { const a = attempt(); change(a); await assert.rejects(f.observer.handle(a)); assert.equal(f.calls(), 0); assert.equal(f.observer.ledger.snapshot(f.g.id).requests, 0); assert.equal(f.store.list('baseline-refusals').length, 1);
-    const refusal = f.store.list<any>('baseline-refusals')[0]!.value; if (a.nativeHttp) assert.deepEqual(JSON.parse(Buffer.from(f.store.readArtifact(refusal.nativeHttp)).toString()), a.nativeHttp);
+    const refusal = f.store.list<any>('baseline-refusals')[0]!.value; if (a.nativeHttp) { const recorded = JSON.parse(Buffer.from(f.store.readArtifact(refusal.nativeHttp)).toString());
+      assert.deepEqual(recorded, { path: a.nativeHttp.path, headers: Object.fromEntries(Object.entries(a.nativeHttp.headers).filter(([key]) => ['anthropic-version', 'anthropic-beta'].includes(key.toLowerCase()))) });
+      assert.equal(JSON.stringify(recorded).includes('dummy-native-gateway-token'), false);
+    }
   } finally { f.dispose(); }
 });
 for (const [label, change] of Object.entries({
