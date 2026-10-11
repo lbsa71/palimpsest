@@ -1,7 +1,8 @@
 import { validateModelGrants, type ModelProfile } from './model-grants.ts';
 import { DerivedPolicyRegistry } from './policy-registry.ts';
+import { ReviewerRegistry } from './reviewer-registry.ts';
 import { randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { identity, invariant, type Authority } from '../packages/contracts/index.ts';
 import { admitCandidate, type AdmissionPolicy } from '../packages/release/admission.ts';
@@ -14,7 +15,7 @@ import { verifyApplication } from './candidate.ts';
 import { beneath, type ApplicationSecrets } from './config.ts';
 import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import { materializeConfiguration, type HostBindings } from './materialize.ts';
-import { ServiceProcess, type ServiceReady } from './service-process.ts';
+import { ServiceProcess, type EvolutionMetadata, type ServiceReady } from './service-process.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
@@ -75,6 +76,10 @@ export class ServiceSupervisor {
   readonly #controller: ReleaseController;
   readonly #service: ServiceProcess;
   readonly #policies: DerivedPolicyRegistry;
+  #reviewers?: ReviewerRegistry;
+  #configuredReviewer?: ReviewerFile;
+  #reviewerDiagnosis?: string;
+  readonly #resolvedReviewers = new Map<string, ReviewerFile>();
   #evolutionStore?: OperationalStore;
   #dispatcher?: EvaluationDispatcher;
   #controls?: ControlContinuation;
@@ -100,7 +105,18 @@ export class ServiceSupervisor {
     try {
       this.#authority = authority = new AuthorityStore(join(options.host.stateDirectory, 'authority.sqlite'));
       this.#evolutionStore = new OperationalStore({ filename: join(options.host.stateDirectory, 'operational.sqlite') });
-      this.#policies = new DerivedPolicyRegistry(this.#evolutionStore, options.getPolicy);
+      if (options.evaluationDispatcher) {
+        try {
+          this.#configuredReviewer = loadReviewerFile(options.evaluationDispatcher.reviewerFile, options.host);
+          this.#reviewers = new ReviewerRegistry({ store: this.#evolutionStore, host: options.host,
+            directory: join(dirname(options.evaluationDispatcher.reviewerFile), `revisions-${identity(options.host.stateDirectory).slice(0, 16)}`),
+            configuredReviewer: this.#configuredReviewer });
+        } catch { this.#reviewerDiagnosis = 'External evaluation unavailable: configured reviewer file is missing or invalid'; }
+      }
+      this.#policies = new DerivedPolicyRegistry(this.#evolutionStore, options.getPolicy, (prior, next, candidate) => {
+        if (this.#reviewers) this.#reviewers.prepare(prior, next, candidate);
+        else invariant(identity(policyDescriptor(prior)) === identity(policyDescriptor(next)), 'Changed governance requires an available source-bound reviewer registry');
+      });
       this.#mailbox = new EvolutionMailbox({ store: this.#evolutionStore, assertAuthority: grant => this.#authority.assert(grant) });
       this.#service = new ServiceProcess(options.host, options.secrets, { mode: options.mode, onUnexpectedExit: () => {
         this.#ready = undefined;
@@ -116,7 +132,7 @@ export class ServiceSupervisor {
             invariant(target.operationalStatePath === options.host.stateDirectory, 'Recovery must retain current operational state');
             await this.#prepare(target.candidate.manifest.id);
             const status = this.#controller.status()!;
-            this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority, { policyDigest: status.probationJudge?.policyDigest ?? status.active.policyDigest, ...(options.allowedModelProfiles ? { allowedModelProfiles: options.allowedModelProfiles } : {}) });
+            this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority, this.#evolutionMetadata(status.probationJudge?.policyDigest ?? status.active.policyDigest));
           },
         } });
     } catch (error) { this.#evolutionStore?.close(); authority?.close(); this.#lease.close(); throw error; }
@@ -171,15 +187,29 @@ export class ServiceSupervisor {
     this.#authority.assert(request.authority);
     return enqueueControlActivation(this.#evolutionStore!, request);
   }
+  #getReviewer(policyDigest: string): ReviewerFile | undefined {
+    const retained = this.#resolvedReviewers.get(policyDigest);
+    if (retained) return structuredClone(retained);
+    if (!this.#reviewers) return undefined;
+    const reviewer = this.#reviewers.get(this.#policies.get(policyDigest));
+    // Resolve sealed identities once. Physical dispatch rechecks every byte and key;
+    // status polling must not repeatedly read the entire executable closure.
+    this.#resolvedReviewers.set(policyDigest, reviewer);
+    return structuredClone(reviewer);
+  }
+  #evolutionMetadata(policyDigest: string): EvolutionMetadata {
+    const metadata: EvolutionMetadata = { policyDigest, ...(this.#options.allowedModelProfiles ? { allowedModelProfiles: this.#options.allowedModelProfiles } : {}) };
+    // Retained recovery must not depend on an evaluator, its key or its private files.
+    try { if (this.#reviewers) metadata.reviewer = this.#reviewers.publicDescriptor(this.#policies.get(policyDigest)); } catch { /* Dispatcher reports the unavailable reviewer separately. */ }
+    return metadata;
+  }
   #startDispatcher(): void {
     const configured = this.#options.evaluationDispatcher;
-    let reviewer: ReviewerFile | undefined, unavailableDiagnosis: string | undefined;
-    if (configured) {
-      try { reviewer = loadReviewerFile(configured.reviewerFile, this.#options.host); }
-      catch { unavailableDiagnosis = 'External evaluation unavailable: configured reviewer file is missing or invalid'; }
-    }
-    this.#dispatcher = new EvaluationDispatcher({ mailbox: this.#mailbox!, host: this.#options.host, reviewer, unavailableDiagnosis,
+    this.#dispatcher = new EvaluationDispatcher({ mailbox: this.#mailbox!, host: this.#options.host, reviewer: this.#configuredReviewer, unavailableDiagnosis: this.#reviewerDiagnosis,
       getPolicy: this.#policies.get, policyDigests: configured?.policyDigests ?? [], assertAuthority: grant => this.#authority.assert(grant),
+      getReviewer: digest => this.#getReviewer(digest), currentPolicyDigest: () => {
+        const state = this.#controller.status()!; return state.probationJudge?.policyDigest ?? state.active.policyDigest;
+      },
       dispatchAuthority: (grant, operation) => this.#authority.dispatch(grant, operation),
       acceptedCandidateId: () => this.#controller.status()!.accepted.candidateId,
       prepareControlPolicy: request => this.#authority.dispatch(request.proposal.authority, () => this.#policies.prepare(request.policyDigest, request.candidate)),
@@ -292,7 +322,7 @@ export class ServiceSupervisor {
     if (!current) this.#authority.bootstrap(prior.generation, prior.controlRevision, candidateId);
     this.#controller.bootstrap(proof, policy);
     await this.#prepare(candidateId);
-    this.#ready = await this.#service.start(candidateId, prior, { policyDigest: policy.policyDigest, ...(this.#options.allowedModelProfiles ? { allowedModelProfiles: this.#options.allowedModelProfiles } : {}) });
+    this.#ready = await this.#service.start(candidateId, prior, this.#evolutionMetadata(policy.policyDigest));
   }
   async #prepare(candidateId: string): Promise<void> {
     const host = this.#options.host, candidate = verifyApplication(host.artifactStore, candidateId, host.nodeBinary);

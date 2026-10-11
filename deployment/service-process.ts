@@ -9,14 +9,16 @@ import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { HostBindings } from './materialize.ts';
 import type { ApplicationSecrets } from './config.ts';
+import { validateReviewerMetadata, type ReviewerMetadata } from './reviewer-registry.ts';
 
 export interface ServiceReady { kind: 'ready'; candidateId: string; authority: Authority; address: { address: string; family: string; port: number } }
 export interface ServiceProcessOptions { mode: 'engineering' | 'product'; onUnexpectedExit?: () => void }
 /** Previously accepted judging policy information; evaluator keys and grants stay in the parent. */
-export interface EvolutionMetadata { policyDigest: string; allowedModelProfiles?: ModelProfile[] }
+export interface EvolutionMetadata { policyDigest: string; allowedModelProfiles?: ModelProfile[]; reviewer?: ReviewerMetadata }
 export function validateEvolutionMetadata(metadata: EvolutionMetadata): void {
-  invariant(metadata && typeof metadata === 'object' && !Array.isArray(metadata) && Object.keys(metadata).every(key => ['policyDigest', 'allowedModelProfiles'].includes(key)) && typeof metadata.policyDigest === 'string' && /^[a-f0-9]{64}$/.test(metadata.policyDigest), 'Public frozen evolution policy digest required');
+  invariant(metadata && typeof metadata === 'object' && !Array.isArray(metadata) && Object.keys(metadata).every(key => ['policyDigest', 'allowedModelProfiles', 'reviewer'].includes(key)) && typeof metadata.policyDigest === 'string' && /^[a-f0-9]{64}$/.test(metadata.policyDigest), 'Public frozen evolution policy digest required');
   if (metadata.allowedModelProfiles !== undefined) validateModelGrants(metadata.allowedModelProfiles);
+  if (metadata.reviewer !== undefined) validateReviewerMetadata(metadata.reviewer);
 }
 /** Pin both directories and refuse a pre-existing public or redirected diagnostic sink. */
 function writeDiagnostic(stateDirectory: string, value: object): void {

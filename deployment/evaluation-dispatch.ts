@@ -171,6 +171,9 @@ export interface DispatchOptions {
   getPolicy(digest: string): AdmissionPolicy; policyDigests: readonly string[];
   /** Derive unchanged judging rules for a new control closure; grants no activation authority. */
   prepareControlPolicy?(request: EvaluationRequest): AdmissionPolicy;
+  /** Resolve the exact original judging policy, including separately accepted evaluator revisions. */
+  getReviewer?(policyDigest: string): ReviewerFile | undefined;
+  currentPolicyDigest?(): string;
   assertAuthority(authority: Authority): void; dispatchAuthority(authority: Authority, operation: () => void): void; acceptedCandidateId(): string;
   release(proof: ReleaseProof): Promise<Authority>; stageControl(proof: ReleaseProof, policyDigest: string): Promise<string>;
 }
@@ -199,8 +202,9 @@ export class EvaluationDispatcher {
   }
   status(): DispatchStatus {
     const jobs = this.options.mailbox.jobs();
-    const diagnosis = this.#diagnosis ?? (!this.options.reviewer ? 'External evaluation unavailable: no qualified reviewer is configured' : undefined);
-    return { available: !!this.options.reviewer && !this.#abort.signal.aborted, ...(this.#activeJob ? { activeJob: this.#activeJob } : {}), pending: jobs.filter(job => job.status === 'pending').length,
+    const reviewer = this.#reviewer(this.options.currentPolicyDigest?.());
+    const diagnosis = this.#diagnosis ?? (!reviewer ? 'External evaluation unavailable: no qualified reviewer is available for the current policy' : undefined);
+    return { available: !!reviewer && !this.#abort.signal.aborted, ...(this.#activeJob ? { activeJob: this.#activeJob } : {}), pending: jobs.filter(job => job.status === 'pending').length,
       uncertain: jobs.filter(job => job.status === 'uncertain').length, ...(diagnosis ? { diagnosis } : {}) };
   }
   #publish(): void {
@@ -208,12 +212,16 @@ export class EvaluationDispatcher {
     if (!row || identity(row.value) !== identity(value)) store.put('host.evaluation-dispatch', 'current', value, row?.revision ?? null);
   }
   start(): void { invariant(!this.#loop, 'Evaluation dispatcher already started'); this.#loop = this.#run(); }
-  probationAvailable(): boolean { return !!this.options.reviewer && !this.#activeJob && !this.#abort.signal.aborted; }
+  #reviewer(policyDigest?: string): ReviewerFile | undefined {
+    try { return this.options.getReviewer ? (policyDigest ? this.options.getReviewer(policyDigest) : undefined) : this.options.reviewer; }
+    catch { return undefined; }
+  }
+  probationAvailable(policyDigest = this.options.currentPolicyDigest?.()): boolean { return !!this.#reviewer(policyDigest) && !this.#activeJob && !this.#abort.signal.aborted; }
   /** Host continuation reserves under the old serving authority before activation. */
   reserveProbation(review: ProbationReviewRequest, commitReservation?: () => void): void {
-    invariant(this.probationAvailable(), 'External probation reviewer unavailable or busy');
+    invariant(this.probationAvailable(review.policyDigest), 'External probation reviewer unavailable or busy');
     invariant(identity(review.judgeAuthority) === identity(review.proposal.authority) && review.rescueCandidateId === this.options.acceptedCandidateId(), 'Exact original probation judge and rescue required');
-    const reviewer = this.options.reviewer!, request = this.#probationRequest(review);
+    const reviewer = this.#reviewer(review.policyDigest)!, request = this.#probationRequest(review);
     assertProbationLineage(this.options.mailbox.store, review);
     const policy = this.options.getPolicy(review.policyDigest);
     invariant(policy.controlRevision === review.judgeAuthority.controlRevision && policy.evaluatorArtifacts.get(reviewer.evaluatorId) === hashBytes(Buffer.from(reviewerDescriptor(reviewer))), 'Original probation evaluator unavailable');
@@ -252,7 +260,7 @@ export class EvaluationDispatcher {
    * This bypasses neither old-policy signature validation nor the controller's probation gate.
    */
   async reviewProbation(review: RunningProbationReview, signal: AbortSignal): Promise<ReleaseProof> {
-    const { physicalAuthority, ...original } = review, { mailbox, reviewer } = this.options;
+    const { physicalAuthority, ...original } = review, { mailbox } = this.options, reviewer = this.#reviewer(review.policyDigest);
     invariant(reviewer && this.#activeJob === review.id && identity(mailbox.store.get('host.probation-review-contexts', review.id)?.value) === identity(original), 'Exact reserved probation continuation required');
     const request = this.#probationRequest(review), combined = AbortSignal.any([signal, this.#abort.signal]);
     const assertCurrent = (authority: Authority) => { this.options.assertAuthority(authority); assertProbationLineage(mailbox.store, review); };
@@ -283,11 +291,13 @@ export class EvaluationDispatcher {
   }
   async processPending(): Promise<void> {
     if (this.#activeJob) return;
-    const { mailbox, reviewer } = this.options;
-    const job = mailbox.jobs().find(value => value.status === 'pending' && (reviewer || value.kind === 'submission'));
+    const { mailbox } = this.options;
+    const job = mailbox.jobs().find(value => value.status === 'pending' && (value.kind === 'submission' || this.#reviewer(value.policyDigest)));
     if (!job || this.#abort.signal.aborted) return;
     if (mailbox.fencePending(job.id)) { this.#diagnosis = mailbox.status(job.id)!.diagnosis; this.#publish(); return; }
     if (job.kind === 'evaluation' && evaluationAcknowledgmentPending(mailbox.store, job.id)) return;
+    const reviewer = job.kind === 'evaluation' ? this.#reviewer(job.policyDigest) : undefined;
+    if (job.kind === 'evaluation' && !reviewer) return;
     this.#activeJob = job.id;
     this.#publish();
     try {
