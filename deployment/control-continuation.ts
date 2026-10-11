@@ -1,4 +1,4 @@
-import { identity, invariant, type Authority, type DataScope, type ResourceEnvelope, type Run } from '../packages/contracts/index.ts';
+import { canonicalJson, identity, invariant, type ArtifactRef, type Authority, type DataScope, type ResourceEnvelope, type Run } from '../packages/contracts/index.ts';
 import type { FrozenCandidate } from '../packages/release/artifacts.ts';
 import type { ReleaseProof, ReleaseState, StagedControl } from '../packages/release/controller.ts';
 import type { ChangeRecord } from '../packages/release/proposals.ts';
@@ -38,7 +38,7 @@ export function assertProbationLineage(store: OperationalStore, review: Probatio
 export interface ControlContinuationRecord {
   request: ControlActivationRequest;
   status: 'pending' | 'activating' | 'reviewing' | 'accepted' | 'rejected' | 'uncertain';
-  review?: ProbationReviewRequest; physicalAuthority?: Authority; proofId?: string; diagnosis?: string;
+  review?: ProbationReviewRequest; physicalAuthority?: Authority; proofId?: string; probationProof?: ArtifactRef; diagnosis?: string;
 }
 function boundRun(store: OperationalStore, request: ControlActivationRequest): void {
   const run = store.get<Run>('runs', request.runId)?.value;
@@ -138,9 +138,13 @@ export class ControlContinuation {
           proposal: structuredClone(submission.proposal), candidate: structuredClone(submission.candidate),
           policyDigest: submission.policyDigest, judgeAuthority: structuredClone(request.authority), rescueCandidateId: state.accepted.candidateId,
           admissionEvidenceIds: stage.proof.proposal.evidence.map(value => value.id), allocationLineage, reservedAt: Date.now() };
-        this.options.reserveProbation(review);
-        this.#update(request.id, { status: 'activating', review }); return review;
+        return review;
       });
+      // The reviewer obtains authority then operational write locks. Never invert that order
+      // by calling it from our operational transaction. A crash in this gap leaves a used
+      // reservation: recovery cannot replay it, and no authority transfer has occurred.
+      this.options.reserveProbation(review);
+      this.#update(request.id, { status: 'activating', review });
       started = true;
       const physicalAuthority = await this.options.activate(request.stageId);
       const state = this.options.status();
@@ -149,11 +153,12 @@ export class ControlContinuation {
         state.probationJudge?.policyDigest === review.policyDigest, 'Control probation differs from the original host review request');
       this.#update(request.id, { status: 'reviewing', physicalAuthority });
       const proof = await this.options.reviewProbation({ ...review, physicalAuthority }, this.#abort.signal);
+      const bytes = Buffer.from(canonicalJson(proof)); invariant(bytes.length <= 8 * 1024 * 1024, 'Bounded probation proof required');
+      this.#update(request.id, { probationProof: this.options.store.putArtifact(bytes), proofId: proof.proposal.id });
       invariant(proof.proposal.id === review.id && identity(proof.proposal.priorAuthority) === identity(review.judgeAuthority) &&
         identity(proof.proposal.candidate) === identity(review.candidate.manifest) &&
         proof.proposal.evidence.every(value => !review.admissionEvidenceIds.includes(value.id)), 'Probation review requires fresh original-policy signed evidence');
       this.options.assertAuthority(physicalAuthority);
-      this.#update(request.id, { proofId: proof.proposal.id });
       await this.options.acceptProbation(proof, { ...review, physicalAuthority });
       this.#update(request.id, { status: 'accepted' });
     } catch {
