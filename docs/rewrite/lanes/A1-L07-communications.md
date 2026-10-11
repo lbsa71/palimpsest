@@ -1,6 +1,6 @@
 # A1-L07 — responsive communication and durable follow-through
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing** (bounded components implemented and fixture-integrated; full lane acceptance pending). Session owner: **`/root/a1_communications`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW09, RW10, RW11, RW12, RW19](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,27 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | `/root/a1_communications` |
+| Branch / worktree | `codex/a1-communications-20261011` / `/home/palimpsest/migration/aeon-1-20261011/communications` |
+| Base source / contract revision | `4e55167` / `aeon1.c1.v1`; actual OperationalStore, DurableRuntime, EffectJournal |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Last handoff / evidence | Component handoff being recorded; 20 communication tests, joined actual runtime/obligation receipt case, strict typecheck and compiled build pass |
+| Blockers / next eligible task | Root L09 host/scheduler/tool assembly, authenticated live Slack/API smoke and fresh independent review; no external sends authorized for this task |
+
+## Bounded component result — 2026-10-11
+
+T01–T04 and the deterministic portion of T05 are implemented in fresh TypeScript
+source against actual C1 storage/runtime/effect contracts. Twenty local tests pass:
+authenticated HTTP remains responsive during a running shell; source revisions and
+controls reach their owned run; Slack mention admission persists joined threads;
+channel/history/reply recovery resumes paginated cursors, rate limits and intake
+transactions; authenticated Socket Mode reconnects and ACKs committed intake; and
+explicit speech remains uncertain until a trusted bot receipt reconciles. A joined
+L05 obligation fixture closes only after actual delivery reconciliation.
+
+The bounded component goal does not claim full lane acceptance. No private key,
+external Slack message or paid model request was used. Parent-thread lookback,
+retention and permission limitations are explicit in durable recovery gaps.
+Authentic live smoke, host scheduler/tool assembly, process-crash communication
+coverage and fresh independent review remain next acceptance tasks. See the
+package README for exact transport/configuration interfaces and limits.
