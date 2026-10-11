@@ -9,7 +9,8 @@ import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { assertResourceConfinement, initializeResourceDelegation } from '../packages/supervisor/resource-limits.ts';
 import { verifyApplication } from './candidate.ts';
-import type { ApplicationSecrets } from './config.ts';
+import { beneath, type ApplicationSecrets } from './config.ts';
+import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import { materializeConfiguration, type HostBindings } from './materialize.ts';
 import { ServiceProcess, type ServiceReady } from './service-process.ts';
 
@@ -52,10 +53,14 @@ export class ServiceSupervisor {
   #closed = false;
   #delegationInitialized = false;
   #unexpectedExitPending = false;
+  #automaticRecoveryAvailable = true;
   #closePromise?: Promise<void>;
   private constructor(options: SupervisorOptions) {
     invariant(['engineering', 'product'].includes(options.mode), 'Explicit supervisor mode required');
     for (const path of Object.values(options.host)) invariant(path === resolve(path) && realpathSync(path) === path, 'Canonical existing host bindings required');
+    for (const path of [options.host.stateDirectory, options.host.artifactStore]) assertPrivateHostDirectory(path);
+    const roots = [options.host.stateDirectory, options.host.workspaceDirectory, options.host.artifactStore];
+    invariant(new Set(roots).size === roots.length && roots.every(a => roots.every(b => a === b || !beneath(a, b))), 'Host state, source artifacts and workspaces must be disjoint');
     this.#options = options;
     this.#lease = new ProcessLease(join(options.host.stateDirectory, 'supervisor-lease.sqlite'));
     let authority: AuthorityStore | undefined;
@@ -64,7 +69,7 @@ export class ServiceSupervisor {
       this.#service = new ServiceProcess(options.host, options.secrets, { mode: options.mode, onUnexpectedExit: () => {
         this.#ready = undefined;
         this.#unexpectedExitPending = true;
-        if (!this.#closing && !this.#operation) { this.#unexpectedExitPending = false; void this.recover().catch(() => {}); }
+        this.#handleUnexpectedExit();
       } });
       this.#controller = new ReleaseController({ statePath: join(options.host.stateDirectory, 'release.sqlite'),
         artifactStore: options.host.artifactStore, operationalStatePath: options.host.stateDirectory,
@@ -83,7 +88,7 @@ export class ServiceSupervisor {
     const supervisor = new ServiceSupervisor(options);
     try {
       if (supervisor.#controller.status()) await supervisor.recover();
-      else await supervisor.#initialize();
+      else await supervisor.#exclusive(() => supervisor.#initialize());
       return supervisor;
     } catch (error) { await supervisor.close(); throw error; }
   }
@@ -104,7 +109,13 @@ export class ServiceSupervisor {
     }
   }
   release(proof: ReleaseProof): Promise<Authority> { return this.#exclusive(() => this.#controller.transfer(proof, randomUUID())); }
-  recover(): Promise<Authority> { return this.#exclusive(() => this.#controller.recover(randomUUID())); }
+  recover(): Promise<Authority> {
+    return this.#exclusive(async () => {
+      const authority = await this.#controller.recover(randomUUID());
+      this.#automaticRecoveryAvailable = true;
+      return authority;
+    });
+  }
   acceptProbation(proof: ReleaseProof): Promise<void> { return this.#exclusive(async () => this.#controller.acceptProbation(proof)); }
   stageControl(proof: ReleaseProof, policyDigest: string): Promise<string> {
     return this.#exclusive(async () => {
@@ -122,9 +133,24 @@ export class ServiceSupervisor {
     catch (error) { this.#failure = 'Host operation failed; inspect retained release history and private diagnostics'; throw error; }
     finally {
       this.#operation = undefined;
-      if (this.#unexpectedExitPending && !this.#closing) {
-        this.#unexpectedExitPending = false; void this.recover().catch(() => {});
-      }
+      this.#handleUnexpectedExit();
+    }
+  }
+  #handleUnexpectedExit(): void {
+    if (!this.#unexpectedExitPending || this.#closing || this.#operation) return;
+    this.#unexpectedExitPending = false;
+    if (this.#automaticRecoveryAvailable) {
+      this.#automaticRecoveryAvailable = false;
+      void this.#exclusive(() => this.#controller.recover(randomUUID())).catch(() => {});
+    } else {
+      // One unattended rescue attempt per explicit recovery. Repeated crashes leave a fenced,
+      // inspectable unavailable host instead of consuming unbounded resources and authority epochs.
+      void this.#exclusive(async () => {
+        const current = this.#authority.current();
+        if (current?.generation) this.#authority.withdraw(current as Authority);
+        await this.#service.stop(); await this.#drainExecutionLease();
+        throw new Error('Automatic recovery exhausted; explicit host recovery required');
+      }).catch(() => { this.#failure = 'Automatic recovery exhausted; inspect diagnostics and use explicit host recovery'; });
     }
   }
   async #initialize(): Promise<void> {
@@ -152,7 +178,7 @@ export class ServiceSupervisor {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const stat = lstatSync(intentPath);
-      invariant(realpathSync(intentPath) === intentPath && stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0 && readFileSync(intentPath, 'utf8') === intent, 'Interrupted bootstrap requires the exact original signed proof and policy');
+      invariant(realpathSync(intentPath) === intentPath && stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0 && readHostFile(intentPath, 1024).toString('utf8') === intent, 'Interrupted bootstrap requires the exact original signed proof and policy');
     }
     if (!current) this.#authority.bootstrap(prior.generation, prior.controlRevision, candidateId);
     this.#controller.bootstrap(proof, policy);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,11 +17,16 @@ import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { controlSocket, requestControl, serveControls } from './cli.ts';
 import { contentAddressedEvidence, loadHostPolicy, type HostPolicyFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
+import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceSupervisor, type SupervisorOptions } from './supervisor.ts';
 
 function fixture() {
-  const source = process.env.AEON_TEST_SOURCE_ROOT ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  const repository = process.env.AEON_TEST_SOURCE_ROOT ?? dirname(dirname(fileURLToPath(import.meta.url)));
   const root = mkdtempSync(join(tmpdir(), 'aeon-coordinator-'));
+  const source = join(root, 'source'); mkdirSync(source);
+  for (const entry of rewriteSourceEntries) if (existsSync(join(repository, entry))) cpSync(join(repository, entry), join(source, entry), { recursive: true });
+  // Development worktrees may link the trusted compiler closure; admitted candidate payloads must not.
+  cpSync(realpathSync(join(repository, 'node_modules')), join(source, 'node_modules'), { recursive: true });
   const host: HostBindings = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspace'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
   const evidenceDirectory = join(root, 'evidence');
   for (const path of [...Object.values(host).filter(path => path !== process.execPath), evidenceDirectory]) mkdirSync(path, { mode: 0o700 });
@@ -86,6 +91,13 @@ test('real frozen service transfers, uses fresh probation, recovers on child cra
     process.kill(pid, 'SIGKILL');
     await eventually(() => supervisor!.status().running && (supervisor!.status().ready?.authority.epoch ?? 0) > epoch);
     assert.equal(supervisor.status().release?.active.candidateId, successor.manifest.id);
+    const rescuedPid = supervisor.status().processId!;
+    process.kill(rescuedPid, 'SIGKILL');
+    await eventually(() => !supervisor!.status().running && Boolean(supervisor!.status().failure));
+    const fenced = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+    assert.equal(fenced.current()?.generation, null); fenced.close();
+    await supervisor.recover();
+    assert.equal(supervisor.status().running, true);
     await supervisor.close(); supervisor = undefined;
     rmSync(f.evidenceDirectory, { recursive: true, force: true });
     supervisor = await ServiceSupervisor.open({ ...f.options, bootstrap: () => { throw new Error('No bootstrap signer'); },

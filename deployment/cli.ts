@@ -1,11 +1,11 @@
 import { chmodSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
-import { createConnection, createServer, type Server } from 'node:net';
+import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { invariant } from '../packages/contracts/index.ts';
 import type { ReleaseProof } from '../packages/release/controller.ts';
 import { freezeApplication, verifyApplication, type DeploymentInputs } from './candidate.ts';
-import { environmentSecrets } from './config.ts';
+import { beneath, environmentSecrets } from './config.ts';
 import { contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { ServiceSupervisor, type SupervisorCommand } from './supervisor.ts';
@@ -20,6 +20,15 @@ export interface SupervisorFile {
 }
 export function controlSocket(stateDirectory: string): string { return join(stateDirectory, 'host-control', 'supervisor.sock'); }
 const maxMessageBytes = 8 * 1024 * 1024;
+const controlConnections = new WeakMap<Server, { closing: boolean; sockets: Set<Socket> }>();
+/** Stop admission and close idle, incomplete and backpressured clients before releasing host ownership. */
+export async function closeControls(server: Server): Promise<void> {
+  const controls = controlConnections.get(server);
+  if (controls) controls.closing = true;
+  const closed = new Promise<void>(accept => server.close(() => accept()));
+  for (const socket of controls?.sockets ?? []) socket.destroy();
+  await closed;
+}
 export async function serveControls(supervisor: ServiceSupervisor, stateDirectory: string): Promise<Server> {
   const directory = join(stateDirectory, 'host-control'); mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = lstatSync(directory);
@@ -27,15 +36,18 @@ export async function serveControls(supervisor: ServiceSupervisor, stateDirector
   const path = controlSocket(stateDirectory);
   try { const existing = lstatSync(path); invariant(existing.isSocket() && existing.uid === process.getuid?.(), 'Control socket location is occupied'); rmSync(path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const controls = { closing: false, sockets: new Set<Socket>() };
   const server = createServer(socket => {
+    if (controls.closing) { socket.destroy(); return; }
+    controls.sockets.add(socket); socket.once('close', () => controls.sockets.delete(socket));
     socket.setTimeout(10000, () => socket.destroy());
     let bytes = 0, input = '', received = false;
     socket.on('error', () => {});
     socket.on('data', chunk => {
-      if (received) { socket.destroy(); return; }
+      if (received || controls.closing) { socket.destroy(); return; }
       bytes += chunk.length; if (bytes > maxMessageBytes) { socket.destroy(); return; }
       input += chunk.toString('utf8'); if (!input.includes('\n')) return;
-      received = true; socket.setTimeout(0);
+      received = true; socket.setTimeout(60000); // Bound operation/response waits as well as incomplete requests.
       void (async () => {
         try {
           invariant(input.endsWith('\n') && input.indexOf('\n') === input.length - 1, 'One JSON control request required');
@@ -47,6 +59,7 @@ export async function serveControls(supervisor: ServiceSupervisor, stateDirector
       })();
     });
   });
+  controlConnections.set(server, controls);
   try {
     await new Promise<void>((accept, reject) => { server.once('error', reject); server.listen(path, () => { server.off('error', reject); accept(); }); });
     chmodSync(path, 0o600);
@@ -83,6 +96,7 @@ export async function runCli(args: string[]): Promise<void> {
     const config = JSON.parse(readHostFile(values[0]!).toString('utf8')) as SupervisorFile;
     invariant(Object.keys(config).sort().join(',') === (config.bootstrap ? 'bootstrap,evidenceDirectory,host,mode,policyFiles' : 'evidenceDirectory,host,mode,policyFiles'), 'Exact supervisor configuration fields required');
     invariant(Array.isArray(config.policyFiles) && config.policyFiles.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(value => typeof value === 'string')) && new Set(config.policyFiles.map(([id]) => id)).size === config.policyFiles.length, 'Exact configured policy registry required');
+    invariant([config.host.workspaceDirectory, config.host.artifactStore].every(root => !beneath(root, config.evidenceDirectory)), 'Evidence store must remain outside model-accessible roots');
     const paths = new Map(config.policyFiles);
     const supervisor = await ServiceSupervisor.open({ host: config.host, mode: config.mode, secrets: environmentSecrets(process.env),
       readArtifact: contentAddressedEvidence(config.evidenceDirectory), getPolicy(digest) {
@@ -98,7 +112,7 @@ export async function runCli(args: string[]): Promise<void> {
       process.once('SIGTERM', stop); process.once('SIGINT', stop);
     });
     await stopped;
-    const controlsClosed = new Promise<void>(accept => server.close(() => accept()));
+    const controlsClosed = closeControls(server);
     await supervisor.close(); await controlsClosed; return;
   }
   if ((command === 'status' || command === 'recover') && values.length === 1) { print(await requestControl(values[0]!, { kind: command })); return; }
