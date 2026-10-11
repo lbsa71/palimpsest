@@ -29,6 +29,8 @@ for (const steeringSource of ['direct', 'slack:T1']) test(`host goal origin cann
     admit('bootstrap', 'host.bootstrap', 'development:v1'); store.put('host.bootstrap', 'development:v1', { runId: 'bootstrap' }, null);
     const parent = propose('bootstrap', 'chosen-parent'); assert.ok(store.get('host.release-self-origins', parent.id));
     admit('independent', 'initiative', parent.id); store.put('initiative.execution', parent.id, { runId: 'independent' }, null);
+    call('independent', 'initiative_goal_revise', { id: parent.id, expectedRevision: parent.revision, nextAction: 'inspect independently revised action', reason: 'observed evidence' });
+    assert.equal(proposalProvenance(context('independent')).kind, 'self', 'independent revision of the executing goal retains its original ancestry without a cycle');
     const child = propose('independent', 'chosen-child'); assert.equal(store.get<{ basis: string }>('host.release-self-origins', child.id)?.value.basis, 'independent-initiative');
     assert.deepEqual(proposalProvenance(context('independent')), { kind: 'self', inputId: 'input:independent', goalId: parent.id, actorId: 'g1' });
     call('human', 'initiative_goal_revise', { id: child.id, expectedRevision: child.revision, nextAction: 'human-supplied operation', reason: 'new instruction' });
@@ -59,9 +61,21 @@ for (const steeringSource of ['direct', 'slack:T1']) test(`host goal origin cann
     assert.throws(() => proposalProvenance(context('tainted-child-run')), /independently originated/);
     select('bootstrap', 'offered-before-steering', 'selected-tainted-inquiry');
     assert.equal(store.get('host.release-self-origins', 'selected-tainted-inquiry'), undefined, 'selection cannot launder a human-steered inquiry origin either');
+    // A descendant already created before ancestor steering must not escape revocation.
+    const bootstrapOnly = propose('bootstrap', 'bootstrap-only');
+    admit('pre-steering-child-run', 'initiative', bootstrapOnly.id); store.put('initiative.execution', bootstrapOnly.id, { runId: 'pre-steering-child-run' }, null);
+    const preSteeringChild = propose('pre-steering-child-run', 'pre-steering-child');
+    const bootstrapSteering: InboundInput = { ...steering, id: 'bootstrap-human', externalId: 'bootstrap-human' };
+    store.append({ id: 'bootstrap-human-steering', stream: 'bootstrap', type: 'steering', data: bootstrapSteering });
+    admit('tainted-bootstrap-child', 'initiative', bootstrapOnly.id); store.put('initiative.execution', bootstrapOnly.id, { runId: 'tainted-bootstrap-child' }, 1);
+    assert.throws(() => proposalProvenance(context('tainted-bootstrap-child')), /independently originated/, 'bootstrap origin must also be invalidated by later human steering');
+    admit('pre-steering-grandchild-run', 'initiative', preSteeringChild.id); store.put('initiative.execution', preSteeringChild.id, { runId: 'pre-steering-grandchild-run' }, null);
+    assert.throws(() => proposalProvenance(context('pre-steering-grandchild-run')), /independently originated/, 'ancestor steering must revoke existing descendants too');
+    // Restore this fixture's bootstrap stream for the independent atomic-write check.
+    admit('clean-bootstrap', 'host.bootstrap', 'development:v1'); store.put('host.bootstrap', 'development:v1', { runId: 'clean-bootstrap' }, 1);
     const originalPut = store.put.bind(store);
     store.put = (namespace, key, value, expected) => { if (namespace === 'host.release-self-origins') throw new Error('marker persistence unavailable'); return originalPut(namespace, key, value, expected); };
-    assert.throws(() => propose('bootstrap', 'atomic-goal'), /marker persistence/); store.put = originalPut;
+    assert.throws(() => propose('clean-bootstrap', 'atomic-goal'), /marker persistence/); store.put = originalPut;
     assert.equal(goals.goal('atomic-goal'), undefined, 'goal and authenticated origin must commit together');
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });

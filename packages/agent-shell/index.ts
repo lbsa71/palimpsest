@@ -10,7 +10,7 @@ import type { Attempt, AttemptOutcome, MistralTransportOptions } from './mistral
 export { DEFAULT_MISTRAL_MODEL, createMistralTransport, mistralModel, mistralPayload } from './mistral.ts';
 export type { Attempt, AttemptOutcome } from './mistral.ts';
 
-import { createOpenAITransport, openaiModel } from './openai.ts';
+import { completedOpenAIOutput, createOpenAITransport, openaiModel } from './openai.ts';
 export { createOpenAITransport, openaiModel, openaiPayload } from './openai.ts';
 export type ShellProvider = 'mistral' | 'openai';
 
@@ -152,6 +152,15 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         await save(); // completed assistant/tool observations become durable before subsequent dispatch
       }
       try {
+        // Recovery must validate the native response before any pending tool effect,
+        // including checkpoints produced by an incompatible or corrupt projection.
+        if (provider === 'openai') for (const item of continuationMessages()) {
+          if (item.role !== 'assistant') continue;
+          invariant(item.provider === 'openai' && item.openaiOutput, 'Invalid OpenAI assistant history');
+          const parsed = completedOpenAIOutput(item.openaiOutput);
+          invariant(identity(parsed.content) === identity(item.content), 'Invalid OpenAI assistant projection');
+          invariant(item.stopReason === (parsed.content.some(part => part.type === 'toolCall') ? 'toolUse' : 'stop'), 'Invalid OpenAI assistant stop reason');
+        }
         if (status === 'completed' && input.messages.length === 0) return { status: 'completed', checkpoint: input.checkpoint, observations };
         const last = transcript.at(-1);
         if (input.checkpoint && input.messages.length === 0 && last?.role === 'assistant' && last.stopReason === 'stop') {

@@ -48,7 +48,9 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   invariant(config.model.provider === undefined || ['mistral', 'openai'].includes(config.model.provider), 'Unsupported configured provider');
   invariant(config.model.id.length > 0 && !config.model.id.includes('latest'), 'Pinned model required');
   for (const key of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(config.model[key]) && config.model[key] > 0, `Invalid model ${key}`);
-  invariant(config.model.effort === 'none' || config.model.effort === 'high' && config.model.reasoning, 'Unsupported reasoning profile');
+  invariant(typeof config.model.reasoning === 'boolean' && (config.model.effort === 'none' || config.model.effort === 'high' && config.model.reasoning), 'Unsupported reasoning profile');
+  invariant(config.model.maxOutputTokens <= config.model.contextWindow, 'Output allowance exceeds configured context window');
+  invariant(config.model.pricesPerMillion && Object.keys(config.model.pricesPerMillion).sort().join(',') === 'input,output', 'Explicit input and output model prices required');
   for (const value of Object.values(config.model.pricesPerMillion)) invariant(Number.isFinite(value) && value >= 0, 'Finite model price required');
   invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');
   validateEnvelope(config.resources); validateEnvelope(config.conversationResources); validateEnvelope(config.scheduler.resources);

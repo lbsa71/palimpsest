@@ -42,6 +42,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
   invariant(provider === 'mistral' || provider === 'openai', 'Unsupported broker provider');
   invariant(options.worker.model && !options.worker.model.includes('latest'), 'Broker needs an explicitly pinned model');
   invariant(/^[a-zA-Z0-9_./-]+\.(ts|js)$/.test(options.entrypoint) && !options.entrypoint.split('/').includes('..'), 'Invalid worker entrypoint');
+  invariant(options.pricesPerMillion && Object.keys(options.pricesPerMillion).sort().join(',') === 'input,output', 'Explicit input and output token prices required');
   for (const price of Object.values(options.pricesPerMillion)) invariant(Number.isFinite(price) && price >= 0, 'Invalid configured token price');
   return {
     async run(input, bridge, signal) {

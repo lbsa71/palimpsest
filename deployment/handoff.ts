@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { identity, invariant, scopeAllows, type Authority, type DataScope, type JsonValue } from '../packages/contracts/index.ts';
+import { readFileSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { identity, invariant, scopeAllows, validateScope, type Authority, type DataScope, type JsonValue } from '../packages/contracts/index.ts';
 import { admitCandidate, type AdmissionPolicy, type AdmissionReceipt } from '../packages/release/admission.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
-import type { ReleaseProof } from '../packages/release/controller.ts';
+import { ReleaseController, type ReleaseProof } from '../packages/release/controller.ts';
+import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import type { ApplicationTool } from './application.ts';
 import type { EvolutionContext } from './evolution-tools.ts';
@@ -11,14 +12,23 @@ import type { EvolutionContext } from './evolution-tools.ts';
 export const handoffCases = ['E1', 'E2', 'E3', 'E4', 'E5', 'codex-parity', 'claude-parity', 'H1-continuity', 'H1-plan-execution'] as const;
 interface HandoffRecord { candidateId: string; controls: string; scope: DataScope; acceptedAt: string; admission: AdmissionReceipt; proofArtifact: { uri: string; sha256: string } }
 /** Host witness entrypoint; model tools cannot call it or supply evaluator keys/policy. */
-export function acceptHandoff(options: { store: OperationalStore; artifactStore: string; authority: Authority; candidateId: string; scope: DataScope; policy: AdmissionPolicy; proof: ReleaseProof; readArtifact(uri: string): Uint8Array }): HandoffRecord {
+export function acceptHandoff(options: { store: OperationalStore; artifactStore: string; authority: Authority; releaseController: ReleaseController; authorityStore: AuthorityStore; candidateId: string; scope: DataScope; policy: AdmissionPolicy; proof: ReleaseProof; readArtifact(uri: string): Uint8Array }): HandoffRecord {
   invariant(options.policy.kind === 'product' && handoffCases.every(id => options.policy.requiredCases.includes(id)), 'H1 requires all declared capability, comparison and continuity cases under product policy');
-  invariant(options.proof.proposal.candidate.id === options.candidateId, 'Handoff must bind the currently qualified candidate');
-  const receipt = admitCandidate(options.artifactStore, options.proof.proposal, options.authority, options.policy, options.proof.signed, options.readArtifact);
-  const record: HandoffRecord = { candidateId: options.candidateId, controls: options.authority.controlRevision, scope: structuredClone(options.scope), acceptedAt: new Date().toISOString(), admission: receipt,
-    proofArtifact: options.store.putJsonArtifact(JSON.parse(JSON.stringify(options.proof)) as JsonValue) };
-  options.store.transaction(() => { const old = options.store.get<HandoffRecord>('host.handoff', 'H1'); options.store.put('host.handoff', 'H1', record, old?.revision ?? null); });
-  return record;
+  invariant(options.releaseController instanceof ReleaseController && options.authorityStore instanceof AuthorityStore, 'H1 requires accepted host release and authority stores');
+  validateScope(options.scope);
+  return options.authorityStore.dispatch(options.authority, () => {
+    const release = options.releaseController.status(), serving = options.authorityStore.current();
+    invariant(release?.phase === 'accepted' && release.accepted.candidateId === options.candidateId && release.active.candidateId === options.candidateId, 'H1 requires the currently accepted active release');
+    invariant(release.accepted.policyDigest === options.policy.policyDigest && release.active.policyDigest === options.policy.policyDigest, 'H1 policy differs from accepted release policy');
+    invariant(serving?.artifactId === options.candidateId && identity(release.authority) === identity(serving), 'H1 release authority differs from current serving authority');
+    invariant(realpathSync(dirname(options.store.filename)) === release.operationalStatePath, 'H1 witness must use the accepted operational state');
+    invariant(options.proof.proposal.candidate.id === options.candidateId, 'Handoff must bind the currently qualified candidate');
+    const receipt = admitCandidate(options.artifactStore, options.proof.proposal, options.authority, options.policy, options.proof.signed, options.readArtifact);
+    const record: HandoffRecord = { candidateId: options.candidateId, controls: options.authority.controlRevision, scope: structuredClone(options.scope), acceptedAt: new Date().toISOString(), admission: receipt,
+      proofArtifact: options.store.putJsonArtifact(JSON.parse(JSON.stringify(options.proof)) as JsonValue) };
+    options.store.transaction(() => { const old = options.store.get<HandoffRecord>('host.handoff', 'H1'); options.store.put('host.handoff', 'H1', record, old?.revision ?? null); });
+    return record;
+  });
 }
 interface TaskPack { schema: string; aeon: string; entry: string; status: string; runtimeRouting: string; lanes: { id: string; source: string; sourceSha256: string; slashGoal: string; entryCapabilities: string[]; tasks: { id: string }[] }[] }
 /** Reads only accepted source-owned planning content and host-authenticated qualification state. */

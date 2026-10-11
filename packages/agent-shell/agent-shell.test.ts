@@ -226,3 +226,14 @@ test('a final assistant checkpoint interrupted before terminal status resumes wi
   const resumed=await shell.run({...input(),messages:[],checkpoint},f.bridge);
   assert.equal(resumed.status,'completed');assert.equal(calls,1);
 });
+
+test('Responses recovery validates native projection before replaying a pending effect', async () => {
+  const f = fixture(); let fetched = 0;
+  const shell = createAgentShell({ provider: 'openai', model: 'fixture-v1', resolveFragment, tools: [tool], apiKey: () => 'fixture', maxRequests: 1, fetch: async () => { fetched++; throw Error('No fetch expected'); } });
+  const snapshot = { schema: SHELL_REVISION, provider: 'openai', status: 'blocked', observationIds: [], compactions: [], messages: [{ role: 'assistant', provider: 'openai', api: 'openai-responses', model: 'fixture-v1', timestamp: 0, aeonStepId: 'pending', stopReason: 'toolUse',
+    content: [{ type: 'toolCall', id: 'call_1', name: 'edit', arguments: { value: 'changed-after-checkpoint-upgrade' } }],
+    openaiOutput: [{ type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'edit', arguments: '{"value":"original-provider-argument"}', status: 'completed' }] }] };
+  const checkpoint = await f.bridge.persistCheckpoint(input().run.id, input().run.revision, SHELL_REVISION, snapshot);
+  const result = await shell.run({ ...input(), messages: [], checkpoint }, f.bridge);
+  assert.equal(result.status, 'blocked'); assert.equal(f.tools.length, 0, 'native/projection mismatch must fail before effect dispatch'); assert.equal(fetched, 0);
+});
