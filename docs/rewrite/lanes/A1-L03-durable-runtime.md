@@ -1,6 +1,6 @@
 # A1-L03 — durable runtime and recovery
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing**. Session owner: **/root/a1_runtime**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW05, RW10, RW11, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | /root/a1_runtime |
+| Branch / worktree | codex/a1-runtime-20261011 / /home/palimpsest/migration/aeon-1-20261011/runtime |
+| Base source / contract revision | 3398077 / aeon1.c1.v1 (ACK) |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Blockers / next eligible task | Implement T01 storage, T02–T04 runtime/effects/resources; joined shell and independent review gates pending |
