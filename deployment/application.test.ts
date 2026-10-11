@@ -8,6 +8,8 @@ import type { AddressInfo } from 'node:net';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { AutarkApplication } from './application.ts';
 import type { ApplicationConfig } from './config.ts';
+import type { Run } from '../packages/contracts/index.ts';
+import { SlackError } from '../packages/communications/index.ts';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'aeon-application-'));
@@ -264,6 +266,42 @@ test('ordinary Slack report with a lost receipt remains delivering until reconci
     const effect = app.effects.unresolved(run.id)[0]!; assert.equal(effect.status, 'uncertain'); assert.equal((await app.effects.reconcile(effect.id, f.authority)).status, 'succeeded');
     await app.tick(); assert.equal(app.obligations.obligation(owed.id)?.status, 'delivered'); assert.equal(posts, 1); assert.equal(calls, 2);
     await app.close(); app = new AutarkApplication({ ...f, secrets, slackBotApi, slackAppApi: { async call<T>() { return {} as T; } }, performRequest: async () => { throw new Error('No uncertain report replay'); } }); assert.equal(app.obligations.obligation(owed.id)?.status, 'delivered'); assert.equal(posts, 1);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary Slack reasoning and status tools see durable conversation recovery gaps without foreign channel or thread disclosure', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let physicalHistoryCalls = 0, modelCalls = 0;
+  f.config.slack = { teamId: 'T1', botUserId: 'BOT', channels: [{ channel: 'C1', scope: f.config.direct.scope }, { channel: 'FOREIGN_CHANNEL', scope: { kind: 'restricted', principals: ['other'] } }], eligibleHumanIds: ['U1'], coverageStart: '1', lookbackSeconds: 60, allowSpeech: false };
+  const slackBotApi = { async call<T>(method: string, args: Record<string, string>): Promise<T> {
+    assert.ok(['conversations.history', 'conversations.replies'].includes(method), 'No message or socket operation is permitted in this fixture'); physicalHistoryCalls++;
+    throw new SlackError(args.channel === 'FOREIGN_CHANNEL' ? 'access_denied' : args.ts ? 'thread_not_found' : 'missing_scope');
+  } };
+  const inspect = (state: any) => {
+    assert.equal(state.transport, 'slack'); assert.equal(state.channel, 'C1'); assert.equal(state.status, 'scan-cycle-finished');
+    assert.ok(state.knownGaps.some((gap: any) => gap.kind === 'permission' && gap.detail === 'missing_scope'));
+    assert.ok(state.knownGaps.some((gap: any) => gap.kind === 'retention'));
+    assert.match(state.coverage.meaning, /not complete delivery/); assert.equal(state.connectivity, 'not-probed');
+    for (const hidden of ['FOREIGN_CHANNEL', 'access_denied', 'thread_not_found', 'FOREIGN_THREAD']) assert.equal(JSON.stringify(state).includes(hidden), false);
+  };
+  const performRequest = async (payload: string) => {
+    modelCalls++; const request = parsed(payload); inspect(context(request).communication);
+    for (const hidden of ['FOREIGN_CHANNEL', 'access_denied', 'thread_not_found', 'FOREIGN_THREAD']) assert.equal(payload.includes(hidden), false);
+    if (modelCalls % 2 === 1) return tool('communication_status', {});
+    inspect(receipt(request)); return stop('Private recovery reasoning; no automatic publication.');
+  };
+  const options = { ...f, secrets, slackBotApi, slackAppApi: { async call<T>() { throw new Error('No socket operation'); return {} as T; } }, performRequest };
+  try {
+    app = new AutarkApplication(options);
+    app.store.put('communications.slack.threads', 'T1:C1:FOREIGN_THREAD', { channel: 'C1', threadTs: 'FOREIGN_THREAD', joinedAt: '1' }, null);
+    assert.equal((await app.slackRecovery!.tick()).complete, true); assert.equal(physicalHistoryCalls, 3);
+    for (const ts of ['10', '20']) {
+      const run: Run = app.slackIngress!.acceptHistory('C1', { ts, user: 'U1', text: '<@BOT> inspect known recovery coverage' })!.run;
+      await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed' || value?.status === 'blocked');
+      assert.equal(app.runtime.getRun(run.id)?.status, 'completed', JSON.stringify(app.store.get('execution', run.id)));
+      assert.equal(app.output(run.id).length, 0);
+      await app.close(); app = new AutarkApplication(options);
+    }
+    assert.equal(modelCalls, 4); assert.equal(physicalHistoryCalls, 3);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
