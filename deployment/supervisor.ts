@@ -45,7 +45,7 @@ export interface SupervisorStatus {
   release?: ReleaseState;
   failure?: string;
   evaluation?: DispatchStatus;
-  controls?: ControlContinuationRecord[];
+  controls?: { total: number; recent: { id: string; status: ControlContinuationRecord['status']; candidateId?: string; diagnosis?: string }[] };
 }
 export type SupervisorCommand =
   | { kind: 'status' }
@@ -130,9 +130,12 @@ export class ServiceSupervisor {
     } catch (error) { await supervisor.close(); throw error; }
   }
   status(): SupervisorStatus {
+    const controls = this.#controls?.records();
     return { coordinator: { processId: process.pid, module: import.meta.url }, mode: this.#options.mode, qualification: this.#options.mode === 'engineering' ? 'engineering-only' : 'product-policy',
       running: this.#service.running, processId: this.#service.processId, ready: this.#ready,
-      release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status(), controls: this.#controls?.records() };
+      release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status(),
+      ...(controls ? { controls: { total: controls.length, recent: controls.slice(-32).map(record => ({ id: record.request.id, status: record.status,
+        ...(record.review ? { candidateId: record.review.candidate.manifest.id } : {}), ...(record.diagnosis ? { diagnosis: record.diagnosis } : {}) })) } } : {}) };
   }
   #startControlContinuation(): void {
     const reviewer = this.#options.controlReview ?? {
