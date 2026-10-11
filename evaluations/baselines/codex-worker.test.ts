@@ -18,7 +18,7 @@ test('actual Codex CLI runs through a network-isolated host-observed Responses f
   copyFileSync(new URL('./codex-worker.mjs', import.meta.url), join(image, 'codex-worker.mjs'));
   writeFileSync(join(privateRoot, 'answer'), 'PRIVATE_EVALUATOR_SENTINEL');
     const result = await runWorker({ command: { workspace, applicationRoot: image, nodeBinary: process.execPath, protectedPaths: [privateRoot], executable: '/runtime/node', args: ['/app/codex-worker.mjs'], timeoutMs: 30000, maxOutputBytes: 8_000_000 },
-      initial: { prompt: 'Use the command tool to verify the fixture and write proof.txt; then reply with baseline-fixture-complete.', model: 'gpt-6-astra', effort: 'high', maxRequestBytes: 1_000_000, maxOutputBytes: 1_000_000 }, maxMessageBytes: 2_000_000, maxRequests: 8,
+      initial: { prompt: 'Use the command tool to verify the fixture and write proof.txt; then reply with baseline-fixture-complete.', model: 'gpt-6-astra', effort: 'high', maxConcurrency: 1, maxRequestBytes: 1_000_000, maxOutputBytes: 1_000_000 }, maxMessageBytes: 2_000_000, maxRequests: 8,
       async handle(method, args) {
         try {
         assert.equal(method, 'baseline.provider'); calls++; assert.ok(calls <= 2, 'Each fixture allows two physical requests');

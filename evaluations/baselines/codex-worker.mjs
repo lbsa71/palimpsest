@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 // provider credentials. Every HTTP attempt becomes a separately observed host RPC.
 const pending = new Map();
 let sequence = 0, started = false;
+let stop = () => {};
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const rpc = (method, ...args) => new Promise((resolve, reject) => {
   const id = String(++sequence); pending.set(id, { resolve, reject });
@@ -15,22 +16,32 @@ const rpc = (method, ...args) => new Promise((resolve, reject) => {
 async function main(start) {
   if (!start || typeof start.prompt !== 'string' || typeof start.model !== 'string' || !['none', 'low', 'medium', 'high', 'xhigh'].includes(start.effort) ||
       !Number.isSafeInteger(start.maxRequestBytes) || start.maxRequestBytes < 1 || start.maxRequestBytes > 2_000_000 ||
+      !Number.isSafeInteger(start.maxConcurrency) || start.maxConcurrency < 1 || start.maxConcurrency > 8 ||
       !Number.isSafeInteger(start.maxOutputBytes) || start.maxOutputBytes < 1 || start.maxOutputBytes > 2_000_000) throw new Error('Invalid bounded baseline invocation');
+  Object.freeze(start);
   const home = '/tmp/aeon-baseline-home'; mkdirSync(`${home}/codex`, { recursive: true, mode: 0o700 });
-  let child, busy = false;
+  let child, inFlight = 0, stopped = false;
   const server = createServer(async (request, response) => {
     // No proxy routes, provider URL selection, WebSocket or ambient authentication.
-    if (request.method !== 'POST' || request.url !== '/v1/responses' || busy) { response.writeHead(403).end(); return; }
-    busy = true; let bytes = 0; const chunks = [];
+    if (request.method !== 'POST' || request.url !== '/v1/responses' || stopped || inFlight >= start.maxConcurrency) { response.writeHead(403).end(); return; }
+    inFlight++; let bytes = 0; const chunks = [];
     try {
       for await (const chunk of request) { bytes += chunk.length; if (bytes > start.maxRequestBytes) throw new Error('Oversized baseline request'); chunks.push(chunk); }
       const payload = Buffer.concat(chunks).toString('utf8');
       const reply = await rpc('baseline.provider', { method: request.method, path: request.url, payload });
       if (!reply || !Number.isInteger(reply.status) || typeof reply.body !== 'string' || typeof reply.contentType !== 'string') throw new Error('Invalid host response');
       response.writeHead(reply.status, { 'Content-Type': reply.contentType }).end(reply.body);
-    } catch { response.writeHead(502).end('Host observer refused or could not complete the physical attempt'); }
-    finally { busy = false; }
+    } catch {
+      stopped = true; response.writeHead(502).end('Host observer refused or could not complete the physical attempt');
+      child?.kill('SIGTERM');
+    }
+    finally { inFlight--; }
   });
+  stop = () => {
+    stopped = true; child?.kill('SIGTERM'); server.closeAllConnections();
+    for (const request of pending.values()) request.reject(new Error('Host protocol stopped'));
+    pending.clear();
+  };
   server.on('upgrade', (_request, socket) => socket.destroy());
   server.on('clientError', (_error, socket) => socket.destroy());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -61,7 +72,7 @@ async function main(start) {
   const result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })); });
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (pending.size) throw new Error('Baseline exited with a physical observation pending');
-  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, invocation: { executable: '/app/codex', args, authentication: 'dummy-bridge-token-only' } } });
+  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, invocation: { executable: '/app/codex', args, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
 }
 const input = createInterface({ input: process.stdin });
 input.on('line', line => {
@@ -73,5 +84,5 @@ input.on('line', line => {
       const request = pending.get(message.id); pending.delete(message.id);
       if (message.ok === true) request.resolve(message.value); else request.reject(new Error('Host operation refused or unavailable'));
     } else throw new Error('Invalid host protocol');
-  } catch { process.exitCode = 1; input.close(); process.stdin.destroy(); }
+  } catch { stop(); process.exitCode = 1; input.close(); process.stdin.destroy(); }
 });

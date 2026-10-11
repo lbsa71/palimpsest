@@ -105,7 +105,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       workerSha256: createHash('sha256').update(readFileSync(worker)).digest('hex'), nodeSha256: sha256(process.execPath),
       nodeVersion: process.versions.node, sourceIdentity: sourceIdentity(),
       hostTools: ['/usr/bin/bash', '/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit'].map(path => ({ path, sha256: sha256(realpathSync(path)) })),
-      maxCliOutputBytes: input.maxCliOutputBytes, protectedPaths: input.protectedPaths.map(path => realpathSync(path)),
+      maxCliOutputBytes: input.maxCliOutputBytes, workerLimits: { maxConcurrency: observer.grant.resources.maxConcurrency, maxRequestBytes: observer.grant.maxRequestBytes }, protectedPaths: input.protectedPaths.map(path => realpathSync(path)),
       providerTransport: input.provider.kind,
       qualification: input.provider.resourceLimits ? 'kernel-profile' as const : 'namespace-fixture' as const,
       kernelLimits: input.provider.resourceLimits ?? null,
@@ -141,7 +141,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
         maxOutputBytes: maxMessageBytes * (input.grant.resources.maxRequests + 1), signal: input.signal,
         ...(input.provider.resourceLimits ? { resourceLimits: input.provider.resourceLimits } : {}) },
       initial: { prompt: input.prompt, model: input.grant.profile.model, effort: input.grant.profile.effort,
-        maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes,
+        maxConcurrency: observer.grant.resources.maxConcurrency, maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes,
         ...(input.kind === 'claude' ? { profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) } : {}) },
       maxMessageBytes, maxRequests: input.grant.resources.maxRequests,
       async handle(method, args, signal) {

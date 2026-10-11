@@ -52,7 +52,8 @@ export function validateObserverGrant(grant: ObserverGrant): void {
     invariant(grant.profile.prices.cachedInputUsdPerMillion <= grant.profile.prices.inputUsdPerMillion, 'cached price exceeds reserved price'); }
   for (const key of ['maxRequests', 'maxTokens', 'maxCostUsd', 'maxElapsedMs', 'maxConcurrency'] as const) invariant(Number.isFinite(grant.resources[key]) && grant.resources[key] > 0, `finite positive ${key} grant required`);
   positive(grant.resources.maxRequests, 'requests'); positive(grant.resources.maxTokens, 'tokens'); positive(grant.resources.maxElapsedMs, 'elapsed time');
-  invariant(grant.resources.maxConcurrency === 1, 'native observer requires one active attempt');
+  positive(grant.resources.maxConcurrency, 'concurrency');
+  invariant(grant.resources.maxConcurrency <= 8, 'native observer concurrency exceeds worker pending ceiling');
   positive(grant.requestTimeoutMs, 'request timeout'); positive(grant.maxRequestBytes, 'request bytes'); positive(grant.maxResponseBytes, 'response bytes');
   invariant(grant.requestTimeoutMs <= grant.resources.maxElapsedMs && grant.requestTimeoutMs <= 900_000, 'request timeout exceeds grant');
   invariant(grant.maxRequestBytes <= 2_000_000 && grant.maxResponseBytes <= 2_000_000, 'bridge byte ceiling exceeded');
@@ -258,6 +259,9 @@ export class BaselineObserver {
           ...(status === undefined ? {} : { responseStatus: status }), ...(contentType === undefined ? {} : { contentType }),
           outcome: 'unknown', reason: 'No trustworthy completed usage; reservation held and grant cancelled', usage }, row.revision);
       });
+      // Stop the original allocation before waking every outstanding sibling.
+      // Each sibling settles its own observed usage or retains its own reservation.
+      this.cancel();
       throw new Error('Baseline provider outcome unknown; grant stopped');
     } finally {
       this.active.delete(controller);
