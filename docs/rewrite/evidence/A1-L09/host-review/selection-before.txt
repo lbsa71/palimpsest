@@ -1,0 +1,50 @@
+(node:760597) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ selection refuses a redirected journal without changing its target (20.692834ms)
+✖ selection rejects malformed or excessive values before returning executable targets (16.26731ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 302.201192
+
+✖ failing tests:
+
+test at deployment/host-selection.test.ts:10:1
+✖ selection refuses a redirected journal without changing its target (20.692834ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/host-review/deployment/host-selection.test.ts:18:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /journal|host/i,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at deployment/host-selection.test.ts:23:1
+✖ selection rejects malformed or excessive values before returning executable targets (16.26731ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/host-review/deployment/host-selection.test.ts:30:14)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /selection|journal/i,
+    operator: 'throws',
+    diff: 'simple'
+  }

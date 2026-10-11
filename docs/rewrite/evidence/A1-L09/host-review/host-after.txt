@@ -1,0 +1,30 @@
+(node:761413) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ accepted host and evaluator code actually replace the coordinator; failed host restores old code offline with latest state (51544.22189ms)
+✔ accepted but unbootable coordinator restores the retained host without evaluating itself or reading provider inputs (39351.390601ms)
+✔ a broken accepted launcher falls back through the retained bootstrap on restart without a surviving old coordinator (25463.90793ms)
+✔ coordinator observes launcher loss during asynchronous startup and releases authority (15464.123488ms)
+(node:761414) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real frozen service transfers, uses fresh probation, recovers on child crash and restarts without evidence, keys or provider (54575.979404ms)
+✔ first authority is never served without authenticated proof, and interrupted bootstrap resumes its exact signed grant (20185.116663ms)
+✔ host keys bind public policy; evidence rejects paths; owner-only controls reject filepath requests and serialize actual recovery (18590.715734ms)
+✔ CLI supervisor SIGKILL releases host ownership and recovers actual application with latest state and absent bootstrap/evaluator inputs (13678.023332ms)
+(node:761416) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual successor probation and offline rescue retain latest memory and uncertain effects, with durable proof (829.932992ms)
+✔ fresh signed probation judgment pins rescue; changed payload is rejected after drain before execution (1021.462606ms)
+✔ evaluator/control replacement is separately staged under previous controls and can recover old controls (805.110701ms)
+✔ failed child startup is fenced and recovery does not need provider access (656.473876ms)
+✔ new controls cannot judge their own probation; subsequent release uses the accepted new evaluator (1137.884549ms)
+✔ failed drain prevents successor authority; changed state path and closed lease are rejected (446.719501ms)
+✔ SIGKILL controller during drain recovers accepted artifact with latest state (971.238858ms)
+✔ SIGKILL controller during start recovers accepted artifact with latest state (946.513594ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 132543.11673

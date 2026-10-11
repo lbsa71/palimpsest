@@ -103,31 +103,42 @@ export async function runCli(args: string[]): Promise<void> {
     const paths = new Map(config.policyFiles);
     let requestHandoff: (() => void) | undefined;
     const launched = Boolean(process.send && process.env.AEON_HOST_LAUNCHER);
-    const selection = launched ? hostSelection(config) : undefined;
-    const supervisor = await ServiceSupervisor.open({ host: config.host, mode: config.mode, secrets: environmentSecrets(process.env),
-      readArtifact: contentAddressedEvidence(config.evidenceDirectory),
-      ...(selection?.phase === 'rescue' ? { hostRescue: selection.selected } : {}),
-      ...(launched ? { onHostAccepted: (target, previous) => { requestHostSuccessor(config, target, previous); setTimeout(() => requestHandoff?.(), 50); } } : {}),
-      getPolicy(digest) {
-        const path = paths.get(digest); invariant(path, 'Policy digest is absent from the host registry');
-        const policy = loadHostPolicy(path, [config.host.workspaceDirectory, config.host.artifactStore]); invariant(policy.policyDigest === digest, 'Host policy registry identity changed'); return policy;
-      }, ...(config.bootstrap ? { bootstrap: () => ({ proof: proof(config.bootstrap!.proofFile), policyDigest: config.bootstrap!.policyDigest }) } : {}) });
-    let server: Server;
-    try { server = await serveControls(supervisor, config.host.stateDirectory); }
-    catch (error) { await supervisor.close(); throw error; }
-    print(supervisor.status());
-    if (launched) process.send?.({ kind: 'host-ready' });
-    let handoff = false;
-    const stopped = new Promise<void>(accept => {
-      requestHandoff = () => { handoff = true; accept(); };
-      const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); accept(); };
-      process.once('SIGTERM', stop); process.once('SIGINT', stop);
-      if (launched) process.once('disconnect', stop);
-    });
-    await stopped;
-    const controlsClosed = closeControls(server);
-    await supervisor.close(); await controlsClosed;
-    if (launched && process.connected) process.disconnect?.();
+    // Register lifetime observers before asynchronous startup: IPC disconnect is not replayed.
+    let handoff = false, stopping = launched && !process.connected;
+    let wake!: () => void;
+    const stopped = new Promise<void>(accept => { wake = accept; });
+    const stop = () => { stopping = true; wake(); };
+    requestHandoff = () => { handoff = true; stop(); };
+    process.once('SIGTERM', stop); process.once('SIGINT', stop);
+    if (launched) process.once('disconnect', stop);
+    let supervisor: ServiceSupervisor | undefined, server: Server | undefined;
+    try {
+      if (stopping) return;
+      const selection = launched ? hostSelection(config) : undefined;
+      supervisor = await ServiceSupervisor.open({ host: config.host, mode: config.mode, secrets: environmentSecrets(process.env),
+        readArtifact: contentAddressedEvidence(config.evidenceDirectory),
+        ...(selection?.phase === 'rescue' ? { hostRescue: selection.selected } : {}),
+        ...(launched ? { onHostAccepted: (target, previous) => { requestHostSuccessor(config, target, previous); setTimeout(() => requestHandoff?.(), 50); } } : {}),
+        getPolicy(digest) {
+          const path = paths.get(digest); invariant(path, 'Policy digest is absent from the host registry');
+          const policy = loadHostPolicy(path, [config.host.workspaceDirectory, config.host.artifactStore]); invariant(policy.policyDigest === digest, 'Host policy registry identity changed'); return policy;
+        }, ...(config.bootstrap ? { bootstrap: () => ({ proof: proof(config.bootstrap!.proofFile), policyDigest: config.bootstrap!.policyDigest }) } : {}) });
+      if (!stopping) {
+        server = await serveControls(supervisor, config.host.stateDirectory);
+        if (!stopping) {
+          print(supervisor.status());
+          if (launched && process.connected) process.send?.({ kind: 'host-ready' }, error => { if (error) stop(); });
+          await stopped;
+        }
+      }
+    } finally {
+      const controlsClosed = server ? closeControls(server) : Promise.resolve();
+      try { await supervisor?.close(); await controlsClosed; }
+      finally {
+        process.off('SIGTERM', stop); process.off('SIGINT', stop); process.off('disconnect', stop);
+        if (launched && process.connected) process.disconnect?.();
+      }
+    }
     if (handoff) process.exitCode = 75;
     return;
   }

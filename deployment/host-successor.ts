@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { closeSync, constants, existsSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,10 +6,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { identity, invariant } from '../packages/contracts/index.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { policyDescriptor, type ReleaseState, type ReleaseTarget } from '../packages/release/controller.ts';
+import { hashBytes } from '../packages/release/artifacts.ts';
 import { admitCandidate } from '../packages/release/admission.ts';
 import { verifyApplication } from './candidate.ts';
 import type { SupervisorFile } from './cli.ts';
-import { contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-policy.ts';
+import { assertPrivateHostDirectory, contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-policy.ts';
+import { validateHostBindings } from './supervisor.ts';
 
 export interface HostSelection {
   selected: ReleaseTarget;
@@ -18,14 +20,35 @@ export interface HostSelection {
 }
 /** Host-private durable selection. No source paths or provider credentials come from a release request. */
 function journal<T>(config: SupervisorFile, operation: (db: DatabaseSync) => T): T {
-  const db = new DatabaseSync(join(config.host.stateDirectory, 'host-successor.sqlite'));
+  assertPrivateHostDirectory(config.host.stateDirectory);
+  const path = join(config.host.stateDirectory, 'host-successor.sqlite');
+  try { const fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600); closeSync(fd); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  // The containing directory is host-private. Refuse redirected/preexisting public SQLite files,
+  // including sidecars, before SQLite can modify them or interpret selection state.
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    try {
+      const stat = lstatSync(path + suffix);
+      invariant(stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0 && stat.size <= 1024 * 1024, 'Private bounded host selection journal required');
+    } catch (error) { if (suffix && (error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+  }
+  const db = new DatabaseSync(path);
   try {
     db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS selection(singleton INTEGER PRIMARY KEY CHECK(singleton=1), value TEXT NOT NULL)');
     return operation(db);
   } finally { db.close(); }
 }
 export function hostSelection(config: SupervisorFile): HostSelection | undefined {
-  return journal(config, db => { const row = db.prepare('SELECT value FROM selection WHERE singleton=1').get(); return row ? JSON.parse(String(row.value)) : undefined; });
+  return journal(config, db => {
+    const row = db.prepare('SELECT CASE WHEN length(CAST(value AS BLOB)) <= 8192 THEN value ELSE NULL END AS value FROM selection WHERE singleton=1').get();
+    if (!row) return undefined;
+    invariant(typeof row.value === 'string', 'Host selection exceeds byte limit');
+    const value = JSON.parse(row.value) as HostSelection;
+    const target = (value: ReleaseTarget) => value && Object.keys(value).sort().join(',') === 'candidateId,policyDigest' &&
+      /^[a-f0-9]{64}$/.test(value.candidateId) && /^[a-f0-9]{64}$/.test(value.policyDigest);
+    invariant(value && Object.keys(value).sort().join(',') === 'phase,rescue,selected' && target(value.selected) && target(value.rescue) && ['ready', 'requested', 'booting', 'rescue'].includes(value.phase), 'Exact host selection required');
+    return value;
+  });
 }
 function save(config: SupervisorFile, value: HostSelection): void {
   journal(config, db => db.prepare('INSERT INTO selection VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET value=excluded.value').run(JSON.stringify(value)));
@@ -50,6 +73,7 @@ function rescue(config: SupervisorFile, current: HostSelection): HostSelection {
  * A pending boot after an OS restart chooses old code. No ancestor coordinator remains in memory. */
 export async function launchHost(configPath: string, selectedBoot?: string): Promise<void> {
   const config = JSON.parse(readHostFile(configPath).toString('utf8')) as SupervisorFile;
+  validateHostBindings(config.host);
   const lease = new ProcessLease(join(config.host.stateDirectory, 'host-launcher-lease.sqlite'));
   try {
     let current = hostSelection(config);
@@ -63,6 +87,8 @@ export async function launchHost(configPath: string, selectedBoot?: string): Pro
       invariant(config.mode === 'engineering' || policy.kind === 'product', 'Product host requires product bootstrap policy');
       const candidate = verifyApplication(config.host.artifactStore, proof.proposal.candidate.id, config.host.nodeBinary);
       invariant(identity((candidate.inputs.controls as { policy?: unknown }).policy) === identity(policyDescriptor(policy)), 'Bootstrap host policy descriptor differs');
+      invariant(proof.proposal.priorAuthority.epoch === 1 && proof.proposal.priorAuthority.controlRevision === candidate.manifest.controls && proof.proposal.priorAuthority.generation.trim().length > 0, 'Initial host proof must bind the first authority epoch and candidate controls');
+      invariant(proof.proposal.recoveryArtifact.sha256 === hashBytes(readFileSync(join(config.host.artifactStore, candidate.manifest.id, 'candidate.json'))), 'Initial host rescue must bind the current candidate manifest');
       admitCandidate(config.host.artifactStore, proof.proposal, proof.proposal.priorAuthority, policy, proof.signed, contentAddressedEvidence(config.evidenceDirectory));
       const target = { candidateId: proof.proposal.candidate.id as string, policyDigest: config.bootstrap.policyDigest };
       current = { selected: target, rescue: target, phase: 'ready' }; save(config, current);

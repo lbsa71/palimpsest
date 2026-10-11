@@ -1,0 +1,31 @@
+(node:760469) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ coordinator observes launcher loss during asynchronous startup and releases authority (21062.328955ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21473.222147
+
+✖ failing tests:
+
+test at deployment/host-successor.test.ts:196:1
+✖ coordinator observes launcher loss during asynchronous startup and releases authority (21062.328955ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(!ledger.current()?.generation)
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/host-review/deployment/host-successor.test.ts:225:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

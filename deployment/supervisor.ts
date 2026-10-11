@@ -42,6 +42,14 @@ export type SupervisorCommand =
   | { kind: 'stage-control'; proof: ReleaseProof; policyDigest: string }
   | { kind: 'activate-control'; stageId: string };
 
+/** Validate before opening journals or executing any candidate-owned host code. */
+export function validateHostBindings(host: HostBindings): void {
+  for (const path of Object.values(host)) invariant(path === resolve(path) && realpathSync(path) === path, 'Canonical existing host bindings required');
+  for (const path of [host.stateDirectory, host.artifactStore]) assertPrivateHostDirectory(path);
+  const roots = [host.stateDirectory, host.workspaceDirectory, host.artifactStore];
+  invariant(new Set(roots).size === roots.length && roots.every(a => roots.every(b => a === b || !beneath(a, b))), 'Host state, source artifacts and workspaces must be disjoint');
+}
+
 /** One host coordinator owns release mutations; applications hold a separate execution lease. */
 export class ServiceSupervisor {
   readonly #options: SupervisorOptions;
@@ -61,10 +69,7 @@ export class ServiceSupervisor {
   #closePromise?: Promise<void>;
   private constructor(options: SupervisorOptions) {
     invariant(['engineering', 'product'].includes(options.mode), 'Explicit supervisor mode required');
-    for (const path of Object.values(options.host)) invariant(path === resolve(path) && realpathSync(path) === path, 'Canonical existing host bindings required');
-    for (const path of [options.host.stateDirectory, options.host.artifactStore]) assertPrivateHostDirectory(path);
-    const roots = [options.host.stateDirectory, options.host.workspaceDirectory, options.host.artifactStore];
-    invariant(new Set(roots).size === roots.length && roots.every(a => roots.every(b => a === b || !beneath(a, b))), 'Host state, source artifacts and workspaces must be disjoint');
+    validateHostBindings(options.host);
     this.#options = options;
     this.#lease = new ProcessLease(join(options.host.stateDirectory, 'supervisor-lease.sqlite'));
     let authority: AuthorityStore | undefined;
@@ -128,8 +133,8 @@ export class ServiceSupervisor {
     const prior = this.#controller.status()!;
     this.#controller.acceptProbation(proof);
     if (prior.probationJudge?.change === 'control-upgrade' && this.#options.onHostAccepted) {
-      this.#options.onHostAccepted(this.#controller.status()!.accepted, prior.accepted);
       this.#hostHandoffPending = true;
+      this.#options.onHostAccepted(this.#controller.status()!.accepted, prior.accepted);
     }
   }); }
   stageControl(proof: ReleaseProof, policyDigest: string): Promise<string> {

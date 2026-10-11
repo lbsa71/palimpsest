@@ -191,3 +191,43 @@ test('a broken accepted launcher falls back through the retained bootstrap on re
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+
+test('coordinator observes launcher loss during asynchronous startup and releases authority', { timeout: 60000 }, async () => {
+  const f = fixture(); let child: ChildProcess | undefined; let coordinator: number | undefined;
+  const cli = join(f.writableSource, 'deployment/cli.ts'), marker = join(f.root, 'starting');
+  // Pause inside startup before the service returns, after the coordinator has entered supervise.
+  writeFileSync(cli, readFileSync(cli, 'utf8').replace('      supervisor = await ServiceSupervisor.open(',
+    `    await import('node:fs').then(fs => fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid)));
+    await new Promise(resolve => setTimeout(resolve, 1500));
+      supervisor = await ServiceSupervisor.open(`));
+  const candidate = freezeApplication(f.writableSource, f.host.artifactStore, f.inputs);
+  const fields = { ...f.policy, controlRevision: candidate.manifest.controls }, policy = { ...fields, policyDigest: admissionPolicyIdentity(fields) };
+  const authority = { ...f.initial, controlRevision: candidate.manifest.controls };
+  const proof = f.proof(candidate, authority, candidate);
+  proof.signed = proof.proposal.evidence.map(evidence => signEvaluation(evidence, f.key, policy.policyDigest));
+  const keyPath = join(f.root, 'key'), policyPath = join(f.root, 'policy'), proofPath = join(f.root, 'proof'), configPath = join(f.root, 'config');
+  writeFileSync(keyPath, f.key, { mode: 0o600 });
+  writeFileSync(policyPath, JSON.stringify({ controlRevision: policy.controlRevision, policyDigest: policy.policyDigest, descriptor: policyDescriptor(policy), keyFiles: [['fixture-reviewer', keyPath]] }), { mode: 0o600 });
+  writeFileSync(proofPath, JSON.stringify(proof), { mode: 0o600 });
+  writeFileSync(configPath, JSON.stringify({ host: f.host, mode: 'engineering', evidenceDirectory: f.evidenceDirectory, policyFiles: [[policy.policyDigest, policyPath]], bootstrap: { proofFile: proofPath, policyDigest: policy.policyDigest } }), { mode: 0o600 });
+  try {
+    child = spawn(process.execPath, [fileURLToPath(new URL('./cli.ts', import.meta.url)), 'launch', configPath], { env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1', MISTRAL_API_KEY: 'unavailable', AUTARK_DIRECT_TOKEN: 'token' }, stdio: 'ignore' });
+    await eventually(() => existsSync(marker)); coordinator = Number(readFileSync(marker, 'utf8'));
+    const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGKILL'); await exited;
+    await new Promise(resolve => setTimeout(resolve, 6000));
+    let serving = false;
+    try { serving = Boolean((await requestControl(f.host.stateDirectory, { kind: 'status' }) as any).running); } catch {}
+    assert.equal(serving, false, 'orphan coordinator must not remain serving after launcher disappears during startup');
+    const lease = new ProcessLease(join(f.host.stateDirectory, 'supervisor-lease.sqlite')); lease.close();
+    if (existsSync(join(f.host.stateDirectory, 'authority.sqlite'))) {
+      const ledger = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+      try { assert.ok(!ledger.current()?.generation); } finally { ledger.close(); }
+    }
+  } finally {
+    if (coordinator) { try { process.kill(coordinator, 'SIGTERM'); } catch {} }
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
