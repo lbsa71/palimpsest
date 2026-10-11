@@ -102,16 +102,19 @@ test('physical launch holds both authority and cancellation write locks across a
         launches++;
         const observer = spawnSync(process.execPath, ['--input-type=module', '--eval', `
           import { DatabaseSync } from 'node:sqlite';
-          const locks = process.argv.slice(1).map(path => {
+          const observerDb = new DatabaseSync(process.argv[2]);
+          const row = observerDb.prepare('SELECT value FROM documents WHERE namespace=? AND key=?').get('requests', process.argv[3]);
+          const status = JSON.parse(row.value).request.status; observerDb.close();
+          const locks = process.argv.slice(1, 3).map(path => {
             const db = new DatabaseSync(path); db.exec('PRAGMA busy_timeout=1');
             try { db.exec('BEGIN IMMEDIATE'); db.exec('ROLLBACK'); return false; }
             catch (error) { if (!/locked/.test(error.message)) throw error; return true; }
             finally { db.close(); }
           });
-          process.stdout.write(JSON.stringify(locks));
-        `, authorityPath, f.filename], { encoding: 'utf8', env: {} });
+          process.stdout.write(JSON.stringify({ status, locks }));
+        `, authorityPath, f.filename, reviewPhysicalId('stable-job')], { encoding: 'utf8', env: {} });
         assert.equal(observer.status, 0, observer.stderr);
-        assert.deepEqual(JSON.parse(observer.stdout), [true, true]);
+        assert.deepEqual(JSON.parse(observer.stdout), { status: 'dispatched', locks: [true, true] });
       });
     });
     assert.equal(launches, 1);
