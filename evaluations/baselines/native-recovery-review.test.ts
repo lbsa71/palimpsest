@@ -61,3 +61,55 @@ test('changed actual kernel identity refuses continuation before launch under th
     try { assert.equal(store.list('allocations').length, 1); assert.equal(store.get<{ status: string }>('native-checkpoints', first.checkpoint.id)?.value.status, 'ready'); } finally { store.close(); }
   } finally { kernelRevision = 'original'; rmSync(root, { recursive: true, force: true }); }
 });
+
+import { stripTypeScriptTypes } from 'node:module';
+import { runInNewContext } from 'node:vm';
+import { canonicalJson } from '../../packages/contracts/common.ts';
+// Execute only these pure assertion definitions from the frozen driver; no imports,
+// test registration, acquisitionFreeze, native code, marker or physical entry runs.
+function acquisitionAssertions(): { observation: (kind: string, request: any, phase: string) => void; history: (kind: string, request: any) => void; fixture: (kind: string, phase?: string) => any } {
+  const source = readFileSync(new URL('./native-recovery-physical.test.ts', import.meta.url), 'utf8');
+  const definitions = source.slice(source.indexOf('function command('), source.indexOf('function grant('))
+    + source.slice(source.indexOf('function assertResult('), source.indexOf('function instructions('))
+    + source.slice(source.indexOf('const acquiredCodexResult ='), source.indexOf("test('acquisition checks"));
+  return runInNewContext(stripTypeScriptTypes(definitions) + `
+    ({observation: assertObservation, history: assertHistory, fixture(kind, phase = 'write') {
+      const call = tool(kind, phase);
+      if(kind === 'claude') return {messages: [{role:'assistant',content:[call]}, {role:'user',content:[{type:'tool_result',tool_use_id:call.id,content:marker,is_error:false}]}]};
+      const output = structuredClone(acquiredCodexResult); output.call_id = call.call_id;
+      const payload = JSON.parse(output.output[1].text); payload.output = marker + '\\n'; output.output[1].text = JSON.stringify(payload);
+      return {input:[call,output]};
+    }})`, { assert, structuredClone, marker: 'native-recovery-write-observed', file: 'recovery-observed.txt', equal: (a: any, b: any) => canonicalJson(JSON.parse(JSON.stringify(a))) === canonicalJson(JSON.parse(JSON.stringify(b))) });
+}
+for (const kind of ['codex', 'claude']) test(`fixed ${kind} acquisition observation refuses an extra foreign command`, () => {
+  const helpers = acquisitionAssertions(), request = helpers.fixture(kind);
+  helpers.observation(kind, request, 'write'); // Synthetic protocol fixture, not acquired recovery history.
+  const extra = structuredClone(kind === 'codex' ? request.input[0] : request.messages[0].content[0]);
+  if (kind === 'codex') { extra.id += '-foreign'; extra.call_id += '-foreign'; request.input.push(extra); }
+  else { extra.id += '-foreign'; request.messages.push({ role: 'assistant', content: [extra] }); }
+  assert.throws(() => helpers.observation(kind, request, 'write'));
+});
+
+for (const kind of ['codex', 'claude']) test(`fixed ${kind} acquisition observation refuses an extra foreign failed result`, () => {
+  const helpers = acquisitionAssertions(), request = helpers.fixture(kind); helpers.observation(kind, request, 'write');
+  const extra = structuredClone(kind === 'codex' ? request.input[1] : request.messages[1].content[0]);
+  if (kind === 'codex') { extra.call_id += '-foreign'; const value = JSON.parse(extra.output[1].text); value.exit_code = 9; extra.output[1].text = JSON.stringify(value); request.input.push(extra); }
+  else { extra.tool_use_id += '-foreign'; extra.is_error = true; request.messages.push({ role: 'user', content: [extra] }); }
+  assert.throws(() => helpers.observation(kind, request, 'write'));
+});
+for (const kind of ['codex', 'claude']) test(`fixed ${kind} acquisition history requires terminal after the successful command result`, () => {
+  const helpers = acquisitionAssertions(), request = helpers.fixture(kind);
+  const final = kind === 'codex' ? { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'native-recovery-write-complete' }] } : { role: 'assistant', content: [{ type: 'text', text: 'native-recovery-write-complete' }] };
+  const sequence = kind === 'codex' ? request.input : request.messages;
+  sequence.push(final); helpers.history(kind, request);
+  sequence.pop(); sequence.unshift(final);
+  assert.throws(() => helpers.history(kind, request));
+});
+
+for (const kind of ['codex', 'claude']) test(`fixed ${kind} acquisition accepts ordered prior write and current read history`, () => {
+  const helpers = acquisitionAssertions(), request = helpers.fixture(kind), read = helpers.fixture(kind, 'read');
+  const sequence = kind === 'codex' ? request.input : request.messages;
+  sequence.push(kind === 'codex' ? { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'native-recovery-write-complete' }] } : { role: 'assistant', content: [{ type: 'text', text: 'native-recovery-write-complete' }] });
+  sequence.push(...(kind === 'codex' ? read.input : read.messages));
+  helpers.history(kind, request); helpers.observation(kind, request, 'read');
+});
