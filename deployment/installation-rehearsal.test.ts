@@ -167,7 +167,7 @@ test('complete disposable installation retains current state, with optional inst
         assert.equal(witness.pid, pid); assert.equal(witness.module, join(artifacts, successor.manifest.id, 'payload/deployment', module));
       }
       const bootReady = JSON.parse(readFileSync(join(selectedBoot, 'boot-ready.json'), 'utf8'));
-      assert.deepEqual(bootReady.authority, successorBooted.ready.authority); assert.equal(bootReady.target.candidateId, successor.manifest.id);
+      assert.deepEqual(bootReady.authority, successorBooted.release.authority); assert.equal(bootReady.target.candidateId, successor.manifest.id);
       assert.ok(successorBooted.ready.authority.epoch > successorRunning.ready.authority.epoch);
       const current = new OperationalStore({ filename: join(state, 'operational.sqlite') });
       current.put('fixture.current-state', 'latest', { experience: 'latest after installed succession', uncertainEffect: 'unresolved; do not retry' }, null);
