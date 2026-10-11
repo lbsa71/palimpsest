@@ -24,4 +24,10 @@ Raw output, outside Git:
 
 An earlier isolated full activation at `7dfbf9f` passed 1/1 in 38621 ms with concurrency two. The joined result above supersedes that narrower result and includes the prepared-reservation ownership and failed-activation cleanup repairs. It does not cover later atomic producer-start/withdrawal guards or ordinary rescue rotation; those changes require subsequent integration checks.
 
+## Atomic activation integration
+
+At `f6dd341`, after integrating atomic scheduler/runtime start claims and the supervisor's guarded actual withdrawal, the complete ordinary activation case passed again: **1/1, zero skips, 33070.36175 ms**. Command: `node --test --test-name-pattern='ordinary author activates' deployment/evaluation-dispatch.test.ts`. This retains concurrency one and the same physical original-judge review assertions. Strict TypeScript checking also passed. A separate reservation rollback check passed: a producer winning the claim leaves no host context, physical request or request charge, and a subsequent eligible claim commits both context and reservation.
+
+Output: `/home/palimpsest/migration/aeon-1-20261011/integration-evidence/atomic-control-composition-f6dd341.log`; SHA-256 `0aead0fff29dc68bc236c1a3abc76936ca50823598c24ae2ee7fc845398e24b8`. This is a targeted integration result, not a new complete aggregate. Fresh atomic review and the later rescue/governance integration have separate receipts.
+
 The separately installed systemd succession/rescue result belongs to its own [source and evidence](installed-succession.md), with [fresh review attribution](installed-succession-review.md). This test does not replace that installed scenario, a live qualified evaluator, comparator runs, developmental transfer or the H1 witness.
