@@ -14,6 +14,9 @@ export interface TransportReceipt {
   usage: PhysicalRequest['usage'];
   responseModel: string | null;
   responseDigest: string | null;
+  /** Mistral's explicit served value, including malformed values. Absence is
+   * request-default inference, never an observation of the served tier. */
+  responseServiceTier?: JsonValue;
 }
 type WorkerConfig = Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'endpoint'>;
 export interface BrokerShellOptions {
@@ -180,6 +183,14 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                   const body = JSON.parse(response.body) as { usage?: Record<string, unknown>; model?: string; id?: string; status?: string; output?: unknown };
                   receipt.responseModel = typeof body.model === 'string' ? body.model : null;
                   const usage = body.usage;
+                  if (provider === 'mistral') {
+                    if (usage && Object.hasOwn(usage, 'service_tier')) receipt.responseServiceTier = json(usage.service_tier);
+                    // Requests cannot select service_tier; Mistral documents its
+                    // omitted default as standard_only. Unknown profiles remain
+                    // uncertain with null usage, retaining the original charge.
+                    invariant(body.model === options.worker.model, 'Mistral response model differs from qualified host profile');
+                    invariant(receipt.responseServiceTier === undefined || receipt.responseServiceTier === 'standard', 'Unsupported Mistral served tier');
+                  }
                   const inputTokens = usage?.[provider === 'openai' ? 'input_tokens' : 'prompt_tokens'];
                   const outputTokens = usage?.[provider === 'openai' ? 'output_tokens' : 'completion_tokens'];
                   if (Number.isSafeInteger(inputTokens) && Number.isSafeInteger(outputTokens) && Number(inputTokens) >= 0 && Number(outputTokens) >= 0) {

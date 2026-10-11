@@ -15,6 +15,7 @@ import type { TransportReceipt } from './broker-shell.ts';
 const physical = process.env.AEON_MISTRAL_BINDING_PHYSICAL === '1';
 const pure = process.execArgv.includes('--experimental-test-module-mocks');
 const enabled = physical || pure;
+let mockedWorkers = 0;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const MODEL = 'mistral-fixture-v1';
 const content = 'Owned fixture instructions';
@@ -35,7 +36,7 @@ async function protocol(rpc: (method: string, ...args: JsonValue[]) => Promise<J
   return { status: delivered ? 'completed' : 'blocked', observations: [], delivered, replayDelivered };
 }
 if (pure && !physical) mock.module('../packages/supervisor/worker-process.ts', { namedExports: {
-  runWorker: async (options: WorkerOptions): Promise<JsonValue> => protocol((method, ...args) => options.handle(method, args, new AbortController().signal)),
+  runWorker: async (options: WorkerOptions): Promise<JsonValue> => { mockedWorkers++; return protocol((method, ...args) => options.handle(method, args, new AbortController().signal)); },
 } });
 const { createBrokerShell } = await import('./broker-shell.ts');
 
@@ -68,13 +69,18 @@ for (const [label, response, admitted] of cases) test(`Mistral host profile bind
   // Same request sequence as the pure mock, through the actual isolated pipe.
   writeFileSync(join(application, 'worker.js'), `const {createInterface}=require('node:readline');let seq=0;const pending=new Map();const send=x=>console.log(JSON.stringify(x));const rpc=(method,...args)=>new Promise((resolve,reject)=>{const id=String(++seq);pending.set(id,{resolve,reject});send({kind:'request',id,method,args});});createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.kind==='reply'){const p=pending.get(m.id);m.ok?p.resolve(m.value):p.reject(Error('Host refusal'));}else main();});async function main(){try{const rpcProtocol=${protocol.toString()};const manifest=${JSON.stringify(manifest)},payload=${JSON.stringify(payload)},request=${JSON.stringify(request)};send({kind:'done',value:await rpcProtocol(rpc)});}catch{send({kind:'done',value:{status:'blocked',observations:[],unexpectedProtocolFailure:true}});}}`);
   try {
+    const previousMockedWorkers = mockedWorkers;
     const result = await shell.run(input, bridge) as unknown as { status: string; delivered: boolean; replayDelivered: boolean; unexpectedProtocolFailure?: boolean };
+    if (!physical) assert.equal(mockedWorkers, previousMockedWorkers + 1, 'pure test must never launch a confined worker');
     const receipt = receipts.at(-1)!; const snapshot = ledger.snapshot('run');
     writeFileSync(join(root, 'summary.json'), JSON.stringify({ label, admitted, result, calls, reserved, receipts, snapshot }, null, 2));
     assert.equal(result.unexpectedProtocolFailure, undefined);
     assert.equal(result.delivered, admitted, 'unsupported response reached worker as a successful provider reply');
     assert.equal(result.status, admitted ? 'completed' : 'blocked'); assert.equal(result.replayDelivered, false); assert.equal(calls, 1);
     assert.equal(receipt.responseDigest, hash(raw)); assert.equal(receipt.responseModel, typeof response.model === 'string' ? response.model : null);
+    const responseUsage = response.usage as Record<string, JsonValue>;
+    assert.equal(Object.hasOwn(receipt, 'responseServiceTier'), Object.hasOwn(responseUsage, 'service_tier'));
+    if (Object.hasOwn(responseUsage, 'service_tier')) assert.deepEqual(receipt.responseServiceTier, responseUsage.service_tier);
     assert.equal(receipt.status, admitted ? 'succeeded' : 'uncertain');
     assert.deepEqual({ input: receipt.usage.inputTokens, output: receipt.usage.outputTokens, cost: receipt.usage.costUsd }, admitted ? { input: 7, output: 2, cost: 0.000011 } : { input: null, output: null, cost: null });
     assert.equal(snapshot.tokens, admitted ? 9 : reserved!.usage.inputTokens! + reserved!.usage.outputTokens!);
@@ -84,6 +90,7 @@ for (const [label, response, admitted] of cases) test(`Mistral host profile bind
     if (!admitted) { ledger.settle({ ...ledger.request(request.id)!, status: 'uncertain' }); assert.deepEqual(ledger.snapshot('run'), snapshot); }
     assert.throws(() => ledger.reserve(request), /identity already used/);
     assert.throws(() => ledger.reserve({ ...request, id: 'new-attempt', reservationId: 'new-attempt' }), /budget|allocation/);
+    ledger.cancel('run'); assert.deepEqual(ledger.snapshot('run'), { ...snapshot, cancelled: true });
     assert.equal(calls, 1); // Restart/reconciliation never invokes the transport.
   } finally { store.close(); if (!evidence) rmSync(root, { recursive: true, force: true }); }
 });
