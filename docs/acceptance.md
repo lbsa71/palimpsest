@@ -1,6 +1,6 @@
 # Rewrite acceptance and handoff
 
-Status: active acceptance specification, 2026-10-11. No rewrite runtime gate has passed. The old [acceptance catalogue](history/pre-aeon-2026-10-11/docs/acceptance.md) is historical; its test results are not rewrite acceptance.
+Status: active acceptance specification, 2026-10-11. C1/L01 and the bounded L03 runtime engineering gate have passed; full product qualification and H1 remain unaccepted. The [execution record](rewrite/execution.md) binds current dispositions to exact evidence. The old [acceptance catalogue](history/pre-aeon-2026-10-11/docs/acceptance.md) is historical; its test results are not rewrite acceptance.
 
 The product target is useful sustained reasoning/action at least comparable to the named mature agents, together with an independently developing, continuing Autark. Evaluate actual artifacts, observations and later behavior. Do not score hidden reasoning length, assertive language, self-praise, fixed persona compliance or activity as competence.
 

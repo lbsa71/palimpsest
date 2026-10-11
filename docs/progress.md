@@ -1,5 +1,15 @@
 # Current progress and evidence
 
+## 2026-10-11 — current integration and qualification boundary
+
+All nine lanes have source components or evaluation machinery integrated. C1/L01 and the bounded L03 engineering gate are accepted. Actual interrupted coding, retained-dependency successor loading, installed succession/offline rescue, ordinary child execution, and native comparator synthetic transport have separate source-bound evidence. Native Claude selected high/adaptive protocol and Mistral response model/tier binding now have independent reviews; neither establishes live competence.
+
+The last full aggregate at `ea5e445` recorded 633 passes, one qualification-fixture failure and seven explicit skips. The corrected case subsequently passed 1/1 under its unchanged grant; the failed aggregate is retained. Root's later `32ad37e` focused integration passed strict compilation and 107/107 pure checks. These precede the latest Mistral and governance work, which will receive appropriate joined verification. The ordinary runner now enables Node's module-mock flag so pure host-broker regressions execute in `npm test`.
+
+Current finite goals finish and independently review the substantive governance checker, then audit remaining acceptance against actual source. The full root goal remains active. See [execution](rewrite/execution.md) for exact ownership and [joined verification](rewrite/evidence/A1-L09/joined-verification-20261011.md) for preserved outcomes. Historical entries below describe their original checkpoints.
+
+**Aeon 1 and H1 remain unaccepted.** Live provider/Slack competence, both comparator results, actual elapsed developmental transfer and independently judged model-authored evolution remain open. Account access and live spending are still pending; no paid generation, external Slack send, push or production rewrite deployment has occurred.
+
 ## 2026-10-11 — host/runtime succession and recovery visibility
 
 The actual host launcher, coordinator and service can now activate candidate-bound source and a different frozen Node executable, then recover retained code with the latest lived state after failure. Separate bounded ext4 volumes contain host data and workspaces. Fresh review repaired launcher-start interruption, malformed boot selection, and a reproduced privileged systemd log-path escape. Provider continuation and H1 admission were also reviewed: H1 now requires the actual accepted release/controller/policy, and pending OpenAI tool calls are validated before any effect dispatch.

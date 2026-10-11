@@ -11,6 +11,6 @@ Start with the [Aeon plan](PLAN.md). It organizes work into two Aeons, independe
 
 The [requirements](REQUIREMENTS.md), [architecture](docs/rewrite/architecture.md), [agent-shell decision](docs/rewrite/agent-shell-decision.md), [planning workflow](docs/rewrite/workflow.md), and [engineering rules](AGENTS.md) govern the rewrite. Prompt ownership includes instructions introduced by libraries, tool descriptions, compaction and subagents. Reuse is welcome when it passes those requirements; locally maintaining a fork remains an option.
 
-The initial shell choice is **Pi agent core with locally editable dependencies**, documented in [ADR 0032](docs/adr/0032-select-pi-core-and-source-owned-dependencies.md). Rig is the Rust fallback; integration and behavioral qualification remain outstanding.
+The initial shell choice is **Pi agent core with locally editable dependencies**, documented in [ADR 0032](docs/adr/0032-select-pi-core-and-source-owned-dependencies.md). Rig is the Rust fallback. The selected core is integrated with durable execution and locally editable dependencies; live behavioral qualification remains outstanding.
 
 The [diagnosis](docs/rewrite/findings.md) records why a full redesign is warranted and how it relates to the previous plan. The [decommission receipt](docs/rewrite/decommission.md) records the actual host change. Earlier docs and source remain historical research material, with the [prior README](docs/history/pre-aeon-2026-10-11/README.md) as an archive entry point. Old startup commands are not instructions to resume that installation.
