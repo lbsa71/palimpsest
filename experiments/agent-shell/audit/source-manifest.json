@@ -62,7 +62,7 @@
       "retained": "ai/types.ts",
       "upstreamSha256": "19f632e0918cca442d3dfa3572ebabe79453dea0b1f54eadd3287a9c6b515674",
       "patch": "Retain request/message/tool/model protocol declarations; omit optional provider/classifier/image APIs and compat declarations; telemetry context opaque.",
-      "retainedSha256": "c56641bc4d428d5625b347929d7ff45410f4c8f3d520b5847db88fb105b8e30b"
+      "retainedSha256": "aa1ad5c342e4dced7c61c2c9c7652c7d18e5206d9363a6a6b2e0c39b54b93289"
     }
   ],
   "runtimeDependencies": {},
