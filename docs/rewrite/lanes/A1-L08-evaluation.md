@@ -44,7 +44,7 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Owner session | Codex /root/a1_evaluation_integration; finite adapter/protocol engineering goal complete; full lane partial |
 | Branch / worktree | codex/a1-evaluation-integration-20261011; /home/palimpsest/migration/aeon-1-20261011/evaluation-integration |
 | Base source / contract revision | Integration base e35b1f8eb18a06e397e039251af06626b2224595; C1 f11a25b consumer-checked |
-| Additional path reservations | None; use the exclusive scope above |
+| Additional path reservations | Lead integrates central evidence/status. `/root/a1_atomic_start_review` has a new finite goal in `baseline-kernel`, owning native baseline runner/test and necessary observer/worker integration plus `baseline-kernel.md`; shared kernel resource machinery remains read-only. |
 | Last handoff / evidence | V2 protocol/adapter a94a9c0; [integration handoff](../evaluation/results/2026-10-11-application-integration-v2.md), 19 evaluation tests and actual application fixture passed; foundation history preserved |
 | Blockers / next eligible task | L09 integrates actual application adapter and v2 preregistration; T05/T06 await isolated private workloads, host grant, comparator calibration/runs, real operational-boundary development and fresh independent review |
 
