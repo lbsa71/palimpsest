@@ -80,10 +80,14 @@ for (const kernel of [false, true]) test(kernel ? 'actual kernel-bounded native 
           assert.equal(read('memory.max'), String(limits.memoryBytes)); assert.equal(read('memory.swap.max'), '0');
           assert.equal(read('memory.oom.group'), '1'); assert.equal(read('pids.max'), String(limits.pids));
           assert.equal(read('cpu.max'), `${limits.cpuQuotaMicros} ${limits.cpuPeriodMicros}`);
-          const processes = read('cgroup.procs').split('\n').map(pid => readFileSync(`/proc/${pid}/comm`, 'utf8').trim());
-          assert.ok(processes.includes('codex')); assert.ok(processes.includes('node'));
+          const processes = read('cgroup.procs').split('\n').map(pid => ({
+            name: readFileSync(`/proc/${pid}/comm`, 'utf8').trim(),
+            command: readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').slice(0, 2),
+          }));
           const observation = { calls, group, memoryPeakBytes: Number(read('memory.peak')), pids: read('pids.events'), cpu: read('cpu.stat'), processes };
           observations.push(observation);
+          assert.ok(processes.some(value => value.command[0] === '/app/codex'));
+          assert.ok(processes.some(value => value.command[0] === '/runtime/node' && value.command[1] === '/app/codex-worker.mjs'));
           if (calls === 2) {
             assert.match(observation.pids, /max [1-9]\d*/); assert.match(observation.cpu, /throttled_usec [1-9]\d*/);
             assert.ok(observation.memoryPeakBytes > 16 * 1024 * 1024 && observation.memoryPeakBytes <= limits.memoryBytes);
