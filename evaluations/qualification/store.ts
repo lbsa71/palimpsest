@@ -1,4 +1,4 @@
-import { closeSync, constants, fsyncSync, fstatSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, fstatSync, openSync, readSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, identity, invariant, type ArtifactRef } from '../../packages/contracts/index.ts';
 import { hashBytes } from '../../packages/release/artifacts.ts';
@@ -40,16 +40,33 @@ export class QualificationStore {
     return { usedBytes: names.filter(file => !['writer.sqlite', 'writer.sqlite-journal'].includes(file)).reduce((total, file) => total + this.read(file).byteLength, 0), entryCount: names.length };
   }
   private path(name: string): string { return `/proc/self/fd/${this.fd}/${name}`; }
-  private read(name: string): Buffer {
+  private read(name: string, maxBytes = this.capacityBytes): Buffer {
+    this.lease.assertHeld();
+    invariant(Number.isSafeInteger(maxBytes) && maxBytes >= 0 && maxBytes <= this.capacityBytes, 'Bounded private evidence read required');
     invariant(/^[a-f0-9]{64}$/.test(name) || /^(claim|grant)-[a-f0-9]{64}$/.test(name), 'Unknown evidence name');
     const fd = openSync(this.path(name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try { const s = fstatSync(fd); invariant(s.isFile() && s.nlink === 1 && s.uid === process.getuid?.() && (s.mode & 0o077) === 0 && s.size <= this.capacityBytes, 'Private evidence file changed'); return readFileSync(fd); }
+    try {
+      const before = fstatSync(fd, { bigint: true });
+      invariant(before.isFile() && before.nlink === 1n && before.uid === BigInt(process.getuid!()) && (before.mode & 0o077n) === 0n, 'Private evidence file changed');
+      invariant(before.size <= BigInt(maxBytes), 'Private evidence exceeds read bound');
+      const bytes = Buffer.alloc(Number(before.size)); let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(fd, bytes, offset, Math.min(bytes.length - offset, 64 * 1024), offset);
+        invariant(count > 0, 'Private evidence changed during read'); offset += count;
+      }
+      const eof = readSync(fd, Buffer.alloc(1), 0, 1, bytes.length), after = fstatSync(fd, { bigint: true });
+      invariant(eof === 0 && before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs &&
+        before.mode === after.mode && before.uid === after.uid && before.gid === after.gid && before.dev === after.dev && before.ino === after.ino && after.nlink === 1n,
+      'Private evidence changed during read');
+      return bytes;
+    }
     finally { closeSync(fd); }
   }
   private write(name: string, bytes: Buffer): void {
     this.lease.assertHeld();
-    const { usedBytes: used } = this.usage();
+    const { usedBytes: used, entryCount } = this.usage();
     invariant(used + bytes.byteLength <= this.capacityBytes, 'Private evidence capacity exhausted');
+    invariant(entryCount + 1 < 4096, 'Private evidence entry limit');
     const fd = openSync(this.path(name), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o400);
     try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
     fsyncSync(this.fd);
@@ -61,13 +78,22 @@ export class QualificationStore {
     this.write(`claim-${identity(id)}`, bytes);
   }
   put(value: unknown): ArtifactRef {
-    const bytes = Buffer.from(canonicalJson(value)), sha256 = hashBytes(bytes);
+    return this.putBytes(Buffer.from(canonicalJson(value)));
+  }
+  /** Retains the exact byte stream; identical bytes deduplicate regardless of their source. */
+  putBytes(value: Uint8Array): ArtifactRef {
+    this.lease.assertHeld();
+    invariant(value instanceof Uint8Array, 'Private evidence byte array required');
+    invariant(value.byteLength <= this.capacityBytes, 'Private evidence capacity exhausted');
+    const bytes = Buffer.from(value), sha256 = hashBytes(bytes);
+    try { invariant(this.read(sha256).equals(bytes), 'Existing immutable artifact changed'); return { uri: `sha256:${sha256}`, sha256 }; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     try { this.write(sha256, bytes); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; invariant(this.read(sha256).equals(bytes), 'Existing immutable artifact changed'); }
     return { uri: `sha256:${sha256}`, sha256 };
   }
-  readArtifact(ref: ArtifactRef): Buffer {
+  readArtifact(ref: ArtifactRef, maxBytes = this.capacityBytes): Buffer {
     invariant(ref.uri === `sha256:${ref.sha256}` && /^[a-f0-9]{64}$/.test(ref.sha256), 'Content-addressed qualification artifact required');
-    const bytes = this.read(ref.sha256); invariant(hashBytes(bytes) === ref.sha256, 'Qualification artifact corrupted'); return bytes;
+    const bytes = this.read(ref.sha256, maxBytes); invariant(hashBytes(bytes) === ref.sha256, 'Qualification artifact corrupted'); return bytes;
   }
 }
