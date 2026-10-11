@@ -192,6 +192,34 @@ test('declining a pending review continuation finishes the author without cancel
     f.complete(); assert.deepEqual(f.continuations.wake(), []);
   } finally { f.close(); }
 });
+test('foreign, terminal, cancelled, fenced or malformed local acknowledgments cannot release receiver reservations', async () => {
+  for (const reason of ['cancelled', 'completed', 'scope', 'withdrawn', 'request', 'receipt', 'reservation', 'payload']) {
+    const f = fixture();
+    try {
+      const call = { id: 'enqueue', runId: f.run.id, stepId: 'step', name: 'candidate_evaluate', arguments: { changeId: f.request.proposal.id } };
+      const effects = new EffectJournal(f.store, f.authorities, { async dispatch(effect) {
+        recordEvaluationAcknowledgment(f.store, effect.id, f.request, effect.payload, { proposal: f.request.proposal, evaluation: f.mailbox.readEvaluation(f.request) });
+        throw Error('Lost local reply');
+      }, async reconcile() { throw Error('No replay'); } });
+      const runtime = new DurableRuntime({ store: f.store, effects, resources: f.resources, shell: { async run(_input, bridge) { await bridge.execute(call); return { status: 'completed', observations: [] }; } } });
+      await runtime.resume(f.run.id, f.prompt); const effect = effects.unresolved(f.run.id)[0]!;
+      if (reason === 'cancelled') runtime.cancel(f.run.id, 'operator', 'Do not continue');
+      if (reason === 'completed' || reason === 'scope') { const row = f.store.get<Run>('runs', f.run.id)!; f.store.put('runs', f.run.id,
+        { ...row.value, ...(reason === 'completed' ? { status: 'completed' as const } : { scope: { kind: 'public' as const } }) }, row.revision); }
+      if (reason === 'withdrawn') f.authorities.withdraw(f.authority);
+      if (reason === 'request') { const row = f.store.get<any>('host.evolution-jobs', f.request.requestId)!; f.store.put('host.evolution-jobs', f.request.requestId, { ...row.value, requestDigest: identity('foreign request') }, row.revision); }
+      if (reason === 'receipt') { const row = f.store.get<any>('host.evolution-acknowledgments', effect.id)!; f.store.put('host.evolution-acknowledgments', effect.id,
+        { ...row.value, receipt: f.store.putJsonArtifact({ proposal: f.request.proposal, evaluation: { ...f.mailbox.readEvaluation(f.request), policyDigest: 'foreign' } } as any) }, row.revision); }
+      if (reason === 'reservation') { const row = f.store.get<any>('requests', effect.id)!; f.store.put('requests', effect.id, { ...row.value, request: { ...row.value.request, model: 'foreign' } }, row.revision); }
+      if (reason === 'payload') { const row = f.store.get<any>('effects', effect.id)!; f.store.put('effects', effect.id, { ...row.value, payload: { changeId: 'foreign' } }, row.revision); }
+      const before = runtime.getRun(f.run.id)!;
+      const continuation = new EvolutionContinuations({ store: f.store, runtime, authorityStore: f.authorities });
+      assert.deepEqual(continuation.reconcileAcknowledgments(), [], reason); assert.deepEqual(runtime.getRun(f.run.id), before, reason);
+      assert.equal(effects.get(effect.id)!.status, 'uncertain', reason); assert.equal(f.resources.request(effect.id)!.status, 'uncertain', reason);
+      assert.equal(f.resources.snapshot(f.run.id).concurrent, 1, reason);
+    } finally { f.close(); }
+  }
+});
 test('host defers claiming a queued review until its successful local enqueue receiver releases the lineage slot', async () => {
   const f = fixture(); let dispatcher: EvaluationDispatcher | undefined;
   try {
