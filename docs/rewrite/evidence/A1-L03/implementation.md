@@ -21,7 +21,7 @@ Effects persist `pending → authorized → dispatched` before crossing the rece
 
 The selected shell owns the cognition loop. The runtime provides durable observations, prompt byte capture, physical reserve/dispatch/settle, shell checkpoints, cancellation, steering, atomic admission, explicit generation adoption and startup recovery. On resume a checkpoint reference is rebound to the current run revision while its digest and content stay unchanged. A durable message cursor prevents already-consumed inbound messages being replayed. Input values become user messages; they cannot spoof assistant/tool roles. Shell-supplied observation order is preserved and checked against durable receipts.
 
-All model requests, compaction, review, retry, child allocations and tool effects share the root envelope. Unknown usage retains configured conservative token/cost/time ceilings through restart. Recorded actual over-ceiling usage freezes further work while preserving the true observed usage. Child cancellation leaves sibling/parent allocations available; parent cancellation bars descendants. Budgets enforce reservations, elapsed deadlines and concurrency before dispatch. Physical records cannot change provider/model/digest/parent/allocation identity during dispatch or settlement.
+All model requests, compaction, review, retry, child allocations and tool effects share the root envelope; each child and its descendants also enforce that child’s narrower envelope. Unknown usage retains configured conservative token/cost/time ceilings through restart. Recorded actual over-ceiling usage freezes further work while preserving the true observed usage. Child cancellation leaves sibling/parent allocations available; parent cancellation bars descendants. Budgets enforce reservations, elapsed deadlines and concurrency before dispatch. Physical records cannot change provider/model/digest/parent/allocation identity during dispatch or settlement.
 
 ## Observed checks
 
@@ -32,7 +32,7 @@ node node_modules/typescript/bin/tsc --noEmit
 node --test packages/storage/test/storage.test.ts packages/effects/test/effects.test.ts packages/runtime/test/runtime.test.ts packages/runtime/test/resources.test.ts packages/runtime/test/shell-joined.test.ts
 ```
 
-Strict typecheck passed. The combined suite passed 16 cases, zero failures/skips. Evidence includes real child-process `SIGKILL`, SQLite reopen and continuation, rather than memory-only reducers:
+Strict typecheck passed. The combined suite passed 18 cases, zero failures/skips. Evidence includes real child-process `SIGKILL`, SQLite reopen and continuation, rather than memory-only reducers:
 
 | Boundary | Observed retained state / behavior |
 |---|---|
@@ -54,5 +54,7 @@ The initial joined checks exposed string artifact encoding and receipt source/in
 `OperationalStore` is the single storage engine for runtime/development/initiative namespaces. L04/L05 own their meanings; root owns overall configuration and startup. `EffectJournal(store, authorityStore, receiver)` accepts the root `AuthorityStore.assert` API. The receiver must assert at its physical boundary too. `ResourceLedger(store, perRequestCeiling)` requires explicit conservative host ceilings. `DurableRuntime({store,shell,effects,resources})` offers `admit`, `steer`, `resume`, `cancel`, `recover`, `adopt`, `getRun`, `observations` and a C1 `bridge`.
 
 Call `recover()` only after the supervisor obtains exclusive serving authority. Explicitly adopt resumable old-generation runs. Reconcile effects before resumption; settle physical usage receipts independently when available. Unknown usage is never silently zeroed. State directories remain outside source checkouts and are not copied when selecting another executable generation.
+
+Bridge settlement/dispatch rejects foreign run receipts. Checkpoint reads require the assigned artifact/shell/observation index; checkpoint writes require currently running authority, including after cancellation. Late usage settlement for the bridge’s own run remains permitted. A cancelled shell cannot persist a final drained transcript after cancellation, but previously committed checkpoints and all effect/request records survive. Host broker isolation (no candidate keys or storage handles) is root-owned and pending; current fixtures call trusted in-process bridges.
 
 Pending: independent consequential review; production L06 receiver and L07 inbox/obligation integration; authentic provider/tool transport receipts and real interruption/recovery matrix; explicit live model spend/qualification; held-out evaluation and H1. Fixture tools simulate inspect/edit/test outcomes, so they prove bridge/recovery mechanics rather than real coding competence. This is an early implementation handoff, not final A1-L03 acceptance.
