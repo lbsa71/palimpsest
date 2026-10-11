@@ -1,5 +1,13 @@
 # Current progress and evidence
 
+## 2026-10-11 — frozen service, recovery and ordinary evolution tools
+
+The ordinary service now includes the accounted Pi action loop, developmental initiative, source-editing tools and durable external evaluation/release requests. The coordinator can transfer, stage controls and recover retained accepted code with current operational state; fresh reviews repaired repeated rescue loops, host I/O boundaries and authenticated proposal lineage. Installation rendering and disposable resource/mount checks pass. Authenticated health separates a living process from action admission held by authority, capacity or resources.
+
+The last full aggregate was **312 passing tests plus strict check/build at `b52aac2`**; subsequent service, coordinator, evolution and health checks passed separately and require a new joined run. Three finite goals are active in parallel for provider portability, actual coordinator replacement, and bounded host-data storage. [The execution record](rewrite/execution.md) lists exact revisions, ownership and open work.
+
+**Aeon 1 and H1 remain unaccepted.** There has been no paid inference, comparator scoring, external Slack send, push or replacement deployment. The source-bound Aeon 2 task pack is available for preparation; it does not grant an operational handoff. Live API budget and Claude Code access remain pending, while implementation continues.
+
 ## 2026-10-11 — joined application, review and service qualification
 
 All nine lanes now have implemented components or evaluation machinery integrated locally. The actual confined application executes iterative tools, delegated child runs, consolidation and durable owed replies; frozen release machinery handles probation, staged controls and provider-independent recovery. Fresh review continues to find and repair concrete scope, accounting and process-lifecycle defects. Source and runtime dependency closures are explicit, and there are no installed npm runtime dependencies.

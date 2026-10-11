@@ -55,7 +55,7 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 |---|---|
 | Owner session | `/root` — active full Aeon 1 implementation goal |
 | Branch / worktree | `codex/aeon-1-implementation-20261011`; `/home/palimpsest/src/palimpsest` |
-| Base source / contract revision | `14c7420`; C1 draft being coordinated with L01 |
+| Base source / contract revision | Rewrite base `14c7420`; integrated C1 contracts, ordinary service/evolution at `40791cb`, health at `8179fba` |
 | Additional path reservations | Root configuration/lockfile, integration entry points and `docs/rewrite/execution.md` |
-| Last handoff / evidence | Initial supervisor checks in progress; see [boundary and failures](../evidence/A1-L09/boundary.md) |
-| Blockers / next eligible task | Build exact candidate/evidence admission; integrate C1 and component adapters. H1 remains open. |
+| Last handoff / evidence | See [execution record](../execution.md), [coordinator review](../evidence/A1-L09/coordinator-review.md), [ordinary evolution mailbox](../evidence/A1-L09/evolution-host.md), and [installation checks](../evidence/A1-L09/installation.md). Engineering fixtures and component reviews remain separate from product acceptance. |
+| Blockers / next eligible task | Parallel whole-host replacement, bounded host storage and provider portability; independent evaluator wiring, fresh joined review, live qualification and H1 witness remain open. Paid grant and Claude Code access are pending. |

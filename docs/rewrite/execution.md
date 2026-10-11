@@ -2,6 +2,32 @@
 
 Implementation authorized 2026-10-11 by the user: “start work, set a goal to implement aeon 1 with maximal parallelism. Make sure subagents has goals as well.” The lead's active goal covers all nine lanes and H1 without reducing the acceptance gates. Every delegated session must create a finite goal and record its claim, evidence and remaining integration work.
 
+## Current disposition — service and evolution integration
+
+This section supersedes historical activity labels below. All nine lanes have source components or evaluation machinery integrated, but **no lane is accepted as a complete product capability and H1 is unaccepted**. The full lead goal remains active. Finite component/review goals release their slots after verified handoff; they do not inherit or falsely complete the full Aeon goal.
+
+Recent integrated handoffs:
+
+- Frozen ordinary service, pinned runtime and prompts, real kernel-limited application/source-tool fixture: `451d5ca`, `b52aac2`, `6c97c75`. The corrected aggregate at `b52aac2` passed strict check, **312 tests**, and build; that result predates later changes and is not the current aggregate. The original eight integration failures and corrected evidence are retained in [service integration](evidence/A1-L09/service-integration.md).
+- Fresh application review fixed scope disclosure/mutation, run-owned progress, atomic child/report registration and lost steering; first start now admits one accounted, attributed developmental initiative without invented history or a preset identity (`e0a3d48`, `6c639bd`, `24408ec`).
+- Fresh resource review reproduced and repaired a parent-death launch race (`27a2ecf`). The real bounded application fixture ran iterative edit/failure/repair/verification plus source checkout under the same cgroup profile. Disposable service, loop mount and cgroups were removed.
+- Model-accessible change/freeze/evaluate/submit tools (`119b2e9`), followed by fresh host-origin and frozen-policy continuity repairs (`6c97c75`, `6adba9d`). The ordinary frozen service now exposes these tools through a durable external-proof mailbox (`40791cb`). The engineering fixture reaches the real staged-control controller; no automatic live evaluator has been configured and no model-authored live release is claimed.
+- Fresh artifact/host boundary review repaired nine reproduced read, snapshot, privacy and lifecycle defects (`ae71979`, `b279425`). Coordinator and owner-only control CLI integration (`fe164ce`) was followed by bounded rescue retries, bounded shutdown sockets and descriptor-pinned host I/O repairs (`8f07e66`, `6b57e91`); see [coordinator review](evidence/A1-L09/coordinator-review.md).
+- Initial installation render/apply/check/stop/uninstall (`2fc354f`) passed systemd unit validation and disposable mount/remount plus confined-worker checks. No production unit was installed. Its workspace-only storage limit is being extended, not treated as final RW16 acceptance.
+- The exact source-bound Aeon 2 task pack and read-only handoff tools (`ae439ed`) are wired into the ordinary service. Its five lanes and 26 tasks are preparation; the host-only H1 witness gate has no accepted live record.
+- Authenticated direct `/health` (`8179fba`) distinguishes process liveness from held action admission without spending on a model probe. A real HTTP regression covers cancelled resources and withdrawn authority; it does not assert provider connectivity or cognition.
+
+Current exclusive finite goals, all created through the goal tool:
+
+| Session / worktree | Ownership | Acceptance and limits |
+|---|---|---|
+| `/root/a1_provider_portability`; `provider-portability` | Pi/provider transport, provider config/gateway/broker and coordinated application provider seams | Explicit OpenAI Responses alternative, Mistral default retained; native continuation, physical accounting and owned instructions; fixture-only qualification, no paid calls |
+| `/root/a1_whole_host`; `whole-host` | Coordinator/CLI successor activation and new host launcher, coordinated installation seam | Actual accepted coordinator/evaluator source takeover plus retained offline rescue using latest operational state; child-only replacement is insufficient |
+| `/root/a1_installation`; `installation` | Installation/provisioning and operations documentation | Persistent fixed-capacity host data volume, separate bounded workspace, disposable mount checks and complete cleanup; no production install |
+| `/root`; integration checkout | Serialized integration/configuration, H1 handoff, health, evidence/status and final qualification | Fresh reviews and joined verification; paid comparison/development runs require the pending explicit grant and comparator access |
+
+Open implementation/qualification work remains explicit: whole-host/runtime replacement; bounded cumulative host storage; independent executable evaluation/observer wiring; fresh review of the latest joins; provider qualification; real Slack recovery/conversation; both baseline comparisons; actual elapsed developmental transfer; independently checked model-authored non-cognition/evaluator changes; and the H1 plan-execution witness. A callback or fixture is not an independently operating evaluator. Neither comparator has generated a scored result. Claude Code runtime/account location and the live API budget remain unanswered user questions. No live generation, external Slack send, push or rewrite deployment has occurred.
+
 Integration checkout: `/home/palimpsest/src/palimpsest`, branch `codex/aeon-1-implementation-20261011`, starting revision `14c7420`. Four concurrent execution slots are available. The lead owns L09 and integrates independent work from three isolated worktrees; subsequent component work starts as slots and contracts become available. Root configuration and lockfiles have one writer.
 
 | Lane | Current owner / worktree | Goal scope | State |
