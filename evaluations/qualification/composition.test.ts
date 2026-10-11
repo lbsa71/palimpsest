@@ -43,14 +43,20 @@ test('authenticated synthetic observer invokes actual confined application and p
     const issued = Date.now() - 1000;
     const e: Experiment = { version: 1, id: 'synthetic-composition', grantId: 'one-original-synthetic-grant', kind: 'integration', candidate: candidate.manifest, configurationDigest: identity(JSON.parse(JSON.stringify(config))), protocolDigest, calibrationPlanDigest,
       privatePacketDigest: identity(packet), observerArtifactDigest: implementation.artifact.sha256, evaluatorId: 'synthetic-observer', priorPolicyDigest: policy.policyDigest, resources, issuedAt: new Date(issued).toISOString(), expiresAt: new Date(issued + resources.maxElapsedMs).toISOString(), maxEvidenceBytes: 8 * 1024 * 1024, maxArtifactBytes: 1_000_000 };
-    let calls = 0; const transport = boundedCodingFixture();
+    let calls = 0; let transportFailure: string | null = null; const transport = boundedCodingFixture();
     const options = { experiment: signDocument('aeon.qualification.experiment.v1', e, 'synthetic-issuer', issuerKey), trust, store, privateRoot, packetFile, host, authorityStore, authority, secrets: { mistralApiKey: 'fixture-not-a-provider-key', directToken: 'private-fixture-direct' } };
     const receipt = await observeSynthetic(options, async (payload, signal) => {
-      calls++; assert.equal(payload.includes('hidden-positive'), false); assert.equal(payload.includes('9999'), false); assert.equal(payload.includes(privateRoot), false); signal.throwIfAborted(); return transport(payload);
+      calls++;
+      try {
+        assert.equal(payload.includes('hidden-positive'), false, 'Private check ID entered model payload');
+        assert.equal(payload.includes('9999'), false, 'Private numeric input entered model payload');
+        assert.equal(payload.includes(privateRoot), false, 'Private directory entered model payload');
+        signal.throwIfAborted(); return await transport(payload);
+      } catch (error) { transportFailure = error instanceof Error ? error.stack ?? error.message : String(error); throw error; }
     });
     const bundle = JSON.parse(store.readArtifact(receipt.bundle).toString('utf8')) as ObservationBundle;
     // Retain bounded synthetic diagnostics in the test transcript before assertions/cleanup.
-    console.log(JSON.stringify({ kind: bundle.kind, failure: bundle.failure, assessment: bundle.assessment, calls, commands: bundle.commands.length, physicalRequests: bundle.ledger?.requests.map(request => ({ id: request.id, provider: request.provider, status: request.status, usage: request.usage })), originalAdapterReport: JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8')) }));
+    console.log(JSON.stringify({ kind: bundle.kind, failure: bundle.failure, transportFailure, assessment: bundle.assessment, calls, commands: bundle.commands.length, physicalRequests: bundle.ledger?.requests.map(request => ({ id: request.id, provider: request.provider, status: request.status, usage: request.usage })), originalAdapterReport: JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8')) }));
     assert.equal(bundle.kind, 'integration'); assert.equal(bundle.failure, null); assert.equal(bundle.assessment?.quality, 3);
     assert.equal(calls, 7); assert.equal(bundle.commands.length, 2); assert.equal(bundle.ledger?.startedAt, issued); assert.deepEqual(bundle.ledger?.envelope, resources); assert.equal(bundle.ledger?.cancelled, true);
     assert.equal(bundle.ledger?.requests.filter(request => request.provider === 'qualification-command').length, 2);
