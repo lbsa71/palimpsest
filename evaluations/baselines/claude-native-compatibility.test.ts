@@ -92,6 +92,8 @@ for (const [label, change] of Object.entries({
   changedMidturnEffort: (b: any): unknown => b.messages[1].output_config.effort = 'low',
   hostedCaller: (b: any): unknown => b.messages[2].content[2].caller = { type: 'code_execution_20260120', tool_id: 'hosted' },
   deferredTool: (b: any): unknown => b.tools[0].defer_loading = true,
+  changedDisplay: (b: any): unknown => b.thinking.display = 'omitted',
+  missingDisplay: (b: any): unknown => delete b.thinking.display,
   missingThinking: (b: any): unknown => delete b.thinking,
   missingEffort: (b: any): unknown => delete b.output_config,
   zeroPrewarm: (b: any): unknown => b.max_tokens = 0,
@@ -109,6 +111,13 @@ for (const [label, change] of Object.entries({
   try { await assert.rejects(f.observer.handle(attempt()), /outcome unknown/); const s = f.observer.ledger.snapshot(f.g.id); assert.equal(s.tokens, 100 + CAP); assert.equal(s.costUsd, (100 * 8 + CAP * 20) / 1_000_000); assert.equal(s.cancelled, true);
     await assert.rejects(f.observer.handle(attempt()), /budget|allocation/); assert.equal(f.calls(), 1);
   } finally { f.dispose(); }
+});
+
+test('the pinned native label covers only the captured high-effort configuration', () => {
+  for (const effort of ['low', 'medium', 'xhigh', 'max'] as const) { const f = grant(); f.profile.effort = effort;
+    const root = mkdtempSync(join(tmpdir(), 'aeon-opus-profile-')); const store = new OperationalStore({ filename: join(root, 'state.sqlite') });
+    try { assert.throws(() => new BaselineObserver({ store, grant: f, transport: async () => { throw new Error('never'); } }), /high-effort profile/); assert.equal(store.list('requests').length, 0); } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 test('pinned native compatibility cannot silently become a paid transport or a different native binary', async () => {

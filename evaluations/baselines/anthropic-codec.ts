@@ -42,7 +42,7 @@ export function validateAnthropicProfile(profile: BaselineProfile): void {
   invariant(profile.provider === 'anthropic' && profile.anthropic, 'explicit first-party Anthropic profile required');
   fields(profile.prices as unknown as Record<string, unknown>, ['source', 'inputUsdPerMillion', 'cachedInputUsdPerMillion', 'outputUsdPerMillion', 'cacheWrite5mUsdPerMillion', 'cacheWrite1hUsdPerMillion']);
   const options = profile.anthropic; fields(options as unknown as Record<string, unknown>, ['thinking', 'thinkingBudgetTokens', 'serviceTier', 'inferenceGeo', 'speed', 'nativeProtocol']);
-  if (options.nativeProtocol) { validateNativeProtocol(options.nativeProtocol); invariant(profile.model === 'claude-opus-5-5' && options.thinking === 'adaptive', 'pinned native protocol requires declared Opus adaptive profile'); }
+  if (options.nativeProtocol) { validateNativeProtocol(options.nativeProtocol); invariant(profile.model === 'claude-opus-5-5' && options.thinking === 'adaptive' && profile.effort === 'high', 'pinned native protocol requires declared Opus adaptive high-effort profile'); }
   invariant(options.serviceTier === 'standard' && options.inferenceGeo === 'global' && options.speed === 'standard', 'unpriced Anthropic tier/geography/speed refused');
   invariant(['adaptive', 'enabled', 'disabled'].includes(options.thinking), 'explicit thinking profile required');
   if (options.thinking === 'enabled') invariant(count(options.thinkingBudgetTokens) >= 1024 && options.thinkingBudgetTokens! < profile.maxOutputTokens, 'manual thinking requires at least 1,024 tokens below the output cap');
@@ -83,6 +83,7 @@ export function validateAnthropicPayload(body: Record<string, unknown>, profile:
     const thinking = object(body.thinking); fields(thinking, ['type', 'budget_tokens', 'display']); invariant(thinking.type === profile.anthropic!.thinking, 'thinking differs from immutable host profile');
     invariant(thinking.budget_tokens === profile.anthropic!.thinkingBudgetTokens, 'thinking budget differs from profile');
     invariant(thinking.display === undefined || ['summarized', 'omitted', ...(profile.anthropic?.nativeProtocol ? ['updates'] : [])].includes(String(thinking.display)), 'unknown thinking display');
+    if (profile.anthropic?.nativeProtocol) invariant(thinking.display === 'updates', 'pinned Opus native profile requires explicit updates display');
     if (thinking.display === 'updates') invariant(profile.anthropic?.nativeProtocol?.beta.split(',').includes('thinking-display-updates-2026-08-18'), 'thinking updates requires its native beta pair');
   }
   if (body.metadata !== undefined) { const metadata = object(body.metadata); fields(metadata, ['user_id']); invariant(typeof metadata.user_id === 'string', 'invalid metadata'); }
