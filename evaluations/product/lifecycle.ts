@@ -39,6 +39,7 @@ function gone(value: ProcessIdentity) { const current = processIdentity(value.pi
 export function captureLifecycle(stateDirectory: string, servingPid?: number): Snapshot {
   const state = new OperationalStore({ filename: join(stateDirectory, 'operational.sqlite') });
   try {
+    return state.transaction(() => {
     const documents = Object.fromEntries(namespaces.map(namespace => [namespace, state.list(namespace)])) as Record<string, Rows>;
     const events = state.events(); invariant(events.length <= 2000 && documents.requests!.length <= 180 && documents.runs!.length <= 8, 'Lifecycle record bounds exceeded');
     const artifacts = new Map<string, Snapshot['artifacts'][number]>(); let artifactBytes = 0;
@@ -62,6 +63,7 @@ export function captureLifecycle(stateDirectory: string, servingPid?: number): S
     const hostObservation = { readerProcess: processIdentity(process.pid), servingProcess: servingPid ? processIdentity(servingPid) : null, authority };
     const snapshot = { at: new Date().toISOString(), documents, events, artifacts: [...artifacts.values()], files, ledger, hostObservation };
     invariant(Buffer.byteLength(JSON.stringify(snapshot)) <= 32_000_000, 'Lifecycle snapshot byte bound exceeded'); return snapshot;
+    });
   } finally { state.close(); }
 }
 function value(snapshot: Snapshot, namespace: string, key: string) { return snapshot.documents[namespace]?.find(row => row.key === key)?.value; }
@@ -118,7 +120,9 @@ export function assessLifecycle(witness: LifecycleWitness) {
     const source = saved?.compactions?.find((item: any) => item.sourceDigest === identity(prefixes[0] ?? []));
     check('ordinary-threshold-compaction-manifest', compact.length === 1 && compact[0]!.request.status === 'succeeded' && compact[0]!.prompt.manifest.fragments.some((fragment: any) => fragment.id === 'application.compaction' && artifact(final, fragment.artifact) === compactionPrompt) && compact[0]!.prompt.manifest.fragments.some((fragment: any) => fragment.id === 'shell.tools' && artifact(final, fragment.artifact) === '[]') && (compact[0]!.payload.tools ?? []).length === 0 && prefixes[0]!.length + 20 > 60 && typeof summary === 'string' && source?.summary.content.some((block: any) => block.type === 'text' && block.text === summary) && responseRecord?.response.sha256 === value(final, 'host-transport', compact[0]!.request.id)?.responseDigest, { compact, responseRecord, response, compactions: saved?.compactions, prefixMessages: prefixes.map(prefix => prefix.length) });
     const continued = physical.filter(row => row.request.purpose === 'reasoning' && row.payload?.messages?.some((message: any) => message.role === 'user' && message.content === summary) && Date.parse(value(final, 'screen.lifecycle-provider-responses', row.request.requestDigest)?.recordedAt ?? '') >= Date.parse(responseRecord?.recordedAt ?? ''));
-    check('context-reclaimed-with-original-constraint', typeof summary === 'string' && summary.includes('indigo') && continued.length > 0 && continued.some(row => row.payload.messages.length <= 25 && row.payload.messages.length < (prefixes[0]?.length ?? 0) + 20) && successfulEffects(final, runId, 'workspace_read').filter(effect => effect.payload.path.startsWith('notes/')).length >= 31 && final.files[runId]?.['answer.json'] === '{"origin":"indigo","notes":32}\n' && hasRead(final, runId, 'answer.json', '{"origin":"indigo","notes":32}\n'), { continued: continued.map(row => ({ request: row.request, messages: row.payload.messages.length })), sourceMessages: (prefixes[0]?.length ?? 0) + 20, files: final.files[runId] });
+    const publicNotes = lifecycleWorkload('S09').files;
+    const notesObserved = Array.from({ length: 32 }, (_, index) => { const path = `notes/${index}.json`; return hasRead(final, runId, path, publicNotes[path]!); });
+    check('context-reclaimed-with-original-constraint', typeof summary === 'string' && summary.includes('indigo') && continued.length > 0 && continued.some(row => row.payload.messages.length <= 25 && row.payload.messages.length < (prefixes[0]?.length ?? 0) + 20) && notesObserved.every(Boolean) && final.files[runId]?.['answer.json'] === '{"origin":"indigo","notes":32}\n' && hasRead(final, runId, 'answer.json', '{"origin":"indigo","notes":32}\n'), { continued: continued.map(row => ({ request: row.request, messages: row.payload.messages.length })), sourceMessages: (prefixes[0]?.length ?? 0) + 20, notesObserved, files: final.files[runId] });
   }
   if (caseId === 'S11') {
     const effects = final.documents.effects!.map(row => row.value).filter(effect => effect.runId === runId && effect.kind === 'speech_send'), uncertain = boundary?.documents.effects?.map(row => row.value).filter(effect => effect.runId === runId && effect.status === 'uncertain') ?? [];

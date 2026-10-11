@@ -22,7 +22,7 @@ export function configureLifecycle(config: ApplicationConfig) {
   return config;
 }
 export function lifecycleWorkload(caseId: LifecycleCase) {
-  if (caseId === 'S09') return { prompt: 'Read each public note sequentially. Preserve the indigo origin tag through ordinary context compaction. Write answer.json with origin:indigo and notes:32; explicitly report verified completion.', files: Object.fromEntries(Array.from({ length: 36 }, (_, i) => [`notes/${i}.json`, `${JSON.stringify({ id: `public-note-${i}`, origin: 'indigo', value: i })}\n`])) };
+  if (caseId === 'S09') return { prompt: 'Read public notes0 through31 sequentially. Preserve the indigo origin tag through ordinary context compaction. Write answer.json with origin:indigo and notes:32; explicitly report verified completion.', files: Object.fromEntries(Array.from({ length: 36 }, (_, i) => [`notes/${i}.json`, `${JSON.stringify({ id: `public-note-${i}`, origin: 'indigo', value: i })}\n`])) };
   if (caseId === 'S11') return { prompt: '<@BOT> Deliver the local result exactly once. After host recovery retain the actual receipt; do not repeat the delivery.', files: {} };
   return { prompt: 'Read state.json and retain its actual observation. Wait for the authenticated correction, then write value9 with the observed digest, read it back and explicitly report the result. For the prompt-transition task, use a real inspected and accepted child result.', files: { 'state.json': '{"value":4}\n' } };
 }
