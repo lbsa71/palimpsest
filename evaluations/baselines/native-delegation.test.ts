@@ -11,7 +11,7 @@ import { runNativeBaseline } from './run-native.ts';
 import type { NativeBaselineRun } from './run-native.ts';
 import type { CodexNativeProtocol } from './codex-native-protocol.ts';
 import { claudeInvocation } from './claude-configuration.ts';
-import { codexChildIndex, codexObservedToolOutput, codexParentReceipt, claudeChildIdentity, claudeParentReceipts } from './native-delegation-fixture.ts';
+import { codexChildIndex, codexObservedToolOutput, codexParentReceipt, claudeChildIdentity, claudeParentReceipts, claudeTaskBindings } from './native-delegation-fixture.ts';
 
 const hashes = ['ab55e3cee93fc5fd90cd7ed85197f7c8423beeb52836ad99770c4cd83fb779b9', '04ef8c718640204d79a6a8256bf76e4b9be6712075685a448f7b10fa401d79a8'];
 const native: CodexNativeProtocol = { kind: 'agent-message-v1', codexVersion: 'codex-cli 0.162.1', codexSha256: '628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1', helperSha256: 'ec71830690a7c0024916ee0c99fbdc635bc6e747ff665ea4f03a8389bbcb6b30', qualification: 'synthetic-only' };
@@ -150,4 +150,33 @@ test('delegation beta cannot be substituted into the ordinary coding profile or 
   let fetched = false;
   await assert.rejects(async () => anthropicTransport('PUBLIC_FIXTURE_KEY', (async () => { fetched = true; return new Response(); }) as typeof fetch)('{}', new AbortController().signal, { version: '2023-06-01', beta: delegationBeta }));
   assert.equal(fetched, false);
+});
+
+test('exact acquired child requests require paired omitted beta/display and native child identity', async () => {
+  const { nativeProtocolHeaders } = await import('./anthropic-native-protocol.ts');
+  for (const index of [0, 1]) {
+    const payload = readFileSync(new URL(`./fixtures/claude-delegation-child-${index}-2.1.296.json`, import.meta.url), 'utf8');
+    assert.equal(createHash('sha256').update(payload).digest('hex'), ['952877d5856ce73367e6b055118a3fdddccfbffc3cfb9f624a264e6049c3e371', '9bf655f80fd1fb2b5a0f7d7767258d503884d6d7c7a3758f59fc3ae824a18f45'][index]);
+    const original = JSON.parse(readFileSync(new URL('./fixtures/claude-delegation-child-http-2.1.296.json', import.meta.url), 'utf8'));
+    const headers = { ...original.headers, 'x-claude-code-agent-id': `native_child_${index}`, 'x-claude-code-session-id': 'original_session' };
+    const profile = claudeDelegationGrant().profile;
+    const attempt = { method: 'POST', path: '/v1/messages', payload, nativeHttp: { ...original, headers } };
+    assert.equal(nativeProtocolHeaders(attempt, profile)!.beta, original.headers['anthropic-beta']);
+    for (const patch of [{ thinking: { type: 'adaptive', display: 'updates' } }, { thinking: { type: 'disabled' } }, { output_config: { effort: 'low' } }]) assert.throws(() => nativeProtocolHeaders({ ...attempt, payload: JSON.stringify({ ...JSON.parse(payload), ...patch }) }, profile));
+    for (const patch of [{ 'x-claude-code-agent-id': undefined }, { 'x-claude-code-agent-id': '' }, { 'anthropic-beta': delegationBeta }, { 'anthropic-beta': headers['anthropic-beta'] + ',unknown' }]) assert.throws(() => nativeProtocolHeaders({ ...attempt, nativeHttp: { ...original, headers: { ...headers, ...patch } } }, profile));
+    const f = fixture(claudeDelegationGrant());
+    try { const { validateAnthropicPayload } = await import('./anthropic-codec.ts'); validateAnthropicPayload(JSON.parse(payload), profile); } finally { f.close(); }
+  }
+});
+
+test('task-start witnesses bind actual child IDs to emitted Agent call IDs and returned finals', () => {
+  const starts = [0, 1].map(index => ({ type: 'system', subtype: 'task_started', task_type: 'local_agent', subagent_type: 'general-purpose', spawn_depth: 1, is_backgrounded: false, task_id: `native_${index}`, tool_use_id: `tool_spawn_${index}` }));
+  const request = { messages: [{ role: 'user', content: [0, 1].map(index => ({ type: 'tool_result', tool_use_id: `tool_spawn_${index}`, content: [{ type: 'text', text: `child-${index + 1}-observed\n\nagentId: native_${index} (native diagnostic)` }] })) }] };
+  const stdout = starts.map(event => JSON.stringify(event)).join('\n');
+  assert.equal(claudeTaskBindings(stdout, ['native_0', 'native_1'], request), true);
+  assert.equal(claudeTaskBindings(stdout, ['native_1', 'native_0'], request), false);
+  assert.equal(claudeTaskBindings(stdout, ['native_0', 'native_0'], request), false);
+  assert.equal(claudeTaskBindings(stdout, ['foreign', 'native_1'], request), false);
+  assert.equal(claudeTaskBindings(stdout.replace('tool_spawn_1', 'tool_spawn_0'), ['native_0', 'native_1'], request), false);
+  assert.equal(claudeTaskBindings(stdout, ['native_0', 'native_1'], { messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(request) }] }] }), false);
 });

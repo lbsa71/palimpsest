@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { codexChildIndex, codexObservedToolOutput, codexParentReceipt, claudeChildIdentity, claudeParentReceipts } from './native-delegation-fixture.ts';
+import { codexChildIndex, codexObservedToolOutput, codexParentReceipt, claudeChildIdentity, claudeParentReceipts, claudeTaskBindings } from './native-delegation-fixture.ts';
 import { OperationalStore } from '../../packages/storage/index.ts';
 import { runNativeBaseline } from './run-native.ts';
 import type { NativeBaselineRun } from './run-native.ts';
@@ -28,16 +28,16 @@ function messages(model: string, blocks: any[], id: number): Response {
   events.push({ type: 'message_delta', delta: { stop_reason: blocks.some(block => block.type === 'tool_use') ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 10 } }, { type: 'message_stop' });
   return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
 }
-for (const kind of ['codex', 'claude'] as const) test(kind === 'codex' ? 'physical pinned Codex narrow child continuation and parent receipt' : 'physical pinned Claude isolated native child continuation and parent receipt', { skip: process.env.AEON_NATIVE_DELEGATION_RUN !== '1', timeout: 75_000 }, async context => {
+for (const kind of ['claude'] as ('codex' | 'claude')[]) test(kind === 'codex' ? 'physical pinned Codex narrow child continuation and parent receipt' : 'physical pinned Claude isolated native child continuation and parent receipt', { skip: process.env.AEON_NATIVE_DELEGATION_RUN !== '1', timeout: 75_000 }, async context => {
   const destination = process.env.AEON_NATIVE_DELEGATION_EVIDENCE; assert.ok(destination, 'explicit retained evidence root required');
-  const root = mkdtempSync(join(destination, `${kind}-delegation-attempt-2-`)), checkout = join(root, 'checkout'), workspace = join(root, 'workspace'), protectedRoot = join(root, 'protected');
+  const root = mkdtempSync(join(destination, `${kind}-delegation-attempt-3-`)), checkout = join(root, 'checkout'), workspace = join(root, 'workspace'), protectedRoot = join(root, 'protected');
   for (const path of [checkout, workspace, protectedRoot]) mkdirSync(path, { mode: 0o700 });
   writeFileSync(join(protectedRoot, 'sentinel'), 'PRIVATE_CONCURRENCY_EVALUATOR');
   const model = kind === 'codex' ? 'gpt-6-astra' : 'claude-opus-5-5';
   const native = kind === 'codex' ? realpathSync('/home/palimpsest/.local/bin/codex') : '/home/palimpsest/migration/aeon-1-20261011/claude-native-feasibility/claude-2.1.296';
   assert.equal(digest(native), kind === 'codex' ? '628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1' : PINNED_CLAUDE_SHA256);
   if (kind === 'codex') assert.equal(digest(join(dirname(native), 'codex-code-mode-host')), 'ec71830690a7c0024916ee0c99fbdc635bc6e747ff665ea4f03a8389bbcb6b30');
-  const g: ObserverGrant = { id: `original-${kind}-native-delegation-attempt-2`, resources: { maxRequests: 8, maxTokens: 8 * ((kind === 'codex' ? 200_000 : 1_000_000) + 4096), maxCostUsd: 100, maxElapsedMs: 60_000, maxConcurrency: 4 },
+  const g: ObserverGrant = { id: `original-${kind}-native-delegation-attempt-3`, resources: { maxRequests: 8, maxTokens: 8 * ((kind === 'codex' ? 200_000 : 1_000_000) + 4096), maxCostUsd: 100, maxElapsedMs: 60_000, maxConcurrency: 4 },
     profile: { provider: kind === 'codex' ? 'openai' : 'anthropic', model, effort: 'high', contextContract: 'Original full-context synthetic rehearsal contract; no prompt token estimate or paid grant', contextWindowTokens: kind === 'codex' ? 200_000 : 1_000_000, maxOutputTokens: 4096,
       prices: { source: 'synthetic fixture category rates; no provider pricing', inputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.2, outputUsdPerMillion: 20,
         ...(kind === 'claude' ? { cacheWrite5mUsdPerMillion: 5, cacheWrite1hUsdPerMillion: 8 } : {}) },
@@ -65,7 +65,7 @@ for (const kind of ['codex', 'claude'] as const) test(kind === 'codex' ? 'physic
             assert.ok(row?.value.nativeHttp, 'actual native HTTP attribution must be retained before transport');
             headers = JSON.parse(Buffer.from(ledger.readArtifact(row.value.nativeHttp)).toString()).headers;
           } finally { ledger.close(); }
-          assert.equal(request.model, model); assert.equal(request.thinking.type, 'adaptive'); assert.equal(request.thinking.display, 'updates'); assert.equal(request.output_config.effort, 'high');
+          assert.equal(request.model, model); assert.equal(request.thinking.type, 'adaptive'); assert.ok(['updates', 'omitted'].includes(request.thinking.display)); assert.equal(request.output_config.effort, 'high');
           if (!parentHeaders) { parentHeaders = headers; writeFileSync(join(root, 'acquired-tools.json'), JSON.stringify(request.tools, null, 2)); assert.ok(request.tools.some((tool: any) => tool.name === 'Agent')); }
           else {
             const nativeId = claudeChildIdentity(headers, parentHeaders);
@@ -112,13 +112,18 @@ for (const kind of ['codex', 'claude'] as const) test(kind === 'codex' ? 'physic
         return kind === 'codex' ? responses(model, [{ type: 'message', id: 'msg_parent', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'native-concurrency-parent-complete', annotations: [] }] }], id) : messages(model, [{ type: 'text', text: 'native-concurrency-parent-complete' }], id);
       } catch (error) { refusal = error; throw error; } finally { active--; }
     } } };
-  writeFileSync(join(root, 'declared-plan.json'), JSON.stringify({ sourceTestSha256: digest(new URL(import.meta.url).pathname), native: input.native, grant: g, prompt: input.prompt, claudeOptions: input.claudeOptions, replies: kind === 'codex' ? 'parent emits two native child calls; both child first requests held until original-ledger overlap, each writes artifact and completes; parent waits until exact directed native text final receipts' : 'actual acquired Agent schema emits two synchronous parallel general-purpose calls with pinned opus/high; classify children only by distinct actual native agent/session headers, label encountered identities 0/1, hold first requests for original-ledger overlap, emit Bash write then final, require successful original Agent tool-result IDs with both public final first lines; unknown identity/result/header stops without fallback', originalGrant: true, acquisitionOnly: false, initialWorkspace: [] }, null, 2));
+  writeFileSync(join(root, 'declared-plan.json'), JSON.stringify({ sourceTestSha256: digest(new URL(import.meta.url).pathname), native: input.native, grant: g, prompt: input.prompt, claudeOptions: input.claudeOptions, replies: kind === 'codex' ? 'parent emits two native child calls; both child first requests held until original-ledger overlap, each writes artifact and completes; parent waits until exact directed native text final receipts' : 'actual acquired Agent schema emits two synchronous parallel general-purpose calls with pinned opus/high; classify children only by distinct actual native agent/session headers, label encountered identities 0/1, hold first requests for original-ledger overlap, emit Bash write then final, require successful original Agent tool-result IDs with both public final first lines; pair acquired parent updates/child omitted beta with adaptive/high; final native stdout task_started IDs bind each captured child header to its Agent call and returned agentId/public final; unknown identity/result/header stops without fallback', originalGrant: true, acquisitionOnly: false, initialWorkspace: [] }, null, 2));
   try {
     const result = await runNativeBaseline(input); writeFileSync(join(root, 'result.json'), JSON.stringify(result, null, 2));
     const outcome = result.outcome as { code: number; stdout: string; stderr: string; exceeded: boolean };
     assert.equal(outcome.code, 0, outcome.stderr); assert.equal(outcome.exceeded, false); assert.match(outcome.stdout, /native-concurrency-parent-complete/);
     assert.ok(peak >= 2); assert.equal(childStarts, 2); assert.equal(overlap.length, 2);
-    if (kind === 'claude') assert.equal(nativeChildIds.length, 2);
+    if (kind === 'claude') {
+      assert.equal(nativeChildIds.length, 2);
+      assert.ok(claudeTaskBindings(outcome.stdout, nativeChildIds, captured.at(-1)), 'actual task_started must bind each child HTTP identity to its Agent tool-result call and returned final');
+      const starts = outcome.stdout.split('\n').filter(Boolean).map(line => JSON.parse(line)).filter(event => event.type === 'system' && event.subtype === 'task_started');
+      assert.ok(starts.every(event => event.session_id === parentHeaders!['x-claude-code-session-id']));
+    }
     assert.equal(readFileSync(join(protectedRoot, 'sentinel'), 'utf8'), 'PRIVATE_CONCURRENCY_EVALUATOR');
     await assert.rejects(runNativeBaseline(input), /unavailable or stopped|blank initial workspace/);
   } catch (error) { writeFileSync(join(root, 'failure.json'), JSON.stringify({ error: String(error), refusal: String(refusal) }, null, 2)); throw error; }

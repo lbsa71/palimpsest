@@ -85,7 +85,7 @@ export function validateAnthropicPayload(body: Record<string, unknown>, profile:
     const thinking = object(body.thinking); fields(thinking, ['type', 'budget_tokens', 'display']); invariant(thinking.type === profile.anthropic!.thinking, 'thinking differs from immutable host profile');
     invariant(thinking.budget_tokens === profile.anthropic!.thinkingBudgetTokens, 'thinking budget differs from profile');
     invariant(thinking.display === undefined || ['summarized', 'omitted', ...(profile.anthropic?.nativeProtocol ? ['updates'] : [])].includes(String(thinking.display)), 'unknown thinking display');
-    if (profile.anthropic?.nativeProtocol) invariant(thinking.display === 'updates', 'pinned Opus native profile requires explicit updates display');
+    if (profile.anthropic?.nativeProtocol) invariant(thinking.display === 'updates' || (profile.anthropic.nativeProtocol.kind === 'opus-adaptive-delegation' && thinking.display === 'omitted'), 'pinned Opus native profile requires explicit updates display');
     if (thinking.display === 'updates') invariant(profile.anthropic?.nativeProtocol?.beta.split(',').includes('thinking-display-updates-2026-08-18'), 'thinking updates requires its native beta pair');
   }
   if (body.metadata !== undefined) { const metadata = object(body.metadata); fields(metadata, ['user_id']); invariant(typeof metadata.user_id === 'string', 'invalid metadata'); }

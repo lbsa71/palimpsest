@@ -41,3 +41,21 @@ export function claudeParentReceipts(request: { messages?: any[] }): string[] {
   }
   return [...finals.values()];
 }
+
+/** Bind actual completed CLI task events to native request identities and parent Agent results. */
+export function claudeTaskBindings(stdout: string, childIds: string[], parentRequest: { messages?: any[] }): boolean {
+  const events = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line));
+  const starts = events.filter(event => event.type === 'system' && event.subtype === 'task_started' && event.task_type === 'local_agent' && event.subagent_type === 'general-purpose' && event.spawn_depth === 1 && event.is_backgrounded === false);
+  if (childIds.length !== 2 || new Set(childIds).size !== 2 || starts.length !== 2) return false;
+  const calls = new Set<string>();
+  for (const [index, childId] of childIds.entries()) {
+    const start = starts.find(event => event.task_id === childId);
+    if (!start || !['tool_spawn_0', 'tool_spawn_1'].includes(start.tool_use_id) || calls.has(start.tool_use_id)) return false;
+    calls.add(start.tool_use_id);
+    const receipt = parentRequest.messages?.some(message => message.role === 'user' && Array.isArray(message.content) && message.content.some((part: any) => part.type === 'tool_result' && part.tool_use_id === start.tool_use_id && part.is_error !== true && Array.isArray(part.content)
+      && part.content[0]?.type === 'text' && typeof part.content[0].text === 'string' && part.content[0].text.split('\n')[0] === `child-${index + 1}-observed`
+      && part.content[0].text.split('\n').some((line: string) => line === `agentId: ${childId}` || line.startsWith(`agentId: ${childId} (`))));
+    if (!receipt) return false;
+  }
+  return true;
+}

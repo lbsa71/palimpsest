@@ -8,6 +8,7 @@ export const HISTORICAL_CLAUDE_FIXTURE_BETA = 'interleaved-thinking-2025-05-14,t
 export const PINNED_CLAUDE_BETA = 'claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,effort-2025-11-24,thinking-display-updates-2026-08-18';
 /* Exact isolated-native Agent surface, acquired before transport in d9dc038e. */
 export const PINNED_CLAUDE_DELEGATION_BETA = 'claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,effort-2025-11-24,thinking-display-updates-2026-08-18';
+export const PINNED_CLAUDE_DELEGATION_CHILD_BETA = PINNED_CLAUDE_DELEGATION_BETA.replace(',thinking-display-updates-2026-08-18', '');
 export interface AnthropicNativeProtocol {
   kind: 'opus-adaptive-coding' | 'opus-adaptive-delegation'; claudeVersion: string; claudeSha256: string; version: '2023-06-01'; beta: string;
   qualification: 'synthetic-only';
@@ -37,8 +38,14 @@ export function nativeProtocolHeaders(attempt: ProviderAttempt, profile: Baselin
     const key = raw.toLowerCase(); invariant(headers[key] === undefined, 'duplicate native header');
     invariant(['anthropic-version', 'anthropic-beta', ...CONSUMED_HEADERS].includes(key), 'unknown native header refused'); headers[key] = value;
   }
-  invariant(headers['anthropic-version'] === protocol.version && headers['anthropic-beta'] === protocol.beta, 'native version/beta differs from pinned host profile');
-  return { version: headers['anthropic-version'], beta: headers['anthropic-beta'] };
+  const child = protocol.kind === 'opus-adaptive-delegation' && headers['anthropic-beta'] === PINNED_CLAUDE_DELEGATION_CHILD_BETA;
+  invariant(headers['anthropic-version'] === protocol.version && (headers['anthropic-beta'] === protocol.beta || child), 'native version/beta differs from pinned host profile');
+  if (protocol.kind === 'opus-adaptive-delegation') {
+    const body = object(JSON.parse(attempt.payload)), thinking = object(body.thinking), effort = object(body.output_config);
+    invariant(thinking.type === 'adaptive' && thinking.display === (child ? 'omitted' : 'updates') && effort.effort === profile.effort, 'native delegation beta/display/thinking/effort pairing differs from pinned surface');
+    if (child) invariant(typeof headers['x-claude-code-agent-id'] === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(headers['x-claude-code-agent-id']) && typeof headers['x-claude-code-session-id'] === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(headers['x-claude-code-session-id']), 'native child delegation identity required');
+  }
+  return { version: headers['anthropic-version'], beta: headers['anthropic-beta']! as string };
 }
 function threshold(raw: unknown, types: string[], positive = false): void { const value = object(raw); fields(value, ['type', 'value']); invariant(types.includes(String(value.type)), 'unknown context threshold'); count(value.value, positive); }
 /** Documented server-side clearing; local history remains untouched. No hosted tools or compaction iterations. */
