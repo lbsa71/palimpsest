@@ -189,8 +189,11 @@ test('complete disposable installation retains current state, with optional inst
       // systemd requires the file itself. Retain only the direct-surface credential; no provider key.
       writeFileSync(environmentFile, 'AUTARK_DIRECT_TOKEN=fixture-direct-token\n', { mode: 0o600 });
       for (const path of [proofFile, keyFile, ...policies.map(([, path]) => path), evidenceDirectory]) rmSync(path, { recursive: true, force: true });
+      // Four deliberate manual starts exceed the real unit's three-start burst limit.
+      // Reset only this disposable unit before measuring its automatic failure/recovery restart.
+      execute('/usr/bin/systemctl', ['reset-failed', unitName]);
       const restartsBefore = Number(execute('/usr/bin/systemctl', ['show', '--property=NRestarts', '--value', unitName]).trim());
-      execute('/usr/bin/systemctl', ['start', unitName]);
+      soft('/usr/bin/systemctl', ['start', unitName]);
       const recovered = await ready(value => value.coordinator.module.includes(candidate.manifest.id));
       assert.equal(recovered.release.active.candidateId, candidate.manifest.id); assert.equal(recovered.release.accepted.candidateId, candidate.manifest.id);
       assert.ok(recovered.ready.authority.epoch > brokenRunning.ready.authority.epoch);
@@ -199,12 +202,21 @@ test('complete disposable installation retains current state, with optional inst
       assert.equal(restartsAfter, restartsBefore + 1, 'Exactly one systemd restart into independently retained rescue');
       assert.ok(readFileSync(join(data, 'work/logs/coordinator.log'), 'utf8').includes('fixture-installed-bootstrap-failure'));
       const rescuePid = Number(execute('/usr/bin/systemctl', ['show', '--property=MainPID', '--value', unitName]).trim());
+      assert.equal(realpathSync(join(boot, 'rescue')), incumbentBoot);
+      assert.equal(realpathSync(join(boot, 'active')), join(boot, 'targets', broken.manifest.id), 'Failure latch chooses retained rescue without executing or republishing the broken active bootstrap');
       assert.equal(readlinkSync(`/proc/${rescuePid}/cwd`), incumbentBoot);
       assert.ok(readFileSync(`/proc/${rescuePid}/cmdline`, 'utf8').split('\0').includes('payload/deployment/bootstrap-evolution.ts'));
       assert.ok(readFileSync(`/proc/${rescuePid}/cmdline`, 'utf8').endsWith('rescue\0'));
       for (const pid of [rescuePid, recovered.coordinator.processId, recovered.processId]) assert.equal(readlinkSync(`/proc/${pid}/exe`), join(incumbentBoot, 'node'));
       assert.equal(readFileSync(join(cgroupRoot, 'cgroup.procs'), 'utf8').trim(), '');
       assert.ok(readFileSync(join(cgroupRoot, 'host/cgroup.procs'), 'utf8').trim().split('\n').includes(String(rescuePid)));
+      assert.ok(!readFileSync(`/proc/${rescuePid}/environ`, 'utf8').split('\0').some(entry => /^(MISTRAL_API_KEY|OPENAI_API_KEY)=/.test(entry)));
+      const recoveryResponse = await fetch(`http://127.0.0.1:${recovered.ready.address.port}/health`, { headers: { authorization: 'Bearer fixture-direct-token' } });
+      assert.equal(recoveryResponse.status, 200);
+      const recoveryHealth = await recoveryResponse.json() as typeof health;
+      assert.equal(recoveryHealth.alive, true); assert.equal(recoveryHealth.kernelLimitsConfigured, true);
+      assert.equal(recoveryHealth.execution.admission, 'held'); assert.ok(recoveryHealth.execution.reasons.includes('provider-credential-unavailable'));
+      assert.equal(recoveryHealth.execution.providerConnectivity, 'not-probed');
       withStore(restored => { assert.deepEqual(restored.get('fixture.current-state', 'latest'), latest); assert.equal(restored.list('requests').length, 0); });
       t.diagnostic(JSON.stringify({ kind: 'installed-succession-offline-rescue-engineering', incumbent: candidate.manifest.id, successor: successor.manifest.id, brokenBootstrap: broken.manifest.id,
         epochs: [first, second, successorRunning, successorBooted, brokenRunning, recovered].map(value => value.ready.authority.epoch), restartsBefore, restartsAfter,
