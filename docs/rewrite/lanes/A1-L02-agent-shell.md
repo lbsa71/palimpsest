@@ -39,12 +39,12 @@ Owned by the lead who claims implementation; update before concurrent edits.
 
 | Field | Current value |
 |---|---|
-| Owner session | `/root` integration owner; active finite screen-lifecycle and tool-instruction-retention owners below |
-| Branch / worktree | Root `codex/aeon-1-implementation-20261011`; separate `screen-lifecycle` and `tool-instruction-retention` worktrees |
+| Owner session | `/root` integration owner; active finite screen-lifecycle owner below; tool-instruction author/review goals complete |
+| Branch / worktree | Root `codex/aeon-1-implementation-20261011`; separate `screen-lifecycle` worktree |
 | Base source / contract revision | Disposition source `fbaa610`; C1 `aeon1.c1.v1`, separately accepted by L01/root; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9` |
-| Additional path reservations | `/root/a1_real_screen` owns remaining product-screen lifecycle files; `/root/a1_tool_instruction_retention` owns shell/broker/application instruction wiring and specifically listed consumer fixtures below. Root owns shared integration/configuration; no overlapping production writers. |
+| Additional path reservations | `/root/a1_real_screen` owns remaining product-screen lifecycle files, rebased onto reviewed retention source `e1b57ee`. Root owns shared integration/configuration and integrated shell/broker/application wiring; no overlapping production writers. |
 | Last handoff / evidence | [Current Q1–Q5/T01–T06 disposition](../evidence/A1-L02/qualification-disposition.md), source `fbaa610`; final independent dependency review `79b6df2`, execution `c7ca96e` (1/1, 27.689 s). Original reports and failures remain historical evidence. |
-| Blockers / next eligible task | Continue Pi; no evidenced Rig fallback trigger. Eight actual-tool screen cases and fresh review are integrated through `6077cef`, with preserved failures and corrected attempts. S08/S09/S11/S12 lifecycle integration and exact tool-fragment retention are active. Live twelve-case Mistral competence, qualified authority/profile and independent outcomes remain required for Q3 and final Q5/full-lane acceptance. |
+| Blockers / next eligible task | Continue Pi; no evidenced Rig fallback trigger. Eight actual-tool screen cases and fresh review are integrated through `6077cef`, with preserved failures and corrected attempts. Exact tool-fragment retention and fresh review are integrated through `7478df1`; S08/S09/S11/S12 lifecycle integration remains active. Live twelve-case Mistral competence, qualified authority/profile and independent outcomes remain required for Q3 and final Q5/full-lane acceptance. |
 
 ### Exact dependency succession evidence task — 2026-10-11
 
@@ -71,3 +71,5 @@ Root assigned `/root/a1_real_screen` a finite T04/L08 implementation goal at `86
 ### Tool instruction retention — 2026-10-11
 
 Root reserves the shell/broker/application tool-instruction wiring and focused tests for `/root/a1_tool_instruction_retention`, isolated worktree `tool-instruction-retention` from `6085f1f`, `gpt-6.1-sol` / high, finite actual goal under the [fixed specification](../evidence/A1-L02/tool-instruction-retention-specification.md). Root also permits only the necessary consumer fixture adaptations in `packages/runtime/test/{shell-joined,crash-worker,recovery-composition-fixture}.ts` and `packages/initiative/test/initiative.test.ts`. C1 and runtime bridge changes still require coordination. No legacy fallback or paid execution; fresh independent review follows.
+
+Author and independent review goals are complete, integrated through `7478df1`. [Fresh evidence](../evidence/A1-L02/tool-instruction-review.md) records 14 adversarial cases, 67 focused passes and exact retained-byte audits; root's joined strict/build and 93 focused checks also pass. The canonical artifact now records ordinary and compaction tool surfaces before dispatch, preserving scope, purpose and projection binding. This closes the retention defect without making unavailable historical bytes recoverable or accepting Q3/H1.
