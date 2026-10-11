@@ -8,7 +8,7 @@ import { collectDevelopmentEvidenceProjection, prepareDevelopmentEvidenceProject
 export const reviewEnvelopeDomains = Object.freeze({
   registration: 'aeon.development.registration.v2', behavior: 'aeon.development.behavior.v2',
   review: 'aeon.development.review-binding.v2', tail: 'aeon.development.accounting-tail.v2',
-  closure: 'aeon.development.closure.v2', settlement: 'aeon.development.settlement.v2',
+  closure: 'aeon.development.closure.v2', settlement: 'aeon.development.settlement.v2', execution: 'aeon.development.review-execution.v2',
 });
 export interface DevelopmentRoleBinding {
   id: string; kind: 'candidate' | 'control' | 'reviewer' | 'observer'; assignmentId: string | null;
@@ -23,7 +23,7 @@ export interface DevelopmentRequestState {
   payload: ArtifactRef; prompt: ArtifactRef | null;
 }
 export interface DevelopmentRegistration {
-  version: 2; attemptDigest: string; rootId: string; registeredAt: string; reviewDeadlineAt: string;
+  version: 2; attemptDigest: string; rootId: string; rootCancelled: boolean; registeredAt: string; reviewDeadlineAt: string;
   observerClosureDigest: string; closureVerifierDigest: string; assignmentDigest: string;
   roles: DevelopmentRoleBinding[]; originalRequests: DevelopmentRequestState[];
 }
@@ -31,12 +31,23 @@ export interface DevelopmentRegistration {
 export interface DevelopmentBehavior {
   version: 2; registrationDigest: string; frozenAt: string;
   manifest: Signed<DevelopmentAttempt>; observations: Signed<DevelopmentObservation>[];
-  requests: DevelopmentRequestState[]; transitions: DevelopmentAccountingTransition[]; evidence: CollectedDevelopment;
+  requests: DevelopmentRequestState[]; transitions: DevelopmentAccountingTransition[]; rootCancelled: boolean; evidence: CollectedDevelopment;
   artifactIndex: { artifact: ArtifactRef; bytes: number }[];
 }
 export interface DevelopmentReviewBinding {
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string;
-  review: Signed<DevelopmentReview>;
+  review: Signed<DevelopmentReview>; execution: Signed<DevelopmentReviewExecution>;
+}
+/** Qualified host derivation of a model judgment, never a caller-filled execution assertion. */
+export interface DevelopmentReviewExecution {
+  version: 2; registrationDigest: string; behaviorDigest: string; roleId: string;
+  requestId: string; requestIdentityDigest: string; settledStateDigest: string; settlementDigest: string;
+  input: ArtifactRef; response: ArtifactRef; output: ArtifactRef; derivedAt: string;
+  evidenceReads: { requestId: string; artifact: ArtifactRef }[];
+  decoder: 'mistral-chat-final.v1' | 'openai-responses-final.v1';
+}
+export interface DevelopmentReviewInput {
+  version: 2; registrationDigest: string; behaviorDigest: string; roleId: string; behavior: DevelopmentBehavior;
 }
 /** Host transport attestation, never candidate/reviewer-reported usage. */
 export interface DevelopmentSettlement {
@@ -54,7 +65,7 @@ export interface DevelopmentAccountingTail {
 }
 export interface DevelopmentClosure {
   version: 2; registrationDigest: string; behaviorDigest: string; tailDigest: string;
-  reviewDigests: string[]; closedAt: string;
+  reviewDigests: string[]; closedAt: string; rootCancelled: boolean;
   requestStates: { id: string; stateDigest: string }[]; accounting: Accounting;
 }
 /** Accepted external configuration; these digests are not supplied by the candidate. */
