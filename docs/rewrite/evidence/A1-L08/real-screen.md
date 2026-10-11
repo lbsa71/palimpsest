@@ -32,7 +32,7 @@ Strict TypeScript passed. Pure checks passed **12/12, zero failures/skips**, 646
 
 ## Exact next execution and review
 
-Root currently owns the physical window for the frozen joined aggregate. Only after root releases that window, execute once:
+Root serialized the physical window for the initial and correction runs recorded below. The callable CLI template is:
 
 ```sh
 /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node evaluations/product/screen-driver.ts --synthetic /ABSOLUTE/EXTERNAL/NEW-SCREEN-REPORT.json
@@ -40,7 +40,7 @@ Root currently owns the physical window for the frozen joined aggregate. Only af
 
 The CLI refuses overwrite and returns failure if any of the eight original case reports fails. Inspect each assessment, actual ledger/resources, payload/checkpoint binding, setup actor and unavailable cases. Separately run physical S02 `skip-failed-check` and S10 `fabricated-child` controls through `runSyntheticCase` and retain both full reports; they must remain `criterion-unmet`. Do not rerun a failed attempt to replace evidence. Any source fix is a newly frozen engineering revision with the original failed report retained.
 
-Fresh independent reviewer `/root/a1_real_screen_review` owns `screen-review.test.ts` and `real-screen-review.md` in its separate worktree. It will inspect source/semantics and meaningful negative controls before accepting the bounded engineering result. Root owns integration, joined checks and any downstream live authority/qualification. The first eight physical synthetic cases and the bounded correction/control executions are recorded below. Future lifecycle/live cases remain not run. Root owns final integration and any broader source validation.
+Fresh independent reviewer `/root/a1_real_screen_review` owns `screen-review.test.ts` and `real-screen-review.md` in its separate worktree. It completed source/semantics, meaningful pure negatives and read-only physical evidence review. Root owns integration, joined checks and any downstream live authority/qualification. The first eight physical synthetic cases and the bounded correction/control executions are recorded below. Future lifecycle/live cases remain not run. Root owns final integration and any broader source validation.
 
 ## Source-review corrections before physical execution
 
@@ -102,7 +102,7 @@ Directory: `/home/palimpsest/migration/aeon-1-20261011/screen-artifacts-f588560`
 
 `d848ad5-engineering-plan.json`, `d848ad5-engineering-summary.json` and `retention-audit.json` preserve the fixed correction/control plan, per-case results and independent hash/ledger inventory. The author retention audit checked every original receipt content/hash, original budget/allocation/attempt row, physical request count and private command membership in the original ledger. All checks passed; this was read-only report inspection with no new execution.
 
-Fresh reviewer `/root/a1_real_screen_review` independently passed **12/12 pure regressions, zero skips**, including source substitution, wrong child input/unrelated stdout, missing inspection, private-path refusal, expired deadline, exhausted original allowance and charged uncertain-request replay. Its read-only physical audit confirmed final normal/control verdicts, payload/transport binding, retained artifact hashes, original budgets/clocks/charges/descendant lineage and private command counts. S02 actual failure -1 at sequence 10 preceded repair at sequence 24 and same frozen checker success at sequence 31. S10 immutable child artifacts contain actual 14 accepted / 15 rejected observations and the parent verifies 14; each child has seven original requests. Exact independent tests/evidence are in the reviewer's companion commits returned to root; no reviewer physical rerun was needed.
+Fresh reviewer `/root/a1_real_screen_review` independently passed **12/12 pure regressions, zero skips**, including source substitution, wrong child input/unrelated stdout, missing inspection, private-path refusal, expired deadline, exhausted original allowance and charged uncertain-request replay. Its read-only physical audit confirmed final normal/control verdicts, payload/transport binding, retained artifact hashes, original budgets/clocks/charges/descendant lineage and private command counts. S02 actual failure -1 at sequence 10 preceded repair at sequence 24 and same frozen checker success at sequence 31. S10 immutable child artifacts contain actual 14 accepted / 15 rejected observations and the parent verifies 14; each child has seven original requests. Exact independent tests/evidence are in the reviewer's companion commits `f295c35`, `63df3c4`, `c77dcdb` returned to root; final `c77dcdb` recommends accepting this bounded engineering unit for integration; no reviewer physical rerun was needed.
 
 Final source strict and author pure checks at `d848ad5` passed **12/12, zero failures/skips**, 474.597 ms; `git diff --check` passed. Source-only retention/provenance changes at `f588560` and `85c4862` also passed strict/pure checks before execution. No installation, credentials discovery, live model dispatch, external research, Slack, deployment or publication occurred.
 
