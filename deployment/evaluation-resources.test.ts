@@ -44,6 +44,24 @@ test('active tool receiver concurrency is retained; reviewer cannot silently bor
     assert.equal(spawns, 0); assert.equal(f.ledger.request(effect.id)!.status, 'dispatched');
   } finally { f.close(); }
 });
+test('late resource refusal rolls back a host activation claim and permits the same unused reservation after contention clears', () => {
+  const f = fixture(1);
+  try {
+    const effect: PhysicalRequest = { id: 'tool:busy', runId: 'child', purpose: 'reasoning', provider: 'effect-receiver', model: 'fixture', promptManifestId: 'tool:busy', requestDigest: identity('busy'), reservationId: 'tool:busy', status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
+    f.ledger.reserve(effect); f.ledger.dispatched({ ...effect, status: 'dispatched' });
+    const options = { ...f.options, commitReservation: () => { f.store.put('host.test-activation', 'claim', { status: 'activating' }, null); } };
+    assert.throws(() => prepareReview(options), /budget exhausted|allocation exhausted/);
+    assert.equal(f.store.get('host.test-activation', 'claim'), undefined);
+    assert.equal(f.ledger.request(reviewPhysicalId('stable-job')), undefined);
+    assert.deepEqual(f.store.list('host.external-review-reservations'), []);
+    assert.equal(f.ledger.snapshot('parent').requests, 1); assert.equal(f.ledger.snapshot('parent').concurrent, 1);
+    f.ledger.settle({ ...effect, status: 'succeeded' }); prepareReview(options);
+    assert.ok(f.store.get('host.test-activation', 'claim'));
+    assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))?.status, 'reserved');
+    assert.equal(f.ledger.snapshot('parent').requests, 2); assert.equal(f.ledger.snapshot('parent').concurrent, 1);
+  } finally { f.close(); }
+});
+
 test('last-moment cancellation before launch is known undispatched; successful physical usage is measured', async () => {
   const f = fixture(); let spawns = 0;
   try {

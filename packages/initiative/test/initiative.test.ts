@@ -60,6 +60,24 @@ test('host-deferred initiative start rolls back its slice and preserves unrelate
   } finally { f.store.close(); }
 });
 
+test('prompt preparation failure after the runtime claim rolls back a new initiative slice and permits retry', async () => {
+  const now = Date.parse(at), f = fixture(); ready(f, 'new-author'); let fail = true, calls = 0;
+  const r = runtime(f, { async run() { calls++; return { status: 'checkpointed', observations: [] }; } }, () => now);
+  const scheduler = new FairScheduler(f.store, f.goals, f.obligations, 'prompt-rollback', policy(), now);
+  const runner = new InitiativeRunner({ scheduler, runtime: r.runtime, memory: f.memory, authority,
+    prompt: () => { if (fail) throw Error('Prompt unavailable before execution'); return prompt; },
+    decide: () => { throw Error('No observation to judge'); } });
+  try {
+    const before = { scheduler: scheduler.snapshot(), goal: f.goals.goal('new-author'), allocations: f.store.list('allocations') };
+    await assert.rejects(runner.tick(), /Prompt unavailable/);
+    assert.deepEqual(scheduler.snapshot(), before.scheduler); assert.deepEqual(f.goals.goal('new-author'), before.goal);
+    assert.deepEqual(f.store.list('allocations'), before.allocations); assert.deepEqual(f.store.list('runs'), []);
+    assert.deepEqual(f.store.list('initiative.execution'), []); assert.equal(calls, 0);
+    fail = false; assert.equal((await runner.tick()).kind, 'selected'); assert.equal(calls, 1);
+    assert.equal(scheduler.snapshot().lifetimeSlices, 1); assert.equal(f.store.list('runs').length, 1);
+  } finally { f.store.close(); }
+});
+
 test('goal revisions/dependencies/reasons survive reopen; terminal evidence and allowance cannot disappear', async () => {
   const file = filename(); let f = fixture(file); const a = ready(f, 'a'), b = ready(f, 'b', { dependencyIds: ['a'] });
   assert.deepEqual((await f.goals.ready(at)).map(g => g.id), ['a']);

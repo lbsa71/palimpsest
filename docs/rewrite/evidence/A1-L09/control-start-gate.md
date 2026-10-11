@@ -20,6 +20,8 @@ The host continuation passes a synchronous callback to `reserveProbation`. `prep
 
 The original policy, fresh independent evidence rules, allocation identity/start time, reservation identity, uncertain physical usage and separate owner recovery path remain unchanged. The claim and guarded-withdraw tests use real SQLite databases and actual tiny successor/rescue processes. Another process observes both authority and operational write locks at the actual withdrawal and acceptance boundaries.
 
+Fresh independent review of author and root wiring at `f6dd341` is recorded in [atomic-start-review](atomic-start-review.md). It found no actionable production defect, added three adversarial rollback/withdrawal cases, and passed 76 focused checks plus the dispatcher's logical-reservation check. Root retains the final ordinary physical composition and aggregate verification gates.
+
 ## Verification and handoff
 
 Node v24.13.0: `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node`. Trusted development compiler closure is linked into the isolated worktree; no candidate build closure was changed.

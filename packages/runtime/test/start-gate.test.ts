@@ -76,3 +76,20 @@ test('rolled back prepared claims leak no active ownership; cancellation before 
     assert.equal((await f.runtime.resume(unrelated.id, prompt)).status, 'completed'); assert.equal(calls, 1);
   } finally { f.store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('withdrawal after a committed start fences cognition and preserves unconsumed steering for takeover', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-claim-withdraw-')); let calls = 0, messages: unknown[] = [];
+  const f = setup(join(root, 'state.sqlite'), { async run(value) { calls++; messages = value.messages; return { status: 'completed', observations: [] }; } });
+  try {
+    const run = f.runtime.admit(input, authority, envelope), claim = f.runtime.prepareResume(run.id);
+    f.runtime.steer(run.id, { ...input, id: 'late-steering', externalId: 'late-steering', value: 'Retain this across authority transfer' });
+    const successor = f.withdraw();
+    assert.equal((await claim.execute(prompt)).status, 'waiting'); assert.equal(calls, 0);
+    assert.equal(f.resources.snapshot(run.id).requests, 0);
+    const allocation = f.store.get('allocations', run.id);
+    f.runtime.adopt(run.id, successor);
+    assert.equal((await f.runtime.resume(run.id, prompt)).status, 'completed'); assert.equal(calls, 1);
+    assert.match(JSON.stringify(messages), /Retain this across authority transfer/);
+    assert.deepEqual(f.store.get('allocations', run.id), allocation);
+  } finally { f.store.close(); rmSync(root, { recursive: true, force: true }); }
+});
