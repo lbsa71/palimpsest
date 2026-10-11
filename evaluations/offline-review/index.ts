@@ -20,7 +20,7 @@ export interface ValidatorInput { schema: { type: 'string'; minLength?: number; 
 interface CaseBounds { id: string; timeoutMs: number; maxOutputBytes: number }
 export interface ValidatorCase extends CaseBounds { kind: 'validator-string-length'; inputs: ValidatorInput[]; expected: boolean[] }
 export interface ReviewerInput { packet: ReviewPacket; plan: OfflinePlan; keyHex: string }
-export interface ReviewerCase extends CaseBounds { kind: 'reviewer-behavior'; inputs: ReviewerInput[]; expected: ('pass' | 'fail' | 'refuse')[] }
+export interface ReviewerCase extends CaseBounds { kind: 'reviewer-behavior'; adapterDigest: string; inputs: ReviewerInput[]; expected: ('pass' | 'fail' | 'refuse')[] }
 export type OfflineCase = ValidatorCase | ReviewerCase;
 export interface OfflinePlan { version: 2; runnerDigest: string; cases: OfflineCase[] }
 export interface OfflineObservation {
@@ -36,6 +36,8 @@ export function offlineRunnerDigest(): string {
     .filter(file => !file.path.endsWith('.test.ts') && !file.path.endsWith('.md'));
   return identity({ version: 1, files, node: hashBytes(readFileSync(process.execPath)), nodeVersion: process.version });
 }
+/** First governance case permits a core replacement only under this exact prior CLI adapter. */
+export function offlineAdapterDigest(): string { return hashBytes(readFileSync(join(ownRoot, 'evaluations/offline-review/reviewer.mjs'))); }
 export function parseOfflinePlan(bytes: Uint8Array): OfflinePlan {
   invariant(bytes.byteLength <= 65536, 'Offline plan exceeds byte bound');
   const text = Buffer.from(bytes).toString('utf8'), plan = JSON.parse(text) as OfflinePlan;
@@ -45,12 +47,13 @@ export function parseOfflinePlan(bytes: Uint8Array): OfflinePlan {
   invariant(plan.version === 2 && /^[a-f0-9]{64}$/.test(plan.runnerDigest), 'Supported offline plan and runner identity required');
   invariant(Array.isArray(plan.cases) && plan.cases.length > 0 && plan.cases.length <= 8 && new Set(plan.cases.map(c => c?.id)).size === plan.cases.length, 'Bounded unique offline cases required');
   for (const c of plan.cases) {
-    exact(c, ['id', 'kind', 'inputs', 'expected', 'timeoutMs', 'maxOutputBytes']);
+    exact(c, ['id', 'kind', 'inputs', 'expected', 'timeoutMs', 'maxOutputBytes', ...(c.kind === 'reviewer-behavior' ? ['adapterDigest'] : [])]);
     invariant(typeof c.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(c.id), 'Bounded offline case identity required');
     invariant(Number.isSafeInteger(c.timeoutMs) && c.timeoutMs > 0 && c.timeoutMs <= 5000 && Number.isSafeInteger(c.maxOutputBytes) && c.maxOutputBytes > 0 && c.maxOutputBytes <= 65536, 'Bounded offline command required');
     invariant(Array.isArray(c.inputs) && c.inputs.length > 0 && c.inputs.length <= 64 && Array.isArray(c.expected) && c.expected.length === c.inputs.length, 'Bounded exact offline expectations required');
     invariant(c.kind === 'validator-string-length' || c.kind === 'reviewer-behavior', 'Supported offline case required');
     if (c.kind === 'reviewer-behavior') {
+      invariant(typeof c.adapterDigest === 'string' && /^[a-f0-9]{64}$/.test(c.adapterDigest), 'Exact prior reviewer adapter digest required');
       invariant(c.inputs.length <= 24 && c.expected.every(v => ['pass', 'fail', 'refuse'].includes(v)), 'Bounded reviewer outcomes required');
       for (const input of c.inputs) {
         exact(input, ['packet', 'plan', 'keyHex']);
@@ -80,6 +83,7 @@ export function loadOfflinePlan(config: ReviewerFile): { plan: OfflinePlan; dige
   invariant(hashBytes(bytes) === file.sha256, 'Offline plan differs from accepted reviewer closure');
   const plan = parseOfflinePlan(bytes);
   invariant(plan.runnerDigest === offlineRunnerDigest(), 'Offline runner differs from independently accepted implementation');
+  invariant(plan.cases.every(c => c.kind !== 'reviewer-behavior' || c.adapterDigest === offlineAdapterDigest()), 'Reviewer probe requires the exact prior CLI adapter');
   return { plan, digest: file.sha256 };
 }
 export function offlineOperation(planDigest: string, c: OfflineCase): { id: string; digest: string } {
@@ -98,6 +102,10 @@ export async function runOfflineCase(options: { config: ReviewerFile; host: Host
     // Only the invocation inputs and runner are exposed. No private expected array/plan/key.
     writeFileSync(join(workspace, 'runner.mjs'), readFileSync(join(ownRoot, 'evaluations/offline-review', c.kind === 'reviewer-behavior' ? 'reviewer-runner.mjs' : 'runner.mjs')), { mode: 0o400 });
     writeFileSync(join(workspace, 'inputs.json'), canonicalJson(c.inputs), { mode: 0o400 });
+    if (c.kind === 'reviewer-behavior') {
+      invariant(c.adapterDigest === offlineAdapterDigest(), 'Reviewer adapter changed before invocation');
+      writeFileSync(join(workspace, 'adapter.sha256'), c.adapterDigest, { mode: 0o400 });
+    }
     // A pre-transfer reservation includes activation time; do not reset its original clock.
     const resource = { ...options.resource, operation: offlineOperation(planDigest, c), maxElapsedMs: options.resource.prepared ? config.maxElapsedMs : c.timeoutMs };
     const command = await accountedReview(resource, async gate => {

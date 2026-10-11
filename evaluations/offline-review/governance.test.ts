@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
 import { canonicalJson, identity, validateCandidate, validateEvaluation, validatePhysicalRequest } from '../../packages/contracts/index.ts';
-import { assessOffline, parseOfflinePlan, type OfflineObservation, type OfflinePlan, type ReviewerCase, type ReviewerInput } from './index.ts';
+import { assessOffline, offlineAdapterDigest, parseOfflinePlan, type OfflineObservation, type OfflinePlan, type ReviewerCase, type ReviewerInput } from './index.ts';
 import { reviewOfflinePacket, type ReviewPacket } from './review-core.ts';
 
 /** Test provisioning only; removed from physical candidate input before its source freeze. */
@@ -39,7 +39,7 @@ export function governanceCase(): ReviewerCase {
   add('refuse', p => { p.packet.offlineObservations[0]!.physical.runId = 'wrong-author'; });
   add('refuse', p => { p.packet.offlineObservations[0]!.physical.requestDigest = identity('wrong-receipt'); });
   add('refuse', p => { p.packet.offlineObservations[0]!.physical.usage.requests = 0; });
-  return { id: 'concrete-reviewer', kind: 'reviewer-behavior', inputs, expected, timeoutMs: 3000, maxOutputBytes: 32768 };
+  return { id: 'concrete-reviewer', kind: 'reviewer-behavior', adapterDigest: offlineAdapterDigest(), inputs, expected, timeoutMs: 3000, maxOutputBytes: 32768 };
 }
 const run = (c: ReviewerCase) => c.inputs.map(input => {
   try { return { kind: 'result', response: reviewOfflinePacket(input.packet, input.plan, Buffer.from(input.keyHex, 'hex')) }; }
@@ -82,6 +82,7 @@ test('governance plan retains bounds, inert fields and nonrecursive packet provi
   const plan: OfflinePlan = { version: 2, runnerDigest: identity('old-runner'), cases: [governanceCase()] };
   for (const mutate of [
     (p: any) => p.version = 1,
+    (p: any) => delete p.cases[0].adapterDigest,
     (p: any) => p.cases[0].inputs[0].keyHex = 'authority-file',
     (p: any) => p.cases[0].inputs[0].plan.cases[0].kind = 'reviewer-behavior',
     (p: any) => p.cases[0].inputs[0].executable = '/bin/sh',

@@ -195,7 +195,7 @@ function fixture(activate = false, governance = false, offline: boolean | 'revie
       ], expected: [false, true, false, true, false, true, true, false] }] };
     const path = join(reviewerRoot, 'private-plan.json'); writeFileSync(path, canonicalJson(plan), { mode: 0o600 }); retain(path, offlinePlanMount);
   }
-  const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: ['--jitless', '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
+  const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: [...(offline ? [] : ['--jitless']), '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
     pollMs: 10, maxElapsedMs: 15000, maxOutputBytes: 8 * 1024 * 1024, maxClosureBytes: 256 * 1024 * 1024, memoryBytes: 8 * 1024 * 1024 * 1024 };
   const reviewerFile = join(reviewerRoot, 'config.json'); writeFileSync(reviewerFile, JSON.stringify(reviewer), { mode: 0o600 });
   const futureRules = "export const heldOutMarker = 'externalDispatchEngineeringFixture = true';\nexport const governanceRevision = 'source-owned-future-reviewer-v2';\n";
@@ -270,6 +270,12 @@ test('governance reviewer probes reject actual weakened implementations under th
     store.put('runs', request.proposal.runId, { id: request.proposal.runId, status: 'completed', revision: 0, scope: request.proposal.scope, authority }, null);
     const allocation = store.get('allocations', request.proposal.runId)!.value, parent = store.get('allocations', 'reviewer-parent')!.value;
     const corePath = join(f.source, 'evaluations/offline-review/review-core.ts'), original = readFileSync(corePath, 'utf8');
+    const adapterPath = join(f.source, 'evaluations/offline-review/reviewer.mjs'), adapterOriginal = readFileSync(adapterPath, 'utf8');
+    const retainedDirectory = process.env.AEON_GOVERNANCE_EVIDENCE_DIR;
+    const retain = (name: string, value: unknown) => { if (retainedDirectory) { mkdirSync(retainedDirectory, { recursive: true, mode: 0o700 }); writeFileSync(join(retainedDirectory, name), canonicalJson(value), { mode: 0o600 }); } };
+    retain('old-reviewer-descriptor.json', JSON.parse(reviewerDescriptor(f.reviewer)));
+    retain('old-private-plan.json', loadOfflinePlan(f.reviewer)!.plan);
+    retain('original-allocations.json', { child: allocation, parent });
     const privatePaths = ['/reviewer-key', offlinePlanMount, '/app/deployment/evaluation-dispatch.test.ts', '/app/evaluations/offline-review/plan.test.ts', '/app/evaluations/offline-review/governance.test.ts', f.reviewer.keyFile,
       ...f.reviewer.files.filter(file => file.mount === offlinePlanMount).map(file => file.path)];
     const privacy = `import { readFileSync as probeRead } from 'node:fs';
@@ -277,6 +283,7 @@ for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try {
 `;
     const variants = [
       { name: 'good-private-isolation', code: privacy + original, verdict: 'pass' },
+      { name: 'changed-entrypoint', code: original, verdict: 'fail' },
       { name: 'always-refusing', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nexport function reviewOfflinePacket() { throw Object.assign(Error("always refuse"), { code: "OFFLINE_REVIEW_REFUSED" }); }\n', verdict: 'fail' },
       { name: 'always-accepting', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nlet first; export function reviewOfflinePacket(...args) { return first ??= originalReview(...args); }\n', verdict: 'fail' },
       { name: 'ignores-request-binding', code: original.replace('observation.requestId === r.requestId && ', ''), verdict: 'fail' },
@@ -284,26 +291,32 @@ for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try {
     ];
     let expectedRequests = 0;
     for (const variant of variants) {
-      assert.notEqual(variant.code, original);
+      if (variant.name !== 'changed-entrypoint') assert.notEqual(variant.code, original);
       writeFileSync(corePath, variant.code);
+      writeFileSync(adapterPath, variant.name === 'changed-entrypoint' ? "process.stdout.write('always accept');\n" : adapterOriginal);
       const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs);
       assert.notEqual(candidate.manifest.controls, authority.controlRevision, 'Proposed concrete reviewer is a control change');
       const current = { ...request, requestId: variant.name, candidate };
+      retain(`${variant.name}-request.json`, current);
+      retain(`${variant.name}-candidate-sources.json`, { core: variant.code, adapter: readFileSync(adapterPath, 'utf8') });
       const resource = { store, request: current, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId,
         maxElapsedMs: f.reviewer.maxElapsedMs, assertAuthority: (a: Authority) => assert.deepEqual(a, authority), dispatchAuthority: (a: Authority, run: () => void) => { assert.deepEqual(a, authority); run(); } };
       const response = await runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource);
+      retain(`${variant.name}-response.json`, response);
+      retain(`${variant.name}-physical-ledger.json`, store.list('requests'));
       const evidence = response.result.receipt.evidence[0]!, observationHash = evidence.caseResults[0]!.observations.sha256;
       const observation = JSON.parse(Buffer.from(response.artifacts.find(a => a.sha256 === observationHash)!.base64, 'base64').toString('utf8')) as OfflineObservation;
-      assert.equal(observation.command.exitCode, 0, JSON.stringify(observation.command));
+      assert.equal(observation.command.exitCode, variant.name === 'changed-entrypoint' ? 1 : 0, JSON.stringify(observation.command));
+      if (variant.name === 'changed-entrypoint') assert.match(observation.command.stderr, /adapter differs/);
       assert.equal(observation.command.stoppedFor, undefined);
       assert.equal(evidence.verdict, variant.verdict, JSON.stringify(observation.command));
-      const outputs = JSON.parse(observation.command.stdout);
+      const outputs = variant.name === 'changed-entrypoint' ? [] : JSON.parse(observation.command.stdout);
       if (variant.name === 'good-private-isolation') assert.deepEqual(outputs.slice(0, 3).map((r: any) => r.response.result.receipt.evidence[0].verdict), ['pass', 'fail', 'fail']);
       if (variant.name === 'ignores-request-binding') assert.equal(outputs[3].kind, 'result', 'Seed actually accepts a wrong request observation');
       if (variant.name === 'promotes-failed-command') assert.equal(outputs[1].response.result.receipt.evidence[0].verdict, 'pass', 'Seed actually promotes failed behavior');
       const artifacts = new Map(response.artifacts.map(a => [a.sha256, Buffer.from(a.base64, 'base64')]));
       const admit = () => admitCandidate(f.host.artifactStore, response.result.proof.proposal, authority, f.policy, response.result.proof.signed, uri => artifacts.get(uri.slice(7))!, 'control-upgrade');
-      if (variant.verdict === 'pass') assert.equal(admit().controlChange, true); else assert.throws(admit, /passing evidence/);
+      if (variant.verdict === 'pass') { const admission = admit(); assert.equal(admission.controlChange, true); retain(`${variant.name}-admission.json`, admission); } else assert.throws(admit, /passing evidence/);
       expectedRequests += 2;
       assert.equal(ledger.snapshot(request.proposal.runId).requests, expectedRequests);
       assert.equal(ledger.snapshot('reviewer-parent').requests, expectedRequests);
