@@ -8,6 +8,8 @@ export interface ConfinedCommand {
   executable: string;
   args: string[];
   nodeBinary?: string;
+  /** Host-selected admitted application image; never supplied by a model/tool argument. */
+  applicationRoot?: string;
   timeoutMs: number;
   maxOutputBytes: number;
   signal?: AbortSignal;
@@ -58,6 +60,14 @@ export function confinementArguments(command: ConfinedCommand): string[] {
     '--bind', workspace, '/work', '--chdir', '/work', '--clearenv', '--setenv', 'PATH', '/runtime:/usr/bin:/bin',
     '--setenv', 'LANG', 'C.UTF-8'];
   if (command.nodeBinary) args.push('--ro-bind', realpathSync(command.nodeBinary), '/runtime/node');
+  if (command.applicationRoot) {
+    const application = realpathSync(command.applicationRoot);
+    for (const path of command.protectedPaths) {
+      const protectedPath = realpathSync(path);
+      if (contains(application, protectedPath) || contains(protectedPath, application)) throw new Error('Application image overlaps protected storage');
+    }
+    args.push('--ro-bind', application, '/app');
+  }
   // No host network, sockets, home, credentials, state or control mounts. Research uses a separate receiver.
   args.push('--', command.executable, ...command.args);
   return args;

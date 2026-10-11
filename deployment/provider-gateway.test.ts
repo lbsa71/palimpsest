@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { OperationalStore } from '../packages/storage/index.ts';
+import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import type { PhysicalRequest } from '../packages/contracts/index.ts';
+import { mistralGateway, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
+
+test('gateway pins destination, supplies credentials only to fetch and bounds response streaming', async () => {
+  const gateway = mistralGateway({ apiKey: () => 'private-fixture-key', maxResponseBytes: 10,
+    fetch: async (url, init) => {
+      assert.equal(url, 'https://api.mistral.ai/v1/chat/completions');
+      assert.equal(init?.redirect, 'error');
+      assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer private-fixture-key');
+      return new Response('01234567890');
+    } });
+  await assert.rejects(gateway('{}', new AbortController().signal), /byte ceiling/);
+});
+
+test('a provider receipt settles after restart without repeating the physical request', () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-provider-receipt-'));
+  let store = new OperationalStore({ filename: join(root, 'state.sqlite') });
+  try {
+    let ledger = new ResourceLedger(store, { tokens: 100, costUsd: 1, elapsedMs: 1000 });
+    ledger.allocate('run', { maxRequests: 4, maxTokens: 400, maxCostUsd: 4, maxElapsedMs: 10000, maxConcurrency: 2 });
+    const request: PhysicalRequest = { id: 'physical-request', runId: 'run', purpose: 'reasoning', provider: 'mistral', model: 'fixture',
+      promptManifestId: 'prompt', requestDigest: '1'.repeat(64), reservationId: 'reservation', status: 'reserved',
+      usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
+    ledger.reserve(request); ledger.dispatched({ ...request, status: 'dispatched' });
+    transportRecorder(store)({ requestId: request.id, dispatched: true, status: 'succeeded', httpStatus: 200,
+      responseModel: 'fixture', responseDigest: '2'.repeat(64), usage: { requests: 1, inputTokens: 10, outputTokens: 4, costUsd: 0.05, elapsedMs: 10 } });
+    store.close(); store = new OperationalStore({ filename: join(root, 'state.sqlite') });
+    ledger = new ResourceLedger(store, { tokens: 100, costUsd: 1, elapsedMs: 1000 });
+    ledger.recoverDispatched();
+    assert.equal(reconcileProviderReceipts(store, ledger), 1);
+    assert.equal(ledger.snapshot('run').tokens, 14);
+    assert.equal(ledger.snapshot('run').costUsd, 0.05);
+    assert.equal(reconcileProviderReceipts(store, ledger), 0);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
