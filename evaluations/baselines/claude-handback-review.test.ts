@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { claudeParentReceipts, claudeTaskBindings, claudeObservedToolOutput } from './native-delegation-fixture.ts';
@@ -39,6 +39,8 @@ const receiptMutations: [string, (w: Witness) => void][] = [
   ['duplicate result', w => { w.request.messages.push({ role: 'user', content: [structuredClone(parts(w, 'tool_result')[0])] }); }],
   ['duplicate emitted call', w => { w.request.messages.unshift({ role: 'assistant', content: [structuredClone(parts(w, 'tool_use')[0])] }); }],
   ['wrong emitted tool', w => { parts(w, 'tool_use')[0].name = 'Bash'; }],
+  ['duplicate call id under another tool name', w => { w.request.messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: 'tool_spawn_0', name: 'Bash', input: { command: 'false' } }] }); }],
+  ['extra foreign tool call', w => { w.request.messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: 'foreign', name: 'Bash', input: { command: 'false' } }] }); }],
   ['different original task', w => { parts(w, 'tool_use')[0].input.prompt = 'child-1-observed'; }],
   ['task-text spoof instead of result', w => { w.request.messages = [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(w.request.messages) }] }]; }],
   ['duplicate agent id', w => { const r = parts(w, 'tool_result'); r[1].content[0].text = r[1].content[0].text.replace(/agentId: [^\n]+/, r[0].content[0].text.match(/agentId: [^\n]+/)[0]); }],
@@ -60,6 +62,7 @@ const attributionMutations: [string, (w: Witness) => void][] = [
   ['failed native completion', w => { event(w, 'task_notification').status = 'failed'; }],
   ['wrong completion run', w => { event(w, 'task_notification').run_id = 'other'; }],
   ['duplicate completion', w => { w.events.push(structuredClone(event(w, 'task_notification'))); }],
+  ['extra foreign completion', w => { const extra = structuredClone(event(w, 'task_notification')); extra.task_id = 'foreign'; extra.tool_use_id = 'foreign'; w.events.push(extra); }],
   ['wrong completion session', w => { event(w, 'task_notification').session_id = 'other'; }],
   ['failed raw handback', w => { w.events.find((e: any) => e.tool_use_result?.agentId).tool_use_result.status = 'failed'; }],
   ['raw handback task spoof', w => { const e = w.events.find((e: any) => e.tool_use_result?.agentId); e.tool_use_result.content[0].text = e.tool_use_result.prompt; }],
@@ -68,6 +71,11 @@ const attributionMutations: [string, (w: Witness) => void][] = [
   ['different Bash command', w => { w.events.find((e: any) => e.agent_id && e.message?.content?.[0]?.type === 'tool_use').message.content[0].input.command = 'false'; }],
   ['wrong child command session', w => { w.events.find((e: any) => e.agent_id && e.message?.content?.[0]?.type === 'tool_use').session_id = 'other'; }],
   ['Bash result before its call', w => { const i = w.events.findIndex((e: any) => e.agent_id && e.message?.content?.[0]?.type === 'tool_result'); const [result] = w.events.splice(i, 1); w.events.unshift(result); }],
+  ['extra native child command', w => { const i = w.events.findIndex((e: any) => e.agent_id && e.message?.content?.[0]?.type === 'tool_use'); const extra = structuredClone(w.events[i]); extra.message.content[0].id = 'foreign'; extra.message.content[0].input.command = 'false'; w.events.splice(i + 1, 0, extra); }],
+  ['extra failed native child result', w => { const i = w.events.findIndex((e: any) => e.agent_id && e.message?.content?.[0]?.type === 'tool_result'); const extra = structuredClone(w.events[i]); extra.message.content[0].tool_use_id = 'foreign'; extra.message.content[0].is_error = true; w.events.splice(i + 1, 0, extra); }],
+  ['extra native parent call', w => { const i = w.events.findIndex((e: any) => e.parent_tool_use_id === null && e.message?.content?.[0]?.type === 'tool_use'); const extra = structuredClone(w.events[i]); extra.message.content[0].id = 'foreign'; w.events.splice(i + 1, 0, extra); }],
+  ['extra native parent result', w => { const i = w.events.findIndex((e: any) => e.parent_tool_use_id === null && e.message?.content?.[0]?.type === 'tool_result'); const extra = structuredClone(w.events[i]); extra.message.content[0].tool_use_id = 'foreign'; w.events.splice(i + 1, 0, extra); }],
+
 ];
 for (const [label, mutate] of attributionMutations) test(`acquired positive then refuse ${label}`, () => {
   const w = load(); positive(w); mutate(w); assert.equal(binding(w), false);
@@ -103,6 +111,17 @@ test('read-only one-follow-up audit: exact artifacts, source, instructions, char
   const marker = JSON.parse(readFileSync(join(destination, 'followup-1-consumed.json'), 'utf8'));
   const plan = JSON.parse(read('declared-plan.json'));
   assert.equal(plan.sourceRevision, marker.sourceRevision); assert.equal(plan.reviewRevision, marker.reviewRevision);
+  const priorInventoryBytes = readFileSync(plan.priorInventoryPath, 'utf8');
+  assert.equal(hash(priorInventoryBytes), '38c08a1962bf416f0a0650bda2ad08c0ffa7ca4e056701c60bb4b6740c821acd');
+  assert.equal(hash(priorInventoryBytes), plan.priorInventorySha256);
+  const inventory: Record<string, string> = JSON.parse(priorInventoryBytes);
+  for (const [path, expected] of Object.entries(inventory)) assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), expected, path);
+  const priorIndexPath = Object.keys(inventory).find(path => path.endsWith('/artifact-index-final.json'))!;
+  const priorIndexBytes = readFileSync(priorIndexPath, 'utf8');
+  assert.equal(hash(priorIndexBytes), 'c151ef8b29c4390468b4a3bb378b39a6bec8aa88b28ef8f1dd9b247690e5be54');
+  const priorEntries = JSON.parse(priorIndexBytes).files; assert.equal(priorEntries.length, 203);
+  for (const entry of priorEntries) assert.equal(createHash('sha256').update(readFileSync(join(dirname(priorIndexPath), entry.path))).digest('hex'), entry.sha256, entry.path);
+
   const driver = execFileSync('git', ['show', `${plan.sourceRevision}:evaluations/baselines/claude-handback-physical.test.ts`], { encoding: 'utf8' });
   assert.equal(hash(driver), plan.sourceTestSha256); assert.equal(hash(driver), marker.driverSha256);
   const db = new DatabaseSync(join(root, 'state/observer.sqlite'), { readOnly: true });
