@@ -1,0 +1,353 @@
+{
+  "label": "fixture-verified actual Pi/runtime/memory unattended scheduling; no live model or growth claim",
+  "physicalUsage": {
+    "requests": 9,
+    "tokens": 84,
+    "costUsd": 0.6,
+    "elapsedMs": 3000,
+    "concurrent": 0,
+    "cancelled": false
+  },
+  "scheduler": {
+    "cursor": 0,
+    "lifetimeSlices": 3,
+    "policy": {
+      "idleRetryMs": 100,
+      "maxLifetimeSlices": 30,
+      "maxSlicesPerWindow": 1,
+      "maxStalls": 3,
+      "quantumMs": 2000,
+      "resources": {
+        "maxConcurrency": 1,
+        "maxCostUsd": 10,
+        "maxElapsedMs": 600000,
+        "maxRequests": 30,
+        "maxTokens": 3000
+      },
+      "windowMs": 1000
+    },
+    "queue": {
+      "commitment": [],
+      "conversation": [],
+      "inquiry": []
+    },
+    "startedAt": 1791720000000,
+    "windowSlices": 0,
+    "windowStartedAt": 1791720003000
+  },
+  "goals": [
+    {
+      "dependencyIds": [],
+      "evidenceIds": [
+        "episode",
+        "tool:run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722:assistant:8ef14a9f-21dc-48ea-881a-c072a6d5c239:observed01"
+      ],
+      "id": "inquiry-0",
+      "nextAction": "measure inquiry-0",
+      "origin": {
+        "kind": "self"
+      },
+      "priority": 1,
+      "purpose": "compare image symmetries",
+      "reason": "fixture observation satisfies finite comparison criteria; no live growth claim",
+      "resources": {
+        "maxConcurrency": 1,
+        "maxCostUsd": 10,
+        "maxElapsedMs": 600000,
+        "maxRequests": 30,
+        "maxTokens": 3000
+      },
+      "reviewAt": "2026-10-11T12:00:00.000Z",
+      "revision": 4,
+      "scope": {
+        "kind": "public"
+      },
+      "status": "completed",
+      "successCriteria": [
+        "obtain a new measured observation"
+      ]
+    },
+    {
+      "dependencyIds": [],
+      "evidenceIds": [
+        "episode",
+        "tool:run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f:assistant:f7aff9c4-01af-4292-82a9-2344840f2035:observed01"
+      ],
+      "id": "inquiry-1",
+      "nextAction": "measure inquiry-1",
+      "origin": {
+        "kind": "self"
+      },
+      "priority": 1,
+      "purpose": "test observed parsing duplicate",
+      "reason": "fixture observation satisfies finite comparison criteria; no live growth claim",
+      "resources": {
+        "maxConcurrency": 1,
+        "maxCostUsd": 10,
+        "maxElapsedMs": 600000,
+        "maxRequests": 30,
+        "maxTokens": 3000
+      },
+      "reviewAt": "2026-10-11T12:00:00.000Z",
+      "revision": 4,
+      "scope": {
+        "kind": "public"
+      },
+      "status": "completed",
+      "successCriteria": [
+        "obtain a new measured observation"
+      ]
+    },
+    {
+      "dependencyIds": [],
+      "evidenceIds": [
+        "episode",
+        "tool:run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f:assistant:23e2b4b0-175a-4c7d-998b-0febb4bbc454:observed01"
+      ],
+      "id": "inquiry-2",
+      "nextAction": "measure inquiry-2",
+      "origin": {
+        "kind": "self"
+      },
+      "priority": 1,
+      "purpose": "measure unsupported benchmark operation",
+      "reason": "fixture observation satisfies finite comparison criteria; no live growth claim",
+      "resources": {
+        "maxConcurrency": 1,
+        "maxCostUsd": 10,
+        "maxElapsedMs": 600000,
+        "maxRequests": 30,
+        "maxTokens": 3000
+      },
+      "reviewAt": "2026-10-11T12:00:00.000Z",
+      "revision": 4,
+      "scope": {
+        "kind": "public"
+      },
+      "status": "completed",
+      "successCriteria": [
+        "obtain a new measured observation"
+      ]
+    }
+  ],
+  "selections": [
+    {
+      "sequence": 7,
+      "id": "e6c65132-6a41-4432-b68b-801034625b20",
+      "stream": "scheduler:joined",
+      "type": "selection",
+      "data": {
+        "kind": "selected",
+        "selection": {
+          "goal": {
+            "dependencyIds": [],
+            "evidenceIds": [
+              "episode"
+            ],
+            "id": "inquiry-0",
+            "nextAction": "measure inquiry-0",
+            "origin": {
+              "kind": "self"
+            },
+            "priority": 1,
+            "purpose": "compare image symmetries",
+            "reason": "finite observation worthwhile",
+            "resources": {
+              "maxConcurrency": 1,
+              "maxCostUsd": 10,
+              "maxElapsedMs": 600000,
+              "maxRequests": 30,
+              "maxTokens": 3000
+            },
+            "reviewAt": "2026-10-11T12:00:00.000Z",
+            "revision": 2,
+            "scope": {
+              "kind": "public"
+            },
+            "status": "ready",
+            "successCriteria": [
+              "obtain a new measured observation"
+            ]
+          },
+          "kind": "goal",
+          "service": "inquiry"
+        },
+        "sequence": 1
+      }
+    },
+    {
+      "sequence": 22,
+      "id": "116e69e1-9848-4863-b5d2-3e1957c01aec",
+      "stream": "scheduler:joined",
+      "type": "selection",
+      "data": {
+        "kind": "window-exhausted",
+        "nextWakeup": "2026-10-11T12:00:01.000Z",
+        "reason": "window service exhausted; lifetime usage retained"
+      }
+    },
+    {
+      "sequence": 23,
+      "id": "c244e5d3-7ad2-4d44-8cf2-63906538e77f",
+      "stream": "scheduler:joined",
+      "type": "selection",
+      "data": {
+        "kind": "selected",
+        "selection": {
+          "goal": {
+            "dependencyIds": [],
+            "evidenceIds": [
+              "episode"
+            ],
+            "id": "inquiry-1",
+            "nextAction": "measure inquiry-1",
+            "origin": {
+              "kind": "self"
+            },
+            "priority": 1,
+            "purpose": "test observed parsing duplicate",
+            "reason": "finite observation worthwhile",
+            "resources": {
+              "maxConcurrency": 1,
+              "maxCostUsd": 10,
+              "maxElapsedMs": 600000,
+              "maxRequests": 30,
+              "maxTokens": 3000
+            },
+            "reviewAt": "2026-10-11T12:00:00.000Z",
+            "revision": 2,
+            "scope": {
+              "kind": "public"
+            },
+            "status": "ready",
+            "successCriteria": [
+              "obtain a new measured observation"
+            ]
+          },
+          "kind": "goal",
+          "service": "inquiry"
+        },
+        "sequence": 2
+      }
+    },
+    {
+      "sequence": 38,
+      "id": "f5ef5164-8588-4352-b42c-ff944bcc3410",
+      "stream": "scheduler:joined",
+      "type": "selection",
+      "data": {
+        "kind": "selected",
+        "selection": {
+          "goal": {
+            "dependencyIds": [],
+            "evidenceIds": [
+              "episode"
+            ],
+            "id": "inquiry-2",
+            "nextAction": "measure inquiry-2",
+            "origin": {
+              "kind": "self"
+            },
+            "priority": 1,
+            "purpose": "measure unsupported benchmark operation",
+            "reason": "finite observation worthwhile",
+            "resources": {
+              "maxConcurrency": 1,
+              "maxCostUsd": 10,
+              "maxElapsedMs": 600000,
+              "maxRequests": 30,
+              "maxTokens": 3000
+            },
+            "reviewAt": "2026-10-11T12:00:00.000Z",
+            "revision": 2,
+            "scope": {
+              "kind": "public"
+            },
+            "status": "ready",
+            "successCriteria": [
+              "obtain a new measured observation"
+            ]
+          },
+          "kind": "goal",
+          "service": "inquiry"
+        },
+        "sequence": 3
+      }
+    },
+    {
+      "sequence": 53,
+      "id": "34065a58-2930-448c-8cd7-83e477303c4e",
+      "stream": "scheduler:joined",
+      "type": "selection",
+      "data": {
+        "kind": "idle",
+        "nextWakeup": null,
+        "reason": "no eligible observation or delivery; await input, evidence, dependency or wakeup"
+      }
+    }
+  ],
+  "toolObservations": [
+    {
+      "id": "tool:run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f:assistant:f7aff9c4-01af-4292-82a9-2344840f2035:observed01",
+      "kind": "result",
+      "provenance": {
+        "actorId": "effect-receiver",
+        "derivation": "observed",
+        "recordedAt": "2026-10-11T12:00:01.000Z",
+        "sourceIds": [
+          "tool:run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f:assistant:f7aff9c4-01af-4292-82a9-2344840f2035:observed01"
+        ]
+      },
+      "runId": "run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f",
+      "sourceId": "run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f:assistant:f7aff9c4-01af-4292-82a9-2344840f2035:observed01",
+      "stepId": "run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f:assistant:f7aff9c4-01af-4292-82a9-2344840f2035",
+      "value": {
+        "fixture": true,
+        "measured": "tool:run:34db08d7adab60958abefbc91f2a0825271f995783cc35d42cd1970779cd332f:assistant:f7aff9c4-01af-4292-82a9-2344840f2035:observed01"
+      }
+    },
+    {
+      "id": "tool:run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f:assistant:23e2b4b0-175a-4c7d-998b-0febb4bbc454:observed01",
+      "kind": "result",
+      "provenance": {
+        "actorId": "effect-receiver",
+        "derivation": "observed",
+        "recordedAt": "2026-10-11T12:00:02.000Z",
+        "sourceIds": [
+          "tool:run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f:assistant:23e2b4b0-175a-4c7d-998b-0febb4bbc454:observed01"
+        ]
+      },
+      "runId": "run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f",
+      "sourceId": "run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f:assistant:23e2b4b0-175a-4c7d-998b-0febb4bbc454:observed01",
+      "stepId": "run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f:assistant:23e2b4b0-175a-4c7d-998b-0febb4bbc454",
+      "value": {
+        "fixture": true,
+        "measured": "tool:run:a5b3b20e8d9b9e69220794b5af3b1da90063e49ef2d09119731a1b890527312f:assistant:23e2b4b0-175a-4c7d-998b-0febb4bbc454:observed01"
+      }
+    },
+    {
+      "id": "tool:run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722:assistant:8ef14a9f-21dc-48ea-881a-c072a6d5c239:observed01",
+      "kind": "result",
+      "provenance": {
+        "actorId": "effect-receiver",
+        "derivation": "observed",
+        "recordedAt": "2026-10-11T12:00:00.000Z",
+        "sourceIds": [
+          "tool:run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722:assistant:8ef14a9f-21dc-48ea-881a-c072a6d5c239:observed01"
+        ]
+      },
+      "runId": "run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722",
+      "sourceId": "run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722:assistant:8ef14a9f-21dc-48ea-881a-c072a6d5c239:observed01",
+      "stepId": "run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722:assistant:8ef14a9f-21dc-48ea-881a-c072a6d5c239",
+      "value": {
+        "fixture": true,
+        "measured": "tool:run:a99a1ab62db1cde2c0a5328e6a4202545351848a0879086c2d586a99b14f3722:assistant:8ef14a9f-21dc-48ea-881a-c072a6d5c239:observed01"
+      }
+    }
+  ],
+  "modelRequestCount": 6,
+  "restart": {
+    "retainedRequests": 3
+  },
+  "noAction": "idle after all finite inquiry criteria observed"
+}
