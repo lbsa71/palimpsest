@@ -113,6 +113,18 @@ test('already selected launcher preserves normal-boot readiness callback across 
   } finally { f.dispose(); }
 });
 
+test('redirected bootstrap directory is refused before publication lease writes', () => {
+  const f = fixture();
+  try {
+    const outside = join(f.root, 'outside'); mkdirSync(outside, { mode: 0o700 });
+    fs.symlinkSync(outside, join(f.config.host.stateDirectory, 'boot')); f.state('accepted');
+    assert.throws(() => publishBootstrapSelection(f.config, f.next));
+    assert.deepEqual(fs.readdirSync(outside), [], 'invalid boot path must not create an escaped lease');
+    assert.throws(() => rotateBootstrapRescue(f.config, f.next));
+    assert.deepEqual(fs.readdirSync(outside), []);
+  } finally { f.dispose(); }
+});
+
 test('interruption after active rename preserves latched independent rescue and latest state', () => {
   const f = fixture(), original = fs.renameSync;
   try {
