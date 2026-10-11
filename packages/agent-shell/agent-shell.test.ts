@@ -104,6 +104,26 @@ test('uncertain effect blocks further tool dispatch and remains pending for reco
   const snapshot = await f.bridge.readCheckpoint(result.checkpoint!); assert.equal((snapshot as { messages: { role: string }[] }).messages.filter(item => item.role === 'toolResult').length, 0);
 });
 
+test('provider tool IDs reused across turns remain distinct durable effects on restart', async () => {
+  const f = fixture(); let rounds = 0; const receipts = new Map<string, Observation>(); let effects = 0;
+  f.setReceiver(async request => {
+    if (receipts.has(request.id)) return receipts.get(request.id)!;
+    effects++;
+    const receipt: Observation = { id: `obs:${request.id}`, runId: request.runId, stepId: request.stepId, sourceId: request.id, kind: 'result', value: effects, provenance: { sourceIds: [request.id], actorId: 'fixture', recordedAt: new Date().toISOString(), derivation: 'observed' } };
+    receipts.set(request.id, receipt);
+    if (effects === 2) throw Error('secret simulated crash');
+    return receipt;
+  });
+  const shell = createAgentShell({ resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: 3, fetch: async () => ++rounds <= 2 ? response(null, [call('same', 'reused001')]) : response('complete') });
+  const first = await shell.run(input(), f.bridge); assert.equal(first.status, 'blocked'); assert.equal(effects, 2);
+  const snapshot = await f.bridge.readCheckpoint(first.checkpoint!);
+  assert.match((snapshot as unknown as { failure: { reason: string } }).failure.reason, /receiver failed/);
+  assert.ok(!JSON.stringify(snapshot).includes('secret'));
+  const resumed = await shell.run({ ...input(), messages: [], checkpoint: first.checkpoint }, f.bridge);
+  assert.equal(resumed.status, 'completed'); assert.equal(effects, 2); assert.equal(f.tools.length, 3);
+  assert.notEqual(f.tools[0].id, f.tools[1].id); assert.equal(f.tools[1].id, f.tools[2].id);
+});
+
 test('context reduction uses the same counted transport and preserves paired observations', async () => {
   const f = fixture(); let calls = 0;
   const compaction = { thresholdMessages: 6, retainMessages: 2, instruction: fragment('summary', 'Summarize observed task state and uncertainties.', 1) };
@@ -113,6 +133,38 @@ test('context reduction uses the same counted transport and preserves paired obs
   assert.equal(result.status, 'completed'); assert.deepEqual([...f.requests.values()].map(request => request.purpose), ['compaction', 'reasoning']);
   const final = JSON.parse(f.manifests.at(-1)!.payload); assert.equal(final.messages.length, 4); assert.match(final.messages[1].content, /retained verified/);
   assert.ok(f.manifests[0].manifest.fragments.some(value => value.id === 'summary'));
+});
+
+test('explicit reasoning profile preserves complete native thinking chunks through tools and restart', async () => {
+  const f = fixture(); const thinking = { type: 'thinking', thinking: [{ type: 'text', text: 'private intermediate reasoning', marker: 'native-inner' }], marker: 'native-outer' };
+  const answer = { type: 'text', text: 'visible answer', marker: 'native-text' }; let rounds = 0;
+  f.setReceiver(async request => ({ id: `obs:${request.id}`, runId: request.runId, stepId: request.stepId, sourceId: request.id, kind: 'uncertain', value: 'pending', provenance: { sourceIds: [request.id], actorId: 'fixture', recordedAt: new Date().toISOString(), derivation: 'observed' } }));
+  const shell = createAgentShell({ resolveFragment, tools: [tool], model: 'explicit-reasoning-profile', modelProfile: { contextWindow: 1_000_000, reasoning: true }, reasoningEffort: 'high', apiKey: () => 'key', maxRequests: 2, fetch: async (_url, init) => {
+    const payload = JSON.parse(String(init?.body)); assert.equal(payload.reasoning_effort, 'high'); assert.equal(payload.model, 'explicit-reasoning-profile');
+    if (rounds++ === 0) return Response.json({ choices: [{ finish_reason: 'tool_calls', message: { content: [thinking, answer], tool_calls: [call()] } }] });
+    const assistant = payload.messages.findLast((item: { role: string }) => item.role === 'assistant'); assert.deepEqual(assistant.content, [thinking, answer]);
+    return response('complete');
+  } });
+  const first = await shell.run(input(), f.bridge); assert.equal(first.status, 'blocked');
+  const snapshot = await f.bridge.readCheckpoint(first.checkpoint!);
+  const assistant = (snapshot as unknown as { messages: { role: string; content: { type: string; thinking?: string }[]; providerThinkingLevel?: string }[] }).messages.find(item => item.role === 'assistant')!;
+  assert.equal(assistant.content[0].type, 'thinking'); assert.equal(assistant.content[0].thinking, 'private intermediate reasoning'); assert.equal(assistant.providerThinkingLevel, 'high');
+  f.setReceiver(async request => ({ id: `obs:${request.id}`, runId: request.runId, stepId: request.stepId, sourceId: request.id, kind: 'result', value: 'reconciled', provenance: { sourceIds: [request.id], actorId: 'fixture', recordedAt: new Date().toISOString(), derivation: 'observed' } }));
+  assert.equal((await shell.run({ ...input(), messages: [], checkpoint: first.checkpoint }, f.bridge)).status, 'completed');
+  assert.equal(rounds, 2);
+  assert.throws(() => createMistralTransport({ apiKey: () => 'key', maxRequests: 1, reasoningEffort: 'high', reserve: async () => {}, dispatched: async () => {}, settle: async () => {} }), /explicitly capable/);
+  assert.equal(mistralModel('unknown').contextWindow, 0);
+});
+
+test('reasoning compaction stores native metadata privately and uses only summary text as new context', async () => {
+  const f = fixture(); let rounds = 0;
+  const shell = createAgentShell({ resolveFragment, tools: [], modelProfile: { contextWindow: 1_000_000, reasoning: true }, reasoningEffort: 'high', apiKey: () => 'key', maxRequests: 2, compaction: { thresholdMessages: 6, retainMessages: 2, instruction: fragment('summary', 'Summarize observed task state and uncertainties.', 1) }, fetch: async () => rounds++ === 0 ? Response.json({ choices: [{ finish_reason: 'stop', message: { content: [{ type: 'thinking', thinking: [{ type: 'text', text: 'private summary deliberation' }], marker: 'summary' }, { type: 'text', text: 'retained summary' }] } }] }) : response('done') });
+  const result = await shell.run({ ...input(), messages: Array.from({ length: 8 }, (_, index) => ({ role: 'user', content: `fact${index}`, timestamp: index })) }, f.bridge);
+  assert.equal(result.status, 'completed');
+  const snapshot = await f.bridge.readCheckpoint(result.checkpoint!);
+  assert.match(JSON.stringify((snapshot as unknown as { compactions: unknown[] }).compactions), /private summary deliberation/);
+  assert.ok(!f.manifests.at(-1)!.payload.includes('private summary deliberation'));
+  assert.match(f.manifests.at(-1)!.payload, /retained summary/);
 });
 
 test('steering becomes an observed request input before next model request', async () => {

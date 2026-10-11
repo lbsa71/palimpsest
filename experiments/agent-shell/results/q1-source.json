@@ -8,7 +8,7 @@
   "commands": [
     {
       "phase": "clean-build",
-      "elapsedMs": 1341.889406,
+      "elapsedMs": 1332.0791100000001,
       "command": [
         "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
         "node_modules/typescript/bin/tsc",
@@ -38,7 +38,7 @@
     },
     {
       "phase": "warm-build",
-      "elapsedMs": 1385.216372,
+      "elapsedMs": 1294.985117,
       "command": [
         "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
         "node_modules/typescript/bin/tsc",
@@ -68,7 +68,7 @@
     },
     {
       "phase": "baseline-regressions",
-      "elapsedMs": 498.0301199999999,
+      "elapsedMs": 513.2657370000002,
       "command": [
         "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
         "--test",
@@ -79,7 +79,7 @@
     },
     {
       "phase": "changed-dependency-build",
-      "elapsedMs": 1385.204135,
+      "elapsedMs": 1333.2659789999998,
       "command": [
         "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
         "node_modules/typescript/bin/tsc",
@@ -109,7 +109,7 @@
     },
     {
       "phase": "changed-dependency-regressions",
-      "elapsedMs": 477.06975499999953,
+      "elapsedMs": 496.62638100000004,
       "command": [
         "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
         "--test",
@@ -120,7 +120,7 @@
     },
     {
       "phase": "fresh-successor-process-loads-edited-dependency",
-      "elapsedMs": 38.785469000000376,
+      "elapsedMs": 41.352404999999635,
       "command": [
         "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
         "verify-loaded.mjs"

@@ -4,7 +4,7 @@ import type { JsonValue, Observation, PhysicalRequest, PromptFragment, PromptMan
 import { runAgentLoopContinue } from './vendor/pi/agent/agent-loop.ts';
 import type { AgentEvent, AgentTool } from './vendor/pi/agent/types.ts';
 import { normalizeContext, validateToolArguments } from './vendor/pi/ai/index.ts';
-import type { Message, Tool, ToolResultMessage } from './vendor/pi/ai/types.ts';
+import type { AssistantMessage, Message, Tool, ToolResultMessage } from './vendor/pi/ai/types.ts';
 import { asJson, createMistralTransport, digest, mistralModel } from './mistral.ts';
 import type { Attempt, AttemptOutcome, MistralTransportOptions } from './mistral.ts';
 export { DEFAULT_MISTRAL_MODEL, createMistralTransport, mistralModel, mistralPayload } from './mistral.ts';
@@ -19,7 +19,7 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   reservationEstimate?: (attempt: Attempt) => ResourceUsage;
   compaction?: { thresholdMessages: number; retainMessages: number; instruction: PromptFragment };
 }
-interface Snapshot { schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled' }
+interface Snapshot { schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[] }
 function json(value: unknown): JsonValue { return asJson(value) as JsonValue; }
 function message(value: JsonValue): Message {
   invariant(typeof value === 'object' && value !== null && !Array.isArray(value), 'Invalid shell message');
@@ -30,8 +30,8 @@ function message(value: JsonValue): Message {
   else invariant(Array.isArray(item.content), 'Invalid shell message content');
   return value as unknown as Message;
 }
-function toolResult(call: { id: string; name: string }, observation: Observation): ToolResultMessage {
-  return { role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: canonicalJson(observation.value) }], isError: observation.kind === 'error', timestamp: Date.now() };
+function toolResult(call: { id: string; name: string }, observation: Observation, aeonStepId: string): ToolResultMessage & { aeonStepId: string } {
+  return { role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: canonicalJson(observation.value) }], isError: observation.kind === 'error', timestamp: Date.now(), aeonStepId };
 }
 
 /** Pi is a projection over the durable receiver: this adapter never directly executes a tool. */
@@ -57,6 +57,9 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       let checkpoint: ShellCheckpoint | undefined;
       let halted = false;
       let status: Snapshot['status'] = 'running';
+      let failure: Snapshot['failure'];
+      let stage = 'recovery';
+      let compactions: Snapshot['compactions'] = [];
       if (input.checkpoint) {
         validateCheckpoint(input.checkpoint, input.run);
         invariant(input.checkpoint.shell === SHELL_REVISION, 'Unsupported shell checkpoint revision');
@@ -69,12 +72,13 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         invariant(snapshot.observationIds.every(id => typeof id === 'string') && identity(snapshot.observationIds) === identity(input.checkpoint.observationIds), 'Checkpoint observation index mismatch');
         observationIds = [...snapshot.observationIds];
         status = snapshot.status;
+        compactions = snapshot.compactions ?? [];
       }
       transcript.push(...input.messages.map(message));
       // Replace every historical application system layer; reintroduce only the current manifest.
       transcript = transcript.filter(item => item.role !== 'system');
       async function save(): Promise<void> {
-        const content = json({ schema: SHELL_REVISION, messages: transcript, observationIds, status });
+        const content = json({ schema: SHELL_REVISION, messages: transcript, observationIds, status, compactions, ...(failure ? { failure } : {}) });
         checkpoint = await bridge.persistCheckpoint(input.run.id, input.run.revision, SHELL_REVISION, content);
         validateCheckpoint(checkpoint, input.run);
         invariant(checkpoint.shell === SHELL_REVISION && checkpoint.artifact.sha256 === identity(content), 'Checkpoint receiver returned another artifact');
@@ -107,7 +111,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         const observation = await bridge.execute({ id: `${stepId}:${call.id}`, runId: input.run.id, stepId, name: call.name, arguments: json(call.arguments) }, signal);
         validateObservation(observation);
         invariant(observation.runId === input.run.id && observation.stepId === stepId && observation.sourceId === `${stepId}:${call.id}`, 'Tool observation does not match dispatched call');
-        if (observation.kind === 'uncertain') { halted = true; status = 'blocked'; }
+        if (observation.kind === 'uncertain') { halted = true; status = 'blocked'; failure = { stage: 'tool', reason: 'Tool outcome is uncertain; durable reconciliation required.' }; }
         else { observations.push(observation); if (!observationIds.includes(observation.id)) observationIds.push(observation.id); }
         return observation;
       }
@@ -117,7 +121,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
           const observation = await execute({ id, name: tool.name, arguments: args }, assistantIndex);
           if (halted) return { content: [{ type: 'text', text: 'Tool outcome is uncertain; reconciliation required.' }], details: null, isError: true, terminate: true };
           return { content: [{ type: 'text', text: canonicalJson(observation.value) }], details: null, isError: observation.kind === 'error' };
-        } catch (error) { halted = true; status = signal?.aborted ? 'cancelled' : 'blocked'; throw error; }
+        } catch (error) { halted = true; status = signal?.aborted ? 'cancelled' : 'blocked'; failure = { stage: 'tool', reason: signal?.aborted ? 'Tool execution cancelled; reconcile dispatched effects.' : 'Tool receiver failed; inspect durable effect records before continuation.' }; throw error; }
       } }));
       const system = () => ({ role: 'system' as const, content: basePrompt, toolsAdded: tools, timestamp: 0 });
       async function emit(event: AgentEvent): Promise<void> {
@@ -125,6 +129,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         if (event.message.role === 'toolResult' && halted) return;
         const completed = structuredClone(event.message) as Message & { aeonStepId?: string };
         if (completed.role === 'assistant') completed.aeonStepId = randomUUID();
+        if (completed.role === 'toolResult') completed.aeonStepId = (transcript.findLast(item => item.role === 'assistant') as Message & { aeonStepId?: string })?.aeonStepId;
         transcript.push(completed);
         await save(); // completed assistant/tool observations become durable before subsequent dispatch
       }
@@ -132,21 +137,23 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         if (status === 'completed' && input.messages.length === 0) return { status: 'completed', checkpoint: input.checkpoint, observations };
         status = 'running';
         // Reconstruct pending tools after a crash. The receiver deduplicates/reconciles stable call IDs.
-        const results = new Set(transcript.filter(item => item.role === 'toolResult').map(item => item.toolCallId));
+        const resultKey = (item: Message & { aeonStepId?: string }, id: string) => `${item.aeonStepId}:${id}`;
+        const results = new Set(transcript.filter(item => item.role === 'toolResult').map(item => resultKey(item, item.toolCallId)));
         for (let index = 0; index < transcript.length; index++) {
           const item = transcript[index]; if (item.role !== 'assistant') continue;
           for (const call of item.content.filter(block => block.type === 'toolCall')) {
-            if (results.has(call.id)) continue;
+            if (results.has(resultKey(item, call.id))) continue;
             const declaration = tools.find(tool => tool.name === call.name);
             invariant(declaration, 'Pending tool is unavailable in successor');
             invariant(item.stopReason === 'toolUse', 'Truncated or incomplete tools cannot replay');
             const args = validateToolArguments(declaration, call);
             const observation = await execute({ ...call, arguments: args }, index);
             if (halted) { await save(); return { status: 'blocked', checkpoint, observations }; }
-            transcript.push(toolResult(call, observation)); results.add(call.id); await save();
+            transcript.push(toolResult(call, observation, (item as Message & { aeonStepId: string }).aeonStepId)); results.add(resultKey(item, call.id)); await save();
           }
         }
-        const model = mistralModel(options.model);
+        const model = mistralModel(options.model, options.modelProfile);
+        stage = 'model';
         await runAgentLoopContinue({ messages: [system(), ...transcript], tools: wrapped }, {
           model, convertToLlm: messages => messages, toolExecution: 'sequential',
           getSteeringMessages: options.steering ? async () => (await options.steering!()).filter(item => item.role !== 'system') : undefined,
@@ -158,14 +165,17 @@ export function createAgentShell(options: ShellOptions): ShellPort {
               while (boundary > 0 && transcript[boundary].role === 'toolResult') boundary--;
               const prefix = transcript.slice(0, boundary); const suffix = transcript.slice(boundary);
               if (prefix.length > 0) {
+                stage = 'compaction';
                 const fragment = options.compaction.instruction; const instruction = await resolve(fragment);
                 currentFragments = [...fragments, { ...fragment, order: Math.max(-1, ...fragments.map(item => item.order)) + 1 }];
                 transport.setPurpose('compaction');
                 const summary = await (await transport.stream(model, normalizeContext({ messages: [{ role: 'system', content: `${basePrompt}\n\n${instruction}`, timestamp: 0 }, { role: 'user', content: canonicalJson(json(prefix)), timestamp: Date.now() }] }), { signal })).result();
                 currentFragments = fragments; transport.setPurpose('reasoning');
-                invariant(summary.stopReason === 'stop' && summary.content.every(block => block.type === 'text'), 'Compaction failed; original context retained');
+                invariant(summary.stopReason === 'stop' && !summary.content.some(block => block.type === 'toolCall'), 'Compaction failed; original context retained');
+                compactions.push({ sourceDigest: identity(json(prefix)), summary: structuredClone(summary) });
                 transcript = [{ role: 'user', content: summary.content.filter(block => block.type === 'text'), timestamp: Date.now() }, ...suffix];
                 await save();
+                stage = 'model';
               }
             }
             return { context: { messages: [system(), ...transcript], tools: wrapped } };
@@ -173,7 +183,12 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         }, emit, signal, transport.stream);
         const final = transcript.findLast(item => item.role === 'assistant');
         status = halted ? status : final?.role === 'assistant' && final.stopReason === 'aborted' ? 'cancelled' : final?.role === 'assistant' && (final.stopReason === 'error' || final.stopReason === 'length') ? 'blocked' : 'completed';
-      } catch { status = signal?.aborted ? 'cancelled' : 'blocked'; }
+        if (!halted && final?.role === 'assistant' && status !== 'completed') failure = { stage: 'model', reason: final.errorMessage ?? 'Model output reached its limit; truncated calls were not executed.' };
+      } catch (error) {
+        status = signal?.aborted ? 'cancelled' : 'blocked';
+        const safeReasons = ['Compaction failed; original context retained', 'Pending tool is unavailable in successor', 'Truncated or incomplete tools cannot replay', 'Assistant lacks durable step identity', 'Tool observation does not match dispatched call'];
+        failure ??= { stage, reason: error instanceof Error && safeReasons.includes(error.message) ? error.message : signal?.aborted ? 'Shell cancelled; inspect durable dispatched records.' : 'Shell boundary failed; inspect durable request, checkpoint and effect records.' };
+      }
       await save();
       return { status: status === 'running' ? 'checkpointed' : status, checkpoint, observations };
     },
