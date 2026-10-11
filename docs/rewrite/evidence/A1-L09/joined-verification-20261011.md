@@ -100,3 +100,8 @@ The correction `0584387` was then exercised once at clean isolated **`eb9e76dccc
 ### Joined acquired Claude witness and actual artifact audit
 
 At clean integrated **`52b8bd253bc2f54a95ccee4168bb2da846a986cf`**, strict TypeScript and the four acquired hand-back/delegation author/reviewer test files passed **146/146, zero skips**, 3.591 seconds. Both original and new physical evidence directories were explicitly supplied for read-only audit; no physical driver ran. Transcript `integration-evidence/claude-joined-52b8bd2.log` SHA-256 is `c2d96ac3820265fe9e519f9c1ea45bb4c4bfdea0e81b23d93a745b444bc04631`; adjacent plan/result JSON retains both exact commands, Node identity and clean ending source. Actual physical success remains bound to author source `104dac2`; the joined audit verifies its retained artifacts and preserves every original failed attempt and held charge.
+
+
+### Joined aggregate at `78432f9`
+
+The next clean 103-file aggregate built successfully, then recorded **1,085 tests: 1,057 passed, 11 failed, two cancelled, 15 skipped**, 722.980 seconds. The full result, exact log hash, failure classification and fixed next observation are in [integration failure diagnosis](integration-timeout-diagnosis.md). The failed parent continued to attempt eight nested checks after its test deadline; the ordinary control uncertainty and separate launcher cleanup failure require their own evidence. Prior passing isolated checks remain valid for their exact runs, without changing this aggregate's failure. No further complete aggregate or product acceptance is claimed.
