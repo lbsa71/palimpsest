@@ -36,7 +36,7 @@ function response(name?: string, args: unknown = {}) {
   return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: name ? 'tool_calls' : 'stop', message: name ? { role: 'assistant', content: null, tool_calls: [{ id: name.replaceAll('_', '').slice(0, 9), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Finite fixture finished.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
 }
 
-test('ordinary service model tools queue evaluation, resume bound feedback and stage through the real controller', { timeout: 90000 }, async t => {
+for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queues evaluation, resumes bound feedback and stages through the real controller (${lostLocalAcknowledgment ? 'lost local acknowledgment' : 'review beyond slice'})`, { timeout: 90000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-evolution-host-'));
   const source = join(root, 'source'); copySource(source);
   const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
@@ -47,7 +47,7 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
   const policyFields = { kind: 'engineering' as const, requiredCases: ['exact-build'], evaluatorKeys: new Map([[evaluatorId, key]]), evaluatorArtifacts: new Map([[evaluatorId, evaluatorArtifact.sha256]]) };
   const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: 2 };
   const inputs: DeploymentInputs = { createdBy: 'accepted-engineering-host', prompts: { mind: 'Finite deterministic evolution host fixture.', compaction: 'Preserve evidence.' }, runtime: { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch }, policy: policyDescriptor(policyFields),
-    configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources, scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'operator', scope: { kind: 'public' }, modificationEligible: true } } };
+    configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources, scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 30000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'operator', scope: { kind: 'public' }, modificationEligible: true } } };
   const accepted = freezeApplication(source, host.artifactStore, inputs), config = materializeConfiguration(accepted, host);
   const authorityStore = new AuthorityStore(join(host.stateDirectory, 'authority.sqlite'));
   const authority = authorityStore.bootstrap('ordinary-author', accepted.manifest.controls, accepted.manifest.id);
@@ -63,11 +63,16 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
   }
   controller.bootstrap(proof('bootstrap', accepted.manifest, { bootstrap: 'engineering fixture' }).proof, policy);
   const mailbox = new EvolutionMailbox({ store, assertAuthority: grant => authorityStore.assert(grant), waitMs: 40, pollMs: 5 });
-  let calls = 0, app: AutarkApplication | undefined;
+  let calls = 0, app: AutarkApplication | undefined, acknowledgmentLost = false;
   const modifiedPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
   const modifiedBytes = readFileSync(join(source, modifiedPath), 'utf8') + '\nexport const hostFixtureRevision = "external-build-bound";\n';
   const createApp = () => new AutarkApplication({ config, authority, authorityStore, secrets: { mistralApiKey: 'no-provider-call', directToken: 'fixture' },
-      additionalTools: context => ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, evolution: { policyDigest: policy.policyDigest }, assertAuthority: grant => authorityStore.assert(grant) }),
+      additionalTools: context => ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, evolution: { policyDigest: policy.policyDigest }, assertAuthority: grant => authorityStore.assert(grant) }).map(tool =>
+        tool.name !== 'candidate_evaluate' ? tool : { ...tool, async execute(args, signal) {
+          const result = await tool.execute(args, signal);
+          if (lostLocalAcknowledgment && !acknowledgmentLost) { acknowledgmentLost = true; throw Object.assign(Error('Fixture lost committed local enqueue reply'), { mayHaveApplied: true }); }
+          return result;
+        } }),
       performRequest: async payload => {
         const request = JSON.parse(payload);
         for (const name of ['source_checkout', 'candidate_freeze', 'candidate_evaluate', 'release_submit']) assert.ok(request.tools.some((value: any) => value.function.name === name));
@@ -77,8 +82,8 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
         if (calls === 3) return response('change_propose', { changeId: 'finite', justification: 'Verify exact candidate external build and host stage.', objective: 'Stage this bounded engineering source change.', successCriteria: ['exact candidate compiles under the accepted closure'], experienceIds: [] });
         if (calls === 4) return response('candidate_freeze', { changeId: 'finite' });
         if (calls === 5) return response('candidate_evaluate', { changeId: 'finite' });
-        if (calls === 7) return response('change_status', { changeId: 'finite' });
-        if (calls === 8) return response('release_submit', { changeId: 'finite' });
+        if (calls === (lostLocalAcknowledgment ? 6 : 7)) return response('change_status', { changeId: 'finite' });
+        if (calls === (lostLocalAcknowledgment ? 7 : 8)) return response('release_submit', { changeId: 'finite' });
         return response();
       } });
   try {
@@ -90,13 +95,13 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
       if (!found && ['completed', 'blocked'].includes(app!.runtime.getRun(run.id)!.status)) throw Error(JSON.stringify({ calls, run: app!.runtime.getRun(run.id), resources: app!.resources.snapshot(run.id), lastResult: app!.store.get<{ lastResult?: { reason?: string; kind?: string; status?: string } }>('execution', run.id)?.value.lastResult?.reason, observations: app!.runtime.observations(run.id).map(value => ({ kind: value.kind, sourceId: value.sourceId, error: value.value && typeof value.value === 'object' && !Array.isArray(value.value) ? value.value.error : undefined })) }));
       return found;
     }, Boolean);
-    assert.equal((await execution).status, 'waiting');
-    assert.equal(calls, 6); assert.equal(app.effects.unresolved(run.id).length, 0);
+    assert.equal((await execution).status, lostLocalAcknowledgment ? 'blocked' : 'waiting');
+    assert.equal(calls, lostLocalAcknowledgment ? 5 : 6); assert.equal(app.effects.unresolved(run.id).length, lostLocalAcknowledgment ? 1 : 0);
     assert.equal(mailbox.readEvaluation(mailbox.request(evaluation!.id) as EvaluationRequest).status, 'pending');
     const usedBeforeRestart = app.resources.snapshot(run.id);
     await app.close(); app = undefined;
     // A known queued review can finish while no author process is alive.
-    await new Promise(resolve => setTimeout(resolve, 80));
+    await new Promise(resolve => setTimeout(resolve, lostLocalAcknowledgment ? 80 : config.scheduler.quantumMs + 50));
     let engineeringResult: ExternalEvaluation | undefined;
     await mailbox.processEvaluation(evaluation!.id, async request => {
       const payload = join(host.artifactStore, request.candidate.manifest.id, 'payload');
@@ -106,9 +111,9 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
       engineeringResult = proof(request.requestId, request.candidate.manifest, JSON.parse(JSON.stringify({ compilerExit: checked.status, manifest: request.candidate.manifest })) as JsonValue); return engineeringResult;
     });
     app = createApp();
-    assert.equal(app.runtime.getRun(run.id)!.status, 'waiting');
+    assert.equal(app.runtime.getRun(run.id)!.status, lostLocalAcknowledgment ? 'blocked' : 'waiting');
     assert.deepEqual(app.resources.snapshot(run.id).requests, usedBeforeRestart.requests);
-    assert.equal(calls, 6, 'Restart does not repeat the author or reviewer request');
+    assert.equal(calls, lostLocalAcknowledgment ? 5 : 6, 'Restart does not repeat the author or reviewer request');
     await app.start();
     const submission = await eventually(() => mailbox.jobs().find(job => job.kind === 'submission'), Boolean);
     await mailbox.processSubmission(submission!.id, async (request, externalProof) => {
@@ -118,7 +123,9 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
       const stageId = controller.stageControlUpgrade(externalProof, next);
       return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status: 'staged', receipt: { stageId, kind: 'engineering' } };
     });
-    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, 9);
+    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, lostLocalAcknowledgment ? 8 : 9);
+    assert.equal(app.effects.unresolved(run.id).length, 0);
+    assert.equal(app.store.events(run.id).filter(event => event.type === 'local-enqueue-reconciled').length, lostLocalAcknowledgment ? 1 : 0);
     assert.equal(app.store.events(run.id).filter(event => event.type === 'steering' && (event.data as any).source === 'host.evolution').length, 1);
     assert.equal(controller.status()!.phase, 'accepted'); assert.equal(authorityStore.current()!.artifactId, accepted.manifest.id);
     assert.equal(mailbox.status(submission!.id)!.status, 'completed');
