@@ -175,6 +175,32 @@ test('prepared review cannot change its bound request, reviewer or elapsed allow
   }
 });
 
+test('a concurrent claimant cannot settle another prepared review or release its live physical slot', async () => {
+  const f = fixture(1); let launches = 0, entered = 0;
+  let releaseSetup!: () => void, releaseReview!: () => void;
+  const setup = new Promise<void>(resolve => { releaseSetup = resolve; });
+  const completion = new Promise<void>(resolve => { releaseReview = resolve; });
+  try {
+    prepareReview(f.options);
+    const first = accountedReview({ ...f.options, prepared: true }, async gate => {
+      entered++; await setup; gate.dispatch(() => { launches++; }); await completion;
+    });
+    const duplicate = accountedReview({ ...f.options, prepared: true }, async gate => {
+      entered++; await setup; gate.dispatch(() => { launches++; });
+    });
+    const rejected = assert.rejects(duplicate, /claimed|unused prepared/);
+    releaseSetup();
+    try {
+      await rejected;
+      assert.equal(entered, 1, 'Only the durable owner may prepare a physical operation');
+      assert.equal(launches, 1);
+      assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'dispatched');
+      assert.equal(f.ledger.snapshot('child').concurrent, 1);
+    } finally { releaseReview(); await first; }
+    assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'succeeded');
+  } finally { f.close(); }
+});
+
 test('prepared review cancellation, expiry and process recovery never grant a fresh attempt', async () => {
   for (const cause of ['cancel', 'expire', 'recover'] as const) {
     const f = fixture(); let launches = 0;

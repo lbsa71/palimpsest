@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -151,6 +151,51 @@ test('cancellation after fresh review but before actual acceptance cannot accept
     assert.equal(f.store.get<Run>('runs', 'author')?.value.status, 'cancelled');
     await continuation.processPending(); assert.deepEqual(f.starts, [2, 1]);
   } finally { await continuation.close(); await f.dispose(); }
+});
+
+test('actual probation acceptance holds authority and cancellation write locks through the controller commit', async () => {
+  const f = await fixture(), continuation = new ControlContinuation(f.options);
+  const commit = f.controller.acceptProbation.bind(f.controller); let commits = 0;
+  f.controller.acceptProbation = proof => {
+    const observer = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+      import { DatabaseSync } from 'node:sqlite';
+      const locks = process.argv.slice(1).map(path => {
+        const db = new DatabaseSync(path); db.exec('PRAGMA busy_timeout=1');
+        try { db.exec('BEGIN IMMEDIATE'); db.exec('ROLLBACK'); return false; }
+        catch (error) { if (!/locked/.test(error.message)) throw error; return true; }
+        finally { db.close(); }
+      });
+      process.stdout.write(JSON.stringify(locks));
+    `, join(f.root, 'state', 'authority.sqlite'), f.store.filename], { encoding: 'utf8', env: {} });
+    assert.equal(observer.status, 0, observer.stderr);
+    assert.deepEqual(JSON.parse(observer.stdout), [true, true]);
+    commit(proof); commits++;
+  };
+  try {
+    enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+    assert.equal(commits, 1); assert.equal(f.status().status, 'accepted');
+    assert.equal(f.controller.status()?.accepted.candidateId, f.successor.manifest.id);
+  } finally { await continuation.close(); await f.dispose(); }
+});
+
+test('probation reservation ownership is finished after partial reserve or lost activation without retrying review', async () => {
+  for (const failure of ['reserve', 'activate'] as const) {
+    const f = await fixture(); let reserved: ProbationReviewRequest | undefined, finished = 0, reviews = 0;
+    const continuation = new ControlContinuation({ ...f.options,
+      reserveProbation: review => { reserved = review; f.options.reserveProbation(review); if (failure === 'reserve') throw Error('Lost reservation response'); },
+      activate: async id => { await f.options.activate(id); throw Error('Lost activation response'); },
+      reviewProbation: async (review, signal) => { reviews++; return f.options.reviewProbation(review, signal); },
+      finishProbation: review => { assert.deepEqual(review, reserved); finished++; },
+    });
+    try {
+      enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+      assert.equal(finished, 1); assert.equal(reviews, 0);
+      assert.equal(f.status().status, failure === 'reserve' ? 'rejected' : 'uncertain');
+      assert.equal(f.ledger.request(reviewPhysicalId(reserved!.id))?.status, 'reserved', 'Finishing logical ownership alone never discards physical accounting');
+      await continuation.processPending(); assert.equal(finished, 1); assert.equal(reviews, 0);
+      assert.equal(f.ledger.snapshot('author').requests, 1);
+    } finally { await continuation.close(); await f.dispose(); }
+  }
 });
 
 test('lost activation response and interrupted journal retain uncertainty and never re-dispatch', async () => {

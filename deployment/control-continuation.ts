@@ -73,6 +73,8 @@ export interface ControlContinuationOptions {
   readyToActivate?(request: ControlActivationRequest): boolean;
   /** Reserve once BEFORE withdrawal, under the existing author lineage. Never allocate a new budget. */
   reserveProbation(request: ProbationReviewRequest): void;
+  /** Release only this exact logical reservation; preserve uncertain physical outcomes. */
+  finishProbation?(request: ProbationReviewRequest): void;
   reviewProbation(request: RunningProbationReview, signal: AbortSignal): Promise<ReleaseProof>;
   activate(stageId: string): Promise<Authority>; acceptProbation(proof: ReleaseProof, review: RunningProbationReview): Promise<void>;
 }
@@ -118,7 +120,7 @@ export class ControlContinuation {
     if (this.#processing || this.#abort.signal.aborted) return;
     const pending = this.records().find(record => record.status === 'pending'); if (!pending) return;
     this.#processing = true;
-    let started = false;
+    let started = false, reservedReview: ProbationReviewRequest | undefined;
     try {
       const request = pending.request;
       const { submission, stage } = this.#resolve(request);
@@ -143,6 +145,7 @@ export class ControlContinuation {
       // The reviewer obtains authority then operational write locks. Never invert that order
       // by calling it from our operational transaction. A crash in this gap leaves a used
       // reservation: recovery cannot replay it, and no authority transfer has occurred.
+      reservedReview = review;
       this.options.reserveProbation(review);
       this.#update(request.id, { status: 'activating', review });
       started = true;
@@ -165,7 +168,10 @@ export class ControlContinuation {
       this.#update(pending.request.id, { status: started ? 'uncertain' : 'rejected', diagnosis: started ?
         'Control activation or probation did not complete; inspect retained controller/review evidence and reconcile this ID' :
         'Control activation rejected before authority transfer; inspect the exact stage, author and remaining allowance' });
-    } finally { this.#processing = false; }
+    } finally {
+      try { if (reservedReview) this.options.finishProbation?.(reservedReview); }
+      finally { this.#processing = false; }
+    }
   }
   start(): void {
     invariant(!this.#loop, 'Control continuation already started');

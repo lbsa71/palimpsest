@@ -6,7 +6,7 @@ import type { EvaluationRequest } from './evolution-tools.ts';
 const provider = 'external-offline-review';
 const preparationNamespace = 'host.external-review-reservations';
 interface ReviewAllocation { parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt: number }
-interface PreparedReview { physical: PhysicalRequest; startedAt: number; maxElapsedMs: number }
+interface PreparedReview { physical: PhysicalRequest; startedAt: number; maxElapsedMs: number; claimed?: boolean }
 export interface ReviewResourceOptions {
   store: OperationalStore; request: EvaluationRequest; evaluatorDigest: string; evaluatorId: string;
   maxElapsedMs: number; assertAuthority(authority: Authority): void;
@@ -52,10 +52,16 @@ operation: (gate: { signal: AbortSignal; dispatch(launch: () => void): void }) =
   const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now);
   invariant(!options.physicalAuthority || options.prepared, 'Transferred review requires its original prepared reservation');
   if (!options.prepared) prepareReview(options);
-  const prepared = store.get<PreparedReview>(preparationNamespace, reviewPhysicalId(request.requestId))?.value;
-  invariant(prepared && prepared.maxElapsedMs === options.maxElapsedMs && prepared.physical.requestDigest === identity(request) &&
-    prepared.physical.model === options.evaluatorId && prepared.physical.promptManifestId === `reviewer-closure:${options.evaluatorDigest}` &&
-    identity(ledger.request(prepared.physical.id)) === identity(prepared.physical), 'Exact unused prepared review reservation required');
+  // Claim before asynchronous preparation. A duplicate must never enter the operation or
+  // settle the owner's physical request after losing a race at the launch gate.
+  const prepared = store.transaction(() => {
+    const row = store.get<PreparedReview>(preparationNamespace, reviewPhysicalId(request.requestId)), prepared = row?.value;
+    invariant(row && prepared && !prepared.claimed && prepared.maxElapsedMs === options.maxElapsedMs && prepared.physical.requestDigest === identity(request) &&
+      prepared.physical.model === options.evaluatorId && prepared.physical.promptManifestId === `reviewer-closure:${options.evaluatorDigest}` &&
+      identity(ledger.request(prepared.physical.id)) === identity(prepared.physical), 'Exact unused prepared review reservation required');
+    store.put(preparationNamespace, prepared.physical.id, { ...prepared, claimed: true }, row.revision);
+    return prepared;
+  });
   const physical = prepared.physical, started = prepared.startedAt, authority = options.physicalAuthority ?? request.proposal.authority;
   const controller = new AbortController(), signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   const assertLive = () => {
