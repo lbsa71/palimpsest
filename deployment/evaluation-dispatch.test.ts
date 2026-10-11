@@ -158,8 +158,8 @@ if (r.requestId === 'forged-negative-review') authentication = '0'.repeat(64);
 process.stdout.write(JSON.stringify({ result: { receipt: { requestId: r.requestId, candidateId: r.candidate.manifest.id, policyDigest: r.policyDigest, evidence: [evidence], receipt: { engineeringFixture: true } },
  proof: { proposal: { id: r.requestId, candidate: r.candidate.manifest, priorAuthority: r.proposal.authority, evidence: [evidence], recoveryArtifact: x.recoveryArtifact }, signed: [{ evidence, authentication }] } }, artifacts: [{ sha256: artifact.sha256, base64: observation.toString('base64') }] }));
 `;
-async function eventually<T>(read: () => T, accept: (value: T) => boolean): Promise<T> {
-  const deadline = Date.now() + 30000;
+async function eventually<T>(read: () => T, accept: (value: T) => boolean, timeoutMs = 30000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
   while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > deadline) throw Error('Fixture deadline: ' + JSON.stringify(value)); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
 function fixture(activate = false, governance = false, offline: boolean | 'reviewer' = false) {
@@ -406,12 +406,17 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
     const response = await fetch(`http://127.0.0.1:${supervisor.status().ready!.address.port}/inputs`, { method: 'POST', headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
       body: JSON.stringify({ externalId: 'offline-validator', revision: '1', conversation: 'offline-review', text: 'Execute the finite offline behavioral review fixture.' }) });
     assert.equal(response.status, 202);
+    const acceptanceStarted = Date.now();
+    // Admission and fresh probation each launch a separate bounded reviewer, with
+    // source staging and successor startup between them. The old 30s polling
+    // deadline could expire while the second review was legitimately in flight.
     const record = await eventually(() => {
       const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
       if (value && ['uncertain', 'rejected'].includes(value.status)) throw Error(JSON.stringify(value));
       if (supervisor!.status().evaluation?.uncertain) throw Error(JSON.stringify(supervisor!.status().evaluation));
       return value;
-    }, value => value?.status === 'accepted');
+    }, value => value?.status === 'accepted', 90000);
+    t.diagnostic(JSON.stringify({ phase: 'offline-behavioral-acceptance', elapsedMs: Date.now() - acceptanceStarted }));
     assert.ok(record?.review && record.probationProof);
     const proof = store.readJsonArtifact<ReleaseProof>(record.probationProof);
     assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
@@ -688,11 +693,13 @@ test('ordinary governance proposal uses old physical judges before accepted rest
   try {
     supervisor = await ServiceSupervisor.open(f.options);
     const authorRun = await admit('source-governance-cycle', 'Execute source-owned governance replacement engineering fixture.');
+    const acceptanceStarted = Date.now();
     const record = await eventually(() => {
       const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
       if (value && ['rejected', 'uncertain'].includes(value.status)) throw Error(JSON.stringify({ control: value.status, diagnosis: value.diagnosis, host: supervisor!.status().evaluation }));
       return value;
-    }, value => value?.status === 'accepted');
+    }, value => value?.status === 'accepted', 90000);
+    t.diagnostic(JSON.stringify({ phase: 'governance-acceptance', elapsedMs: Date.now() - acceptanceStarted }));
     assert.ok(record?.review && record.physicalAuthority && record.probationProof);
     assert.equal(record.request.runId, authorRun);
     const nextDescriptor = (record.review.candidate.inputs.controls as any).policy;
