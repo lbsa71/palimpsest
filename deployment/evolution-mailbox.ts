@@ -18,6 +18,7 @@ export interface EvolutionJob {
   candidateId: string; policyDigest: string; authority: Authority;
   status: 'pending' | 'dispatched' | 'uncertain' | 'completed';
   receipt?: ArtifactRef; proof?: ArtifactRef;
+  diagnosis?: string;
 }
 export interface ExternalEvaluation { receipt: EvaluationReceipt; proof: ReleaseProof }
 export interface EvolutionMailboxOptions {
@@ -74,7 +75,11 @@ export class EvolutionMailbox {
       if (current.status === 'completed' && job.kind === 'submission') return this.store.readJsonArtifact<T>(current.receipt!);
       this.options.assertAuthority(job.authority);
       if (current.status === 'completed') return this.store.readJsonArtifact<T>(current.receipt!);
-      if (Date.now() >= deadline) throw uncertain(`Evolution job ${job.id} remains ${current.status}; a configured external evaluator/host decision is required. Reconcile this stable job ID before retry.`);
+      if (Date.now() >= deadline) {
+        const processor = this.store.get<{ available: boolean; diagnosis?: string }>('host.evaluation-dispatch', 'current')?.value;
+        const diagnosis = job.kind === 'evaluation' && processor?.available === false ? processor.diagnosis ?? 'External evaluation unavailable: host processor is stopped' : 'A configured external evaluator/host decision is required';
+        throw uncertain(`Evolution job ${job.id} remains ${current.status}; ${diagnosis}. Reconcile this stable job ID before retry.`);
+      }
       await new Promise<void>((resolve, reject) => {
         const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); resolve(); };
         const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason ?? new Error('Evolution wait aborted')); };
@@ -107,6 +112,14 @@ export class EvolutionMailbox {
   }
   /** Mark restart-discovered dispatches uncertain; no external operation is automatically repeated. */
   recover(): string[] { return this.store.transaction(() => this.jobs().filter(job => job.status === 'dispatched').map(job => { this.update(job.id, { status: 'uncertain' }); return job.id; })); }
+  /** A revoked author cannot leave a pending job monopolizing the hosted processor. No physical dispatch occurred. */
+  fencePending(id: string): boolean {
+    return this.store.transaction(() => {
+      const job = this.status(id); invariant(job?.status === 'pending', 'Pending evolution job required');
+      try { this.options.assertAuthority(job.authority); return false; }
+      catch { this.update(id, { status: 'uncertain', diagnosis: 'Author authority withdrawn before dispatch; external operation was not invoked. Reconcile this job explicitly.' }); return true; }
+    });
+  }
   private failed(id: string): void { this.store.transaction(() => { if (this.status(id)?.status === 'dispatched') this.update(id, { status: 'uncertain' }); }); }
   async processEvaluation(id: string, evaluate: (request: EvaluationRequest, signal?: AbortSignal) => Promise<ExternalEvaluation>, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted(); const request = this.claim(id, 'evaluation') as EvaluationRequest;

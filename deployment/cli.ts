@@ -18,6 +18,8 @@ export interface SupervisorFile {
   /** Digests and locations are configured by the host owner, never by release requests. */
   policyFiles: [string, string][];
   bootstrap?: { proofFile: string; policyDigest: string };
+  /** Host-only private configuration for an independently qualified external reviewer. */
+  evaluationDispatcher?: string;
 }
 export function controlSocket(stateDirectory: string): string { return join(stateDirectory, 'host-control', 'supervisor.sock'); }
 const maxMessageBytes = 8 * 1024 * 1024;
@@ -97,7 +99,10 @@ export async function runCli(args: string[]): Promise<void> {
   if (command === 'launch-selected' && values.length === 2) { await launchHost(values[0]!, values[1]!); return; }
   if (command === 'supervise' && values.length === 1) {
     const config = JSON.parse(readHostFile(values[0]!).toString('utf8')) as SupervisorFile;
-    invariant(Object.keys(config).sort().join(',') === (config.bootstrap ? 'bootstrap,evidenceDirectory,host,mode,policyFiles' : 'evidenceDirectory,host,mode,policyFiles'), 'Exact supervisor configuration fields required');
+    const fields = ['evidenceDirectory', 'host', 'mode', 'policyFiles', ...(config.bootstrap ? ['bootstrap'] : []), ...(config.evaluationDispatcher !== undefined ? ['evaluationDispatcher'] : [])];
+    invariant(Object.keys(config).sort().join(',') === fields.sort().join(','), 'Exact supervisor configuration fields required');
+    if (config.evaluationDispatcher !== undefined) invariant(typeof config.evaluationDispatcher === 'string' && isAbsolute(config.evaluationDispatcher) && resolve(config.evaluationDispatcher) === config.evaluationDispatcher &&
+      [config.host.stateDirectory, config.host.workspaceDirectory, config.host.artifactStore].every(root => !beneath(root, config.evaluationDispatcher!)), 'Canonical host-only external reviewer configuration required');
     invariant(Array.isArray(config.policyFiles) && config.policyFiles.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(value => typeof value === 'string')) && new Set(config.policyFiles.map(([id]) => id)).size === config.policyFiles.length, 'Exact configured policy registry required');
     invariant([config.host.workspaceDirectory, config.host.artifactStore].every(root => !beneath(root, config.evidenceDirectory)), 'Evidence store must remain outside model-accessible roots');
     const paths = new Map(config.policyFiles);
@@ -117,6 +122,7 @@ export async function runCli(args: string[]): Promise<void> {
       const selection = launched ? hostSelection(config) : undefined;
       supervisor = await ServiceSupervisor.open({ host: config.host, mode: config.mode, secrets: environmentSecrets(process.env),
         readArtifact: contentAddressedEvidence(config.evidenceDirectory),
+        ...(config.evaluationDispatcher ? { evaluationDispatcher: { reviewerFile: config.evaluationDispatcher, policyDigests: [...paths.keys()] } } : {}),
         ...(selection?.phase === 'rescue' ? { hostRescue: selection.selected } : {}),
         ...(launched ? { onHostAccepted: (target, previous) => { requestHostSuccessor(config, target, previous); setTimeout(() => requestHandoff?.(), 50); } } : {}),
         getPolicy(digest) {

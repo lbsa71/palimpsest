@@ -13,6 +13,9 @@ import { beneath, type ApplicationSecrets } from './config.ts';
 import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import { materializeConfiguration, type HostBindings } from './materialize.ts';
 import { ServiceProcess, type ServiceReady } from './service-process.ts';
+import { OperationalStore } from '../packages/storage/index.ts';
+import { EvolutionMailbox } from './evolution-mailbox.ts';
+import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
 
 export interface SupervisorOptions {
   host: HostBindings;
@@ -23,6 +26,7 @@ export interface SupervisorOptions {
   hostRescue?: ReleaseTarget;
   onHostAccepted?(target: ReleaseTarget, previous: ReleaseTarget): void;
   bootstrap?: { proof: ReleaseProof; policyDigest: string } | (() => { proof: ReleaseProof; policyDigest: string });
+  evaluationDispatcher?: { reviewerFile: string; policyDigests: readonly string[] };
 }
 export interface SupervisorStatus {
   coordinator: { processId: number; module: string };
@@ -33,6 +37,7 @@ export interface SupervisorStatus {
   ready?: ServiceReady;
   release?: ReleaseState;
   failure?: string;
+  evaluation?: DispatchStatus;
 }
 export type SupervisorCommand =
   | { kind: 'status' }
@@ -57,6 +62,9 @@ export class ServiceSupervisor {
   readonly #authority: AuthorityStore;
   readonly #controller: ReleaseController;
   readonly #service: ServiceProcess;
+  #evolutionStore?: OperationalStore;
+  #dispatcher?: EvaluationDispatcher;
+  #mailbox?: EvolutionMailbox;
   #ready?: ServiceReady;
   #failure?: string;
   #operation?: Promise<unknown>;
@@ -75,6 +83,8 @@ export class ServiceSupervisor {
     let authority: AuthorityStore | undefined;
     try {
       this.#authority = authority = new AuthorityStore(join(options.host.stateDirectory, 'authority.sqlite'));
+      this.#evolutionStore = new OperationalStore({ filename: join(options.host.stateDirectory, 'operational.sqlite') });
+      this.#mailbox = new EvolutionMailbox({ store: this.#evolutionStore, assertAuthority: grant => this.#authority.assert(grant) });
       this.#service = new ServiceProcess(options.host, options.secrets, { mode: options.mode, onUnexpectedExit: () => {
         this.#ready = undefined;
         this.#unexpectedExitPending = true;
@@ -83,7 +93,7 @@ export class ServiceSupervisor {
       this.#controller = new ReleaseController({ statePath: join(options.host.stateDirectory, 'release.sqlite'),
         artifactStore: options.host.artifactStore, operationalStatePath: options.host.stateDirectory,
         authorityStore: this.#authority, exclusiveProcessLease: this.#lease, getPolicy: options.getPolicy,
-        readArtifact: options.readArtifact, hooks: {
+        readArtifact: uri => { try { return this.#mailbox!.readArtifact(uri); } catch { return options.readArtifact(uri); } }, hooks: {
           stopAndDrain: async () => { this.#ready = undefined; await this.#service.stop(); await this.#drainExecutionLease(); },
           start: async target => {
             invariant(target.operationalStatePath === options.host.stateDirectory, 'Recovery must retain current operational state');
@@ -92,7 +102,7 @@ export class ServiceSupervisor {
             this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority, { policyDigest: status.probationJudge?.policyDigest ?? status.active.policyDigest });
           },
         } });
-    } catch (error) { authority?.close(); this.#lease.close(); throw error; }
+    } catch (error) { this.#evolutionStore?.close(); authority?.close(); this.#lease.close(); throw error; }
   }
   static async open(options: SupervisorOptions): Promise<ServiceSupervisor> {
     const supervisor = new ServiceSupervisor(options);
@@ -102,13 +112,27 @@ export class ServiceSupervisor {
         await supervisor.recover();
       }
       else await supervisor.#exclusive(() => supervisor.#initialize());
+      supervisor.#startDispatcher();
       return supervisor;
     } catch (error) { await supervisor.close(); throw error; }
   }
   status(): SupervisorStatus {
     return { coordinator: { processId: process.pid, module: import.meta.url }, mode: this.#options.mode, qualification: this.#options.mode === 'engineering' ? 'engineering-only' : 'product-policy',
       running: this.#service.running, processId: this.#service.processId, ready: this.#ready,
-      release: this.#controller.status(), failure: this.#failure };
+      release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status() };
+  }
+  #startDispatcher(): void {
+    const configured = this.#options.evaluationDispatcher;
+    let reviewer: ReviewerFile | undefined, unavailableDiagnosis: string | undefined;
+    if (configured) {
+      try { reviewer = loadReviewerFile(configured.reviewerFile, this.#options.host); }
+      catch { unavailableDiagnosis = 'External evaluation unavailable: configured reviewer file is missing or invalid'; }
+    }
+    this.#dispatcher = new EvaluationDispatcher({ mailbox: this.#mailbox!, host: this.#options.host, reviewer, unavailableDiagnosis,
+      getPolicy: this.#options.getPolicy, policyDigests: configured?.policyDigests ?? [], assertAuthority: grant => this.#authority.assert(grant),
+      acceptedCandidateId: () => this.#controller.status()!.accepted.candidateId,
+      release: proof => this.release(proof), stageControl: (proof, digest) => this.stageControl(proof, digest) });
+    this.#dispatcher.start();
   }
   async command(command: SupervisorCommand): Promise<unknown> {
     switch (command.kind) {
@@ -227,6 +251,7 @@ export class ServiceSupervisor {
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closing = true;
+    await this.#dispatcher?.close();
     await this.#operation?.catch(() => {});
     try {
       // A preaccepted bootstrap interruption retains its matching grant for explicit proof retry; no process ran.
@@ -234,7 +259,7 @@ export class ServiceSupervisor {
       if (this.#controller.status() && current?.generation) this.#authority.withdraw(current as Authority);
       this.#ready = undefined; await this.#service.stop();
     } finally {
-      this.#controller.close(); this.#authority.close(); this.#lease.close(); this.#closed = true;
+      this.#evolutionStore?.close(); this.#controller.close(); this.#authority.close(); this.#lease.close(); this.#closed = true;
     }
   }
 }
