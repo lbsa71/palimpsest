@@ -1,0 +1,68 @@
+Running as unit: aeon-resource-test-20261011-final.service
+TAP version 13
+# Subtest: resource readiness refuses an absent profile and a nondelegated cgroup
+ok 1 - resource readiness refuses an absent profile and a nondelegated cgroup
+  ---
+  duration_ms: 1.474365
+  type: 'test'
+  ...
+# Subtest: real installed profile bounds file descriptors/file size and leaves no groups
+ok 2 - real installed profile bounds file descriptors/file size and leaves no groups
+  ---
+  duration_ms: 567.456902
+  type: 'test'
+  ...
+# Subtest: aggregate memory ceiling kills a small multi-process allocation and drains the entire cgroup
+ok 3 - aggregate memory ceiling kills a small multi-process allocation and drains the entire cgroup
+  ---
+  duration_ms: 2292.54118
+  type: 'test'
+  ...
+# {"case":"memory","memoryPeakBytes":67108864,"oomKills":7,"pidsLimitHits":0,"cpuUsageMicros":461334,"cpuThrottledMicros":7200278}
+# Subtest: aggregate process ceiling refuses bounded forks, including detached descendants
+ok 4 - aggregate process ceiling refuses bounded forks, including detached descendants
+  ---
+  duration_ms: 749.515113
+  type: 'test'
+  ...
+# {"case":"pids","memoryPeakBytes":10731520,"oomKills":0,"pidsLimitHits":2,"cpuUsageMicros":163952,"cpuThrottledMicros":984160}
+# Subtest: CPU rate is throttled across multiple busy processes and the deadline bounds cumulative usage
+ok 5 - CPU rate is throttled across multiple busy processes and the deadline bounds cumulative usage
+  ---
+  duration_ms: 1815.02996
+  type: 'test'
+  ...
+# {"case":"cpu","elapsedMs":1813.2324039999999,"memoryPeakBytes":12713984,"oomKills":0,"pidsLimitHits":0,"cpuUsageMicros":176788,"cpuThrottledMicros":3498262}
+# Subtest: fixed workspace storage returns ENOSPC within 16 MiB and inodes remain bounded
+ok 6 - fixed workspace storage returns ENOSPC within 16 MiB and inodes remain bounded
+  ---
+  duration_ms: 910.106969
+  type: 'test'
+  ...
+# Subtest: the same enforcement surrounds an RPC worker; cancelled detached descendants cannot retain storage
+ok 7 - the same enforcement surrounds an RPC worker; cancelled detached descendants cannot retain storage
+  ---
+  duration_ms: 1677.118534
+  type: 'test'
+  ...
+# Subtest: a real host SIGKILL leaves no live descendants and restart reaps its empty cgroup
+ok 8 - a real host SIGKILL leaves no live descendants and restart reaps its empty cgroup
+  ---
+  duration_ms: 1355.366965
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 9388.219789
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 9.554s
+CPU time consumed: 1.837s
+Memory peak: 1.6M
+Memory swap peak: 0B

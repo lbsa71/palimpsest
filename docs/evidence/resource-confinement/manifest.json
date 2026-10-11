@@ -1,0 +1,29 @@
+{
+  "base": "1fa9012f85f878253a2afca39cf7709e74386eba",
+  "node": "v24.13.0",
+  "nodeBinary": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+  "nodeSha256": "53fb205ae78805130177e24bcb459a69a1518c8d98f8965f31d85aae7ea840fc",
+  "dependenciesChanged": false,
+  "sha256": {
+    "packages/supervisor/resource-limits.ts": "07004f08ca3c9805fa4ad263dd572a664af6eda2ee0ec625b1af2dbbc25891f5",
+    "packages/supervisor/resource-limits.test.ts": "a124d1fd9a09d1818ed8a8dc1957cb67bcdb53b7e1e0b698796f22b47af8a6cd",
+    "packages/supervisor/provision-workspace.mjs": "9ba5b6a408431401fa7d69641a1806738a08e4a451a60dae1bf6a917fa27ff08",
+    "packages/supervisor/confinement.ts": "8846fa8ef3d1dd058bf4b682fb48fdd5bd32df29079ad16fc7aede96c08be0fc",
+    "packages/supervisor/worker-process.ts": "cd3bcfc08290c10ea71dde0bf8ff4eaf83461d84b6b3fb2cfbef7abd254d9a64",
+    "packages/tools/commands/index.ts": "42dbce3a64f56270d5ddcad6ec2140237dcf06c5bb72d550a151da89ac9fa8d8",
+    "packages/tools/workspace/index.ts": "3b70d3033ec20bbb55f8e3a318c553f44aa6d962d29c68bf4d9d8d3ad6152910",
+    "docs/evidence/resource-confinement/real-tests.tap": "d8d473a73441d8f577e3e9bb42cf6cb990ad7fe0ba4067a66c953efc0057ee81",
+    "docs/evidence/resource-confinement/component-tests.tap": "c186776ad13a0020d473adfc36d14f0d8a3c201a7c6e8547ce4495c6fa708b72",
+    "docs/evidence/resource-confinement/report.md": "d5061f30dd1c7b8c347d1468aea3d2ae07936969b61a6bff9db1f3836c24a376",
+    "package.json": "488aae75afa82ca630669d93e8a23e3ad24962b9681952e74b62425bbb86b17d",
+    "package-lock.json": "cc2956d305c7bbb1be7d58bde7b1d257ff8329ca73d55d1cfb8ee92d2712efc0"
+  },
+  "cleanup": {
+    "workspaceImageRemoved": true,
+    "loopDetached": true,
+    "temporaryDirectoryRemoved": true,
+    "transientCgroupsRemoved": true,
+    "retainedDelegation": false
+  },
+  "review": "fresh independent review required"
+}

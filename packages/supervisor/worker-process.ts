@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import { confinementArguments, type ConfinedCommand } from './confinement.ts';
+import { spawnBounded } from './resource-limits.ts';
 import type { JsonValue } from '../contracts/index.ts';
 
 export interface WorkerOptions {
@@ -16,7 +16,8 @@ export async function runWorker(options: WorkerOptions): Promise<JsonValue> {
   command.signal?.throwIfAborted();
   if (!Number.isSafeInteger(options.maxMessageBytes) || options.maxMessageBytes < 1 ||
     !Number.isSafeInteger(options.maxRequests) || options.maxRequests < 1) throw new Error('Finite worker protocol limits required');
-  const child = spawn('/usr/bin/bwrap', confinementArguments(command), { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: {} });
+  const confined = await spawnBounded(confinementArguments(command), { ...command, input: 'pipe' });
+  const { child } = confined;
   const controller = new AbortController();
   let buffer = Buffer.alloc(0);
   let emittedBytes = 0;
@@ -28,10 +29,7 @@ export async function runWorker(options: WorkerOptions): Promise<JsonValue> {
   const stop = (error?: Error) => {
     failure ??= error;
     controller.abort(error);
-    if (child.pid) {
-      try { process.kill(-child.pid, 'SIGKILL'); }
-      catch (cause) { if ((cause as NodeJS.ErrnoException).code !== 'ESRCH') failure ??= new Error('Worker termination failed'); }
-    }
+    try { confined.stop(); } catch { failure ??= new Error('Worker termination failed'); }
   };
   const send = (value: unknown) => {
     const line = JSON.stringify(value) + '\n';
@@ -82,12 +80,8 @@ export async function runWorker(options: WorkerOptions): Promise<JsonValue> {
   command.signal?.addEventListener('abort', abort, { once: true });
   if (command.signal?.aborted) abort();
   try {
-    const closed = new Promise<void>((resolve, reject) => {
-      child.once('error', () => reject(new Error('Worker isolation unavailable')));
-      child.once('close', () => resolve());
-    });
     try { send({ kind: 'start', value: options.initial }); } catch (error) { stop(error as Error); }
-    await closed;
+    await confined.closed;
     if (failure) throw failure;
     if (result === undefined) throw new Error('Worker exited without a completed result');
     return result;
@@ -95,5 +89,6 @@ export async function runWorker(options: WorkerOptions): Promise<JsonValue> {
     clearTimeout(timer);
     command.signal?.removeEventListener('abort', abort);
     stop();
+    await confined.cleanup();
   }
 }

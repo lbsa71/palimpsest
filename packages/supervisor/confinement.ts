@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { spawnBounded, type ResourceLimits, type ResourceObservation } from './resource-limits.ts';
 
 export interface ConfinedCommand {
   workspace: string;
@@ -13,14 +13,16 @@ export interface ConfinedCommand {
   timeoutMs: number;
   maxOutputBytes: number;
   signal?: AbortSignal;
+  resourceLimits?: ResourceLimits;
 }
 export interface CommandReceipt {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
-  stoppedFor?: 'cancelled' | 'timeout' | 'output-limit';
+  stoppedFor?: 'cancelled' | 'timeout' | 'output-limit' | 'resource-limit';
   elapsedMs: number;
+  resources?: ResourceObservation;
 }
 
 function contains(parent: string, child: string): boolean {
@@ -40,11 +42,12 @@ export function confinementArguments(command: ConfinedCommand): string[] {
     }
   }
   // A preexisting hardlink could expose or mutate a host file despite namespace isolation.
-  const inspect = (directory: string) => {
+  const inspect = (directory: string, device = statSync(directory).dev) => {
     for (const entry of readdirSync(directory)) {
       const path = join(directory, entry);
       const stat = lstatSync(path);
-      if (stat.isDirectory()) inspect(path);
+      if (command.resourceLimits && stat.dev !== device) throw new Error('Resource-bounded mount contains a nested filesystem');
+      if (stat.isDirectory()) inspect(path, device);
       else if (!stat.isSymbolicLink() && (!stat.isFile() || stat.nlink !== 1)) {
         throw new Error('Workspace contains a special file or hardlink');
       }
@@ -88,18 +91,15 @@ export async function runConfined(command: ConfinedCommand): Promise<CommandRece
   const args = confinementArguments(command);
   command.signal?.throwIfAborted();
   const started = performance.now();
-  const child = spawn('/usr/bin/bwrap', args, { detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: {} });
+  const confined = await spawnBounded(args, { ...command, input: 'ignore' });
+  const { child } = confined;
   let stoppedFor: CommandReceipt['stoppedFor'];
   let outputBytes = 0;
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   const stop = (reason: NonNullable<CommandReceipt['stoppedFor']>) => {
     stoppedFor ??= reason;
-    if (child.pid) {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
-      }
-    }
+    confined.stop();
   };
   const collect = (destination: Buffer[]) => (chunk: Buffer) => {
     const remaining = Math.max(0, command.maxOutputBytes - outputBytes);
@@ -115,14 +115,14 @@ export async function runConfined(command: ConfinedCommand): Promise<CommandRece
   // Abort may have arrived between the preflight check and listener registration.
   if (command.signal?.aborted) abort();
   try {
-    const completion = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', (code, signal) => resolve({ code, signal }));
-    });
+    const completion = await confined.closed;
+    const resources = await confined.cleanup();
+    if (resources?.oomKills) stoppedFor ??= 'resource-limit';
     return { exitCode: completion.code, signal: completion.signal, stdout: Buffer.concat(stdout).toString('utf8'),
-      stderr: Buffer.concat(stderr).toString('utf8'), stoppedFor, elapsedMs: performance.now() - started };
+      stderr: Buffer.concat(stderr).toString('utf8'), stoppedFor, elapsedMs: performance.now() - started, ...(resources ? { resources } : {}) };
   } finally {
     clearTimeout(timer);
     command.signal?.removeEventListener('abort', abort);
+    await confined.cleanup();
   }
 }

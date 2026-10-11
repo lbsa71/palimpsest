@@ -1,0 +1,136 @@
+TAP version 13
+# (node:734731) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: independent receivers fence an old worker and persist withdrawal across restart
+ok 1 - independent receivers fence an old worker and persist withdrawal across restart
+  ---
+  duration_ms: 27.858605
+  type: 'test'
+  ...
+# Subtest: recovery can grant retained code a newer authority without a model
+ok 2 - recovery can grant retained code a newer authority without a model
+  ---
+  duration_ms: 29.160827
+  type: 'test'
+  ...
+# Subtest: real confined process can edit workspace but cannot see private state, host env or host processes
+ok 3 - real confined process can edit workspace but cannot see private state, host env or host processes
+  ---
+  duration_ms: 67.627223
+  type: 'test'
+  ...
+# Subtest: overlapping state mount is refused before spawning
+ok 4 - overlapping state mount is refused before spawning
+  ---
+  duration_ms: 1.523403
+  type: 'test'
+  ...
+# Subtest: a preexisting hardlink into protected state is refused before spawning
+ok 5 - a preexisting hardlink into protected state is refused before spawning
+  ---
+  duration_ms: 0.936707
+  type: 'test'
+  ...
+# Subtest: a read-only application image cannot disclose protected state through a hardlink
+ok 6 - a read-only application image cannot disclose protected state through a hardlink
+  ---
+  duration_ms: 1.513389
+  type: 'test'
+  ...
+# Subtest: protected paths cannot be exposed through system or selected runtime mounts
+ok 7 - protected paths cannot be exposed through system or selected runtime mounts
+  ---
+  duration_ms: 1.219678
+  type: 'test'
+  ...
+# Subtest: timeout terminates the namespace including a child that creates a new process group
+ok 8 - timeout terminates the namespace including a child that creates a new process group
+  ---
+  duration_ms: 1436.555666
+  type: 'test'
+  ...
+# Subtest: stream output and cancellation limits stop real commands
+ok 9 - stream output and cancellation limits stop real commands
+  ---
+  duration_ms: 123.202367
+  type: 'test'
+  ...
+# (node:734734) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: exclusive supervisor lease rejects overlap and recovers after actual process death
+ok 10 - exclusive supervisor lease rejects overlap and recovers after actual process death
+  ---
+  duration_ms: 166.089694
+  type: 'test'
+  ...
+# Subtest: resource readiness refuses an absent profile and a nondelegated cgroup
+ok 11 - resource readiness refuses an absent profile and a nondelegated cgroup
+  ---
+  duration_ms: 1.372897
+  type: 'test'
+  ...
+# Subtest: isolated worker receives only host-approved RPC results
+ok 12 - isolated worker receives only host-approved RPC results
+  ---
+  duration_ms: 77.59533
+  type: 'test'
+  ...
+# Subtest: duplicate RPC IDs and malformed protocol cannot bypass the host
+ok 13 - duplicate RPC IDs and malformed protocol cannot bypass the host
+  ---
+  duration_ms: 61.085516
+  type: 'test'
+  ...
+# Subtest: worker refusal is redacted and cancellation reaches an in-flight handler
+ok 14 - worker refusal is redacted and cancellation reaches an in-flight handler
+  ---
+  duration_ms: 69.765699
+  type: 'test'
+  ...
+# Subtest: synchronous host refusal becomes a redacted reply without escaping the worker boundary
+ok 15 - synchronous host refusal becomes a redacted reply without escaping the worker boundary
+  ---
+  duration_ms: 49.914075
+  type: 'test'
+  ...
+# (node:734787) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: real discover/search/read/CAS patch/move/diff/delete and symlink/hardlink boundaries
+ok 16 - real discover/search/read/CAS patch/move/diff/delete and symlink/hardlink boundaries
+  ---
+  duration_ms: 639.754309
+  type: 'test'
+  ...
+# Subtest: ordinary durable shell bridge inspects, observes failed real test, edits, repairs, verifies and retains restart artifacts
+ok 17 - ordinary durable shell bridge inspects, observes failed real test, edits, repairs, verifies and retains restart artifacts
+  ---
+  duration_ms: 290.111031
+  type: 'test'
+  ...
+# Subtest: bounded commands cancel descendants, enforce output limit and reject ungranted executable
+ok 18 - bounded commands cancel descendants, enforce output limit and reject ungranted executable
+  ---
+  duration_ms: 1234.693705
+  type: 'test'
+  ...
+# Subtest: public research validation rejects credentials, private IPs, mapped IPv6, host and redirect targets
+ok 19 - public research validation rejects credentials, private IPs, mapped IPv6, host and redirect targets
+  ---
+  duration_ms: 8.840636
+  type: 'test'
+  ...
+# Subtest: queued effect rechecks authority at actual dispatch and explicit speech delegates to its receiver
+ok 20 - queued effect rechecks authority at actual dispatch and explicit speech delegates to its receiver
+  ---
+  duration_ms: 271.992708
+  type: 'test'
+  ...
+1..20
+# tests 20
+# suites 0
+# pass 20
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3122.004891
