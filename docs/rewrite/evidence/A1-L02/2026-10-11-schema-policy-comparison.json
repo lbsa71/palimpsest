@@ -1,0 +1,112 @@
+{
+  "baselineHead": "5306a8cbdebf3aedd793d62b10e99d9c7bfde20c",
+  "baselineTypeBox": "1.3.27",
+  "cases": [
+    {
+      "arguments": {
+        "value": 1
+      },
+      "before": {
+        "accepted": true,
+        "result": {
+          "value": 1
+        }
+      },
+      "after": {
+        "accepted": true,
+        "result": {
+          "value": 1
+        }
+      }
+    },
+    {
+      "arguments": {
+        "value": 1,
+        "optional": null
+      },
+      "before": {
+        "accepted": true,
+        "result": {
+          "value": 1
+        }
+      },
+      "after": {
+        "accepted": false
+      }
+    },
+    {
+      "arguments": {
+        "value": "10"
+      },
+      "before": {
+        "accepted": true,
+        "result": {
+          "value": 10
+        }
+      },
+      "after": {
+        "accepted": false
+      }
+    },
+    {
+      "arguments": {
+        "value": null
+      },
+      "before": {
+        "accepted": true,
+        "result": {
+          "value": 0
+        }
+      },
+      "after": {
+        "accepted": false
+      }
+    },
+    {
+      "arguments": {
+        "value": true
+      },
+      "before": {
+        "accepted": true,
+        "result": {
+          "value": 1
+        }
+      },
+      "after": {
+        "accepted": false
+      }
+    },
+    {
+      "arguments": {
+        "value": 1,
+        "nullable": null
+      },
+      "before": {
+        "accepted": true,
+        "result": {
+          "value": 1,
+          "nullable": null
+        }
+      },
+      "after": {
+        "accepted": true,
+        "result": {
+          "value": 1,
+          "nullable": null
+        }
+      }
+    },
+    {
+      "arguments": {
+        "value": 1,
+        "extra": true
+      },
+      "before": {
+        "accepted": false
+      },
+      "after": {
+        "accepted": false
+      }
+    }
+  ]
+}

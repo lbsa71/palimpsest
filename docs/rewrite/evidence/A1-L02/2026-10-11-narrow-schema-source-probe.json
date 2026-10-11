@@ -1,0 +1,135 @@
+{
+  "evidenceKind": "mechanical source edit/check/build/fresh-process-load",
+  "sourceHead": "15db56c78bf120d75ba7a3100ada27797fdff242",
+  "node": "v24.13.0",
+  "libraryVersion": "4.1.1",
+  "upstreamCommit": "5409fdc2bd144f68e8b28c61c71fcb16600000a6",
+  "commands": [
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "elapsedMs": 7,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "elapsedMs": 826,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "elapsedMs": 721,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "--input-type=module",
+        "-e",
+        "import { Validator } from \"file:///home/palimpsest/migration/aeon-1-20261011/schema/dist/packages/narrow-schema/index.js\"; const actual = new Validator({type:'string'}).validate('__a1_schema_dependency_probe__').valid; if (actual !== true) throw new Error('dependency edit not loaded'); console.log(JSON.stringify({valid: actual, freshProcess: true}));"
+      ],
+      "elapsedMs": 44,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "elapsedMs": 734,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "elapsedMs": 683,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "--test",
+        "packages/agent-shell/schema-regression.test.ts",
+        "packages/narrow-schema/schema.test.ts"
+      ],
+      "elapsedMs": 387,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "elapsedMs": 718,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "--input-type=module",
+        "-e",
+        "import { Validator } from \"file:///home/palimpsest/migration/aeon-1-20261011/schema/dist/packages/narrow-schema/index.js\"; const actual = new Validator({type:'string'}).validate('__a1_schema_dependency_probe__').valid; if (actual !== false) throw new Error('dependency edit not loaded'); console.log(JSON.stringify({valid: actual, freshProcess: true}));"
+      ],
+      "elapsedMs": 46,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "elapsedMs": 721,
+      "exitCode": 0
+    },
+    {
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "--input-type=module",
+        "-e",
+        "import { Validator } from \"file:///home/palimpsest/migration/aeon-1-20261011/schema/dist/packages/narrow-schema/index.js\"; const actual = new Validator({type:'string'}).validate('__a1_schema_dependency_probe__').valid; if (actual !== true) throw new Error('dependency edit not loaded'); console.log(JSON.stringify({valid: actual, freshProcess: true}));"
+      ],
+      "elapsedMs": 46,
+      "exitCode": 0
+    }
+  ],
+  "dependencyEdit": {
+    "file": "packages/narrow-schema/vendor/cfworker/validator.ts",
+    "originalSha256": "e7fadc002a41169a44e0ec15c1cd1714c7f258c9d4341641d112e1a25ad3d84a",
+    "editedSha256": "11be264cbf6b35d3a3dc720b4f999a45d0753b55b04013e40a406d8120e49dc0",
+    "baseline": {
+      "valid": true,
+      "freshProcess": true
+    },
+    "changed": {
+      "valid": false,
+      "freshProcess": true
+    },
+    "restored": {
+      "valid": true,
+      "freshProcess": true
+    }
+  },
+  "networkUsedDuringCheckBuild": false,
+  "limits": [
+    "Provisioned pinned Node, TypeScript, and Node definitions required.",
+    "Fresh process proves edited compiled dependency loading; production successor activation belongs to L09.",
+    "No model inference or live effects performed."
+  ]
+}

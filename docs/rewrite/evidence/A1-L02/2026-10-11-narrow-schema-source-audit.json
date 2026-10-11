@@ -1,0 +1,10 @@
+{
+  "upstream": "5409fdc2bd144f68e8b28c61c71fcb16600000a6",
+  "maintainedSourceFiles": 8,
+  "physicalLines": 1721,
+  "bytes": 53808,
+  "externalRuntimeImports": [],
+  "fixtureFiles": 14,
+  "officialAssertions": 373,
+  "upstreamHashesChecked": true
+}
