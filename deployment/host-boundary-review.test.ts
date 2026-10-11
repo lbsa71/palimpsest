@@ -9,6 +9,7 @@ import test from 'node:test';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { materializeConfiguration, type HostBindings } from './materialize.ts';
 import { ServiceProcess } from './service-process.ts';
+import { AuthorityStore } from '../packages/supervisor/authority.ts';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 function fixture(script = '') {
@@ -27,25 +28,34 @@ function fixture(script = '') {
   return { temporary, source, host, inputs, dispose: () => rmSync(temporary, { recursive: true, force: true }) };
 }
 const secrets = { mistralApiKey: 'fixture-not-a-key', directToken: 'fixture-private-token' };
+function authorize(f: ReturnType<typeof fixture>, candidate: ReturnType<typeof freezeApplication>) {
+  const store = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+  try { return store.bootstrap('fixture', candidate.manifest.controls, candidate.manifest.id); }
+  finally { store.close(); }
+}
 
 test('a failed diagnostic write still stops a failed startup child', { timeout: 15000 }, async () => {
-  const f = fixture(`process.on('message', message => { if(message.kind==='start') process.send({kind:'unavailable'}); if(message.kind==='stop') process.exit(0); }); setInterval(()=>{},1000);`);
+  const f = fixture(`import { writeFileSync } from 'node:fs'; process.on('message', message => { if(message.kind==='start') { writeFileSync(message.bindings.stateDirectory+'/started', String(process.pid)); process.send({kind:'unavailable'}); } if(message.kind==='stop') process.exit(0); }); setInterval(()=>{},1000);`);
   const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs);
+  const authority = authorize(f, candidate);
   const service = new ServiceProcess(f.host, secrets, { mode: 'engineering' });
   writeFileSync(join(f.host.stateDirectory, 'host-diagnostics'), 'not a directory');
   try {
-    await assert.rejects(service.start(candidate.manifest.id, { generation: 'fixture', epoch: 1, controlRevision: candidate.manifest.controls }));
+    await assert.rejects(service.start(candidate.manifest.id, authority), /Frozen application unavailable/);
+    assert.ok(existsSync(join(f.host.stateDirectory, 'started')), 'the child must start before exercising failed diagnostic cleanup');
     assert.equal(service.running, false, 'diagnostic I/O failure must not leave the application running');
   } finally { await service.stop(); f.dispose(); }
 });
 
 test('diagnostics cannot traverse a symlink out of private host state', { timeout: 15000 }, async () => {
-  const f = fixture(`process.on('message', message => { if(message.kind==='start') { console.error('private startup evidence'); process.send({kind:'unavailable'}); } if(message.kind==='stop') process.exit(0); }); setInterval(()=>{},1000);`);
+  const f = fixture(`import { writeFileSync } from 'node:fs'; process.on('message', message => { if(message.kind==='start') { writeFileSync(message.bindings.stateDirectory+'/started', String(process.pid)); console.error('private startup evidence'); process.send({kind:'unavailable'}); } if(message.kind==='stop') process.exit(0); }); setInterval(()=>{},1000);`);
   const outside = join(f.temporary, 'outside'); mkdirSync(outside); symlinkSync(outside, join(f.host.stateDirectory, 'host-diagnostics'));
   const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs);
+  const authority = authorize(f, candidate);
   const service = new ServiceProcess(f.host, secrets, { mode: 'engineering' });
   try {
-    await assert.rejects(service.start(candidate.manifest.id, { generation: 'fixture', epoch: 1, controlRevision: candidate.manifest.controls }));
+    await assert.rejects(service.start(candidate.manifest.id, authority), /Frozen application unavailable/);
+    assert.ok(existsSync(join(f.host.stateDirectory, 'started')), 'the child must start before exercising redirected diagnostic rejection');
     const { readdirSync } = await import('node:fs'); assert.deepEqual(readdirSync(outside), []);
     assert.equal(service.running, false);
   } finally { await service.stop(); f.dispose(); }
@@ -64,10 +74,11 @@ test('materialization rejects changed prompt payload before creating files', () 
 test('stopping a leader also kills descendants left in its service process group', { timeout: 15000 }, async () => {
   const f = fixture(`import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs'; process.on('message', message => { if(message.kind==='start') { const child=spawn(process.execPath, ['-e','setInterval(()=>{},1000)'], {stdio:'ignore'}); writeFileSync(message.bindings.stateDirectory+'/descendant.pid', String(child.pid)); process.send({kind:'ready',candidateId:message.candidateId,authority:message.authority,address:{address:'127.0.0.1',family:'IPv4',port:12345}}); } if(message.kind==='stop') process.exit(0); });`);
   const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs);
+  const authority = authorize(f, candidate);
   const service = new ServiceProcess(f.host, secrets, { mode: 'engineering' }); let descendant: number | undefined;
   const active = (pid: number) => { try { return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]?.[0] !== 'Z'; } catch { return false; } };
   try {
-    await service.start(candidate.manifest.id, { generation: 'fixture', epoch: 1, controlRevision: candidate.manifest.controls });
+    await service.start(candidate.manifest.id, authority);
     descendant = Number(readFileSync(join(f.host.stateDirectory, 'descendant.pid'), 'utf8')); assert.equal(active(descendant), true);
     await service.stop();
     const deadline = Date.now() + 2000; while (active(descendant) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
