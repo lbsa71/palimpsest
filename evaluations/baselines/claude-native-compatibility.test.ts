@@ -24,7 +24,7 @@ function grant(context = 100): ObserverGrant {
 function payload(): string { return JSON.stringify({ model: MODEL, max_tokens: 8192, stream: true, thinking: { type: 'adaptive', display: 'updates' }, output_config: { effort: 'high' },
   context_management: { edits: [{ type: 'clear_thinking_20251015', keep: 'all' }, { type: 'clear_tool_uses_20250919', trigger: { type: 'input_tokens', value: 50 }, keep: { type: 'tool_uses', value: 3 }, exclude_tools: ['Bash'], clear_tool_inputs: false }] },
   system: [{ type: 'text', text: 'Native attribution block stays first.' }, { type: 'text', text: 'Native instructions.', cache_control: { type: 'ephemeral' } }],
-  messages: [{ role: 'user', content: 'Verify local work.' }, { role: 'system', content: [{ type: 'text', text: 'Native mid-conversation instructions.', cache_control: { type: 'ephemeral' } }], clear_at: 'never', output_config: { effort: 'high' } },
+  messages: [{ role: 'user', content: 'Verify local work.' }, { role: 'system', content: [{ type: 'text', text: 'Native mid-conversation instructions.', cache_control: { type: 'ephemeral' } }], output_config: { effort: 'high' } },
     { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'native-signature' }, { type: 'redacted_thinking', data: 'encrypted-native-block' }, { type: 'tool_use', id: 'tool', name: 'Bash', input: { command: 'true' }, caller: { type: 'direct' } }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'Observed native command.' }] }],
   tools: [{ name: 'Bash', input_schema: { type: 'object' }, strict: true, defer_loading: false, cache_control: { type: 'ephemeral' } }] }); }
@@ -90,6 +90,9 @@ for (const [label, change] of Object.entries({
   invalidContextThreshold: (b: any): unknown => b.context_management.edits[1].trigger.value = -1,
   unknownContextField: (b: any): unknown => b.context_management.server_tool = 'hosted',
   changedMidturnEffort: (b: any): unknown => b.messages[1].output_config.effort = 'low',
+  unqualifiedClearNever: (b: any): unknown => b.messages[1].clear_at = 'never',
+  unqualifiedTurnScopedEffort: (b: any): unknown => b.messages[1].clear_at = 'next_user_message',
+  unqualifiedTurnScoped: (b: any): unknown => { delete b.messages[1].output_config; return b.messages[1].clear_at = 'next_user_message'; },
   hostedCaller: (b: any): unknown => b.messages[2].content[2].caller = { type: 'code_execution_20260120', tool_id: 'hosted' },
   deferredTool: (b: any): unknown => b.tools[0].defer_loading = true,
   changedDisplay: (b: any): unknown => b.thinking.display = 'omitted',

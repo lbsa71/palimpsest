@@ -62,7 +62,9 @@ export function validateAnthropicPayload(body: Record<string, unknown>, profile:
   invariant(Array.isArray(body.messages), 'explicit Messages input required');
   for (const raw of body.messages) { const message = object(raw); fields(message, ['role', 'content', ...(profile.anthropic?.nativeProtocol ? ['cache_control', 'clear_at', 'output_config'] : [])]); invariant(message.role === 'user' || message.role === 'assistant' || (profile.anthropic?.nativeProtocol && message.role === 'system'), 'invalid Messages role'); content(message.content, message.role as 'user' | 'assistant' | 'system');
     cache(message.cache_control);
-    if (message.clear_at !== undefined) invariant(message.role === 'system' && ['next_user_message', 'never'].includes(String(message.clear_at)), 'invalid mid-conversation system clearing');
+    // The pinned native header lacks mid-conversation-system-clear-at-2026-08-21.
+    // Even explicit `never` needs that beta; preserve omission, never strip a field.
+    invariant(message.clear_at === undefined, 'mid-conversation clear_at requires a separately qualified beta profile');
     if (message.output_config !== undefined) { const config = object(message.output_config); fields(config, ['effort']); invariant(message.role === 'system' && config.effort === profile.effort, 'mid-conversation effort differs from host profile'); } }
   if (body.tools !== undefined) {
     invariant(Array.isArray(body.tools), 'explicit local tools required');
