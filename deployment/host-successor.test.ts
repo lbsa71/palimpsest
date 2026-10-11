@@ -268,7 +268,7 @@ test('coordinator observes launcher loss during asynchronous startup and release
     try { assert.ok(ledger.current()); assert.ok(!ledger.current()!.generation, 'serving authority was withdrawn'); } finally { ledger.close(); }
     assert.throws(() => process.kill(startup.service, 0), /ESRCH/);
     const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
-    try { assert.equal(store.list('physical-requests').length, 0); } finally { store.close(); }
+    try { assert.equal(store.list('requests').length, 0); } finally { store.close(); }
     t.diagnostic(JSON.stringify({ startup, disconnectedAt: Number(readFileSync(disconnected, 'utf8')), exit, stderr }));
   } finally {
     writeFileSync(resume, 'release gate during cleanup');
