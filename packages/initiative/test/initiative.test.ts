@@ -40,7 +40,7 @@ test('goal revisions/dependencies/reasons survive reopen; terminal evidence and 
   assert.equal(f.goals.readyNow(at)[0].id, 'b'); const paused = f.goals.revise('b', b.revision, { status: 'paused' }, 'reconsider feasibility');
   assert.throws(() => f.goals.revise('b', b.revision, { status: 'ready' }, 'stale revision'), RevisionConflict);
   f.store.close(); f = fixture(file); assert.equal(f.goals.goal('b')?.reason, 'reconsider feasibility'); assert.equal(f.goals.goal('b')?.status, 'paused'); assert.equal(f.goals.history('a', scope).length, 4);
-  assert.throws(() => f.goals.revise('a', current.revision, { evidenceIds: [] }, 'hide failure'), /evidence|completion/); assert.equal(f.goals.goal('b')?.revision, paused.revision); f.store.close();
+  assert.throws(() => f.goals.revise('a', current.revision, { evidenceIds: [] }, 'hide failure'), /evidence|completion|terminal/); assert.equal(f.goals.goal('b')?.revision, paused.revision); f.store.close();
 });
 
 test('experience supplies all four adopted dimensions and concrete inquiry; no seeded questions or identities', () => {
@@ -155,4 +155,14 @@ test('progress callback retains owed outcome and backs off repeated delivery att
   let now = Date.parse(at); const f = fixture(undefined, () => new Date(now).toISOString()); f.obligations.owe({ id: 'pending-report', inputId: 'i', audience: scope, promisedOutcome: 'deliver actual outcome', dueAt: at }); let deliveries = 0;
   const r = runtime(f, { async run() { throw Error('delivery should not run cognition'); } }, () => now), scheduler = new FairScheduler(f.store, f.goals, f.obligations, 'delivery', policy(), now), runner = new InitiativeRunner({ scheduler, runtime: r.runtime, memory: f.memory, authority, prompt: () => prompt, decide: () => { throw Error('not cognition'); }, deliver: async () => { deliveries++; } });
   await runner.tick(); assert.equal(f.obligations.obligation('pending-report')?.status, 'owed'); const idle = await runner.tick(); assert.equal(idle.kind, 'idle'); assert.equal(idle.nextWakeup, new Date(now + 100).toISOString()); assert.equal(deliveries, 1); now += 100; await runner.tick(); assert.equal(deliveries, 2); f.store.close();
+});
+
+test('model progress tool consumes actual current runtime observations and cannot fabricate completion evidence', async () => {
+  const f = fixture(); evidence(f); ready(f, 'model-progress'); let toolDecision: Goal | undefined;
+  const tools = initiativeTools(f.goals, f.drives, f.plans, scope, authority.generation, resources, () => at), progress = tools.find(t => t.name === 'initiative_goal_progress')!;
+  const shell: ShellPort = { async run(input, bridge) { const frame = JSON.parse((input.messages[0] as { content: string }).content); assert.equal(frame.goal.revision, f.goals.goal('model-progress')!.revision); const obs = await bridge.execute({ id: 'measurement', runId: input.run.id, stepId: 's', name: 'measure', arguments: {} });
+    assert.throws(() => progress.execute({ id: 'model-progress', expectedRevision: frame.goal.revision, decision: { kind: 'complete', reason: 'imagined success', evidenceIds: ['fabricated'] } }), /successful observations/);
+    toolDecision = progress.execute({ id: 'model-progress', expectedRevision: frame.goal.revision, decision: { kind: 'complete', reason: 'measured outcome satisfies accepted finite criteria', evidenceIds: [obs.id] } }) as Goal; return { status: 'completed', observations: [obs] }; } };
+  const r = runtime(f, shell, () => Date.parse(at)), scheduler = new FairScheduler(f.store, f.goals, f.obligations, 'model-progress', policy(), Date.parse(at)), runner = new InitiativeRunner({ scheduler, runtime: r.runtime, memory: f.memory, authority, prompt: () => prompt, decide: () => { throw Error('model progress already revised agenda'); } });
+  await runner.tick(); assert.equal(toolDecision?.status, 'completed'); assert.equal(f.goals.goal('model-progress')?.status, 'completed'); assert.deepEqual(f.goals.goal('model-progress')?.evidenceIds, ['tool:measurement']); f.store.close();
 });

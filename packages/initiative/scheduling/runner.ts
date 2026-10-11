@@ -60,6 +60,7 @@ export class InitiativeRunner {
       }
       let goal = selected.selection.goal; selectedGoalId = goal.id;
       if (goal.status === 'waiting') goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'declared wakeup reached');
+      goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'running' }, 'selected finite runtime slice');
       const context = memory.context({ audience: goal.scope, query: goal.purpose, maxRecords: 16, maxBytes: 32768 });
       let row = runtime.store.get<GoalExecution>('initiative.execution', goal.id), execution = row?.value;
       let run = execution ? runtime.getRun(execution.runId) : undefined;
@@ -74,7 +75,6 @@ export class InitiativeRunner {
       }
       invariant(execution && run, 'missing execution');
       if (identity(run.authority) !== identity(authority)) runtime.adopt(run.id, authority);
-      goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'running' }, 'selected finite runtime slice');
       const result = await runtime.resume(run.id, this.options.prompt(goal, context), controller.signal);
       const fresh = runtime.observations(run.id).filter(o => !execution!.observationIds.includes(o.id));
       for (const observation of fresh) if (!memory.get(`initiative-observation:${observation.id}`, goal.scope)) memory.ingest({ id: `initiative-observation:${observation.id}`, runId: run.id, sourceId: observation.id, channel: 'tool', actorId: observation.provenance.actorId, scope: goal.scope, at: observation.provenance.recordedAt, content: { kind: observation.kind, value: observation.value } });

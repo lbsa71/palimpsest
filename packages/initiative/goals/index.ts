@@ -22,6 +22,7 @@ export class InitiativeRegistry implements GoalPort {
     return this.store.transaction(() => {
       const old = this.goal(goal.id); invariant(goal.revision === (expectedRevision ?? 0) + 1, 'goal revision must advance once');
       if (old) {
+        invariant(!['completed', 'abandoned'].includes(old.status), 'terminal goal immutable; propose a successor');
         invariant(old.status === goal.status || transitions[old.status].includes(goal.status), 'invalid goal transition');
         invariant(scopeAllows(old.scope, goal.scope) && scopeAllows(goal.scope, old.scope), 'goal audience immutable');
         invariant(JSON.stringify(old.origin) === JSON.stringify(goal.origin), 'goal origin immutable');
@@ -30,7 +31,7 @@ export class InitiativeRegistry implements GoalPort {
       } else invariant(goal.status === 'proposed', 'new goal must be proposed');
       invariant(!goal.dependencyIds.includes(goal.id), 'goal cannot depend on itself');
       for (const id of goal.dependencyIds) {
-        invariant(this.goal(id), 'unknown goal dependency');
+        const dependency = this.goal(id); invariant(dependency, 'unknown goal dependency'); invariant(scopeAllows(dependency.scope, goal.scope), 'dependency widens private goal scope');
         const visits = new Set<string>(); const walk = (current: string): void => { invariant(current !== goal.id, 'goal dependency cycle'); if (visits.has(current)) return; visits.add(current); this.goal(current)?.dependencyIds.forEach(walk); }; walk(id);
       }
       this.store.put(NS, goal.id, goal, expectedRevision);
@@ -47,7 +48,7 @@ export class InitiativeRegistry implements GoalPort {
     nonempty(reason, 'revision reason'); const old = this.goal(id); invariant(old, 'unknown goal');
     return this.save({ ...old, ...patch, id, revision: expectedRevision + 1, reason }, expectedRevision);
   }
-  accept(id: string, expectedRevision: number, reason: string): Goal { return this.revise(id, expectedRevision, { status: 'ready' }, reason); }
+  accept(id: string, expectedRevision: number, reason: string): Goal { invariant(this.goal(id)?.status === 'proposed', 'accept only proposed goal'); return this.revise(id, expectedRevision, { status: 'ready' }, reason); }
   history(id: string, audience: DataScope): Goal[] { return this.store.list<Goal>('initiative.goal-history').map(row => row.value).filter(goal => goal.id === id && scopeAllows(goal.scope, audience)).sort((a, b) => a.revision - b.revision); }
   readyNow(at: string): Goal[] {
     invariant(Number.isFinite(Date.parse(at)), 'invalid scheduler time');

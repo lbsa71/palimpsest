@@ -1,9 +1,10 @@
 import { invariant, nonempty, validateGoal } from '../contracts/index.ts';
-import type { DataScope, Goal, JsonValue, ResourceEnvelope } from '../contracts/index.ts';
+import type { DataScope, Goal, JsonValue, Observation, ResourceEnvelope } from '../contracts/index.ts';
 import { InitiativeRegistry } from './goals/index.ts';
 import { DriveRegistry } from './drives/index.ts';
 import type { GrowthDimension } from './drives/index.ts';
-import { PlanRegistry } from './planning/index.ts';
+import { PlanRegistry, applyProgress } from './planning/index.ts';
+import type { ProgressDecision } from './planning/index.ts';
 import type { DurablePlan } from './planning/index.ts';
 export interface InitiativeTool { name: string; description: string; inputSchema: object; execute(args: JsonValue): unknown }
 function argsObject(args: JsonValue, allowed: string[]): { [key: string]: JsonValue } { invariant(args !== null && typeof args === 'object' && !Array.isArray(args), 'expected object'); invariant(Object.keys(args).every(key => allowed.includes(key)), 'unknown initiative argument'); return args; }
@@ -35,6 +36,21 @@ export function initiativeTools(goals: InitiativeRegistry, drives: DriveRegistry
   }, {
     name: 'initiative_goal_revise', description: 'Reconsider a goal, choose a new observation, pause, block, wait or retire with reasons. Completion is evaluated against actual runtime observations.', inputSchema: schema({ id: string, expectedRevision: revision, purpose: string, nextAction: string, priority: { type: 'number' }, status: { enum: ['ready', 'waiting', 'blocked', 'paused', 'abandoned'] }, wakeup: { type: 'object', properties: { at: string, condition: string }, required: ['at', 'condition'], additionalProperties: false }, reason: string }, ['id', 'expectedRevision', 'reason']),
     execute(args) { const a = argsObject(args, ['id', 'expectedRevision', 'purpose', 'nextAction', 'priority', 'status', 'wakeup', 'reason']); const goal = visibleGoal(text(a.id)); const patch: Partial<Goal> = {}; if (a.purpose !== undefined) patch.purpose = text(a.purpose); if (a.nextAction !== undefined) patch.nextAction = text(a.nextAction); if (a.priority !== undefined) { invariant(typeof a.priority === 'number' && Number.isFinite(a.priority), 'invalid priority'); patch.priority = a.priority; } if (a.status !== undefined) { invariant(['ready', 'waiting', 'blocked', 'paused', 'abandoned'].includes(text(a.status)), 'invalid status'); patch.status = a.status as Goal['status']; } if (a.wakeup !== undefined) { const wakeup = argsObject(a.wakeup, ['at', 'condition']); patch.wakeup = { at: text(wakeup.at), condition: text(wakeup.condition) }; } return goals.revise(goal.id, count(a.expectedRevision), patch, text(a.reason)); },
+  }, {
+    name: 'initiative_goal_progress', description: 'Judge the current runtime observations against the goal criteria, preserving uncertainty. Complete only with persisted successful evidence; continue after failure by choosing a changed observation. This is a mind decision, not independent competence validation.',
+    inputSchema: schema({ id: string, expectedRevision: revision, decision: { type: 'object' } }, ['id', 'expectedRevision', 'decision']),
+    execute(args) {
+      const a = argsObject(args, ['id', 'expectedRevision', 'decision']); const goal = visibleGoal(text(a.id));
+      invariant(goal.status === 'running' && goal.revision === count(a.expectedRevision), 'progress requires current running goal');
+      const execution = goals.store.get<{ runId: string }>('initiative.execution', goal.id)?.value; invariant(execution, 'progress requires actual runtime execution');
+      const observations = goals.store.list<Observation>('observations').map(row => row.value).filter(o => o.runId === execution.runId && !goal.evidenceIds.includes(o.id));
+      const d = argsObject(a.decision!, ['kind', 'reason', 'evidenceIds', 'nextAction', 'at', 'condition']); const kind = text(d.kind); const reason = text(d.reason); let decision: ProgressDecision;
+      if (kind === 'complete') decision = { kind, reason, evidenceIds: stringArray(d.evidenceIds) };
+      else if (kind === 'continue') decision = { kind, reason, evidenceIds: stringArray(d.evidenceIds), nextAction: text(d.nextAction) };
+      else if (kind === 'wait') decision = { kind, reason, at: text(d.at), condition: text(d.condition) };
+      else { invariant(['block', 'pause', 'abandon'].includes(kind), 'invalid progress decision'); decision = { kind: kind as 'block' | 'pause' | 'abandon', reason }; }
+      return applyProgress(goals, goal, observations, decision);
+    },
   }, {
     name: 'initiative_drive_adopt', description: 'Adopt or revise a standing growth dimension, its relative weight and purpose using attributed experience. No identity or interest is seeded.', inputSchema: schema({ id: string, dimension: { enum: ['judgment', 'curiosity', 'code-quality', 'capability'] }, purpose: string, sourceIds: strings, reason: string, weight: { type: 'number', exclusiveMinimum: 0, maximum: 100 }, active: { type: 'boolean' }, expectedRevision: { anyOf: [revision, { type: 'null' }] } }, ['id', 'dimension', 'purpose', 'sourceIds', 'reason', 'weight', 'active', 'expectedRevision']),
     execute(args) { const a = argsObject(args, ['id', 'dimension', 'purpose', 'sourceIds', 'reason', 'weight', 'active', 'expectedRevision']); const ids = sources(a.sourceIds); invariant(typeof a.weight === 'number' && typeof a.active === 'boolean', 'weight/active required'); return drives.adopt({ id: text(a.id), dimension: text(a.dimension) as GrowthDimension, purpose: text(a.purpose), scope: boundAudience, reason: text(a.reason), weight: a.weight, active: a.active, provenance: { sourceIds: ids, actorId, recordedAt: clock(), derivation: 'interpreted' } }, a.expectedRevision === null ? null : count(a.expectedRevision)); },

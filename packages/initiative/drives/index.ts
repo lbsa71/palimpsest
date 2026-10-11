@@ -12,6 +12,7 @@ export class DriveRegistry {
   readonly store: OperationalStore; readonly memory: DevelopmentalMemory;
   constructor(store: OperationalStore, memory: DevelopmentalMemory) { this.store = store; this.memory = memory; }
   adopt(input: Omit<AdoptedDrive, 'revision'>, expected: number | null): AdoptedDrive {
+    return this.store.transaction(() => {
     invariant(growthDimensions.includes(input.dimension as GrowthDimension), 'standing drive must use growth dimension');
     nonempty(input.purpose, 'drive purpose'); nonempty(input.reason, 'drive reason'); validateProvenance(input.provenance);
     invariant(Number.isFinite(input.weight) && input.weight > 0 && input.weight <= 100, 'invalid drive weight');
@@ -20,6 +21,7 @@ export class DriveRegistry {
     if (old) invariant(old.dimension === input.dimension && scopeAllows(old.scope, input.scope) && scopeAllows(input.scope, old.scope), 'drive dimension/audience immutable');
     const drive = { ...input, revision: (expected ?? 0) + 1 }; this.store.put('initiative.drives', input.id, drive, expected);
     this.store.put('initiative.drive-history', `${input.id}:${drive.revision}`, drive, null); return drive;
+    });
   }
   adopted(audience: DataScope): AdoptedDrive[] { return this.store.list<AdoptedDrive>('initiative.drives').map(row => row.value).filter(drive => drive.active && scopeAllows(drive.scope, audience) && drive.provenance.sourceIds.every(id => this.memory.get(id, audience))); }
   coverage(audience: DataScope): { adopted: GrowthDimension[]; missing: GrowthDimension[] } { const adopted = growthDimensions.filter(dimension => this.adopted(audience).some(drive => drive.dimension === dimension)); return { adopted, missing: growthDimensions.filter(dimension => !adopted.includes(dimension)) }; }
