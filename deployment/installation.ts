@@ -223,7 +223,10 @@ export function writeInstallationBundle(input: Installation, directory: string):
   for (const [name, content] of Object.entries(renderInstallation(input))) writeFileSync(join(directory, name), content, { flag: 'wx', mode: 0o600 });
 }
 function ownedUnitFile(path: string, content: string): void {
-  canonical(path); const stat = lstatSync(path);
+  // Names come only from renderInstallation's validated specification. systemd
+  // mount names contain literal escape sequences, unlike input filesystem paths.
+  invariant(dirname(path) === '/etc/systemd/system' && realpathSync(path) === path, 'Installed unit path must not traverse symlinks');
+  const stat = lstatSync(path);
   invariant(stat.isFile() && stat.nlink === 1 && stat.uid === 0 && (stat.mode & 0o022) === 0 && readFileSync(path, 'utf8') === content, 'Installed unit does not match this installation; refusing mutation');
 }
 /** Explicit administrator command. It installs files only; enable/start remains a separate operation. */
