@@ -1,0 +1,38 @@
+(node:773475) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ old-policy acceptance publishes one boot snapshot without changing retained rescue (10713.79017ms)
+✔ changed retained runtime is refused before selection publication (3066.30414ms)
+✔ runtime copy must still match the accepted identity after application verification (1433.322321ms)
+✔ selected launcher preserves readiness and reconciles requested selection (2601.296133ms)
+✔ selected launcher preserves readiness and reconciles ready selection (5435.79331ms)
+✔ redirected bootstrap directory is refused before publication lease writes (872.933151ms)
+✔ rescue rotation rejects a witness whose authority was withdrawn after the last release record (4874.221367ms)
+✔ one selected cwd pins runtime and source across active-pointer replacement (124.130621ms)
+✔ interruption after active rename preserves latched independent rescue and latest state (4924.308443ms)
+✔ real systemd drains failed detached descendants before latched rescue, and clean stop does not latch (4917.930176ms)
+(node:773794) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ accepted host and evaluator code actually replace the coordinator; failed host restores old code offline with latest state (42414.862811ms)
+✔ accepted but unbootable coordinator restores the retained host without evaluating itself or reading provider inputs (27799.600312ms)
+✔ a broken accepted launcher falls back through the retained bootstrap on restart without a surviving old coordinator (30833.864964ms)
+✔ coordinator observes launcher loss during asynchronous startup and releases authority (16255.962023ms)
+(node:774524) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ renders a complete systemd-verifiable new installation with a persistent ordered mount (119.481698ms)
+✔ mount names match systemd path escaping, including hyphens and leading dots (12.844048ms)
+✔ refuses legacy names, extra fields, unbounded profiles, overlap and all unit/command injection inputs (6.807629ms)
+✔ private environment accepts only explicit secret assignments and prevents runtime option injection (1.055261ms)
+✔ preflight rehashes coordinator/runtime and rejects a mismatched frozen capacity before delegation (4711.632127ms)
+✔ read-only workspace preflight refuses an ordinary host filesystem without deleting lived data (2.288979ms)
+﹣ administrator-provisioned real workspace retains its marker and matches its exact bounded backing image (0.256444ms) # SKIP
+﹣ real host-data capacity bounds combined state/artifact/evidence/log growth and preserves markers (0.126984ms) # SKIP
+✔ service-owned log paths cannot be accepted as privileged systemd append sinks (0.841295ms)
+✔ runtime staging is bounded, hash-bound and descriptor-pinned without executing candidate bytes (8.982993ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 2
+ℹ todo 0
+ℹ duration_ms 162070.563116
