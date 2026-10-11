@@ -157,7 +157,7 @@ async function eventually<T>(read: () => T, accept: (value: T) => boolean): Prom
   const deadline = Date.now() + 30000;
   while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > deadline) throw Error('Fixture deadline: ' + JSON.stringify(value)); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
-function fixture(activate = false) {
+function fixture(activate = false, governance = false) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-external-dispatch-'));
   const source = join(root, 'source'); mkdirSync(source);
   for (const entry of rewriteSourceEntries) if (existsSync(join(repository, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(join(repository, entry), join(source, entry), { recursive: true }); }
@@ -177,17 +177,39 @@ function fixture(activate = false) {
   const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: ['--jitless', '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
     pollMs: 10, maxElapsedMs: 15000, maxOutputBytes: 8 * 1024 * 1024, maxClosureBytes: 256 * 1024 * 1024, memoryBytes: 8 * 1024 * 1024 * 1024 };
   const reviewerFile = join(reviewerRoot, 'config.json'); writeFileSync(reviewerFile, JSON.stringify(reviewer), { mode: 0o600 });
+  const futureRules = "export const heldOutMarker = 'externalDispatchEngineeringFixture = true';\nexport const governanceRevision = 'source-owned-future-reviewer-v2';\n";
+  const futureReviewerSource = reviewerSource.replace("import { heldOutMarker }", "import { heldOutMarker, governanceRevision }")
+    .replace("id: 'held-out-exact-source'", "id: 'governance-future-source'")
+    .replace('inheritedKeys: false', 'inheritedKeys: false, reviewerGeneration: governanceRevision');
+  const futureReviewer = { ...reviewer, files: reviewer.files.map(file => ({ ...file, sha256: file.mount === '/reviewer/reviewer.mjs' ? hashBytes(futureReviewerSource) : file.mount === '/reviewer/rules.mjs' ? hashBytes(futureRules) : file.sha256 })) };
+  const futureReviewerDigest = hashBytes(reviewerDescriptor(futureReviewer));
   const evaluator = blob(reviewerDescriptor(reviewer));
   const fields = { kind: 'engineering' as const, requiredCases: ['held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
   const modifiedBytes = readFileSync(join(source, markerPath), 'utf8') + marker;
   // Frozen fixture transport replaces the provider completely. It exercises the ordinary service child/tools.
   const calls = [['source_checkout', {}], ['workspace_write', { path: markerPath, content: modifiedBytes, expectedSha256: hashBytes(readFileSync(join(source, markerPath))) }],
+    ...(governance ? [['governance_profile', {}],
+      ['workspace_write', { path: 'deployment/fixture-reviewer.mjs', content: futureReviewerSource, expectedSha256: null }],
+      ['workspace_write', { path: 'deployment/fixture-reviewer-rules.mjs', content: futureRules, expectedSha256: null }],
+      ['workspace_write', { path: 'deployment/governance-proposal.json', content: '__from_public_governance_profile__', expectedSha256: null }]] : []),
     ['change_propose', { changeId: 'finite', justification: 'Test physical hosted review dispatch.', objective: 'Stage exact source through prior controls.', successCriteria: ['held-out exact source observed by physical external process'], experienceIds: [] }],
     ['candidate_freeze', { changeId: 'finite' }], ['candidate_evaluate', { changeId: 'finite' }], ['change_status', { changeId: 'finite' }], ['release_submit', { changeId: 'finite' }],
     ...(activate ? [['control_activate', { changeId: 'finite' }]] : [])];
   // Persisted model messages select the next step across service replacement; the fixture
   // stops after enqueue and resumes only after the actual bound host result event.
-  const transport = `const fixtureSequence = ${JSON.stringify(calls)};\nasync function fixtureTransport(payload) { const messages = JSON.parse(payload).messages; const seen = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.function.name) ?? [])); let step = fixtureSequence.find(step => !seen.has(step[0])); if (step?.[0] === 'change_status' && !messages.some(message => message.role === 'user' && String(message.content).includes('external-evaluation-completed'))) step = undefined; return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + fixtureSequence.indexOf(step), type: 'function', function: { name: step[0], arguments: JSON.stringify(step[1]) } }] } : { role: 'assistant', content: 'Engineering fixture waiting or complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }\n`;
+  const futureCalls = [['source_checkout', {}], ['governance_profile', {}], ['change_propose', { changeId: 'future', justification: 'Verify accepted source-owned evaluator through ordinary tools.', objective: 'Obtain a future-policy physical review.', successCriteria: ['new required case and reviewer bytes execute'], experienceIds: [] }], ['candidate_freeze', { changeId: 'future' }], ['candidate_evaluate', { changeId: 'future' }]];
+  const governanceTransport = governance ? `import { createHash as fixtureCreateHash } from 'node:crypto';
+const fixtureFutureSequence = ${JSON.stringify(futureCalls)};
+function fixtureGovernance(profile) {
+  const hash = bytes => fixtureCreateHash('sha256').update(bytes).digest('hex');
+  const sort = value => Array.isArray(value) ? value.map(sort) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sort(value[key])])) : value;
+  const canonical = value => JSON.stringify(sort(value));
+  const reviewer = { ...profile.reviewer, files: profile.reviewer.files.map(file => file.mount === '/reviewer/reviewer.mjs' ? { mount: file.mount, sha256: ${JSON.stringify(hashBytes(futureReviewerSource))}, source: 'deployment/fixture-reviewer.mjs' } : file.mount === '/reviewer/rules.mjs' ? { mount: file.mount, sha256: ${JSON.stringify(hashBytes(futureRules))}, source: 'deployment/fixture-reviewer-rules.mjs' } : file) };
+  const digest = hash(canonical({ version: 1, executable: reviewer.executable, args: reviewer.args, files: reviewer.files.map(({mount,sha256})=>({mount,sha256})).sort((a,b)=>a.mount.localeCompare(b.mount)) }));
+  return canonical({ version: 1, policy: { ...profile.policy, requiredCases: ['governance-future-source'], evaluatorArtifacts: profile.policy.evaluatorArtifacts.map(([id, original]) => [id, id === reviewer.evaluatorId ? digest : original]) }, reviewer });
+}
+` : '';
+  const transport = `${governanceTransport}const fixtureSequence = ${JSON.stringify(calls)};\nasync function fixtureTransport(payload) { const messages = JSON.parse(payload).messages; const sequence = ${governance ? "messages.some(message => message.role === 'user' && String(message.content).includes('fixture-future-evaluation')) ? fixtureFutureSequence : fixtureSequence" : 'fixtureSequence'}; const seen = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.id) ?? [])); let step = sequence.find((step, index) => !seen.has('fx' + index)); if (step?.[0] === 'change_status' && !messages.some(message => message.role === 'user' && String(message.content).includes('external-evaluation-completed'))) step = undefined; let args = step?.[1]; ${governance ? "if (args?.content === '__from_public_governance_profile__') { const profile = JSON.parse(messages.findLast(message => message.role === 'tool' && message.name === 'governance_profile').content); args = { ...args, content: fixtureGovernance(profile) }; }" : ''} return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + sequence.indexOf(step), type: 'function', function: { name: step[0], arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Engineering fixture waiting or complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }\n`;
   const childPath = join(source, 'deployment/service-child.ts');
   writeFileSync(childPath, transport + readFileSync(childPath, 'utf8').replace('new AutarkApplication({ config,', 'new AutarkApplication({ performRequest: fixtureTransport, config,'));
   const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: activate ? 1 : 2 };
@@ -210,7 +232,7 @@ function fixture(activate = false) {
   const options = { host, mode: 'engineering' as const, secrets: { mistralApiKey: 'no-paid-provider-access', directToken: 'fixture-token' }, readArtifact: contentAddressedEvidence(evidenceDirectory),
     getPolicy: (digest: string) => { const result = policies.get(digest); assert.ok(result, 'Unknown registered policy'); return result; }, bootstrap: { proof: bootstrapProof, policyDigest: policy.policyDigest },
     evaluationDispatcher: { reviewerFile, policyDigests: [...policies.keys()] } };
-  return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources };
+  return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources, futureReviewerDigest };
 }
 
 test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 120000 }, async t => {
@@ -385,5 +407,86 @@ test('ordinary author activates its exact stage and receives fresh physical prob
     assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
     assert.deepEqual(store.get('fixture.control-latest', 'lived')!.value, { retained: true, uncertainEffect: 'do-not-repeat' });
     assert.equal(store.list<{ request: { provider: string } }>('requests').filter(row => row.value.request.provider === 'external-offline-review').length, 2, 'Accepted physical reviews never repeat on restart');
+  } finally { await supervisor?.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary governance proposal uses old physical judges before accepted restart selects the new source reviewer', { timeout: 180000 }, async t => {
+  const f = fixture(true, true); let supervisor: ServiceSupervisor | undefined;
+  const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+  const keyDigest = hashBytes(readFileSync(f.reviewer.keyFile));
+  const physicalRequests = () => store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').map(row => row.value.request).filter(value => value.provider === 'external-offline-review');
+  const admit = async (externalId: string, text: string) => {
+    const response = await fetch(`http://127.0.0.1:${supervisor!.status().ready!.address.port}/inputs`, { method: 'POST', headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' }, body: JSON.stringify({ externalId, revision: '1', conversation: externalId, text }) });
+    assert.equal(response.status, 202); return (await response.json() as { run: { id: string } }).run.id;
+  };
+  try {
+    supervisor = await ServiceSupervisor.open(f.options);
+    const authorRun = await admit('source-governance-cycle', 'Execute source-owned governance replacement engineering fixture.');
+    const record = await eventually(() => {
+      const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
+      if (value && ['rejected', 'uncertain'].includes(value.status)) throw Error(JSON.stringify({ control: value.status, diagnosis: value.diagnosis, host: supervisor!.status().evaluation }));
+      return value;
+    }, value => value?.status === 'accepted');
+    assert.ok(record?.review && record.physicalAuthority && record.probationProof);
+    assert.equal(record.request.runId, authorRun);
+    const nextDescriptor = (record.review.candidate.inputs.controls as any).policy;
+    assert.deepEqual(nextDescriptor.requiredCases, ['governance-future-source']);
+    assert.equal(new Map(nextDescriptor.evaluatorArtifacts).get(f.reviewer.evaluatorId), f.futureReviewerDigest);
+    assert.notEqual(f.futureReviewerDigest, f.policy.evaluatorArtifacts.get(f.reviewer.evaluatorId));
+    const status = supervisor.status(), nextPolicyDigest = status.release!.accepted.policyDigest;
+    assert.equal(status.release?.phase, 'accepted'); assert.equal(status.release?.accepted.candidateId, record.review.candidate.manifest.id);
+    assert.notEqual(nextPolicyDigest, f.policy.policyDigest); assert.equal(record.review.policyDigest, f.policy.policyDigest);
+    const proof = store.readJsonArtifact<ReleaseProof>(record.probationProof);
+    assert.deepEqual(proof.proposal.priorAuthority, record.review.judgeAuthority);
+    assert.ok(proof.proposal.evidence.every(evidence => evidence.evaluatorArtifact.sha256 === f.policy.evaluatorArtifacts.get(f.reviewer.evaluatorId) && evidence.controlRevision === f.policy.controlRevision && evidence.caseResults.every(result => result.id === 'held-out-exact-source') && !record.review!.admissionEvidenceIds.includes(evidence.id)));
+    const jobs = store.list<any>('host.evolution-jobs').map(row => row.value), firstEvaluation = jobs.find(job => job.kind === 'evaluation');
+    const admission = store.readJsonArtifact<any>(firstEvaluation.receipt);
+    assert.equal(admission.policyDigest, f.policy.policyDigest); assert.ok(admission.evidence.every((evidence: EvaluationEvidence) => evidence.evaluatorArtifact.sha256 === f.policy.evaluatorArtifacts.get(f.reviewer.evaluatorId)));
+    assert.equal(physicalRequests().length, 2); assert.ok(physicalRequests().every(value => value.status === 'succeeded' && value.runId === authorRun));
+    for (const allocation of record.review.allocationLineage) {
+      const { cancelled, ...retained } = store.get<any>('allocations', allocation.id)!.value;
+      assert.equal(cancelled, false); assert.deepEqual({ id: allocation.id, ...retained }, allocation);
+    }
+    const oldProfile = store.list<any>('observations').map(row => row.value).find(observation => observation.runId === authorRun && observation.value?.proposalPath === 'deployment/governance-proposal.json')?.value;
+    assert.ok(oldProfile?.reviewer); assert.equal(JSON.stringify(oldProfile).includes(f.root), false); assert.equal(JSON.stringify(oldProfile).includes('keyFile'), false);
+    store.put('fixture.governance-latest', 'lived', { revision: 2, experience: 'after governance acceptance', uncertainEffect: 'do-not-repeat' }, null);
+    const latest = store.get('fixture.governance-latest', 'lived');
+    const beforeRestartEpoch = status.ready!.authority.epoch;
+    await supervisor.close(); supervisor = undefined;
+    supervisor = await ServiceSupervisor.open(f.options);
+    assert.equal(supervisor.status().release?.accepted.policyDigest, nextPolicyDigest); assert.ok(supervisor.status().ready!.authority.epoch > beforeRestartEpoch);
+    assert.deepEqual(store.get('fixture.governance-latest', 'lived'), latest); assert.equal(physicalRequests().length, 2);
+    const futureRun = await admit('source-governance-future', 'fixture-future-evaluation: exercise the newly accepted reviewer.');
+    const futureJob = await eventually(() => {
+      const job = store.list<any>('host.evolution-jobs').map(row => row.value).find(job => job.kind === 'evaluation' && job.runId === futureRun);
+      if (job?.status === 'uncertain') throw Error(JSON.stringify({ future: job, host: supervisor!.status().evaluation }));
+      return job;
+    }, value => value?.status === 'completed');
+    const futureRequest = store.readJsonArtifact<EvaluationRequest>(futureJob.request), futureResult = store.readJsonArtifact<any>(futureJob.receipt);
+    assert.equal(futureRequest.policyDigest, nextPolicyDigest); assert.equal(futureResult.policyDigest, nextPolicyDigest);
+    assert.ok(futureResult.evidence.length > 0);
+    for (const evidence of futureResult.evidence as EvaluationEvidence[]) {
+      assert.equal(evidence.evaluatorArtifact.sha256, f.futureReviewerDigest); assert.equal(evidence.controlRevision, record.review.candidate.manifest.controls);
+      assert.deepEqual(evidence.caseResults.map(result => result.id), ['governance-future-source']);
+      const observed = JSON.parse(contentAddressedEvidence(f.evidenceDirectory)(evidence.artifact.uri).toString());
+      assert.equal(observed.reviewerGeneration, 'source-owned-future-reviewer-v2'); assert.equal(observed.inheritedKeys, false);
+    }
+    const futureProfile = store.list<any>('observations').map(row => row.value).find(observation => observation.runId === futureRun && observation.value?.proposalPath === 'deployment/governance-proposal.json')?.value;
+    assert.deepEqual(futureProfile.policy.requiredCases, ['governance-future-source']);
+    assert.equal(JSON.stringify(futureProfile).includes(f.root), false); assert.equal(JSON.stringify(futureProfile).includes('keyFile'), false);
+    assert.equal(hashBytes(readFileSync(f.reviewer.keyFile)), keyDigest);
+    assert.equal(physicalRequests().length, 3); assert.ok(physicalRequests().every(value => value.status === 'succeeded' && value.usage.elapsedMs > 0));
+    assert.equal(physicalRequests().filter(value => value.runId === futureRun).length, 1);
+    assert.deepEqual(store.get('fixture.governance-latest', 'lived'), latest);
+    t.diagnostic(JSON.stringify({ kind: 'source-governance-physical-engineering', incumbent: f.incumbent.manifest.id, accepted: record.review.candidate.manifest.id, oldPolicy: f.policy.policyDigest, nextPolicy: nextPolicyDigest,
+      oldReviewer: f.policy.evaluatorArtifacts.get(f.reviewer.evaluatorId), futureReviewer: f.futureReviewerDigest, physicalReviews: physicalRequests().map(value => ({ id: value.id, runId: value.runId, status: value.status, elapsedMs: value.usage.elapsedMs })), oldAdmissionEvidence: record.review.admissionEvidenceIds, oldProbationEvidence: proof.proposal.evidence.map(evidence => evidence.id), futureEvidence: futureResult.evidence.map((evidence: EvaluationEvidence) => evidence.id), liveProviderCalls: 0, externalMessages: 0 }));
+  } catch (error) {
+    const diagnosis = { error: error instanceof Error ? error.stack : String(error), host: supervisor?.status(), controls: store.list('host.control-continuations'), jobs: store.list('host.evolution-jobs'), runs: store.list('runs'), observations: store.list('observations'), physical: physicalRequests() };
+    t.diagnostic(JSON.stringify(diagnosis));
+    if (process.env.AEON_GOVERNANCE_LOG_DIRECTORY) {
+      try { mkdirSync(process.env.AEON_GOVERNANCE_LOG_DIRECTORY, { recursive: true }); writeFileSync(join(process.env.AEON_GOVERNANCE_LOG_DIRECTORY, `failure-${process.pid}.json`), JSON.stringify(diagnosis, null, 2)); }
+      catch (archival) { t.diagnostic(`Optional diagnostic archival failed: ${String(archival)}`); }
+    }
+    throw error;
   } finally { await supervisor?.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
