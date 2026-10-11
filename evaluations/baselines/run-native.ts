@@ -8,6 +8,8 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 import { ProcessLease } from '../../packages/supervisor/process-lease.ts';
 import { runWorker } from '../../packages/supervisor/worker-process.ts';
 import type { ResourceLimits } from '../../packages/supervisor/resource-limits.ts';
+import { claudeInvocation } from './claude-configuration.ts';
+import { anthropicTransport } from './anthropic-codec.ts';
 import { BaselineObserver, openAITransport, validateObserverGrant } from './observer.ts';
 import type { BaselineTransport, ObserverGrant, ProviderAttempt } from './observer.ts';
 
@@ -16,7 +18,8 @@ export interface NativeBaselineRun {
   privateStateRoot: string; checkoutRoot: string; workspace: string; protectedPaths: string[];
   native: { version: string; files: { path: string; name: string; sha256: string }[] };
   prompt: string; grant: ObserverGrant; maxCliOutputBytes: number;
-  provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits } | { kind: 'openai'; apiKey: string; resourceLimits: ResourceLimits };
+  claudeOptions?: { tools: string; modelRoles?: { haiku?: string; sonnet?: string; opus?: string; subagent?: string } };
+  provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits } | { kind: 'openai' | 'anthropic'; apiKey: string; resourceLimits: ResourceLimits };
   signal?: AbortSignal;
 }
 export interface NativeBaselineResult {
@@ -46,10 +49,15 @@ function validate(input: NativeBaselineRun): void {
   nonempty(input.prompt, 'prompt'); nonempty(input.native.version, 'native version');
   for (const hash of input.native.files.map(file => file.sha256)) invariant(/^[a-f0-9]{64}$/.test(hash), 'pinned native digest required');
   invariant(Number.isSafeInteger(input.maxCliOutputBytes) && input.maxCliOutputBytes > 0 && input.maxCliOutputBytes <= 2_000_000, 'finite CLI output ceiling required');
-  invariant(input.provider?.kind === 'fixture' || input.provider?.kind === 'openai', 'explicit provider fixture or host credential required');
-  invariant(input.kind === 'codex' ? input.grant.profile.provider === 'openai' : input.grant.profile.provider === 'anthropic-fixture' && input.provider.kind === 'fixture', 'native protocol/profile mismatch or live Claude accounting unavailable');
+  invariant(input.provider?.kind === 'fixture' || input.provider?.kind === 'openai' || input.provider?.kind === 'anthropic', 'explicit provider fixture or host credential required');
+  invariant(input.kind === 'codex' ? input.grant.profile.provider === 'openai' && input.provider.kind !== 'anthropic' : (input.grant.profile.provider === 'anthropic-fixture' && input.provider.kind === 'fixture') || (input.grant.profile.provider === 'anthropic' && input.provider.kind !== 'openai'), 'native protocol/profile mismatch');
+  if (input.kind === 'claude' && input.grant.profile.provider === 'anthropic') {
+    invariant(input.claudeOptions && typeof input.claudeOptions.tools === 'string' && input.claudeOptions.tools.length > 0, 'explicit real native Claude tool selection required');
+    invariant(Object.keys(input.claudeOptions).every(key => ['tools', 'modelRoles'].includes(key)) && Object.keys(input.claudeOptions.modelRoles ?? {}).every(key => ['haiku', 'sonnet', 'opus', 'subagent'].includes(key)), 'unknown native Claude options refused');
+    invariant(Object.values(input.claudeOptions.modelRoles ?? {}).every(model => model === input.grant.profile.model), 'multiple native models require separately priced/qualified profiles');
+  } else invariant(input.claudeOptions === undefined, 'native options require separate real Claude profile');
   invariant(input.kind === 'codex' ? input.native.files.map(file => file.name).join(',') === 'codex,codex-code-mode-host' : input.native.files.map(file => file.name).join(',') === 'claude', 'exact native closure required');
-  if (input.provider.kind === 'openai') invariant(input.provider.resourceLimits && typeof input.provider.apiKey === 'string' && input.provider.apiKey.length > 0, 'paid runner requires explicit kernel limits and host credential');
+  if (input.provider.kind !== 'fixture') invariant(input.provider.resourceLimits && typeof input.provider.apiKey === 'string' && input.provider.apiKey.length > 0, 'paid runner requires explicit kernel limits and host credential');
   invariant(/^24\./.test(process.versions.node), 'qualified Node 24 runtime required');
 }
 
@@ -81,7 +89,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
   const pendingOperations = new Set<Promise<unknown>>();
   try {
     store = new OperationalStore({ filename: join(stateRoot, 'observer.sqlite'), checkoutRoot: checkout });
-    observer = new BaselineObserver({ store, grant: input.grant, transport: input.provider.kind === 'fixture' ? input.provider.transport : openAITransport(input.provider.apiKey) });
+    observer = new BaselineObserver({ store, grant: input.grant, transport: input.provider.kind === 'fixture' ? input.provider.transport : input.provider.kind === 'anthropic' ? anthropicTransport(input.provider.apiKey) : openAITransport(input.provider.apiKey) });
     invariant(!observer.ledger.snapshot(input.grant.id).cancelled, 'baseline grant already cancelled or uncertain');
     const files = input.native.files.map(file => ({ ...file, path: realpathSync(file.path) }));
     for (const file of files) invariant(lstatSync(file.path).isFile() && sha256(file.path) === file.sha256, 'ordinary pinned native closure required');
@@ -97,9 +105,10 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       providerTransport: input.provider.kind,
       qualification: input.provider.resourceLimits ? 'kernel-profile' as const : 'namespace-fixture' as const,
       kernelLimits: input.provider.resourceLimits ?? null,
+      nativeInvocation: input.kind === 'claude' ? claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) }, 0) : null,
       nativeConfiguration: input.kind === 'codex'
         ? { ignoreUserConfig: true, ignoreRules: true, ephemeral: true, webSearch: 'disabled', requestRetries: 0, streamRetries: 0, credentials: 'dummy-bridge-token-only' }
-        : { bare: true, settingSources: '', tools: 'Bash', strictMcpConfig: true, disableSlashCommands: true, noSessionPersistence: true, nativePermissions: 'bypassed only inside namespace', retries: 'each observed separately; host grant unchanged', credentials: 'dummy-bridge-token-only', scope: 'synthetic Messages only; live unavailable' },
+        : { bare: true, settingSources: '', tools: input.claudeOptions?.tools ?? 'Bash', effort: input.grant.profile.effort, modelRoles: input.claudeOptions?.modelRoles ?? (input.grant.profile.provider === 'anthropic-fixture' ? { haiku: input.grant.profile.model, sonnet: input.grant.profile.model, opus: input.grant.profile.model, subagent: input.grant.profile.model } : null), thinking: input.grant.profile.anthropic?.thinking ?? 'disabled', strictMcpConfig: true, disableSlashCommands: true, noSessionPersistence: true, nativePermissions: 'bypassed only inside namespace', retries: 'each observed separately; host grant unchanged', credentials: 'dummy-bridge-token-only', scope: input.grant.profile.provider === 'anthropic-fixture' ? 'synthetic Messages only' : 'first-party standard Messages engineering; native affordance/kernel/live qualification outstanding' },
     };
     const previous = store.get<{ specification: typeof specification; status: string }>('baseline-run', 'run');
     if (previous) {
@@ -111,6 +120,11 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
     image = mkdtempSync(join(tmpdir(), `aeon-${input.kind}-image-`));
     for (const file of files) copyFileSync(file.path, join(image, file.name), constants.COPYFILE_FICLONE);
     copyFileSync(worker, join(image, workerName));
+    if (input.kind === 'claude') {
+      const configuration = new URL('./claude-configuration.ts', import.meta.url);
+      copyFileSync(configuration, join(image, 'claude-configuration.ts'));
+      invariant(sha256(join(image, 'claude-configuration.ts')) === specification.sourceIdentity.files.find(file => file.path === 'evaluations/baselines/claude-configuration.ts')!.sha256, 'staged Claude configuration changed');
+    }
     // Hash the actual copies, closing an input change during staging.
     invariant(files.every(file => sha256(join(image!, file.name)) === file.sha256) && sha256(join(image, workerName)) === specification.workerSha256, 'staged native image changed');
     const remainingMs = Math.floor(input.grant.resources.maxElapsedMs - observer.ledger.snapshot(input.grant.id).elapsedMs);
@@ -123,7 +137,8 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
         maxOutputBytes: maxMessageBytes * (input.grant.resources.maxRequests + 1), signal: input.signal,
         ...(input.provider.resourceLimits ? { resourceLimits: input.provider.resourceLimits } : {}) },
       initial: { prompt: input.prompt, model: input.grant.profile.model, effort: input.grant.profile.effort,
-        maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes },
+        maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes,
+        ...(input.kind === 'claude' ? { profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) } : {}) },
       maxMessageBytes, maxRequests: input.grant.resources.maxRequests,
       async handle(method, args, signal) {
         invariant(method === 'baseline.provider' && args.length === 1, 'only native provider attempts permitted');

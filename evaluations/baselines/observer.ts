@@ -1,3 +1,5 @@
+import { anthropicUsage, validateAnthropicPayload, validateAnthropicProfile } from './anthropic-codec.ts';
+import type { AnthropicReceipt } from './anthropic-codec.ts';
 import { randomUUID } from 'node:crypto';
 import { validateClaudeFixturePayload, claudeFixtureUsage } from './claude-fixture-codec.ts';
 import { canonicalJson, invariant, nonempty } from '../../packages/contracts/common.ts';
@@ -8,10 +10,12 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 
 export const OPENAI_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses';
 export interface BaselineProfile {
-  provider: 'openai' | 'anthropic-fixture'; model: string; effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  provider: 'openai' | 'anthropic-fixture' | 'anthropic'; model: string; effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** Host attestation of the provider's maximum billable text input, not a byte/token estimate. */
   contextContract: string; contextWindowTokens: number; maxOutputTokens: number;
-  prices: { source: string; inputUsdPerMillion: number; cachedInputUsdPerMillion: number; outputUsdPerMillion: number };
+  prices: { source: string; inputUsdPerMillion: number; cachedInputUsdPerMillion: number; outputUsdPerMillion: number; cacheWrite5mUsdPerMillion?: number; cacheWrite1hUsdPerMillion?: number };
+  /** Host-attested model defaults; only global standard synchronous inference is priced. */
+  anthropic?: { thinking: 'adaptive' | 'enabled' | 'disabled'; thinkingBudgetTokens?: number; serviceTier: 'standard'; inferenceGeo: 'global'; speed: 'standard' };
 }
 export interface ObserverGrant {
   id: string; resources: ResourceEnvelope; profile: BaselineProfile;
@@ -25,7 +29,7 @@ export interface AttemptEvidence {
   /** Exact native instructions, input and tool definitions are contained in before/after. */
   response?: ArtifactRef; responseStatus?: number; contentType?: string;
   nativeHttp?: ArtifactRef;
-  outcome?: 'completed' | 'unknown'; reason?: string; usage?: ResourceUsage;
+  outcome?: 'completed' | 'unknown'; reason?: string; usage?: ResourceUsage; anthropicReceipt?: AnthropicReceipt;
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -34,14 +38,16 @@ function freeze<T>(value: T): T {
 
 function positive(value: number, name: string): void { invariant(Number.isSafeInteger(value) && value > 0, `finite positive ${name} required`); }
 export function validateObserverGrant(grant: ObserverGrant): void {
-  nonempty(grant.id, 'grant.id'); invariant(['openai', 'anthropic-fixture'].includes(grant.profile.provider), 'supported baseline profile required');
+  nonempty(grant.id, 'grant.id'); invariant(['openai', 'anthropic-fixture', 'anthropic'].includes(grant.profile.provider), 'supported baseline profile required');
   nonempty(grant.profile.model, 'model'); nonempty(grant.profile.contextContract, 'context contract');
-  invariant(['none', 'low', 'medium', 'high', 'xhigh'].includes(grant.profile.effort), 'invalid effort');
+  invariant((grant.profile.provider === 'anthropic' ? ['low', 'medium', 'high', 'xhigh', 'max'] : ['none', 'low', 'medium', 'high', 'xhigh']).includes(grant.profile.effort), 'invalid effort');
   positive(grant.profile.contextWindowTokens, 'context window'); positive(grant.profile.maxOutputTokens, 'output tokens');
   nonempty(grant.profile.prices.source, 'price source');
   for (const price of [grant.profile.prices.inputUsdPerMillion, grant.profile.prices.cachedInputUsdPerMillion, grant.profile.prices.outputUsdPerMillion]) invariant(Number.isFinite(price) && price >= 0, 'explicit finite prices required');
   if (grant.profile.provider === 'anthropic-fixture') invariant(grant.profile.effort === 'low' && Object.entries(grant.profile.prices).every(([key, value]) => key === 'source' || value === 0), 'Claude supports low-effort zero-price synthetic fixture only; live accounting unavailable');
-  invariant(grant.profile.prices.cachedInputUsdPerMillion <= grant.profile.prices.inputUsdPerMillion, 'cached price exceeds reserved price');
+  if (grant.profile.provider === 'anthropic') validateAnthropicProfile(grant.profile);
+  else { invariant(grant.profile.anthropic === undefined && grant.profile.prices.cacheWrite5mUsdPerMillion === undefined && grant.profile.prices.cacheWrite1hUsdPerMillion === undefined, 'Anthropic categories require separate real profile');
+    invariant(grant.profile.prices.cachedInputUsdPerMillion <= grant.profile.prices.inputUsdPerMillion, 'cached price exceeds reserved price'); }
   for (const key of ['maxRequests', 'maxTokens', 'maxCostUsd', 'maxElapsedMs', 'maxConcurrency'] as const) invariant(Number.isFinite(grant.resources[key]) && grant.resources[key] > 0, `finite positive ${key} grant required`);
   positive(grant.resources.maxRequests, 'requests'); positive(grant.resources.maxTokens, 'tokens'); positive(grant.resources.maxElapsedMs, 'elapsed time');
   invariant(grant.resources.maxConcurrency === 1, 'native observer requires one active attempt');
@@ -49,6 +55,7 @@ export function validateObserverGrant(grant: ObserverGrant): void {
   invariant(grant.requestTimeoutMs <= grant.resources.maxElapsedMs && grant.requestTimeoutMs <= 900_000, 'request timeout exceeds grant');
   invariant(grant.maxRequestBytes <= 2_000_000 && grant.maxResponseBytes <= 2_000_000, 'bridge byte ceiling exceeded');
   positive(grant.profile.contextWindowTokens + grant.profile.maxOutputTokens, 'combined request token ceiling');
+  if (grant.profile.provider === 'anthropic') invariant(grant.profile.contextWindowTokens + grant.profile.maxOutputTokens <= grant.resources.maxTokens, 'Anthropic readiness refused: full input contract plus output cap exceeds token grant');
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -150,7 +157,7 @@ export class BaselineObserver {
     this.store = options.store; this.grant = freeze(structuredClone(options.grant)); this.transport = options.transport; this.now = options.now ?? Date.now;
     const profile = this.grant.profile;
     this.ledger = new ResourceLedger(this.store, { tokens: profile.contextWindowTokens + profile.maxOutputTokens,
-      costUsd: (profile.contextWindowTokens * profile.prices.inputUsdPerMillion + profile.maxOutputTokens * profile.prices.outputUsdPerMillion) / 1_000_000,
+      costUsd: (profile.contextWindowTokens * Math.max(profile.prices.inputUsdPerMillion, profile.prices.cachedInputUsdPerMillion, profile.prices.cacheWrite5mUsdPerMillion ?? 0, profile.prices.cacheWrite1hUsdPerMillion ?? 0) + profile.maxOutputTokens * profile.prices.outputUsdPerMillion) / 1_000_000,
       elapsedMs: this.grant.requestTimeoutMs }, this.now);
     this.store.transaction(() => {
       const owner = this.store.get<string>('baseline-owner', 'grant');
@@ -174,14 +181,18 @@ export class BaselineObserver {
   evidence(): AttemptEvidence[] { return this.store.list<AttemptEvidence>('baseline-attempts').filter(row => this.ledger.request(row.key)?.runId === this.grant.id).map(row => row.value); }
   async handle(attempt: ProviderAttempt, signal?: AbortSignal): Promise<ProviderReply> {
     signal?.throwIfAborted();
-    const claudeFixture = this.grant.profile.provider === 'anthropic-fixture';
+    const claudeFixture = this.grant.profile.provider === 'anthropic-fixture', anthropic = this.grant.profile.provider === 'anthropic', messages = claudeFixture || anthropic;
     let body: Record<string, unknown>;
     try {
-      invariant(attempt.method === 'POST' && attempt.path === (claudeFixture ? '/v1/messages' : '/v1/responses') && typeof attempt.payload === 'string', 'invalid native provider route');
+      invariant(attempt.method === 'POST' && attempt.path === (messages ? '/v1/messages' : '/v1/responses') && typeof attempt.payload === 'string', 'invalid native provider route');
       invariant(Buffer.byteLength(attempt.payload) <= this.grant.maxRequestBytes, 'request byte limit exceeded');
-      if (attempt.nativeHttp) invariant(claudeFixture && ['/v1/messages', '/v1/messages?beta=true'].includes(attempt.nativeHttp.path) && Buffer.byteLength(canonicalJson(attempt.nativeHttp)) <= 16_384, 'invalid native HTTP metadata');
+      if (attempt.nativeHttp) invariant(messages && ['/v1/messages', '/v1/messages?beta=true'].includes(attempt.nativeHttp.path) && Buffer.byteLength(canonicalJson(attempt.nativeHttp)) <= 16_384, 'invalid native HTTP metadata');
       body = object(JSON.parse(attempt.payload));
-      if (claudeFixture) validateClaudeFixturePayload(body, this.grant.profile); else validatePayload(body, this.grant.profile);
+      if (anthropic) {
+        // Native beta/OAuth/account headers cannot silently alter the priced first-party contract.
+        if (attempt.nativeHttp) invariant(Object.entries(attempt.nativeHttp.headers).every(([key, value]) => !['anthropic-beta', 'anthropic-workspace-id', 'anthropic-user-profile-id'].includes(key.toLowerCase()) || value === undefined), 'unsupported native Anthropic header refused');
+        validateAnthropicPayload(body, this.grant.profile);
+      } else if (claudeFixture) validateClaudeFixturePayload(body, this.grant.profile); else validatePayload(body, this.grant.profile);
     } catch (error) {
       // Preserve bounded protocol-discovery failures without calling them provider dispatches.
       this.store.put('baseline-refusals', randomUUID(), { grantId: this.grant.id,
@@ -190,7 +201,7 @@ export class BaselineObserver {
       throw error;
     }
     // Instructions and input remain exactly as emitted. Only explicit host accounting controls change.
-    const outgoing = JSON.stringify(claudeFixture ? { ...body, max_tokens: this.grant.profile.maxOutputTokens, stream: true } : { ...body, max_output_tokens: this.grant.profile.maxOutputTokens, store: false, stream: true, service_tier: 'default' });
+    const outgoing = JSON.stringify(messages ? { ...body, max_tokens: this.grant.profile.maxOutputTokens, stream: true, ...(anthropic ? { service_tier: 'standard_only', inference_geo: 'global' } : {}) } : { ...body, max_output_tokens: this.grant.profile.maxOutputTokens, store: false, stream: true, service_tier: 'default' });
     invariant(Buffer.byteLength(outgoing) <= this.grant.maxRequestBytes, 'modified request byte limit exceeded');
     const id = randomUUID(), startedAt = this.now();
     const request: PhysicalRequest = { id, runId: this.grant.id, purpose: 'reasoning', provider: this.grant.profile.provider, model: this.grant.profile.model,
@@ -221,7 +232,9 @@ export class BaselineObserver {
       } finally { void reader.cancel().catch(() => {}); }
       const body = Buffer.concat(chunks).toString('utf8');
       invariant(status === 200 && /^text\/event-stream(?:;|$)/i.test(contentType), 'untrusted response status or content type');
-      return { body, usage: (claudeFixture ? claudeFixtureUsage : finalUsage)(body, this.grant.profile, Math.max(0, this.now() - startedAt)) };
+      const elapsedMs = Math.max(0, this.now() - startedAt);
+      if (anthropic) { const result = anthropicUsage(body, this.grant.profile, elapsedMs); return { body, usage: result.usage, anthropicReceipt: result.receipt }; }
+      return { body, usage: (claudeFixture ? claudeFixtureUsage : finalUsage)(body, this.grant.profile, elapsedMs) };
     };
     let cancelListener: (() => void) | undefined;
     const cancelled = new Promise<never>((_resolve, reject) => { cancelListener = () => reject(new Error('Baseline attempt stopped')); controller.signal.addEventListener('abort', cancelListener, { once: true }); if (controller.signal.aborted) cancelListener(); });
@@ -230,7 +243,7 @@ export class BaselineObserver {
       this.store.transaction(() => {
         this.ledger.settle({ ...request, status: 'succeeded', usage: completed.usage });
         const row = this.store.get<AttemptEvidence>('baseline-attempts', id)!;
-        this.store.put('baseline-attempts', id, { ...row.value, response: this.store.putArtifact(completed.body), responseStatus: status!, contentType: contentType!, outcome: 'completed', usage: completed.usage }, row.revision);
+        this.store.put('baseline-attempts', id, { ...row.value, response: this.store.putArtifact(completed.body), responseStatus: status!, contentType: contentType!, outcome: 'completed', usage: completed.usage, ...('anthropicReceipt' in completed ? { anthropicReceipt: completed.anthropicReceipt } : {}) }, row.revision);
       });
       return { status: 200, contentType: contentType!, body: completed.body };
     } catch {

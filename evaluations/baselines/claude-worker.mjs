@@ -1,3 +1,4 @@
+import { claudeInvocation } from './claude-configuration.ts';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdirSync } from 'node:fs';
@@ -13,7 +14,7 @@ const rpc = (method, ...args) => new Promise((resolve, reject) => {
   send({ kind: 'request', id, method, args });
 });
 async function main(start) {
-  if (!start || typeof start.prompt !== 'string' || typeof start.model !== 'string' || start.effort !== 'low' ||
+  if (!start || typeof start.prompt !== 'string' || typeof start.model !== 'string' || (start.profile === 'anthropic' ? !['low', 'medium', 'high', 'xhigh', 'max'].includes(start.effort) || !start.claudeOptions || typeof start.claudeOptions.tools !== 'string' : start.effort !== 'low') ||
       !Number.isSafeInteger(start.maxRequestBytes) || start.maxRequestBytes < 1 || start.maxRequestBytes > 2_000_000 ||
       !Number.isSafeInteger(start.maxOutputBytes) || start.maxOutputBytes < 1 || start.maxOutputBytes > 2_000_000) throw new Error('Invalid bounded baseline invocation');
   const home = '/tmp/aeon-baseline-home'; mkdirSync(`${home}/claude`, { recursive: true, mode: 0o700 });
@@ -45,19 +46,8 @@ async function main(start) {
   server.on('clientError', (_error, socket) => socket.destroy());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const port = server.address().port;
-  const args = ['--print', '--bare', '--setting-sources', '', '--settings', '{}', '--no-session-persistence',
-    '--disable-slash-commands', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-    '--tools', 'Bash', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose',
-    '--model', start.model, '--effort', start.effort];
   // Permission bypass applies only inside the independently imposed namespace.
-  // The native gateway token has no provider authority and is never inherited.
-  const environment = { PATH: '/runtime:/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home,
-    CLAUDE_CONFIG_DIR: `${home}/claude`, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-    ANTHROPIC_API_KEY: 'no-provider-authority', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-    CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: '1', MAX_THINKING_TOKENS: '0',
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: start.model, ANTHROPIC_DEFAULT_SONNET_MODEL: start.model,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: start.model, CLAUDE_CODE_SUBAGENT_MODEL: start.model,
-  };
+  const { args, environment } = claudeInvocation(start, port);
   child = spawn('/app/claude', args, { cwd: '/work', env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
   let outputBytes = 0, exceeded = false; const stdout = [], stderr = [];
   const collect = destination => chunk => {
