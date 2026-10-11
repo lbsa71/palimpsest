@@ -1,0 +1,78 @@
+{
+  "upstream": "https://github.com/json-schema-org/JSON-Schema-Test-Suite",
+  "commit": "76b529ff69fa6f284d3e8916cb82cb2e93f82557",
+  "draft": "2020-12",
+  "license": "MIT",
+  "files": [
+    {
+      "source": "tests/draft2020-12/additionalProperties.json",
+      "retained": "additionalProperties.json",
+      "sha256": "a1e6ebef4d63d99c1434f892efb015f2e98fc61556083e0ff9c3716567196ca5"
+    },
+    {
+      "source": "tests/draft2020-12/allOf.json",
+      "retained": "allOf.json",
+      "sha256": "940b67eca31bc9035a9864a5b00a720e6880d7780e6e4db85403bfa12222fd7a"
+    },
+    {
+      "source": "tests/draft2020-12/anyOf.json",
+      "retained": "anyOf.json",
+      "sha256": "1175062b77388b03432d61f1b43448a71b5b2bb03696215ebe52fa5be69eec61"
+    },
+    {
+      "source": "tests/draft2020-12/const.json",
+      "retained": "const.json",
+      "sha256": "e64b0849d36a848a5ca9e02f61964ca4d030455ed0087c8e1ae51c87d75d5929"
+    },
+    {
+      "source": "tests/draft2020-12/enum.json",
+      "retained": "enum.json",
+      "sha256": "d67196c827fa33f438c7357da1919e6e78466f61acc3512c914ac9bf7c59ac32"
+    },
+    {
+      "source": "tests/draft2020-12/exclusiveMinimum.json",
+      "retained": "exclusiveMinimum.json",
+      "sha256": "08435add3250275173074d2b7ad519806baae83be95d7397d3a514b8ad7561d3"
+    },
+    {
+      "source": "tests/draft2020-12/items.json",
+      "retained": "items.json",
+      "sha256": "d40a6f0bc91a85778c1de7ef3ec862dbea2adb5669d489949d15f533961cf791"
+    },
+    {
+      "source": "tests/draft2020-12/minimum.json",
+      "retained": "minimum.json",
+      "sha256": "8e13e2a245ecffc0c39481430583ef3b11ce1ac3eb5d02617bfe6f8a022b1579"
+    },
+    {
+      "source": "tests/draft2020-12/minItems.json",
+      "retained": "minItems.json",
+      "sha256": "f20fbbfebbb3311a12027ed2064cb4334f09b6d06642e3de0dd0a69bc4ff7ce5"
+    },
+    {
+      "source": "tests/draft2020-12/pattern.json",
+      "retained": "pattern.json",
+      "sha256": "92f42bdbf24f20b2b6378a8dfa882a8b40746170303f5dbe5b4cade420599507"
+    },
+    {
+      "source": "tests/draft2020-12/properties.json",
+      "retained": "properties.json",
+      "sha256": "53df052b61f1669f03b5346a1693cd43a7f6890c57a082598d6b30fe17a07b67"
+    },
+    {
+      "source": "tests/draft2020-12/required.json",
+      "retained": "required.json",
+      "sha256": "c45499ec6461f2ce8b0e34df5cfae24d41bb8f437327c18f8d1f449c03c3c5a4"
+    },
+    {
+      "source": "tests/draft2020-12/type.json",
+      "retained": "type.json",
+      "sha256": "091aa31e688df20891de7884878b527745ddac0a3ced6d19a5ea4aa075dbbe00"
+    },
+    {
+      "source": "tests/draft2020-12/uniqueItems.json",
+      "retained": "uniqueItems.json",
+      "sha256": "bfea5fc57e32fc7026261a31be9b3eda38bf60e3b3caef76b61b89fc6772d989"
+    }
+  ]
+}

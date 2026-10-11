@@ -1,4 +1,3 @@
-import type { TSchema } from "typebox";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { CacheRetention, ModelCost, ModelInputLimits, ModelInputModality, ModelPromptCache, ModelThinkingLevel, ThinkingLevel, ThinkingLevelMap } from "./providers/model-schema.ts";
@@ -398,7 +397,7 @@ export type ConstrainedSamplingConfig =
 			variants: GrammarVariants;
 	  };
 
-export interface Tool<TParameters extends TSchema = TSchema> {
+export interface Tool<TParameters extends object = object> {
 	name: string;
 	description: string;
 	parameters: TParameters;

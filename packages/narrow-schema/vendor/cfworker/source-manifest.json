@@ -1,0 +1,69 @@
+{
+  "upstream": "https://github.com/cfworker/cfworker",
+  "version": "4.1.1",
+  "tag": "@cfworker/json-schema@4.1.1",
+  "commit": "5409fdc2bd144f68e8b28c61c71fcb16600000a6",
+  "license": "MIT",
+  "runtimeDependencies": {},
+  "files": [
+    {
+      "source": "packages/json-schema/src/deep-compare-strict.ts",
+      "retained": "deep-compare-strict.ts",
+      "upstreamSha256": "642cfe360fb10268d818180090606c600c8748982dedba8c065ef995618ff6c3",
+      "retainedSha256": "642cfe360fb10268d818180090606c600c8748982dedba8c065ef995618ff6c3"
+    },
+    {
+      "source": "packages/json-schema/src/dereference.ts",
+      "retained": "dereference.ts",
+      "upstreamSha256": "08ecb3bf8dc088525668106c79ca3cadcd5f9c361d566309a9720e7e2d6edd33",
+      "retainedSha256": "d62bf7ddad5b01f30a71127ed67952173189b3d71c3390c97d2de340087b2e94"
+    },
+    {
+      "source": "packages/json-schema/src/format.ts",
+      "retained": "format.ts",
+      "upstreamSha256": "d7c889795bd8f69b4bafbfbd510550628b199e2d1ce1acbe52b6dafda317e5a5",
+      "retainedSha256": "d7c889795bd8f69b4bafbfbd510550628b199e2d1ce1acbe52b6dafda317e5a5"
+    },
+    {
+      "source": "packages/json-schema/src/pointer.ts",
+      "retained": "pointer.ts",
+      "upstreamSha256": "d21378b4690a726836a449bca4002b8dd9bf4bf42e20246650fb349056808d31",
+      "retainedSha256": "d21378b4690a726836a449bca4002b8dd9bf4bf42e20246650fb349056808d31"
+    },
+    {
+      "source": "packages/json-schema/src/types.ts",
+      "retained": "types.ts",
+      "upstreamSha256": "f76a3d1f40959d029b1a7c531852e8b6ae361ddb2af9db280d1c0a4bb2fe8088",
+      "retainedSha256": "208e62d25fc18d0cbb500ccb05f48697c887ac5889d0f03909d8ef10d649b281"
+    },
+    {
+      "source": "packages/json-schema/src/ucs2-length.ts",
+      "retained": "ucs2-length.ts",
+      "upstreamSha256": "42e11d79e237357e72601969605ad5c0e4227a638ffbe25f097810dbc591bb2e",
+      "retainedSha256": "42e11d79e237357e72601969605ad5c0e4227a638ffbe25f097810dbc591bb2e"
+    },
+    {
+      "source": "packages/json-schema/src/validate.ts",
+      "retained": "validate.ts",
+      "upstreamSha256": "add18f2f4a1aa5f488c835c4097198bb98be53c069b74efc973735ca713e06d3",
+      "retainedSha256": "2577133dcbce49071ca5def782ae36f7298ffb4c66e5b5bfff4d6bc4c9011b5a"
+    },
+    {
+      "source": "packages/json-schema/src/validator.ts",
+      "retained": "validator.ts",
+      "upstreamSha256": "5560612b491372aee121b0f9eb19acc97663fa5aa5cc2efa9adc735d2579f757",
+      "retainedSha256": "e7fadc002a41169a44e0ec15c1cd1714c7f258c9d4341641d112e1a25ad3d84a"
+    }
+  ],
+  "patches": [
+    "Import extensions .js to .ts and type-only imports for native Node TypeScript.",
+    "Erasable syntax: OutputFormat enum to constant object; Validator constructor parameter properties to explicit fields/assignments.",
+    "JSON object presence uses Object.hasOwn; property iteration uses Object.keys instead of inherited JavaScript prototype membership."
+  ],
+  "excluded": [
+    "Generated .d.ts files",
+    "Unused index barrel",
+    "Upstream package/build config and bundled CJS output",
+    "Mocha/chai/esbuild/wrangler build-test closure"
+  ]
+}

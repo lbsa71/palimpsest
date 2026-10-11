@@ -14,7 +14,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../ai/index.ts";
-import type { Static, TSchema } from "typebox";
+import type { Schema } from "../../../../narrow-schema/index.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -463,26 +463,26 @@ export interface AgentToolCallOutcome {
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
 /** Tool definition used by the agent runtime. */
-export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
+export interface AgentTool<TParameters extends object = object, TDetails = any> extends Tool<TParameters> {
 	/** Human-readable label for UI display. */
 	label: string;
 	/**
 	 * Optional compatibility shim for raw tool-call arguments before schema validation.
 	 * Must return an object that matches `TParameters`.
 	 */
-	prepareArguments?: (args: unknown) => Static<TParameters>;
+	prepareArguments?: (args: unknown) => Record<string, unknown>;
 	/**
 	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
 	 * set `structuredContent`.
 	 */
-	outputSchema?: TSchema;
+	outputSchema?: Schema;
 	/**
 	 * Execute the tool call. Throw on failure, or return a result with `isError: true`; do not only
 	 * describe the failure in `content`.
 	 */
 	execute: (
 		toolCallId: string,
-		params: Static<TParameters>,
+		params: Record<string, unknown>,
 		signal?: AbortSignal,
 		onUpdate?: AgentToolUpdateCallback<TDetails>,
 	) => Promise<AgentToolResult<TDetails>>;
