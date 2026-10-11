@@ -248,7 +248,9 @@ export function toReleaseEvidence(receipt: ObserverReceipt, trust: Qualification
   }));
   const assessment = assessObjectiveArtifacts(packet, { readArtifact: path => { const text = artifactMap.get(path); invariant(text !== undefined, 'Retained objective artifact missing'); return text; } }, commandResults, e.maxArtifactBytes, () => undefined);
   invariant(assessment.quality === 3 && identity(assessment) === identity(bundle.assessment) && identity(report.assessment) === identity(assessment), 'Retained private outcome verification differs');
-  const usage: ResourceUsage = { requests: requests.length, inputTokens: requests.reduce((sum, r) => sum + r.usage.inputTokens!, 0), outputTokens: requests.reduce((sum, r) => sum + r.usage.outputTokens!, 0), costUsd: requests.reduce((sum, r) => sum + r.usage.costUsd!, 0), elapsedMs: Date.parse(bundle.endedAt) - Date.parse(e.issuedAt) };
+  // Match the operating ledger: parallel work consumes aggregate physical time too.
+  const elapsedMs = Math.max(Date.parse(bundle.endedAt) - Date.parse(e.issuedAt), requests.reduce((sum, r) => sum + r.usage.elapsedMs, 0));
+  const usage: ResourceUsage = { requests: requests.length, inputTokens: requests.reduce((sum, r) => sum + r.usage.inputTokens!, 0), outputTokens: requests.reduce((sum, r) => sum + r.usage.outputTokens!, 0), costUsd: requests.reduce((sum, r) => sum + r.usage.costUsd!, 0), elapsedMs };
   invariant(usage.requests <= e.resources.maxRequests && usage.inputTokens! + usage.outputTokens! <= e.resources.maxTokens && usage.costUsd! <= e.resources.maxCostUsd && usage.elapsedMs <= e.resources.maxElapsedMs, 'Measured original grant exceeded');
   const evidence: EvaluationEvidence = { id: `qualified-objective:${receipt.bundle.sha256}`, candidateId: e.candidate.id, controlRevision: trust.policy.controlRevision, evaluatorId: e.evaluatorId, evaluatorArtifact: bundle.observerArtifact, independent: true, verdict: 'pass', artifact: receipt.bundle,
     caseResults: [{ id: packet.task.id, status: 'pass', observations: bundle.observation, usage, interventions: [] }] };
