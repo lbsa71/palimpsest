@@ -69,7 +69,7 @@ function zeroCache(usage: Record<string, unknown>): void {
 }
 export function claudeFixtureUsage(body: string, profile: BaselineProfile, elapsedMs: number): ResourceUsage {
   invariant(body.endsWith('\n\n') || body.endsWith('\r\n\r\n'), 'truncated Messages SSE');
-  let input: number | undefined, output: number | undefined, delta = false, stopped = false;
+  let input: number | undefined, initialOutput: number | undefined, output: number | undefined, delta = false, stopped = false;
   for (const block of body.split(/\r?\n\r?\n/).filter(Boolean)) {
     const lines = block.split(/\r?\n/), data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
     if (!data) continue;
@@ -78,11 +78,12 @@ export function claudeFixtureUsage(body: string, profile: BaselineProfile, elaps
     if (event.type === 'message_start') {
       invariant(input === undefined, 'duplicate Messages start'); const message = object(event.message);
       nonempty(message.id, 'message id'); invariant(message.type === 'message' && message.role === 'assistant' && message.model === profile.model, 'inconsistent Messages identity');
-      const usage = object(message.usage); zeroCache(usage); input = count(usage.input_tokens); count(usage.output_tokens);
+      const usage = object(message.usage); zeroCache(usage); input = count(usage.input_tokens); initialOutput = count(usage.output_tokens);
     } else if (event.type === 'message_delta') {
       invariant(input !== undefined && !delta, 'unexpected Messages final delta'); delta = true;
       const end = object(event.delta); invariant(['end_turn', 'tool_use', 'stop_sequence'].includes(String(end.stop_reason)), 'incomplete Messages stop');
       const usage = object(event.usage); zeroCache(usage); output = count(usage.output_tokens);
+      invariant(initialOutput !== undefined && output >= initialOutput, 'decreasing cumulative Messages output usage');
       invariant(usage.input_tokens === undefined || count(usage.input_tokens) === input, 'inconsistent Messages input usage');
     } else if (event.type === 'message_stop') {
       invariant(delta && output !== undefined, 'Messages stop without final usage'); stopped = true;

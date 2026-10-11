@@ -51,6 +51,8 @@ for (const [name, mutate] of Object.entries({ media: (b: any): unknown => b.mess
 });
 for (const [name, transform] of Object.entries({ truncated: (s: string) => s.trimEnd(), incomplete: () => stream(events().slice(0, 4)), duplicateStart: () => stream([events()[0]!, ...events()]),
   afterStop: (s: string) => s + stream([events()[1]!]), cached: (s: string) => s.replace('"cache_read_input_tokens":0', '"cache_read_input_tokens":1'),
+  decreasingOutput: (s: string) => s.replace('"output_tokens":1', '"output_tokens":6'),
+  excessiveInitialOutput: (s: string) => s.replace('"output_tokens":1', '"output_tokens":21'),
   wrongModel: (s: string) => s.replace('"model":"fixture-model"', '"model":"other"'), excessive: (s: string) => s.replace('"output_tokens":5', '"output_tokens":21'),
   failed: (s: string) => s.replace('"end_turn"', '"max_tokens"'),
 })) test(`Messages ${name} holds original reservation and prohibits retry`, async () => {
