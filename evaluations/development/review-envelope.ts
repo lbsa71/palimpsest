@@ -240,6 +240,72 @@ function replay(transitions: readonly DevelopmentAccountingTransition[], initial
   return { latest, previousTime, rootCancelled };
 }
 
+/** Exact owned input packet; private raw artifacts remain available through bounded accounted reads. */
+export function developmentReviewInput(behavior: DevelopmentBehavior, roleId: string): DevelopmentReviewInput {
+  return { version: 2, registrationDigest: behavior.registrationDigest, behaviorDigest: identity(behavior), roleId, behavior };
+}
+/** Fixed provider wire decoders. An unfinished/tool/refusal response cannot become a judgment. */
+export function decodeDevelopmentModelJudgment(responseBytes: Uint8Array, provider: 'mistral' | 'openai', model: string): { text: string; judgment: DevelopmentModelJudgment } {
+  const response = JSON.parse(Buffer.from(responseBytes).toString('utf8'));
+  invariant(response && typeof response === 'object' && response.model === model, 'Review raw response changed qualified model');
+  let text: unknown;
+  if (provider === 'mistral') {
+    invariant(Array.isArray(response.choices) && response.choices.length === 1, 'One completed Mistral judgment required');
+    const choice = response.choices[0]; invariant(choice.finish_reason === 'stop' && choice.message?.role === 'assistant' && !choice.message.tool_calls, 'Incomplete/tool Mistral judgment'); text = choice.message.content;
+  } else {
+    invariant(response.status === 'completed' && typeof response.id === 'string' && Array.isArray(response.output), 'Completed OpenAI judgment required');
+    const messages = response.output.filter((item: { type?: string }) => item.type === 'message');
+    invariant(response.output.every((item: { type?: string }) => ['message', 'reasoning'].includes(item.type ?? '')) && messages.length === 1, 'Tool/ambiguous OpenAI judgment');
+    const message = messages[0]; invariant(message.role === 'assistant' && (message.status === undefined || message.status === 'completed') && message.phase !== 'commentary' && Array.isArray(message.content) && message.content.length === 1 && message.content[0].type === 'output_text', 'Nonfinal/refused OpenAI judgment'); text = message.content[0].text;
+  }
+  invariant(typeof text === 'string' && text.length > 0, 'Exact final model judgment text required');
+  const judgment = inertSnapshot(JSON.parse(text)) as DevelopmentModelJudgment; exact(judgment, 'opportunities,controls,boundaries,overall,reason');
+  for (const items of [judgment.opportunities, judgment.controls, judgment.boundaries]) {
+    invariant(Array.isArray(items), 'Model case judgments required');
+    for (const item of items) { exact(item, 'id,outcome,reason'); id(item.id); invariant(typeof item.reason === 'string' && item.reason.length > 0, 'Model judgment reason required'); }
+  }
+  invariant(typeof judgment.reason === 'string' && judgment.reason.length > 0, 'Model overall reason required');
+  return { text, judgment };
+}
+function modelExecution(binding: DevelopmentReviewBinding, b: DevelopmentBehavior, r: DevelopmentRegistration, roles: ReadonlyMap<string, DevelopmentRoleBinding>, transitions: readonly DevelopmentAccountingTransition[], latest: ReadonlyMap<string, DevelopmentRequestState>, trust: DevelopmentEnvelopeTrust, read: BoundedArtifactReader): void {
+  const x = authenticate(reviewEnvelopeDomains.execution, binding.execution, new Map([[trust.behavior.observer.id, trust.behavior.observer.key]]));
+  exact(x, 'version,registrationDigest,behaviorDigest,roleId,requestId,requestIdentityDigest,settledStateDigest,settlementDigest,input,response,output,derivedAt,decoder,evidenceReads');
+  const role = roles.get(binding.roleId)!;
+  invariant(x.version === 2 && x.registrationDigest === identity(r) && x.behaviorDigest === identity(b) && x.roleId === role.id && role.kind === 'reviewer' && role.profile, 'Review execution changed B/assigned model role');
+  const provider = role.profile.provider ?? 'mistral'; invariant(x.decoder === (provider === 'mistral' ? 'mistral-chat-final.v1' : 'openai-responses-final.v1'), 'Unqualified review decoder');
+  const completed = transitions.find(t => t.state.request.id === x.requestId && t.state.request.status === 'succeeded');
+  invariant(completed?.settlement && completed.state.roleId === role.id && completed.state.request.provider === provider && completed.state.request.purpose === 'review' && latest.get(x.requestId)?.request.status === 'succeeded', 'Judgment lacks completed original-root model execution');
+  const dispatched = transitions.find(t => t.state.request.id === x.requestId && t.state.request.status === 'dispatched'); invariant(dispatched, 'Judgment lacks model dispatch history');
+  invariant(x.requestIdentityDigest === developmentRequestIdentity(completed.state.request) && x.settledStateDigest === identity(completed.state) && x.settlementDigest === identity(completed.settlement.value), 'Judgment substituted model request/settlement');
+  invariant(at(dispatched.state.observedAt) <= at(completed.state.observedAt) && at(completed.state.observedAt) <= at(x.derivedAt) && at(x.derivedAt) === at(binding.review.value.reviewedAt), 'Judgment predates completed model response/derivation');
+  const inputBytes = read(x.input, 1_000_000), inputText = Buffer.from(inputBytes).toString('utf8');
+  invariant(inputText === canonicalJson(developmentReviewInput(b, role.id)), 'Model review input changed immutable B/authorized index');
+  const payload = JSON.parse(Buffer.from(read(completed.state.payload, 1_000_000)).toString('utf8'));
+  invariant(payload.model === role.profile.id, 'Model payload changed configured reviewer');
+  const userInput = provider === 'mistral' ? payload.messages : payload.input;
+  invariant(Array.isArray(userInput) && userInput.some(item => item.role === 'user' && (item.content === inputText || provider === 'openai' && Array.isArray(item.content) && item.content.some((part: { type?: string; text?: string }) => part.type === 'input_text' && part.text === inputText))), 'Accounted model payload did not consume exact frozen B input');
+  invariant(completed.settlement.value.response && completed.settlement.value.response.sha256 === x.response.sha256, 'Judgment substituted raw model response');
+  const decoded = decodeDevelopmentModelJudgment(read(x.response, 1_000_000), provider, role.profile.id);
+  invariant(Buffer.from(read(x.output, 1_000_000)).equals(Buffer.from(decoded.text)), 'Observer changed extracted model judgment bytes');
+  const reviewed = binding.review.value;
+  const reason = (text: string, artifact: ArtifactRef) => {
+    invariant(hashBytes(text) === artifact.sha256 && Buffer.from(read(artifact, 1_000_000)).equals(Buffer.from(text)), 'Signed judgment does not derive from actual model reason bytes');
+  };
+  for (const [decodedItems, actualItems] of [[decoded.judgment.opportunities, reviewed.opportunities], [decoded.judgment.controls, reviewed.controls], [decoded.judgment.boundaries, reviewed.boundaries]] as const) {
+    equal(decodedItems.map(({ id, outcome }) => ({ id, outcome })), actualItems.map(({ id, outcome }) => ({ id, outcome })), 'Signed case judgment changed model output');
+    decodedItems.forEach((item, i) => reason(item.reason, actualItems[i]!.judgment));
+  }
+  invariant(decoded.judgment.overall === reviewed.overall, 'Signed overall judgment changed model output'); reason(decoded.judgment.reason, reviewed.judgment);
+  unique(x.evidenceReads.map(v => v.requestId));
+  for (const access of x.evidenceReads) {
+    exact(access, 'requestId,artifact'); invariant(b.artifactIndex.some(v => v.artifact.sha256 === access.artifact.sha256), 'Model evidence read outside sealed B index');
+    const event = transitions.find(t => t.state.request.id === access.requestId && t.state.request.status === 'succeeded');
+    invariant(event?.settlement && event.state.roleId === role.id && event.state.request.provider === 'effect-receiver' && event.state.request.model === 'evidence_read' && event.settlement.value.response?.sha256 === access.artifact.sha256 && transitions.indexOf(event) < transitions.indexOf(dispatched) && at(event.state.observedAt) <= at(dispatched.state.observedAt), 'Judgment evidence read lacks prior accounted role/byte provenance');
+    const accessPayload = JSON.parse(Buffer.from(read(event.state.payload, 1_000_000)).toString('utf8'));
+    invariant(accessPayload.artifact?.sha256 === access.artifact.sha256, 'Evidence read payload substituted artifact'); read(access.artifact, 1_000_000);
+  }
+}
+
 /** Host collector returns an unsigned B; the qualified observer signs these exact bytes. */
 export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], requests: DevelopmentRequestState[], transitions: DevelopmentAccountingTransition[], frozenAt: string, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now()): DevelopmentBehavior {
   const input = inertSnapshot({ document, manifest, observations, requests, transitions, frozenAt });
@@ -291,6 +357,7 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     invariant(tail.version === 2 && tail.registrationDigest === identity(r) && tail.behaviorDigest === behaviorDigest, 'Tail changed registration/B');
     invariant(b.observations.length + r.originalRequests.length + b.requests.length + b.transitions.length + tail.transitions.length + envelope.reviews.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
     const { latest, previousTime, rootCancelled } = replay(tail.transitions, [...r.originalRequests, ...b.requests], b.rootCancelled, 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
+    for (const binding of envelope.reviews) modelExecution(binding.value, b, r, roles, tail.transitions, latest, trust, storage.read);
     storage.scan(envelope);
     if (!envelope.closure) findings.push({ code: 'closure', status: 'unavailable', detail: 'Missing final original-grant closure' });
     else {
