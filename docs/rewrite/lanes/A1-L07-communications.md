@@ -42,7 +42,7 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Branch / worktree | `codex/a1-communications-20261011` / `/home/palimpsest/migration/aeon-1-20261011/communications` |
 | Base source / contract revision | `4e55167` / `aeon1.c1.v1`; actual OperationalStore, DurableRuntime, EffectJournal |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Component handoff being recorded; 23 communication tests, joined actual runtime/obligation receipt case, strict typecheck and compiled build pass |
+| Last handoff / evidence | Component source `d4f66a1` after `7003905`; [bounded evidence](../evidence/A1-L07/components-2026-10-11.md); 23 communication tests, joined actual runtime/obligation receipt case, strict typecheck and build pass |
 | Blockers / next eligible task | Root L09 host/scheduler/tool assembly, authenticated live Slack/API smoke and fresh independent review; no external sends authorized for this task |
 
 ## Bounded component result — 2026-10-11
