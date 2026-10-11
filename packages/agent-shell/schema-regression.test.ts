@@ -25,6 +25,7 @@ test('all actual host tool schemas validate ordinary complete arguments', () => 
     workspace_move: { path: 'file', to: 'new', expectedSha256: 'a'.repeat(64) }, workspace_diff: { path: 'file', before: 'body' },
     command_run: { executable: 'node', args: ['--version'] }, research_fetch: { url: 'https://example.com' },
     speech_send: { channel: 'fixture', text: 'explicit speech', kind: 'report' }, delegation_start: child,
+    delegation_start_batch: { tasks: [child] },
   };
   assert.equal(Object.keys(argumentsByName).length, tools.length);
   for (const tool of tools) assert.deepEqual(validate(tool.name, argumentsByName[tool.name]), argumentsByName[tool.name]);
