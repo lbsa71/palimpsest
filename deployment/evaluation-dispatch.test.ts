@@ -509,7 +509,9 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
 test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 120000 }, async t => {
   const scenario = async (name: string, body: () => Promise<void>): Promise<void> => {
     t.signal.throwIfAborted();
-    await t.test(name, async () => { t.signal.throwIfAborted(); await body(); });
+    let running: Promise<void> | undefined;
+    try { await t.test(name, async () => { t.signal.throwIfAborted(); running = body(); await running; }); }
+    finally { await running; }
     t.signal.throwIfAborted();
   };
   const f = fixture(); let supervisor: ServiceSupervisor | undefined;
