@@ -94,7 +94,7 @@ export function publishBootstrapSelection(config: SupervisorFile, selected: Rele
   } finally { lease.close(); }
 }
 /** Separate post-accept operation; rotation cannot be part of candidate admission or publication. */
-export function rotateBootstrapRescue(config: SupervisorFile, selected: ReleaseTarget): void {
+export function rotateBootstrapRescue(config: SupervisorFile, selected: ReleaseTarget, withRotation?: (apply: () => void) => void): void {
   const boot = bootstrapDirectory(config.host.stateDirectory);
   assertPrivateHostDirectory(boot);
   const lease = new ProcessLease(join(boot, 'publication.sqlite'));
@@ -114,7 +114,10 @@ export function rotateBootstrapRescue(config: SupervisorFile, selected: ReleaseT
       invariant(state.authority.generation, 'Serving authority required for rescue rotation');
       ledger.dispatch({ generation: state.authority.generation, epoch: state.authority.epoch, controlRevision: state.authority.controlRevision }, () => {
         invariant(identity(ledger.current()) === identity(state.authority) && state.authority.artifactId === selected.candidateId && identity(accepted(config, selected).authority) === identity(state.authority), 'Rescue rotation authority changed');
-        point(boot, 'rescue', path);
+        // The ordinary host journal guards cancellation and records its exact decision here,
+        // after this independently opened ledger has acquired authority before operational locks.
+        if (withRotation) withRotation(() => point(boot, 'rescue', path));
+        else point(boot, 'rescue', path);
       });
     } finally { ledger.close(); }
   } finally { lease.close(); }

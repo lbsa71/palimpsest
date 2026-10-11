@@ -11,6 +11,7 @@ import { contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-p
 import type { HostBindings } from './materialize.ts';
 import { hostSelection, launchHost, requestHostSuccessor } from './host-successor.ts';
 import { ServiceSupervisor, type SupervisorCommand } from './supervisor.ts';
+import { rotateBootstrapRescue } from './bootstrap-evolution.ts';
 
 export interface SupervisorFile {
   host: HostBindings;
@@ -125,6 +126,7 @@ export async function runCli(args: string[]): Promise<void> {
       if (stopping) return;
       const selection = launched ? hostSelection(config) : undefined;
       supervisor = await ServiceSupervisor.open({ host: config.host, mode: config.mode, secrets: environmentSecrets(process.env),
+        rotateRescue: (request, commit) => rotateBootstrapRescue(config, request.selected, commit),
         readArtifact: contentAddressedEvidence(config.evidenceDirectory),
         ...(config.allowedModelProfiles ? { allowedModelProfiles: config.allowedModelProfiles } : {}),
         ...(config.evaluationDispatcher ? { evaluationDispatcher: { reviewerFile: config.evaluationDispatcher, policyDigests: [...paths.keys()] } } : {}),

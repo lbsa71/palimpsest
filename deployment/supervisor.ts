@@ -20,6 +20,7 @@ import { EvolutionMailbox } from './evolution-mailbox.ts';
 import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
 import { assertControlActivationClaim, assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 import { controlActivationAcknowledgmentPending } from './control-tools.ts';
+import { RescueRotationHost, type RescueRotationOptions, type RescueRotationRecord } from './rescue-rotation.ts';
 
 export interface SupervisorOptions {
   host: HostBindings;
@@ -34,6 +35,8 @@ export interface SupervisorOptions {
   evaluationDispatcher?: { reviewerFile: string; policyDigests: readonly string[] };
   /** Host-owned reviewer seam. Ordinary callers may only enqueue exact staged bindings. */
   controlReview?: Pick<ControlContinuationOptions, 'reserveProbation' | 'reviewProbation' | 'readyToActivate' | 'finishProbation'>;
+  /** Explicit request only; the installed bootstrap checks current acceptance and boot readiness. */
+  rotateRescue?: RescueRotationOptions['rotate'];
 }
 export interface SupervisorStatus {
   coordinator: { processId: number; module: string };
@@ -46,6 +49,7 @@ export interface SupervisorStatus {
   failure?: string;
   evaluation?: DispatchStatus;
   controls?: { total: number; recent: { id: string; status: ControlContinuationRecord['status']; candidateId?: string; diagnosis?: string }[] };
+  rescueRotations?: { total: number; recent: { id: string; status: RescueRotationRecord['status']; candidateId: string; diagnosis?: string }[] };
 }
 export type SupervisorCommand =
   | { kind: 'status' }
@@ -74,6 +78,7 @@ export class ServiceSupervisor {
   #evolutionStore?: OperationalStore;
   #dispatcher?: EvaluationDispatcher;
   #controls?: ControlContinuation;
+  #rescueRotations?: RescueRotationHost;
   #mailbox?: EvolutionMailbox;
   #ready?: ServiceReady;
   #failure?: string;
@@ -126,16 +131,26 @@ export class ServiceSupervisor {
       else await supervisor.#exclusive(() => supervisor.#initialize());
       supervisor.#startDispatcher();
       supervisor.#startControlContinuation();
+      supervisor.#startRescueRotations();
       return supervisor;
     } catch (error) { await supervisor.close(); throw error; }
   }
   status(): SupervisorStatus {
     const controls = this.#controls?.records();
+    const rescueRotations = this.#rescueRotations?.records();
     return { coordinator: { processId: process.pid, module: import.meta.url }, mode: this.#options.mode, qualification: this.#options.mode === 'engineering' ? 'engineering-only' : 'product-policy',
       running: this.#service.running, processId: this.#service.processId, ready: this.#ready,
       release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status(),
       ...(controls ? { controls: { total: controls.length, recent: controls.slice(-32).map(record => ({ id: record.request.id, status: record.status,
-        ...(record.review ? { candidateId: record.review.candidate.manifest.id } : {}), ...(record.diagnosis ? { diagnosis: record.diagnosis } : {}) })) } } : {}) };
+        ...(record.review ? { candidateId: record.review.candidate.manifest.id } : {}), ...(record.diagnosis ? { diagnosis: record.diagnosis } : {}) })) } } : {}),
+      ...(rescueRotations ? { rescueRotations: { total: rescueRotations.length, recent: rescueRotations.slice(-32).map(record => ({ id: record.request.id, status: record.status,
+        candidateId: record.request.selected.candidateId, ...(record.diagnosis ? { diagnosis: record.diagnosis } : {}) })) } } : {}) };
+  }
+  #startRescueRotations(): void {
+    this.#rescueRotations = new RescueRotationHost({ store: this.#evolutionStore!, authority: this.#authority, status: () => this.#controller.status()!,
+      ready: () => !this.#operation && !this.#closing && !this.#hostHandoffPending && this.#service.running,
+      rotate: this.#options.rotateRescue });
+    this.#rescueRotations.start();
   }
   #startControlContinuation(): void {
     const reviewer = this.#options.controlReview ?? {
@@ -301,6 +316,7 @@ export class ServiceSupervisor {
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closing = true;
+    await this.#rescueRotations?.close();
     await this.#controls?.close();
     await this.#dispatcher?.close();
     await this.#operation?.catch(() => {});
