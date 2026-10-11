@@ -39,12 +39,12 @@ Owned by the lead who claims implementation; update before concurrent edits.
 
 | Field | Current value |
 |---|---|
-| Owner session | `/root` integration owner; active finite screen-lifecycle owner below; tool-instruction author/review goals complete |
-| Branch / worktree | Root `codex/aeon-1-implementation-20261011`; separate `screen-lifecycle` worktree |
+| Owner session | `/root` integration owner; new finite public-screen-live owner below; lifecycle and tool-instruction author/review goals complete |
+| Branch / worktree | Root `codex/aeon-1-implementation-20261011`; separate `public-screen-live` worktree from `2c71576` |
 | Base source / contract revision | Disposition source `fbaa610`; C1 `aeon1.c1.v1`, separately accepted by L01/root; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9` |
-| Additional path reservations | `/root/a1_real_screen` owns remaining product-screen lifecycle files, rebased onto reviewed retention source `e1b57ee`. Root owns shared integration/configuration and integrated shell/broker/application wiring; no overlapping production writers. |
+| Additional path reservations | `/root/a1_real_screen` has a new actual finite goal under the [host-authorized screen specification](../evidence/A1-L08/public-screen-live-specification.md), owning concrete product-screen/lifecycle entry integration, new tests and author plan/evidence. Existing reviewer files and historical evidence remain read-only. Root owns shared integration/configuration and production boundaries. |
 | Last handoff / evidence | [Current Q1–Q5/T01–T06 disposition](../evidence/A1-L02/qualification-disposition.md), source `fbaa610`; final independent dependency review `79b6df2`, execution `c7ca96e` (1/1, 27.689 s). Original reports and failures remain historical evidence. |
-| Blockers / next eligible task | Continue Pi; no evidenced Rig fallback trigger. Eight actual-tool screen cases and fresh review are integrated through `6077cef`, with preserved failures and corrected attempts. Exact tool-fragment retention and fresh review are integrated through `7478df1`; S08/S09/S11/S12 lifecycle integration remains active. Live twelve-case Mistral competence, qualified authority/profile and independent outcomes remain required for Q3 and final Q5/full-lane acceptance. |
+| Blockers / next eligible task | Continue Pi; no evidenced Rig fallback trigger. Eight actual-tool screen cases and fresh review are integrated through `6077cef`, with preserved failures and corrected attempts. Exact tool-fragment retention and fresh review are integrated through `7478df1`; S08/S09/S11/S12 lifecycle source and fresh review are integrated through `2c71576`, with 32/32 joined pure checks. Host-authorized live-screen preparation is active. Live twelve-case Mistral competence, qualified authority/profile and independent outcomes remain required for Q3 and final Q5/full-lane acceptance. |
 
 ### Exact dependency succession evidence task — 2026-10-11
 
