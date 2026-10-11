@@ -202,6 +202,7 @@ test('pointer-before-decision failure and interrupted processing remain uncertai
       if (boundary === 'interrupted') { const row = f.store.get<RescueRotationRecord>('host.rescue-rotations', f.record().request.id)!; f.store.put('host.rescue-rotations', f.record().request.id, { ...row.value, status: 'processing' }, row.revision); }
       const host = new RescueRotationHost(f.options(f.store, (_request, commit) => f.authorities.dispatch(f.authority, () => commit(() => { applied++; throw Error('Pointer mutation returned no durable decision'); }))));
       await host.processPending(); assert.equal(f.record().status, 'uncertain');
+      if (boundary === 'pointer-failure') { const failure = f.store.readJsonArtifact<any>(f.record().failure!); assert.equal(failure.pointerEntered, true); assert.match(failure.cause, /Pointer mutation/); }
       const restarted = new RescueRotationHost(f.options(f.store, () => { applied++; })); await restarted.processPending(); await restarted.processPending();
       assert.equal(f.record().status, 'uncertain'); assert.equal(applied, boundary === 'pointer-failure' ? 1 : 0); assert.equal(f.calls(), 1);
       await host.close(); await restarted.close();

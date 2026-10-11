@@ -13,7 +13,7 @@ export interface RescueRotationRequest { id: string; runId: string; scope: DataS
 interface RotationAcknowledgment { effectId: string; payload: JsonValue; authority: Authority; receipt: ArtifactRef }
 export interface RescueRotationRecord {
   request: RescueRotationRequest; status: 'pending' | 'processing' | 'completed' | 'rejected' | 'uncertain';
-  acknowledgment?: RotationAcknowledgment; decision?: ArtifactRef; diagnosis?: string;
+  acknowledgment?: RotationAcknowledgment; decision?: ArtifactRef; failure?: ArtifactRef; diagnosis?: string;
 }
 function boundAuthor(store: OperationalStore, request: RescueRotationRequest): Run {
   const run = store.get<Run>('runs', request.runId)?.value;
@@ -170,7 +170,7 @@ export class RescueRotationHost {
     } catch (cause) {
       if (cause instanceof ProducerActive && !entered) this.#update(record.request.id, { status: 'pending' });
       else if (this.options.store.get<RescueRotationRecord>(namespace, record.request.id)?.value.status !== 'completed') this.#update(record.request.id,
-        { status: entered ? 'uncertain' : 'rejected', diagnosis: entered ? 'Rescue pointer outcome unresolved; inspect retained host decision and snapshots before retry' : 'Rescue rotation rejected: current authority, audience, remaining allowance, accepted target or boot readiness did not satisfy host guards' });
+        { status: entered ? 'uncertain' : 'rejected', failure: this.options.store.putJsonArtifact({ requestId: record.request.id, selected: { ...record.request.selected }, pointerEntered: entered, cause: cause instanceof Error ? cause.message : String(cause) }), diagnosis: entered ? 'Rescue pointer outcome unresolved; inspect retained host decision and snapshots before retry' : 'Rescue rotation rejected: current authority, audience, remaining allowance, accepted target or boot readiness did not satisfy host guards' });
     } finally { this.#processing = false; }
   }
   start(): void { invariant(!this.#loop, 'Rescue processor already started'); this.#loop = (async () => { while (!this.#abort.signal.aborted) {
