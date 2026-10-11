@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import { canonicalJson, identity } from '../../packages/contracts/index.ts';
-import { assessOffline, type OfflineObservation, type OfflinePlan, type ReviewerCase, type ReviewerInput } from './index.ts';
+import { assessOffline, loadOfflinePlan, offlineAdapterDigest, offlinePlanMount, offlineRunnerDigest, parseOfflinePlan, type OfflineObservation, type OfflinePlan, type ReviewerCase, type ReviewerInput } from './index.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { ReviewerFile } from '../../deployment/evaluation-dispatch.ts';
+import { hashBytes } from '../../packages/release/artifacts.ts';
 import { reviewOfflinePacket, type ReviewPacket } from './review-core.ts';
 
 /** Independent synthetic provisioning; these are not the author's private physical packets. */
@@ -30,7 +35,7 @@ function packet(): ReviewerInput {
 }
 const review = (input: ReviewerInput) => reviewOfflinePacket(input.packet, input.plan, Buffer.from(input.keyHex, 'hex'));
 const caseFor = (input: ReviewerInput, verdict: 'pass' | 'fail'): ReviewerCase => ({ id: 'independent-review', kind: 'reviewer-behavior',
-  inputs: [input], expected: [verdict], timeoutMs: 100, maxOutputBytes: 16384 });
+  adapterDigest: offlineAdapterDigest(), inputs: [input], expected: [verdict], timeoutMs: 100, maxOutputBytes: 16384 });
 const command = (output: unknown) => ({ exitCode: 0, signal: null, stdout: JSON.stringify(output), stderr: '', elapsedMs: 2 });
 
 test('review audit: reordered complete observations retain case identity, negative evidence and exact HMAC', () => {
@@ -102,4 +107,24 @@ test('review audit: crash, timeout, signal and missing output cannot become an i
     { ...refused, exitCode: 1 }, { ...refused, signal: 'SIGTERM' as const }, { ...refused, stoppedFor: 'timeout' as const }]) {
     assert.equal(assessOffline(c, changed), false);
   }
+});
+
+test('review audit: old plan rejects an independently changed adapter identity before any candidate import', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'governance-review-adapter-'));
+  try {
+    const c = caseFor(packet(), 'pass');
+    const plan: OfflinePlan = { version: 2, runnerDigest: offlineRunnerDigest(), cases: [c] };
+    const path = join(directory, 'plan.json');
+    const config = (text: string) => {
+      writeFileSync(path, text, { mode: 0o600 });
+      return { files: [{ path, mount: offlinePlanMount, sha256: hashBytes(text) }] } as ReviewerFile;
+    };
+    assert.equal(loadOfflinePlan(config(canonicalJson(plan)))!.plan.cases[0]!.kind, 'reviewer-behavior');
+    c.adapterDigest = identity('independently changed CLI adapter');
+    assert.throws(() => loadOfflinePlan(config(canonicalJson(plan))), /exact prior CLI adapter/);
+    const missing = JSON.parse(canonicalJson(plan)); delete missing.cases[0].adapterDigest;
+    assert.throws(() => parseOfflinePlan(Buffer.from(canonicalJson(missing))), /Exact offline plan fields/);
+    const legacy = { ...plan, version: 1 };
+    assert.throws(() => parseOfflinePlan(Buffer.from(canonicalJson(legacy))), /Supported offline plan/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

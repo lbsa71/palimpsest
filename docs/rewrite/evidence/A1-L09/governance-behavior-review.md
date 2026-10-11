@@ -12,7 +12,9 @@ The actual finite goal was created before investigation. Required repository, wo
 
 At `1908b3e`, `reviewer-runner.mjs` imported candidate `review-core.ts` directly while the actual sealed entrypoint was `reviewer.mjs`. A candidate could preserve a passing core and alter its entrypoint without that alteration affecting the probe. All five original physical mutants changed the core. Source identity alone did not demonstrate behavior of the changed executable adapter. Root agreed this violated the same-implementation requirement; author accepted the finding.
 
-The coordinated narrow repair is to bind the adapter to the prior runner's actual bytes and reject changes before candidate imports. A changed CLI is thereby explicitly ineligible for this first slice; broader adapter evolution requires a separately supported behavioral path. This avoids treating an unexecuted changed adapter as reviewed. Author repair, wrapper-only regression and retained physical evidence inspection are pending.
+The coordinated narrow repair at author `439ff01` binds `adapterDigest` in the prior-owned plan, checks it against the original source, and rejects changed candidate adapter bytes before importing candidate code. A changed CLI is thereby explicitly ineligible for this first slice; broader adapter evolution requires a separately supported behavioral path. This avoids treating an unexecuted changed adapter as reviewed. Independent plan regression passes; wrapper-only physical regression and retained evidence inspection are pending.
+
+A second source audit found the fixture has no actual `GovernanceProposal`: it calls `fixture(false, false, 'reviewer')`. The canonical candidate core is probed, but `ReviewerRegistry.prepare` can independently select a different executable, argument list or source-to-mount mapping. Its source predicate currently accepts only `deployment/`, which excludes the canonical core. Thus the existing result is source-core qualification, not demonstrated selection of a replacement reviewer. Root and author were informed. The minimal next binding must connect the exact frozen proposal, tested core hash, prior adapter/executable/arguments/inherited mounts and resulting next evaluator descriptor, rejecting unsupported selections. The probe must also avoid exposing undeclared candidate runtime dependencies that the future sealed closure will lack.
 
 ## Independent regressions and initial results
 
@@ -26,6 +28,10 @@ PATH=/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin:$PATH node --test evalu
 ```
 
 Strict compilation passed. The selected suite passed 13/13, zero failures/skips, 922.916 ms. Initial reviewer-only TypeScript errors (purpose enum, readonly signed array and signal literal widening) were corrected before this successful run; no runtime implementation was altered. No broad lifecycle repeat was performed.
+
+After cherry-picking the author's `439ff01` as local `f073921`, the independent fixture supplies `adapterDigest` and a fifth test checks a changed prior adapter identity, omitted binding and the unsupported version-1 plan. The same commands passed strict compilation and 14/14 tests, zero skips, 2140.244 ms.
+
+The initial author physical run at `1908b3e` failed with `write EPIPE`, 0/1 passes, zero skips, 19293.774 ms. The complete retained TAP was inspected at `/home/palimpsest/migration/aeon-1-20261011/governance-review-trials/governance-1908b3e.tap`, SHA-256 `60b17a64cd321625fafdd56b27fc39f9271793605933948f73b953cc4d2030a0`. Author diagnosed Node's TypeScript stripping dependency on WASM being unavailable under `--jitless`; `439ff01` removes that option only for offline fixtures. This diagnosis still needs a successful corrected physical witness.
 
 ## Limits and pending handoff
 
