@@ -44,3 +44,35 @@ The broad pre-final-repair baseline command `env -i /opt/palimpsest/runtime/node
 Next entry gate: root assigns fresh independent review of this exact source and causal evidence. Only after its disposition may root allocate a serialized physical window. No CLI/help/native process, credential/account/provider access, paid inference, external network/message, installation, service, deployment or push occurred here.
 
 The unchanged later physical plan is maximum **one acquisition, one positive and one negative per product**, serialized by root under the [fixed original caps](native-recovery-specification.md). Freeze exact native/source/runtime/kernel/configuration/argv, public response bytes, tool/result sentinels and an external instruction/charge/artifact inventory before first dispatch. Acquisition must capture complete pinned native store/flush/history and both actual UUID startup events before dispatch under one original grant. Acquisition failure blocks positive without fallback, retry or enlarged cap. Positive then requires a distinct host process after durable readiness, exact session/history continuation with a follow-up omitting prior marker/task/output, an actual new read and known completion. Negative interrupts an actual dispatched request and requires no new launch/transport, held uncertain charges, cancelled original allocation and cleanup. All first failures and unknowns remain. Exact resumed event ordering, same-session instructions/history, storage auxiliaries, active-child recovery, native context reduction, live competence/parity and H1 remain unavailable.
+
+
+## Fresh review repair handoff
+
+Root resumed this same active finite goal for the bounded findings in fresh reviewer `b10d8ce` (claim `a0522cf`); reviewer acceptance was withheld at the original source. Repair source **`6b51c3c`** changes only `native-recovery.ts`, `run-native.ts` and new author `native-recovery-claude-events.test.ts`. Reviewer-owned tests/evidence and all original native artifacts remain unchanged. The original source/hash table and first failures above remain historical checkpoints.
+
+The author reproduced the exact seven reviewer controls against the original source: **one acquired positive passed, six controls failed**, retained in `native-recovery-author-evidence/review-author-reproduction.log`. A byte-identical temporary copy of the review test (SHA256 `e812b93d3a1ad8bf74098620c76604c479fd9925ce7d8400b846757a9cf76dde`) resolved imports against the author worktree; it was never edited or committed and was removed after verification. The reviewer's original failing logs remain in `native-recovery-review-evidence/review-first.log` and `review-kernel-first.log`.
+
+The repair refuses explicit `is_error: true` regardless of completion metadata. It retains legitimate acquired Agent results with omitted error flags, binds each task to its original run/call IDs and unique observed Agent call, binds each child message/tool result to that task's original parent call, rejects task identity reuse, and attributes progress/updates and completed handbacks to the original task. An Agent handback must identify its completed child; notification cannot complete a child with active tools. The new author controls embed the complete unchanged acquired successful Claude stdout and its hash, preserve the original omitted error flags and native wrappers, and accept reversed independent sibling-result arrival. Additional tightly coupled mutations reject duplicate calls, foreign handback IDs, early handback and foreign task progress.
+
+The runner observes actual `node:os` platform, architecture, kernel release and build version and includes them in the original immutable manifest before checkpoint consumption. Changed observed release/build metadata now refuses before another launch/dispatch while retaining the original allocation and ready checkpoint state. No caller kernel label supplies this identity. Existing original grant/clock/charges and runtime isolation contracts remain unchanged.
+
+`NativeRecovery` is explicitly documented as a trusted host-internal coordinator. Its caller-provided outcome/artifact objects are not independently authenticated cleanup/admission proof. The public runner remains the authority boundary: it mints the cleanup observation only after runWorker resolves through awaited confinement cleanup. No new caller proof field or alternate public admission path was added.
+
+Commands (serialized, no native/process trial):
+
+```sh
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 evaluations/baselines/native-recovery-review.test.ts
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 evaluations/baselines/native-recovery*.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+git diff --check
+```
+
+Exact reviewer controls **7 passed, zero failed/skipped** (`review-author-repair.log`). Combined focused suite **73 passed, zero failed/skipped** (`review-repair-focused.log`), including the unchanged seven temporary reviewer controls and seven new acquired author controls. Strict TypeScript and whitespace passed (`review-repair-strict.log`). No additional broad sweep was run. The external author evidence index retains all previous logs and these new logs. These author executions support a repair handoff; they do not replace fresh reviewer acceptance.
+
+The actual goal remains **ACTIVE**. Next owner is the same fresh reviewer, with root managing integration and slot/window allocation. No physical window or clearance was issued; acquisition/interruption/session-history/instruction gates and all live/context-reduction exclusions above remain unchanged.
+
+| Repair source at `6b51c3c` | SHA-256 |
+|---|---|
+| `native-recovery.ts` | `9110d64396c9f89c6a76e07cfa175845c3e9c4c52697fa1238f2b611d8a2ba08` |
+| `run-native.ts` | `7e6fc39c09e2b36ee75effaf56f15758adc93e7d5846554b977f8e80353d7ea7` |
+| `native-recovery-claude-events.test.ts` | `64b3db769a17d31794ae1a156fc625b6fe0685ead5822caa9e135159c9fb0fe8` |
