@@ -37,7 +37,7 @@ Current exclusive finite goals, all created through the goal tool without an arb
 |---|---|---|
 | `/root/a1_real_screen`; `real-screen` | Real ordinary-application shell screen, first eight cases S01–S07 and S10 | Implement the bounded [audit specification](evidence/A1-L09/completion-readiness.md), verify synthetic real tools and child evidence; four lifecycle cases remain separate, no live result |
 | `/root/a1_governance_behavior_review`; `governance-behavior-review` | Fresh independent v2 governance checker/core/adapter review | Independent semantic/forgery regressions, retained physical artifacts and exact eligibility bounds; no arbitrary-wrapper or live claim |
-| `/root/a1_changed_host_readiness`; `governance-behavior` | New finite goal after checker handoff: substantive candidate-reviewer behavior under the old judge | Follow [fixed behavior specification](evidence/A1-L09/governance-behavior-specification.md); valid/negative/forged packets, nonauthority probe key, original accounting, fresh independent review |
+| `/root/a1_development_witness`; `development-witness` | Offline development evidence preparation and concrete acquisition procedure | Follow [fixed specification](evidence/A1-L08/development-witness-specification.md); authenticate existing observations/reviews and retain failures/resources; proposed bundle cannot grant H1 |
 | `/root`; integration checkout | Shared integration/configuration, joined verification, central evidence/status and final qualification | Source-frozen aggregate, independently reviewed handoffs and actual empirical gates; paid runs require the pending grant |
 
 Latest completed engineering gates and integrations:
