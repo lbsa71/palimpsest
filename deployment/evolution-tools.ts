@@ -8,6 +8,7 @@ import type { OperationalStore } from '../packages/storage/index.ts';
 import type { ApplicationTool } from './application.ts';
 import { freezeApplication, verifyApplication, type DeploymentInputs } from './candidate.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
+import { isHumanInput } from './input-origin.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority }
 /** Issued by accepted host bootstrap or a host wrapper observing genuinely autonomous goal creation, never from Goal.origin alone. */
@@ -86,10 +87,10 @@ function provenance(context: EvolutionContext, options: EvolutionOptions): Chang
   const inputs = context.store.events<InboundInput>(context.runId).filter(event => ['admitted', 'steering'].includes(event.type)).map(event => event.data);
   const input = inputs.find(input => input.id === bound.inputId);
   invariant(input?.authenticated && input.actorId === bound.actorId && identity(input.scope) === identity(context.scope), 'Proposal requires host-authenticated run provenance');
-  if (bound.kind === 'human') invariant(['direct', 'slack'].includes(input.source) && options.eligibleHumanAuthors.has(input.actorId) && inputs.filter(input => ['direct', 'slack'].includes(input.source)).every(input => input.authenticated && options.eligibleHumanAuthors.has(input.actorId)), 'Human modification author is not configured eligible');
+  if (bound.kind === 'human') invariant(isHumanInput(input) && options.eligibleHumanAuthors.has(input.actorId) && inputs.filter(isHumanInput).every(input => input.authenticated && options.eligibleHumanAuthors.has(input.actorId)), 'Human modification author is not configured eligible');
   else {
     // An adopted run retains its original authenticated actor while the serving grant changes.
-    invariant(input.source === 'initiative' && input.externalId === bound.goalId && !inputs.some(input => ['direct', 'slack'].includes(input.source)), 'Self proposal cannot relabel a human request or steering input');
+    invariant(input.source === 'initiative' && input.externalId === bound.goalId && !inputs.some(isHumanInput), 'Self proposal cannot relabel a human request or steering input');
     const execution = context.store.get<{ runId: string }>('initiative.execution', bound.goalId)?.value;
     const goal = context.store.get<Goal>('initiative.goals', bound.goalId)?.value;
     invariant(execution?.runId === context.runId && goal?.origin.kind === 'self' && ['ready', 'running', 'waiting'].includes(goal.status) && identity(goal.scope) === identity(context.scope), 'Self proposal requires its independently originated finite initiative goal');
@@ -98,7 +99,7 @@ function provenance(context: EvolutionContext, options: EvolutionOptions): Chang
     if (origin.basis === 'independent-initiative') {
       invariant(origin.originRunId, 'Independent origin run required');
       const originalInputs = context.store.events<InboundInput>(origin.originRunId).filter(event => ['admitted', 'steering'].includes(event.type)).map(event => event.data);
-      invariant(originalInputs.some(input => input.authenticated && input.source === 'initiative') && !originalInputs.some(input => ['direct', 'slack'].includes(input.source)), 'Human originating run cannot supply independent goal provenance');
+      invariant(originalInputs.some(input => input.authenticated && input.source === 'initiative') && !originalInputs.some(isHumanInput), 'Human originating run cannot supply independent goal provenance');
     }
   }
   return structuredClone(bound);

@@ -3,6 +3,7 @@ import type { InquiryOpportunity } from '../packages/initiative/drives/index.ts'
 import type { InitiativeTool } from '../packages/initiative/tools.ts';
 import type { ChangeProvenance } from '../packages/release/proposals.ts';
 import { goalDefinitionIdentity, type EvolutionContext, type IndependentSelfOrigin } from './evolution-tools.ts';
+import { isHumanInput } from './input-origin.ts';
 
 const originTable = 'host.release-self-origins';
 function inputs(context: EvolutionContext): InboundInput[] {
@@ -12,7 +13,7 @@ function trustedOrigin(context: EvolutionContext, origin: Pick<IndependentSelfOr
   if (origin.basis === 'accepted-bootstrap') return true;
   if (origin.basis !== 'independent-initiative' || !origin.originRunId) return false;
   const originalInputs = inputs({ ...context, runId: origin.originRunId });
-  return originalInputs.some(input => input.authenticated && input.source === 'initiative') && !originalInputs.some(input => !input.authenticated || ['direct', 'slack'].includes(input.source));
+  return originalInputs.some(input => input.authenticated && input.source === 'initiative') && !originalInputs.some(input => !input.authenticated || isHumanInput(input));
 }
 function validOrigin(context: EvolutionContext, goalId: string): IndependentSelfOrigin | undefined {
   const goal = context.store.get<Goal>('initiative.goals', goalId)?.value;
@@ -21,7 +22,7 @@ function validOrigin(context: EvolutionContext, goalId: string): IndependentSelf
 }
 function independent(context: EvolutionContext): Pick<IndependentSelfOrigin, 'basis' | 'originRunId'> | undefined {
   const events = inputs(context);
-  if (events.some(input => !input.authenticated || ['direct', 'slack'].includes(input.source))) return;
+  if (events.some(input => !input.authenticated || isHumanInput(input))) return;
   const bootstrap = context.store.get<{ runId: string }>('host.bootstrap', 'development:v1')?.value;
   if (bootstrap?.runId === context.runId && events.some(input => input.source === 'host.bootstrap')) return { basis: 'accepted-bootstrap', originRunId: context.runId };
   const input = events.find(input => input.source === 'initiative');
@@ -62,7 +63,7 @@ export function bindGoalOrigins(context: EvolutionContext, tools: InitiativeTool
 /** Used by host-installed evolution tools. Their independent checks still validate eligibility and exact execution. */
 export function proposalProvenance(context: EvolutionContext): ChangeProvenance {
   const events = inputs(context);
-  const human = events.findLast(input => ['direct', 'slack'].includes(input.source));
+  const human = events.findLast(isHumanInput);
   if (human) { invariant(human.authenticated, 'Unauthenticated modification origin'); return { kind: 'human', inputId: human.id, actorId: human.actorId }; }
   const input = events.find(input => input.authenticated && input.source === 'initiative');
   invariant(input && independent(context), 'Self change requires an independently originated finite initiative goal');

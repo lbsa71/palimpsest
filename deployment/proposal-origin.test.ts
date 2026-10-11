@@ -10,7 +10,7 @@ import { DriveRegistry, InitiativeRegistry, PlanRegistry, initiativeTools } from
 import { bindGoalOrigins, proposalProvenance } from './proposal-origin.ts';
 import type { EvolutionContext } from './evolution-tools.ts';
 
-test('host goal origin follows independent ancestry and cannot launder a human goal through initiative', () => {
+for (const steeringSource of ['direct', 'slack:T1']) test(`host goal origin cannot launder ${steeringSource} direction through initiative ancestry`, () => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-origin-')); const store = new OperationalStore({ filename: join(root, 'state.sqlite') });
   const memory = new DevelopmentalMemory(store), goals = new InitiativeRegistry(store), drives = new DriveRegistry(store, memory), plans = new PlanRegistry(store);
   const scope = { kind: 'public' } as const, authority = { generation: 'g1', epoch: 1, controlRevision: 'controls' };
@@ -51,7 +51,7 @@ test('host goal origin follows independent ancestry and cannot launder a human g
     assert.equal(proposalProvenance(adopted).actorId, 'g1', 'host provenance retains the original authenticated actor across adoption');
     const beforeSteering = propose('independent', 'created-before-steering');
     offer('independent', 'offered-before-steering');
-    const steering: InboundInput = { id: 'late-human', source: 'direct', externalId: 'late-human', externalRevision: '1', actorId: 'human', authenticated: true, scope, value: 'A human modification request' };
+    const steering: InboundInput = { id: 'late-human', source: steeringSource, externalId: 'late-human', externalRevision: '1', actorId: 'human', authenticated: true, scope, value: 'A human modification request' };
     store.append({ id: 'late-human-steering', stream: 'independent', type: 'steering', data: steering });
     admit('tainted-child-run', 'initiative', beforeSteering.id); store.put('initiative.execution', beforeSteering.id, { runId: 'tainted-child-run' }, null);
     propose('tainted-child-run', 'laundered-grandchild');
