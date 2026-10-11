@@ -74,8 +74,23 @@
         "focusedReviewPassed": 128,
         "explicitNativeSkips": 3,
         "providerRequests": 0,
-        "nativeProtocolCompatibility": "in-progress; pinned native betas not yet qualified",
+        "nativeProtocolCompatibility": "selected pinned Opus high/adaptive coding profile synthetic-verified; paid qualification unavailable",
         "liveQualification": "unavailable"
+      },
+      "nativeProtocolEngineering": {
+        "kind": "pinned-native-synthetic-Messages-tool-continuation",
+        "profile": "opus-adaptive-coding",
+        "runtimeSource": "335ff73fe5947191d84f3ede5c407c5eeb8855ec",
+        "actualNativeSource": "45599fbd9a40848be78ddc1eea04ee3de0faede7",
+        "evidence": "docs/rewrite/evidence/A1-L08/claude-native-compatibility.md",
+        "reviewEvidence": "docs/rewrite/evidence/A1-L08/claude-native-profile-review.md",
+        "physicalFixtureRequests": 2,
+        "actualBashTool": "passed",
+        "thinkingContinuation": "synthetic signed/redacted blocks preserved",
+        "providerRequests": 0,
+        "kernelQualification": "not established for this profile; older fixture composition is separate",
+        "paidQualification": "unavailable",
+        "broaderNativeAffordances": "unqualified"
       }
     }
   ],
