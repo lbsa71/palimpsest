@@ -167,6 +167,7 @@ export class BaselineObserver {
   private readonly active = new Set<AbortController>();
   constructor(options: { store: OperationalStore; grant: ObserverGrant; transport: BaselineTransport; transportKind?: 'fixture' | 'openai' | 'anthropic'; now?: () => number }) {
     validateObserverGrant(options.grant);
+    if (options.grant.profile.anthropic?.nativeProtocol?.kind === 'opus-adaptive-delegation') invariant(options.transportKind === 'fixture', 'pinned native Claude delegation protocol requires explicit synthetic fixture transport');
     if (options.grant.profile.codexNativeProtocol) invariant(options.transportKind === 'fixture', 'pinned native Codex child protocol requires explicit synthetic fixture transport');
     this.store = options.store; this.grant = freeze(structuredClone(options.grant)); this.transport = options.transport; this.now = options.now ?? Date.now;
     const profile = this.grant.profile;

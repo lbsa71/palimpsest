@@ -11,7 +11,7 @@ import { runNativeBaseline } from './run-native.ts';
 import type { NativeBaselineRun } from './run-native.ts';
 import type { CodexNativeProtocol } from './codex-native-protocol.ts';
 import { claudeInvocation } from './claude-configuration.ts';
-import { codexChildIndex, codexObservedToolOutput, codexParentReceipt } from './native-delegation-fixture.ts';
+import { codexChildIndex, codexObservedToolOutput, codexParentReceipt, claudeChildIdentity, claudeParentReceipts } from './native-delegation-fixture.ts';
 
 const hashes = ['ab55e3cee93fc5fd90cd7ed85197f7c8423beeb52836ad99770c4cd83fb779b9', '04ef8c718640204d79a6a8256bf76e4b9be6712075685a448f7b10fa401d79a8'];
 const native: CodexNativeProtocol = { kind: 'agent-message-v1', codexVersion: 'codex-cli 0.162.1', codexSha256: '628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1', helperSha256: 'ec71830690a7c0024916ee0c99fbdc635bc6e747ff665ea4f03a8389bbcb6b30', qualification: 'synthetic-only' };
@@ -96,6 +96,58 @@ test('fixture observations require native child identity, attributed tool output
   const result = { type: 'custom_tool_call_output', call_id: 'call_child_0', output: [{ type: 'text', text: 'child-1-observed' }] };
   assert.equal(codexObservedToolOutput({ input: [result] }, 0), true); assert.equal(codexObservedToolOutput({ input: [{ ...result, call_id: 'other' }] }, 0), false);
   const final = { type: 'agent_message', author: '/root/native_child_0', recipient: '/root', content: [{ type: 'input_text', text: 'Message Type: FINAL_ANSWER\n' }, { type: 'encrypted_content', encrypted_content: 'child-1-observed' }] };
-  assert.equal(codexParentReceipt({ input: [final] }, 0), true); assert.equal(codexParentReceipt({ input: [final] }, 1), false);
+  assert.equal(codexParentReceipt({ input: [final] }, 0), false); assert.equal(codexParentReceipt({ input: [final] }, 1), false);
   for (const mutation of [{ ...final, author: '/root' }, { ...final, recipient: '/root/native_child_0' }, { ...final, type: 'message' }, { ...final, content: [{ type: 'input_text', text: 'Message Type: NEW_TASK\nchild-1-observed' }, final.content[1]] }]) assert.equal(codexParentReceipt({ input: [mutation] }, 0), false);
+});
+
+const delegationBeta = 'claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,effort-2025-11-24,thinking-display-updates-2026-08-18';
+function claudeDelegationGrant(): ObserverGrant { const g = grant(); g.profile = { ...g.profile, provider: 'anthropic', model: 'claude-opus-5-5', contextWindowTokens: 1_000_000, prices: { ...g.profile.prices, cacheWrite5mUsdPerMillion: 5, cacheWrite1hUsdPerMillion: 8 }, anthropic: { thinking: 'adaptive', serviceTier: 'standard', inferenceGeo: 'global', speed: 'standard', nativeProtocol: { kind: 'opus-adaptive-delegation' as any, claudeVersion: '2.1.296 (Claude Code)', claudeSha256: '24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de', version: '2023-06-01', beta: delegationBeta, qualification: 'synthetic-only' } } }; delete g.profile.codexNativeProtocol; g.resources.maxTokens = 8_032_768; return g; }
+test('actual directed text finals require the complete native envelope and exact emitted body', () => {
+  const final = { type: 'agent_message', author: '/root/native_child_0', recipient: '/root', content: [{ type: 'input_text', text: 'Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/native_child_0\nPayload:\nchild-1-observed' }] };
+  assert.equal(codexParentReceipt({ input: [final] }, 0), true);
+  for (const text of ['Message Type: FINAL_ANSWER\nchild-1-observed', final.content[0].text + 'extra', final.content[0].text.replace('FINAL_ANSWER', 'NEW_TASK'), final.content[0].text.replace('Sender: /root/native_child_0', 'Sender: /root')]) assert.equal(codexParentReceipt({ input: [{ ...final, content: [{ type: 'input_text', text }] }] }, 0), false);
+  for (const patch of [{ author: '/root' }, { recipient: '/root/native_child_0' }, { content: [...final.content, { type: 'input_text', text: 'extra' }] }]) assert.equal(codexParentReceipt({ input: [{ ...final, ...patch }] }, 0), false);
+});
+test('exact acquired Claude delegation beta and Agent surface admit only pinned synthetic transport', async () => {
+  const payload = readFileSync(new URL('./fixtures/claude-delegation-parent-2.1.296.json', import.meta.url), 'utf8'), nativeHttp = JSON.parse(readFileSync(new URL('./fixtures/claude-delegation-http-2.1.296.json', import.meta.url), 'utf8'));
+  assert.equal(createHash('sha256').update(payload).digest('hex'), 'd9dc038e4e3f823b4e94ededae78068dadcc95e3d21148485cf01020ffdb0d08');
+  const root = mkdtempSync(join(tmpdir(), 'native-claude-delegation-')), store = new OperationalStore({ filename: join(root, 'state.sqlite') }); let calls = 0;
+  const nativeEvents = [{ type: 'message_start', message: { id: 'msg_native_delegation', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], usage: { input_tokens: 100, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, service_tier: 'standard', inference_geo: 'global', speed: 'standard' } } }, { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 10 } }, { type: 'message_stop' }];
+  const nativeReceipt = nativeEvents.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+  try {
+    const observer = new BaselineObserver({ store, grant: claudeDelegationGrant(), transportKind: 'fixture', transport: async outgoing => { calls++; assert.deepEqual(JSON.parse(outgoing).tools, JSON.parse(payload).tools); assert.deepEqual(JSON.parse(outgoing).system, JSON.parse(payload).system); return new Response(nativeReceipt, { headers: { 'content-type': 'text/event-stream' } }); } });
+    await observer.handle({ method: 'POST', path: '/v1/messages', payload, nativeHttp }); assert.equal(calls, 1);
+    for (const beta of [delegationBeta + ',unknown-beta', delegationBeta.replace(',mid-conversation-tool-changes-2026-07-01', '')]) await assert.rejects(observer.handle({ method: 'POST', path: '/v1/messages', payload, nativeHttp: { ...nativeHttp, headers: { ...nativeHttp.headers, 'anthropic-beta': beta } } }));
+    assert.equal(calls, 1); assert.equal(observer.ledger.snapshot(claudeDelegationGrant().id).requests, 1);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+test('new Claude delegation profile refuses undeclared and paid observer transports before allocation', () => {
+  const root = mkdtempSync(join(tmpdir(), 'native-claude-paid-')), store = new OperationalStore({ filename: join(root, 'state.sqlite') });
+  try { for (const transportKind of [undefined, 'anthropic', 'openai']) assert.throws(() => new BaselineObserver({ store, grant: claudeDelegationGrant(), transportKind, transport: async () => new Response() } as any)); assert.equal(store.list('baseline-grants').length, 0); }
+  finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Claude witness requires native child headers and attributed Agent results, never prompt text', () => {
+  const parent = { 'x-claude-code-session-id': 'session_original', 'x-claude-code-agent-id': 'parent_original' };
+  const child = { ...parent, 'x-claude-code-agent-id': 'child_actual', 'x-claude-code-parent-agent-id': 'parent_original' };
+  assert.equal(claudeChildIdentity(child, parent), 'child_actual'); assert.equal(claudeChildIdentity(parent, parent), undefined);
+  for (const patch of [{ 'x-claude-code-agent-id': '' }, { 'x-claude-code-session-id': 'foreign' }, { 'x-claude-code-parent-agent-id': 'foreign' }]) assert.equal(claudeChildIdentity({ ...child, ...patch }, parent), undefined);
+  const part = { type: 'tool_result', tool_use_id: 'tool_spawn_0', content: [{ type: 'text', text: 'child-1-observed\n\nagentId: child_actual' }] };
+  const emitted = { role: 'assistant', content: [{ type: 'tool_use', name: 'Agent', id: 'tool_spawn_0' }, { type: 'tool_use', name: 'Agent', id: 'tool_spawn_1' }] };
+  assert.deepEqual(claudeParentReceipts({ messages: [emitted, { role: 'user', content: [part] }] }), ['child-1-observed']);
+  assert.deepEqual(claudeParentReceipts({ messages: [{ role: 'user', content: [part] }] }), []);
+  assert.deepEqual(claudeParentReceipts({ messages: [emitted, { role: 'user', content: [part, { ...part, content: [{ type: 'text', text: 'child-2-observed' }] }] }] }), []);
+  for (const patch of [{ tool_use_id: 'unattributed' }, { is_error: true }, { content: [{ type: 'text', text: 'NATIVE_CHILD_ONE child-1-observed' }] }]) assert.deepEqual(claudeParentReceipts({ messages: [emitted, { role: 'user', content: [{ ...part, ...patch }] }] }), []);
+  assert.deepEqual(claudeParentReceipts({ messages: [{ role: 'assistant', content: [part] }] }), []);
+});
+
+test('delegation beta cannot be substituted into the ordinary coding profile or sent to paid transport', async () => {
+  const { validateNativeProtocol } = await import('./anthropic-native-protocol.ts');
+  const { anthropicTransport } = await import('./anthropic-codec.ts');
+  const profile = claudeDelegationGrant().profile.anthropic!.nativeProtocol!;
+  assert.throws(() => validateNativeProtocol({ ...profile, kind: 'opus-adaptive-coding' }));
+  assert.throws(() => validateNativeProtocol({ ...profile, beta: profile.beta + ',unknown' }));
+  let fetched = false;
+  await assert.rejects(async () => anthropicTransport('PUBLIC_FIXTURE_KEY', (async () => { fetched = true; return new Response(); }) as typeof fetch)('{}', new AbortController().signal, { version: '2023-06-01', beta: delegationBeta }));
+  assert.equal(fetched, false);
 });
