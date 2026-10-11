@@ -1,0 +1,146 @@
+{
+  "evidenceKind": "mechanical",
+  "node": "v24.13.0",
+  "upstreamCommit": "89e5c2c075535e2f427c30fc74720d65b2944ff9",
+  "runtimeDependencies": {
+    "typebox": "1.3.27"
+  },
+  "commands": [
+    {
+      "phase": "clean-build",
+      "elapsedMs": 5902.384739,
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "node_modules/typescript/bin/tsc",
+        "--ignoreConfig",
+        "--target",
+        "es2024",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--strict",
+        "--types",
+        "node",
+        "--erasableSyntaxOnly",
+        "--skipLibCheck",
+        "--rewriteRelativeImportExtensions",
+        "--rootDir",
+        ".",
+        "--outDir",
+        "dist",
+        "packages/agent-shell/agent-shell.test.ts",
+        "packages/agent-shell/index.ts",
+        "packages/agent-shell/mistral.ts",
+        "packages/agent-shell/upstream-event-stream.test.ts"
+      ],
+      "exitCode": 0
+    },
+    {
+      "phase": "warm-build",
+      "elapsedMs": 5874.835468,
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "node_modules/typescript/bin/tsc",
+        "--ignoreConfig",
+        "--target",
+        "es2024",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--strict",
+        "--types",
+        "node",
+        "--erasableSyntaxOnly",
+        "--skipLibCheck",
+        "--rewriteRelativeImportExtensions",
+        "--rootDir",
+        ".",
+        "--outDir",
+        "dist",
+        "packages/agent-shell/agent-shell.test.ts",
+        "packages/agent-shell/index.ts",
+        "packages/agent-shell/mistral.ts",
+        "packages/agent-shell/upstream-event-stream.test.ts"
+      ],
+      "exitCode": 0
+    },
+    {
+      "phase": "baseline-regressions",
+      "elapsedMs": 586.7892100000008,
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "--test",
+        "dist/packages/agent-shell/agent-shell.test.js",
+        "dist/packages/agent-shell/upstream-event-stream.test.js"
+      ],
+      "exitCode": 0
+    },
+    {
+      "phase": "changed-dependency-build",
+      "elapsedMs": 5796.202390999999,
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "node_modules/typescript/bin/tsc",
+        "--ignoreConfig",
+        "--target",
+        "es2024",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--strict",
+        "--types",
+        "node",
+        "--erasableSyntaxOnly",
+        "--skipLibCheck",
+        "--rewriteRelativeImportExtensions",
+        "--rootDir",
+        ".",
+        "--outDir",
+        "dist",
+        "packages/agent-shell/agent-shell.test.ts",
+        "packages/agent-shell/index.ts",
+        "packages/agent-shell/mistral.ts",
+        "packages/agent-shell/upstream-event-stream.test.ts"
+      ],
+      "exitCode": 0
+    },
+    {
+      "phase": "changed-dependency-regressions",
+      "elapsedMs": 598.6393239999998,
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "--test",
+        "dist/packages/agent-shell/agent-shell.test.js",
+        "dist/packages/agent-shell/upstream-event-stream.test.js"
+      ],
+      "exitCode": 0
+    },
+    {
+      "phase": "fresh-successor-process-loads-edited-dependency",
+      "elapsedMs": 39.380245000000286,
+      "command": [
+        "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+        "verify-loaded.mjs"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "dependencyEdit": {
+    "file": "packages/agent-shell/vendor/pi/ai/utils/text.ts",
+    "originalSha256": "d37c1825855c7fc71669a545b5b266810242c1c7e58d57228c0c143f29c1c544",
+    "editedSha256": "c5bc96a0ed5c44447aefeec4943dfdb469e0b8c44e78b1fe2388c13527f7866f",
+    "function": "contentText",
+    "freshProcessVerified": true
+  },
+  "networkUsedDuringCheckBuild": false,
+  "limits": [
+    "Provisioned TypeScript, Node definitions and TypeBox required.",
+    "Fresh subprocess verifies loaded dependency; production successor activation belongs L09.",
+    "No live model competence or benchmark measured.",
+    "Source candidate breadth47,785LOC rejected as initial owned dependency choice."
+  ],
+  "disposition": "Temporary unadopted691-fileTypeBox source closure; not final candidate. Removed after lead reassessment."
+}

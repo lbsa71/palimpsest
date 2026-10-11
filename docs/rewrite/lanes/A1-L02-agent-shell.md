@@ -43,5 +43,5 @@ Owned by the lead who claims implementation; update before concurrent edits.
 | Branch / worktree | `codex/a1-shell-20261011`; `/home/palimpsest/migration/aeon-1-20261011/shell` |
 | Base source / contract revision | Base `14c7420`; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9`; C1 being coordinated with L01 |
 | Additional path reservations | None; use the exclusive scope above and L09 for shared build files |
-| Last handoff / evidence | Session 1 implementation and 22 mechanical cases; [evidence](../evidence/A1-L02/2026-10-11-implementation.md); commit recorded in branch handoff |
+| Last handoff / evidence | Session 1 implementation `6d806a7`, review/reasoning corrections `44ca88c`, 22 passing mechanical cases; [evidence](../evidence/A1-L02/2026-10-11-implementation.md) and [dependency reassessment](../evidence/A1-L02/2026-10-11-typebox-reassessment.md) |
 | Blockers / next eligible task | T01/T02/T03/T05 executable foundation implemented against C1 f11a25b; Q1 whole-dependency edit ownership, Q3 live screen, integrated Q4 and independent Q5 remain. L03/L06/L09 integration next. |
