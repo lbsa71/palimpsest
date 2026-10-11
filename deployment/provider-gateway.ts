@@ -1,14 +1,18 @@
 import { invariant } from '../packages/contracts/index.ts';
 import type { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
+import type { ShellProvider } from '../packages/agent-shell/index.ts';
 import type { TransportReceipt } from './broker-shell.ts';
 
-export function mistralGateway(options: { apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch }) {
+export function providerGateway(options: { provider?: ShellProvider; apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch }) {
+  const provider = options.provider ?? 'mistral';
+  invariant(provider === 'mistral' || provider === 'openai', 'Unsupported gateway provider');
+  const endpoint = provider === 'openai' ? 'https://api.openai.com/v1/responses' : 'https://api.mistral.ai/v1/chat/completions';
   invariant(Number.isSafeInteger(options.maxResponseBytes) && options.maxResponseBytes > 0, 'Response byte ceiling required');
   return async (payload: string, signal: AbortSignal): Promise<{ status: number; body: string }> => {
     const apiKey = options.apiKey();
-    invariant(apiKey.length > 0, 'Mistral credential unavailable');
-    const response = await (options.fetch ?? fetch)('https://api.mistral.ai/v1/chat/completions', {
+    invariant(apiKey.length > 0, 'Selected provider credential unavailable');
+    const response = await (options.fetch ?? fetch)(endpoint, {
       method: 'POST', redirect: 'error', signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: payload,
     });
@@ -49,3 +53,5 @@ export function reconcileProviderReceipts(store: OperationalStore, ledger: Resou
   }
   return reconciled;
 }
+
+export function mistralGateway(options: { apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch }) { return providerGateway({ ...options, provider: 'mistral' }); }

@@ -2,6 +2,7 @@ import { readFileSync, realpathSync, mkdirSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { invariant, validateScope, type DataScope, type ResourceEnvelope } from '../packages/contracts/index.ts';
 import type { SchedulerPolicy } from '../packages/initiative/index.ts';
+import type { ShellProvider } from '../packages/agent-shell/index.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
 export interface ApplicationConfig {
@@ -14,7 +15,7 @@ export interface ApplicationConfig {
   controlRevision: string;
   promptFile: string;
   compactionPromptFile: string;
-  model: { id: string; contextWindow: number; reasoning: boolean; effort: 'none' | 'high'; maxOutputTokens: number; maxRequestsPerSlice: number; timeoutMs: number; pricesPerMillion: { input: number; output: number } };
+  model: { provider?: ShellProvider; id: string; contextWindow: number; reasoning: boolean; effort: 'none' | 'high'; maxOutputTokens: number; maxRequestsPerSlice: number; timeoutMs: number; pricesPerMillion: { input: number; output: number } };
   resources: ResourceEnvelope;
   resourceLimits?: ResourceLimits;
   conversationResources: ResourceEnvelope;
@@ -28,7 +29,7 @@ export interface ApplicationConfig {
   direct: { host: '127.0.0.1' | '::1'; port: number; actorId: string; scope: DataScope; modificationEligible: boolean };
   slack?: { teamId: string; botUserId: string; channels: { channel: string; scope: DataScope }[]; eligibleHumanIds: string[]; coverageStart: string; lookbackSeconds: number; allowSpeech: boolean };
 }
-export interface ApplicationSecrets { mistralApiKey: string; directToken: string; slackBotToken?: string; slackAppToken?: string }
+export interface ApplicationSecrets { mistralApiKey?: string; openaiApiKey?: string; directToken: string; slackBotToken?: string; slackAppToken?: string }
 export function beneath(parent: string, child: string): boolean { const path = relative(parent, child); return path === '' || !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`); }
 export function validateEnvelope(envelope: ResourceEnvelope): void {
   invariant(envelope && Object.keys(envelope).sort().join(',') === 'maxConcurrency,maxCostUsd,maxElapsedMs,maxRequests,maxTokens', 'Invalid resource envelope');
@@ -44,6 +45,7 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   for (const [a, b] of [[config.stateDirectory, config.workspaceDirectory], [config.stateDirectory, config.applicationRoot], [config.workspaceDirectory, config.applicationRoot]]) invariant(!beneath(a!, b!) && !beneath(b!, a!), 'Source, private state and workspaces must be disjoint');
   invariant(statSync(config.nodeBinary).isFile() && statSync(config.applicationRoot).isDirectory(), 'Missing application/runtime');
   invariant(config.artifactId.length > 0 && config.controlRevision.length > 0, 'Qualified release identities required');
+  invariant(config.model.provider === undefined || ['mistral', 'openai'].includes(config.model.provider), 'Unsupported configured provider');
   invariant(config.model.id.length > 0 && !config.model.id.includes('latest'), 'Pinned model required');
   for (const key of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(config.model[key]) && config.model[key] > 0, `Invalid model ${key}`);
   invariant(config.model.effort === 'none' || config.model.effort === 'high' && config.model.reasoning, 'Unsupported reasoning profile');
@@ -67,6 +69,13 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
 }
 export function readConfiguration(path: string): ApplicationConfig { return validateConfiguration(JSON.parse(readFileSync(path, 'utf8')) as ApplicationConfig); }
 export function environmentSecrets(environment: NodeJS.ProcessEnv): ApplicationSecrets {
-  invariant(environment.MISTRAL_API_KEY && environment.AUTARK_DIRECT_TOKEN, 'MISTRAL_API_KEY and AUTARK_DIRECT_TOKEN must be configured');
-  return { mistralApiKey: environment.MISTRAL_API_KEY, directToken: environment.AUTARK_DIRECT_TOKEN, ...(environment.SLACK_BOT_TOKEN ? { slackBotToken: environment.SLACK_BOT_TOKEN } : {}), ...(environment.SLACK_APP_TOKEN ? { slackAppToken: environment.SLACK_APP_TOKEN } : {}) };
+  invariant(environment.AUTARK_DIRECT_TOKEN, 'AUTARK_DIRECT_TOKEN must be configured');
+  return { ...(environment.MISTRAL_API_KEY ? { mistralApiKey: environment.MISTRAL_API_KEY } : {}), ...(environment.OPENAI_API_KEY ? { openaiApiKey: environment.OPENAI_API_KEY } : {}), directToken: environment.AUTARK_DIRECT_TOKEN, ...(environment.SLACK_BOT_TOKEN ? { slackBotToken: environment.SLACK_BOT_TOKEN } : {}), ...(environment.SLACK_APP_TOKEN ? { slackAppToken: environment.SLACK_APP_TOKEN } : {}) };
+}
+
+/** Select only the qualified provider; unrelated configured credentials confer no worker authority. */
+export function selectedProviderKey(model: ApplicationConfig['model'], secrets: ApplicationSecrets): string {
+  const key = (model.provider ?? 'mistral') === 'openai' ? secrets.openaiApiKey : secrets.mistralApiKey;
+  invariant(typeof key === 'string' && key.length > 0, 'Selected provider credential unavailable');
+  return key;
 }

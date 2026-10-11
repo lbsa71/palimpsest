@@ -1,0 +1,37 @@
+# A1-L02/L09 provider portability — 2026-10-11
+
+Finite RW17 objective: retain the original Mistral default, implement an explicit OpenAI Responses alternative through the production host broker, and verify transport, iteration and continuity with deterministic fixtures. Owner: Codex `/root/a1_provider_portability`; branch `codex/a1-provider-portability-20261011`, base `6b57e91` plus the root's evolution-service integration (`40791cb`, locally cherry-picked as `8d713d7`). This is implemented and fixture-integrated evidence, not live qualification or H1 acceptance.
+
+## Implementation and instructions
+
+`ApplicationConfig.model.provider` selects `mistral` (also the omitted-field default) or `openai`; model ID, context capacity, reasoning capability, effort and prices remain explicit qualified configuration. Supported effort values remain `none`/`high`, without translating unsupported knobs. Application readiness validates only the selected provider key. Environment parsing can retain both host credentials for separately qualified replacements, and requires the direct API token. The isolated worker receives neither credential. `selectedProviderKey` is the installation/readiness selector; `providerGateway` fixes the exact provider HTTPS destination and refuses redirects.
+
+No dependency or SDK was added. The existing Pi loop, owned prompts, actual host tool receiver, reservations and request audit are used by both transports. Application delegation grants now report the selected provider/model/effort rather than Mistral unconditionally. The existing shell prompt, tool definitions, compaction instruction and effective request capture remain the only application instruction sources. Neither transport installs a vendor persona, loads authentication files or refreshes a catalogue.
+
+OpenAI requests use `https://api.openai.com/v1/responses`, nonstreaming stateless `store: false`, explicit reasoning effort and encrypted-reasoning inclusion. `AssistantMessage.openaiOutput` retains the complete supported native output items, with unknown opaque fields unchanged. Reasoning items require replayable encrypted content; native assistant phase, function-call ID and `call_id` remain distinct and exact. Tool outputs reference `call_id`. Projection integrity is compared canonically, so SQLite's canonical object ordering cannot corrupt restart. Unsupported hosted tools/output blocks, malformed call arguments/usage, duplicate IDs, partial status and commentary-only nonfinal completion fail before usable tool history is emitted.
+
+Ordinary continuation and disk restart replay native output in order. During OpenAI compaction, user history can be summarized, but native assistant/tool pairs remain in the context; compaction never replaces encrypted reasoning with prose. The private compaction record retains its entire native response too. Every compaction/retry requires its own captured request and reservation. Provider changes against an existing checkpoint fail explicitly rather than silently discard native state.
+
+The host independently settles request receipts using the selected provider's token fields. OpenAI output tokens already include reasoning; the reasoning detail count is not added again. Missing/invalid token counts remain null with conservative reservation charges. Valid usage on a malformed response remains known, while its receipt is failed. Network/5xx outcomes remain uncertain, and only an explicit 429 can use a configured retry allowance. Credentials and raw error bodies never enter the prompt audit or model-visible failure text.
+
+A fixture exposed an existing scheduling race: the deferred original communication-admission callback could enqueue an already running turn after a concurrent tick, causing a failed request to run again. The application now ignores consumed initial ready notifications while preserving steering notifications. Both default Mistral and explicit OpenAI failure fixtures verify one physical attempt per failed turn.
+
+## Verification
+
+All commands use `PATH=/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin:$PATH`. The compiler closure was copied, with real files, from `/home/palimpsest/src/palimpsest/node_modules`; no symlinks or new installed dependencies were introduced.
+
+- `node --test packages/agent-shell/*.test.ts deployment/broker-shell.test.ts deployment/provider-gateway.test.ts` before adding the OpenAI-specific suite: **44 passed**.
+- `node --test packages/agent-shell/openai.test.ts deployment/provider-portability.test.ts`: **13 passed** after corrections. Includes two genuine isolated-worker/durable-runtime provider runs with reasoning, failed observation/repair, uncertain effect, SQLite reopen, explicit reconciliation, native tool continuation, compaction, exact request audit, known and unknown usage. Effects execute twice total; reconciliation does not redispatch the uncertain effect.
+- `node --test --test-name-pattern='OpenAI application' deployment/application.test.ts`: **4 passed**. The production application performs actual confined workspace writing and explicit speech, requires only OpenAI's selected key, and blocks unsupported output/invalid usage/incomplete responses with independent host settlement.
+- `node --test --test-name-pattern='deferred initial admission' deployment/application.test.ts`: default-provider scheduling regression check.
+- `npm run check` and `npm run build`: **passed**. `git diff --check`: clean.
+
+A broad `npm test` was started while edits were still underway; it included superseded fixture assertions and is not cited as a passing final-tree suite. Root integration owns the stable combined-suite run and fresh independent review. Initial failures exposed the canonical-restart projection issue, effect-versus-provider reservation indexing in the fixture, and the actual deferred-admission retry race; these were corrected without weakening the request-count requirement.
+
+## Sources and limitations
+
+Official OpenAI documentation was searched and fetched on 2026-10-11: [reasoning models](https://developers.openai.com/api/docs/guides/reasoning) describes stateless encrypted reasoning replay and preserving original assistant phase; [function calling](https://developers.openai.com/api/docs/guides/function-calling) specifies native function calls/results and retaining reasoning with tool outputs. These establish protocol design, not account entitlement, configured model availability or measured competence.
+
+Only the text/function subset is implemented. Provider context limits can still stop long runs because native encrypted history is deliberately retained. Arbitrary cross-provider checkpoint conversion is not implemented. Existing self-evolution model grants currently restrict model-descriptor keys/IDs; a provider swap needs a separately qualified provider/model/profile/pricing grant rather than inheriting Mistral prices. This finite change does not add an Anthropic transport or establish same-model Claude Code qualification. No paid calls, live credentials, auth-file reads or live qualification occurred.
+
+The Pi declaration patch adds only the optional `openaiOutput: JsonValue[]` field. Root must refresh `experiments/agent-shell/audit/source-manifest.json`'s retained `ai/types.ts` hash when integrating this commit. Whole-host/evolution/installation owners integrate their disjoint changes and report H1 limitations separately.

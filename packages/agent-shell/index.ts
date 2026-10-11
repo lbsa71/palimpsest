@@ -10,8 +10,13 @@ import type { Attempt, AttemptOutcome, MistralTransportOptions } from './mistral
 export { DEFAULT_MISTRAL_MODEL, createMistralTransport, mistralModel, mistralPayload } from './mistral.ts';
 export type { Attempt, AttemptOutcome } from './mistral.ts';
 
+import { createOpenAITransport, openaiModel } from './openai.ts';
+export { createOpenAITransport, openaiModel, openaiPayload } from './openai.ts';
+export type ShellProvider = 'mistral' | 'openai';
+
 export const SHELL_REVISION = 'pi-89e5c2c/aeon-bridge-v1';
 export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 'dispatched' | 'settle'> {
+  provider?: ShellProvider;
   resolveFragment(fragment: PromptFragment): Promise<string>;
   tools: Tool[];
   steering?: () => Promise<Message[]>;
@@ -19,7 +24,7 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   reservationEstimate?: (attempt: Attempt) => ResourceUsage;
   compaction?: { thresholdMessages: number; retainMessages: number; instruction: PromptFragment };
 }
-interface Snapshot { schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[] }
+interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[] }
 function json(value: unknown): JsonValue { return asJson(value) as JsonValue; }
 function message(value: JsonValue): Message {
   invariant(typeof value === 'object' && value !== null && !Array.isArray(value), 'Invalid shell message');
@@ -36,6 +41,9 @@ function toolResult(call: { id: string; name: string }, observation: Observation
 
 /** Pi is a projection over the durable receiver: this adapter never directly executes a tool. */
 export function createAgentShell(options: ShellOptions): ShellPort {
+  const provider = options.provider ?? 'mistral';
+  invariant(provider === 'mistral' || provider === 'openai', 'Unsupported shell provider');
+  invariant(provider !== 'openai' || !!options.model, 'OpenAI requires an explicit model');
   invariant(new Set(options.tools.map(tool => tool.name)).size === options.tools.length, 'Duplicate shell tools');
   if (options.compaction) invariant(Number.isSafeInteger(options.compaction.thresholdMessages) && Number.isSafeInteger(options.compaction.retainMessages) && options.compaction.retainMessages >= 1 && options.compaction.thresholdMessages > options.compaction.retainMessages + 2, 'Invalid context budget');
   return {
@@ -68,6 +76,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         invariant(typeof content === 'object' && content !== null && !Array.isArray(content), 'Invalid checkpoint content');
         const snapshot = content as unknown as Snapshot;
         invariant(snapshot.schema === SHELL_REVISION && Array.isArray(snapshot.messages) && Array.isArray(snapshot.observationIds), 'Invalid checkpoint schema');
+        invariant((snapshot.provider ?? 'mistral') === provider, 'Checkpoint provider switch requires explicit context reconstruction');
         transcript = snapshot.messages.map(value => message(json(value)));
         invariant(snapshot.observationIds.every(id => typeof id === 'string') && identity(snapshot.observationIds) === identity(input.checkpoint.observationIds), 'Checkpoint observation index mismatch');
         observationIds = [...snapshot.observationIds];
@@ -87,7 +96,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         });
       }
       async function save(): Promise<void> {
-        const content = json({ schema: SHELL_REVISION, messages: transcript, observationIds, status, compactions, ...(failure ? { failure } : {}) });
+        const content = json({ schema: SHELL_REVISION, provider, messages: transcript, observationIds, status, compactions, ...(failure ? { failure } : {}) });
         checkpoint = await bridge.persistCheckpoint(input.run.id, input.run.revision, SHELL_REVISION, content);
         validateCheckpoint(checkpoint, input.run);
         invariant(checkpoint.shell === SHELL_REVISION && checkpoint.artifact.sha256 === identity(content), 'Checkpoint receiver returned another artifact');
@@ -96,13 +105,13 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       const records = new Map<string, PhysicalRequest>();
       const started = new Map<string, number>();
       let currentFragments = fragments;
-      const transport = createMistralTransport({ ...options,
+      const transport = (provider === 'openai' ? createOpenAITransport : createMistralTransport)({ ...options,
         async reserve(attempt: Attempt) {
           const toolFragment: PromptFragment = { id: 'shell.tools', owner: 'tool', role: 'tool', order: Math.max(-1, ...currentFragments.map(fragment => fragment.order)) + 1, artifact: { uri: `shell:tools:${digest(JSON.stringify(tools))}`, sha256: digest(JSON.stringify(tools)) }, scope: input.run.scope, replaceable: true, derivedFrom: [] };
           const manifest: PromptManifest = { id: `${input.prompt.id}:${attempt.id}`, fragments: [...currentFragments, toolFragment], requestDigest: attempt.digest };
           validatePromptManifest(manifest);
           await bridge.capturePrompt(manifest, attempt.payload);
-          const request: PhysicalRequest = { id: attempt.id, runId: input.run.id, purpose: attempt.purpose, provider: 'mistral', model: attempt.model, promptManifestId: manifest.id, requestDigest: attempt.digest, reservationId: `request:${attempt.id}`, status: 'reserved', usage: options.reservationEstimate?.(attempt) ?? { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
+          const request: PhysicalRequest = { id: attempt.id, runId: input.run.id, purpose: attempt.purpose, provider, model: attempt.model, promptManifestId: manifest.id, requestDigest: attempt.digest, reservationId: `request:${attempt.id}`, status: 'reserved', usage: options.reservationEstimate?.(attempt) ?? { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
           await bridge.reserve(request); records.set(attempt.id, request); started.set(attempt.id, performance.now());
         },
         async dispatched(attempt: Attempt) { await bridge.dispatched({ ...records.get(attempt.id)!, status: 'dispatched' }); },
@@ -165,7 +174,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
             transcript.push(toolResult(call, observation, (item as Message & { aeonStepId: string }).aeonStepId)); results.add(resultKey(item, call.id)); await save();
           }
         }
-        const model = mistralModel(options.model, options.modelProfile);
+        const model = provider === 'openai' ? openaiModel(options.model!, options.modelProfile) : mistralModel(options.model, options.modelProfile);
         stage = 'model';
         await runAgentLoopContinue({ messages: [system(), ...continuationMessages()], tools: wrapped }, {
           model, convertToLlm: messages => messages, toolExecution: 'sequential',
@@ -177,7 +186,10 @@ export function createAgentShell(options: ShellOptions): ShellPort {
               let boundary = transcript.length - options.compaction.retainMessages;
               while (boundary > 0 && transcript[boundary].role === 'toolResult') boundary--;
               const prefix = transcript.slice(0, boundary); const suffix = transcript.slice(boundary);
-              if (prefix.length > 0) {
+              // Stateless OpenAI native reasoning/calls cannot be discarded by a prose summary.
+              // Compact only when user-history reduction actually removes entries.
+              const retainedNative = provider === 'openai' ? prefix.filter(item => item.role === 'assistant' || item.role === 'toolResult') : [];
+              if (prefix.length - retainedNative.length > (provider === 'openai' ? 1 : 0)) {
                 stage = 'compaction';
                 const fragment = options.compaction.instruction; const instruction = await resolve(fragment);
                 currentFragments = [...fragments, { ...fragment, order: Math.max(-1, ...fragments.map(item => item.order)) + 1 }];
@@ -186,7 +198,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
                 currentFragments = fragments; transport.setPurpose('reasoning');
                 invariant(summary.stopReason === 'stop' && !summary.content.some(block => block.type === 'toolCall'), 'Compaction failed; original context retained');
                 compactions.push({ sourceDigest: identity(json(prefix)), summary: structuredClone(summary) });
-                transcript = [{ role: 'user', content: summary.content.filter(block => block.type === 'text'), timestamp: Date.now() }, ...suffix];
+                transcript = [{ role: 'user', content: summary.content.filter(block => block.type === 'text'), timestamp: Date.now() }, ...retainedNative, ...suffix];
                 await save();
                 stage = 'model';
               }

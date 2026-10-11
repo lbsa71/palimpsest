@@ -14,8 +14,8 @@ import { ToolEffectReceiver, toolDefinitions, type ToolGrant } from '../packages
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { createBrokerShell } from './broker-shell.ts';
-import { mistralGateway, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
-import { validateConfiguration, type ApplicationConfig, type ApplicationSecrets } from './config.ts';
+import { providerGateway, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
+import { selectedProviderKey, validateConfiguration, type ApplicationConfig, type ApplicationSecrets } from './config.ts';
 import { mindDevelopmentTools } from './development-tools.ts';
 import { AccountedConsolidation } from './consolidation.ts';
 import { ConversationObligations } from './obligation-tools.ts';
@@ -59,7 +59,7 @@ export class AutarkApplication {
   private readonly rootAllocation = 'operating-envelope:v1';
   constructor(options: ApplicationOptions) {
     this.options = options; this.config = validateConfiguration(options.config);
-    const config = this.config; options.authorityStore.assert(options.authority);
+    const config = this.config; selectedProviderKey(config.model, options.secrets); options.authorityStore.assert(options.authority);
     invariant(options.authorityStore.current()?.artifactId === config.artifactId && options.authority.controlRevision === config.controlRevision, 'Application differs from admitted authority');
     this.lease = options.lease ?? new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     try {
@@ -105,7 +105,7 @@ export class AutarkApplication {
         const parentTask = this.store.list<{ result?: { childRunId: string }; depth: number }>('delegations').find(row => row.value.result?.childRunId === runId);
         const assignedDepth = this.store.get<{ depth: number }>('host.child-runs', runId)?.value.depth ?? parentTask?.value.depth ?? 0;
         return { scope: grant.scope, writableRoots: [childrenRoot], allowedEffects: this.toolGrant(runId).actions.filter(name => name !== 'speech_send'), resources: config.conversationResources,
-          modelProfiles: [{ provider: 'mistral', model: config.model.id, effort: config.model.reasoning ? config.model.effort : null }], currentDepth: assignedDepth, maxDepth: 2, maxChildren: 8, maxConcurrency: 2 };
+          modelProfiles: [{ provider: config.model.provider ?? 'mistral', model: config.model.id, effort: config.model.reasoning ? config.model.effort : null }], currentDepth: assignedDepth, maxDepth: 2, maxChildren: 8, maxConcurrency: 2 };
       },
       artifactScope: artifact => { const record = this.store.get<{ scope: DataScope }>('host.artifact-scopes', artifact.sha256); invariant(record, 'Artifact has no authenticated disclosure scope'); return record.value.scope; },
       executeChild: async (task, signal) => {
@@ -148,13 +148,13 @@ export class AutarkApplication {
       const tools = [...permittedTools.map(tool => ({ ...tool, parameters: tool.parameters as unknown as Tool['parameters'] })), ...descriptors.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema as Tool['parameters'] }))];
       const broker = createBrokerShell({ applicationRoot: config.applicationRoot, entrypoint: config.workerEntrypoint, workspace: () => record.workspace,
         protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
-        worker: { model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
+        worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
           compaction: { thresholdMessages: 60, retainMessages: 20, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
         timeoutMs: Math.min(config.conversationResources.maxElapsedMs, config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
         assertAuthority: () => options.authorityStore.assert(input.run.authority),
-        performRequest: options.performRequest ?? mistralGateway({ apiKey: () => options.secrets.mistralApiKey, maxResponseBytes: 2_000_000 }), recordTransport: transportRecorder(this.store) });
+        performRequest: options.performRequest ?? providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, options.secrets), maxResponseBytes: 2_000_000 }), recordTransport: transportRecorder(this.store) });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.goals.all(input.run.scope), obligations: this.conversationObligations.visible(record.target), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
       return broker.run({ ...input, messages: [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
     } };
@@ -162,7 +162,12 @@ export class AutarkApplication {
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);
     this.communications = new CommunicationsCore({ store: this.store, runtime: this.runtime,
       grant: () => ({ authority: options.authority, resources: config.conversationResources, parentRunId: this.rootAllocation }),
-      onReady: run => { if (!this.closing) { this.ingestCommunications(run); this.enqueue(run.id); void this.tick().catch(() => undefined); } } });
+      onReady: run => {
+        // Admission notifications are deferred. A concurrent tick may have already
+        // consumed the initial ready state; enqueueing it again would retry a failed turn.
+        if (run.status === 'ready' && this.runtime.getRun(run.id)?.status !== 'ready') return;
+        if (!this.closing) { this.ingestCommunications(run); this.enqueue(run.id); void this.tick().catch(() => undefined); }
+      } });
     if (!this.store.get('allocations', 'initiative:ordinary')) this.resources.allocate('initiative:ordinary', config.scheduler.resources, this.rootAllocation);
     this.scheduler = new FairScheduler(this.store, this.goals, this.obligations, 'ordinary', config.scheduler, Date.now());
     this.initiative = new InitiativeRunner({ scheduler: this.scheduler, runtime: this.runtime, memory: this.memory, authority: options.authority,

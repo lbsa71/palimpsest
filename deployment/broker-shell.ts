@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { identity, invariant, scopeAllows, validateCapturedPrompt, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
   type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
+import { completedOpenAIOutput, openaiOutput } from '../packages/agent-shell/openai.ts';
 import type { ShellOptions } from '../packages/agent-shell/index.ts';
 import { runWorker } from '../packages/supervisor/worker-process.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
@@ -37,6 +38,8 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Model iteration is confined; credentials, reservations, receipts and tools remain in the host. */
 export function createBrokerShell(options: BrokerShellOptions): ShellPort {
+  const provider = options.worker.provider ?? 'mistral';
+  invariant(provider === 'mistral' || provider === 'openai', 'Unsupported broker provider');
   invariant(options.worker.model && !options.worker.model.includes('latest'), 'Broker needs an explicitly pinned model');
   invariant(/^[a-zA-Z0-9_./-]+\.(ts|js)$/.test(options.entrypoint) && !options.entrypoint.split('/').includes('..'), 'Invalid worker entrypoint');
   for (const price of Object.values(options.pricesPerMillion)) invariant(Number.isFinite(price) && price >= 0, 'Invalid configured token price');
@@ -98,15 +101,32 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const compaction = !!options.worker.compaction && identity(manifest.fragments) === identity(expectedFragments(true));
               invariant(normal || compaction, 'Worker changed owned prompt provenance');
               const decoded = JSON.parse(payload) as Record<string, unknown>;
-              invariant(Object.keys(decoded).every(key => ['model', 'messages', 'tools', 'tool_choice', 'reasoning_effort', 'stream', 'max_tokens'].includes(key)), 'Unqualified provider option');
               const expectedSystem = baseFragments.map(fragment => fragments[fragment.artifact.sha256]).join('\n\n') + (compaction ? `\n\n${fragments[options.worker.compaction!.instruction.artifact.sha256]}` : '');
-              const messages = decoded.messages as { role: string; content: unknown }[];
-              invariant(Array.isArray(messages) && messages[0]?.role === 'system' && messages[0].content === expectedSystem && messages.slice(1).every(message => ['user', 'assistant', 'tool'].includes(message.role)), 'Worker changed owned system instructions');
-              const expectedTools = compaction ? [] : options.worker.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
+              let expectedTools: unknown[];
+              if (provider === 'openai') {
+                invariant(Object.keys(decoded).every(key => ['model', 'instructions', 'input', 'tools', 'tool_choice', 'reasoning', 'store', 'include', 'stream', 'max_output_tokens'].includes(key)), 'Unqualified provider option');
+                invariant(decoded.instructions === expectedSystem && Array.isArray(decoded.input), 'Worker changed owned system instructions');
+                for (const raw of decoded.input) {
+                  invariant(raw && typeof raw === 'object' && !Array.isArray(raw), 'Invalid Responses input');
+                  const item = raw as Record<string, unknown>;
+                  if (item.role === 'user') invariant(Object.keys(item).every(key => ['role', 'content'].includes(key)) && typeof item.content === 'string', 'Unowned Responses user instructions');
+                  else if (item.type === 'function_call_output') invariant(Object.keys(item).every(key => ['type', 'call_id', 'output'].includes(key)) && typeof item.call_id === 'string' && typeof item.output === 'string', 'Invalid Responses tool output');
+                  else openaiOutput([item]);
+                }
+                expectedTools = compaction ? [] : options.worker.tools.map(tool => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }));
+                invariant(decoded.store === false && identity(decoded.include) === identity(['reasoning.encrypted_content']), 'Unqualified Responses state profile');
+                invariant(identity(decoded.reasoning ?? null) === identity(options.worker.reasoningEffort ? { effort: options.worker.reasoningEffort } : null), 'Unqualified reasoning effort');
+                invariant(decoded.max_output_tokens === (options.worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
+              } else {
+                invariant(Object.keys(decoded).every(key => ['model', 'messages', 'tools', 'tool_choice', 'reasoning_effort', 'stream', 'max_tokens'].includes(key)), 'Unqualified provider option');
+                const messages = decoded.messages as { role: string; content: unknown }[];
+                invariant(Array.isArray(messages) && messages[0]?.role === 'system' && messages[0].content === expectedSystem && messages.slice(1).every(message => ['user', 'assistant', 'tool'].includes(message.role)), 'Worker changed owned system instructions');
+                expectedTools = compaction ? [] : options.worker.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
+                invariant(decoded.max_tokens === (options.worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
+                invariant(decoded.reasoning_effort === options.worker.reasoningEffort, 'Unqualified reasoning effort');
+              }
               invariant(identity(decoded.tools ?? []) === identity(expectedTools) && decoded.tool_choice === (expectedTools.length ? 'auto' : undefined), 'Worker changed owned tools');
               invariant(decoded.model === options.worker.model && decoded.stream === false, 'Unqualified provider profile');
-              invariant(decoded.max_tokens === (options.worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
-              invariant(decoded.reasoning_effort === options.worker.reasoningEffort, 'Unqualified reasoning effort');
               await bridge.capturePrompt(manifest, payload);
               captured.set(manifest.id, { manifest, payload });
               return null;
@@ -114,7 +134,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
             case 'reserve': {
               const request = args[0] as unknown as PhysicalRequest;
               validatePhysicalRequest(request);
-              invariant(request.runId === input.run.id && request.provider === 'mistral' && request.model === options.worker.model, 'Foreign worker request');
+              invariant(request.runId === input.run.id && request.provider === provider && request.model === options.worker.model, 'Foreign worker request');
               invariant(!records.has(request.id), 'Duplicate worker request identity');
               const capture = captured.get(request.promptManifestId);
               invariant(capture?.manifest.requestDigest === request.requestDigest, 'Uncaptured worker request');
@@ -156,15 +176,24 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                 invariant(Buffer.byteLength(response.body) <= options.maxPayloadBytes, 'Provider response too large');
                 receipt.httpStatus = response.status; receipt.responseDigest = hash(response.body);
                 if (response.status >= 200 && response.status < 300) {
-                  const body = JSON.parse(response.body) as { usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string };
+                  const body = JSON.parse(response.body) as { usage?: Record<string, unknown>; model?: string; id?: string; status?: string; output?: unknown };
                   receipt.responseModel = typeof body.model === 'string' ? body.model : null;
                   const usage = body.usage;
-                  if (Number.isSafeInteger(usage?.prompt_tokens) && Number.isSafeInteger(usage?.completion_tokens) && usage!.prompt_tokens! >= 0 && usage!.completion_tokens! >= 0) {
-                    receipt.usage.inputTokens = usage!.prompt_tokens!; receipt.usage.outputTokens = usage!.completion_tokens!;
-                    receipt.usage.costUsd = (usage!.prompt_tokens! * options.pricesPerMillion.input + usage!.completion_tokens! * options.pricesPerMillion.output) / 1_000_000;
+                  const inputTokens = usage?.[provider === 'openai' ? 'input_tokens' : 'prompt_tokens'];
+                  const outputTokens = usage?.[provider === 'openai' ? 'output_tokens' : 'completion_tokens'];
+                  if (Number.isSafeInteger(inputTokens) && Number.isSafeInteger(outputTokens) && Number(inputTokens) >= 0 && Number(outputTokens) >= 0) {
+                    receipt.usage.inputTokens = Number(inputTokens); receipt.usage.outputTokens = Number(outputTokens);
+                    receipt.usage.costUsd = (Number(inputTokens) * options.pricesPerMillion.input + Number(outputTokens) * options.pricesPerMillion.output) / 1_000_000;
                   }
                   receipt.status = 'succeeded';
-                } else if (response.status === 429) receipt.status = 'failed';
+                  if (provider === 'openai') {
+                    try {
+                      invariant(body.status === 'completed' && typeof body.id === 'string' && body.id.length > 0 && typeof body.model === 'string' && body.model.length > 0, 'Invalid Responses completion');
+                      completedOpenAIOutput(body.output);
+                      invariant(usage === undefined || usage === null || receipt.usage.inputTokens !== null, 'Invalid Responses usage');
+                    } catch { receipt.status = 'failed'; }
+                  }
+                } else if (response.status >= 400 && response.status < 500) receipt.status = 'failed';
                 return json(response);
               } finally {
                 receipt.usage.elapsedMs = performance.now() - started;

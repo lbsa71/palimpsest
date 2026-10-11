@@ -308,6 +308,8 @@ export interface AssistantMessage {
 	provider: ProviderId;
 	model: string;
 	responseModel?: string; // Concrete model reported by the provider when different from the requested `model`
+	/** Complete stateless Responses output, retained verbatim for replay. */
+	openaiOutput?: JsonValue[];
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
 	providerThinkingLevel?: string;

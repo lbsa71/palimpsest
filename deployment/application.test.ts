@@ -422,3 +422,48 @@ test('child admission cannot leave an ordinary run when child authority registra
     assert.deepEqual(app.store.list('host.run-grants').map(row => row.key), [parent.id]);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test('explicit OpenAI application uses actual host tools and speech with native Responses continuation and only its selected secret', async () => {
+  const f = fixture(); f.config.model = { ...f.config.model, provider: 'openai', id: 'openai-fixture-v1', reasoning: true, effort: 'high' }; let app: AutarkApplication | undefined; let calls = 0;
+  const history: unknown[][] = [];
+  try {
+    assert.throws(() => new AutarkApplication({ ...f, secrets: { mistralApiKey: 'unused', directToken: 'fixture' }, async performRequest() { throw Error('No dispatch'); } }), /Selected provider credential/);
+    app = new AutarkApplication({ ...f, secrets: { openaiApiKey: 'selected-private-fixture', directToken: 'fixture' }, async performRequest(payload) {
+      assert.ok(!payload.includes('selected-private-fixture')); const request = JSON.parse(payload); assert.equal(request.model, 'openai-fixture-v1'); assert.deepEqual(request.reasoning, { effort: 'high' });
+      const frame = request.input.filter((item: any) => item.role === 'user').map((item: any) => { try { return JSON.parse(item.content); } catch { return {}; } }).findLast((item: any) => item.hostContext).hostContext;
+      for (const prior of history) for (const item of prior) assert.ok(request.input.some((candidate: unknown) => JSON.stringify(candidate) === JSON.stringify(item)));
+      calls++; const output: any[] = [{ type: 'reasoning', id: `reason_${calls}`, summary: [], encrypted_content: `opaque_${calls}` }];
+      if (calls < 3) {
+        output.push({ type: 'message', id: `msg_${calls}`, role: 'assistant', status: 'completed', phase: 'commentary', content: [{ type: 'output_text', text: 'Execute and inspect.', annotations: [] }] });
+        const args = calls === 1 ? { path: 'verified.txt', content: 'Actual OpenAI fixture tool observation', expectedSha256: null } : { channel: frame.target.channel, text: 'I wrote and verified the fixture artifact.', kind: 'message' };
+        output.push({ type: 'function_call', id: `fc_${calls}`, call_id: `call_${calls}`, name: calls === 1 ? 'workspace_write' : 'speech_send', arguments: JSON.stringify(args), status: 'completed' });
+        if (calls === 2) assert.ok(request.input.some((item: any) => item.type === 'function_call_output' && item.call_id === 'call_1'));
+      } else output.push({ type: 'message', id: 'msg_final', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: 'Verified.', annotations: [] }], status: 'completed' });
+      history.push(output); return { status: 200, body: JSON.stringify({ id: `resp_${calls}`, status: 'completed', model: 'openai-fixture-v1', output, usage: { input_tokens: 100, output_tokens: 20 } }) };
+    } });
+    const run = receive(app, f, 'openai'); await app.tick(); await eventually(() => app!.runtime.getRun(run.id), value => ['completed', 'blocked', 'waiting'].includes(value?.status ?? ''));
+    assert.equal(app.runtime.getRun(run.id)?.status, 'completed', JSON.stringify(app.store.get('execution', run.id))); assert.equal(calls, 3); assert.equal(app.output(run.id).length, 1);
+    const grants = app.store.get<{ workspace: string }>('host.run-grants', run.id)!.value; assert.equal(readFileSync(join(grants.workspace, 'verified.txt'), 'utf8'), 'Actual OpenAI fixture tool observation');
+    assert.equal(app.store.list<any>('requests').filter(row => row.value.request.provider === 'openai').length, 3); assert.equal(app.resources.snapshot(run.id).tokens, 360);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+for (const invalid of ['unsupported-output', 'invalid-usage', 'incomplete'] as const) test(`OpenAI application blocks ${invalid} and settles trustworthy host usage independently`, async () => {
+  const f = fixture(); f.config.model = { ...f.config.model, provider: 'openai', id: 'openai-fixture-v1' }; let app: AutarkApplication | undefined;
+  try {
+    app = new AutarkApplication({ ...f, secrets: { openaiApiKey: 'selected-private-fixture', directToken: 'fixture' }, async performRequest() { return { status: 200, body: JSON.stringify({ id: 'resp_bad', model: 'openai-fixture-v1', status: invalid === 'incomplete' ? 'incomplete' : 'completed', output: invalid === 'unsupported-output' ? [{ type: 'web_search_call', id: 'ws_bad' }] : [{ type: 'message', id: 'msg_bad', role: 'assistant', content: [{ type: 'output_text', text: 'Partial.', annotations: [] }] }], usage: { input_tokens: invalid === 'invalid-usage' ? -1 : 10, output_tokens: 5 } }) }; } });
+    const run = receive(app, f, `invalid-${invalid}`); await app.tick(); await eventually(() => app!.runtime.getRun(run.id), value => ['completed', 'blocked', 'waiting'].includes(value?.status ?? ''));
+    assert.equal(app.runtime.getRun(run.id)?.status, 'blocked'); assert.equal(app.output(run.id).length, 0);
+    const receipt = app.store.list<any>('host-transport')[0].value; assert.equal(receipt.status, 'failed'); assert.equal(receipt.usage.inputTokens, invalid === 'invalid-usage' ? null : 10); assert.equal(receipt.usage.outputTokens, invalid === 'invalid-usage' ? null : 5);
+    const requests = app.store.list<any>('requests').filter(row => row.value.request.runId === run.id); assert.equal(requests.length, 1, JSON.stringify(requests)); assert.equal(requests[0].value.request.provider, 'openai'); assert.equal(requests[0].value.request.status, 'failed');
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('a deferred initial admission cannot retry a failed default Mistral provider turn after a concurrent tick', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let calls = 0;
+  try {
+    app = new AutarkApplication({ ...f, secrets, async performRequest() { calls++; return { status: 503, body: 'Unavailable fixture provider' }; } });
+    const run = receive(app, f, 'admission-race'); await app.tick(); await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'blocked');
+    await app.tick(); assert.equal(calls, 1); assert.equal(app.store.list('host.pending-runs').length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
