@@ -1,0 +1,200 @@
+
+> palimpsest@0.2.0 verify
+> npm run check && npm test && npm run build
+
+
+> palimpsest@0.2.0 check
+> tsc --noEmit
+
+
+> palimpsest@0.2.0 test
+> node deployment/test.mjs
+
+(node:723292) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real isolated Pi worker uses durable host tools and trusted model receipts (compaction: false) (1029.796162ms)
+✔ real isolated Pi worker uses durable host tools and trusted model receipts (compaction: true) (1002.918857ms)
+✔ a hostile worker cannot publish invented observations or call the provider without a reservation (120.330594ms)
+✔ host broker rejects forged prompt provenance and owns receipts: system (58.618881ms)
+✔ host broker rejects forged prompt provenance and owns receipts: manifest (59.881383ms)
+✔ host broker rejects forged prompt provenance and owns receipts: tools (51.438024ms)
+✔ host broker rejects forged prompt provenance and owns receipts: digest (58.793264ms)
+✔ host broker rejects forged prompt provenance and owns receipts: skip-settle (54.161991ms)
+✔ host broker rejects forged prompt provenance and owns receipts: crash-after-fetch (57.901887ms)
+(node:723294) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ gateway pins destination, supplies credentials only to fetch and bounds response streaming (44.831907ms)
+✔ a provider receipt settles after restart without repeating the physical request (110.28153ms)
+✔ baseline plan uses argument array and stdin without executing or inheriting ambient config (2.301671ms)
+✔ missing spend/resource cap and unpinned configuration are rejected before any invocation (0.744809ms)
+✔ C1 adapter preserves author-only mechanical evidence and checks referenced contents (9.220974ms)
+✔ accelerated fixture never qualifies live development (1.357968ms)
+✔ elapsed and independently observed receipt shape passes mechanical validation only (0.317662ms)
+✔ self-praise without later outcomes and controls fails (0.393893ms)
+✔ same-day transfer, disclosure, duplicate identity and disagreement cannot pass (0.328379ms)
+✔ all twelve reference scenarios execute and independently verify across held-out parameters (9.009842ms)
+✔ correct answer without required observations fails (2.280351ms)
+✔ duplicate uncertain effects fail even if final receipt looks correct (1.317966ms)
+✔ scope breaches remain failures even after successful repair (1.71282ms)
+✔ bounded actor actions fail closed (9.636893ms)
+✔ missing and duplicate case sets cannot become passing reports; reports cannot admit (5.767915ms)
+✔ real Pi loop observes tool failure, repairs it, verifies and completes with owned final payloads (67.435297ms)
+✔ physical 429 retry receives its own reservation; uncertain network failure is never retried (3.439253ms)
+✔ reservation and dispatch-fence failure prevents fetch; physical request limit blocks continuation (6.354196ms)
+✔ cancel propagates to fetch and accounts ambiguous dispatched outcome (2.346869ms)
+✔ pending effect is reconciled on restart using stable call id and current prompt replacement (7.704048ms)
+✔ uncertain effect blocks further tool dispatch and remains pending for reconciliation (5.246327ms)
+✔ provider tool IDs reused across turns remain distinct durable effects on restart (12.36651ms)
+✔ context reduction uses the same counted transport and preserves paired observations (4.860852ms)
+✔ explicit reasoning profile preserves complete native thinking chunks through tools and restart (10.804367ms)
+✔ reasoning compaction stores native metadata privately and uses only summary text as new context (4.419928ms)
+✔ steering becomes an observed request input before next model request (4.588561ms)
+✔ checkpoint corruption and cross-run replay fail before dispatch (2.205179ms)
+✔ tool argument validation and length-truncated calls never dispatch an effect (9.329406ms)
+✔ explicit continuation recovers error without replaying incomplete calls or deleting audit history (6.210934ms)
+✔ explicit continuation recovers aborted without replaying incomplete calls or deleting audit history (2.038093ms)
+✔ explicit continuation recovers length without replaying incomplete calls or deleting audit history (2.165792ms)
+✔ explicit continuation recovers truncated-tool without replaying incomplete calls or deleting audit history (2.460885ms)
+✔ a final assistant checkpoint interrupted before terminal status resumes without another paid request (1.612849ms)
+▶ EventStream
+  ✔ drains buffered events in order and ignores events pushed after completion (6.338312ms)
+  ✔ preserves order when events arrive after buffered draining starts (2.307344ms)
+  ✔ delivers events to waiting consumers in registration order (0.505615ms)
+  ✔ drains buffered events after end and resolves the explicit result (0.572057ms)
+  ✔ wakes all waiting consumers when ended without a result (0.56732ms)
+✔ EventStream (15.415493ms)
+▶ AssistantMessageEventStream timing
+  ✔ sets durationMs on the final done or error message of a response it saw start (25.399872ms)
+  ✔ keeps an existing duration, so a forwarding stream keeps the inner measurement (20.935586ms)
+  ✔ leaves a message untimed when it started before the stream, such as a fetched deferred result (0.459554ms)
+  ✔ does not time a message pushed after the stream completed (0.334898ms)
+✔ AssistantMessageEventStream timing (47.798546ms)
+✔ immutable identity ignores property order and rejects lossy JSON (1.782441ms)
+✔ duplicate intake has same identity while revision or source changes do not (0.758329ms)
+✔ uncertain delivery cannot dispatch again; reconciliation preserves effect identity (1.432351ms)
+✔ unresolved effects remain uncertain and confirmed nonapplication requires a new intent (0.46879ms)
+✔ stale generation is fenced even when epoch matches (0.478942ms)
+✔ checkpoint belongs to durable run and exact state revision, including cancelled run (0.423191ms)
+✔ a summary preserves provenance and cannot widen private audience or become an observation (0.812016ms)
+✔ paused goal and forgotten memory leave a separate owed obligation (0.597499ms)
+✔ goal completion needs evidence and waiting requires a wakeup (0.449223ms)
+✔ speech admission does not imply eligibility to originate human modifications (0.507443ms)
+✔ owned prompt instructions must be replaceable and final payload artifact must match (0.473307ms)
+✔ physical retries are separately accounted and unknown usage is not zero (0.426932ms)
+✔ candidate identity covers source, dependencies, prompts, model, config and controls (1.12626ms)
+✔ release rejects self-review, untrusted evidence and substituted candidates or controls (1.468368ms)
+✔ missing comparator or invalid evidence cannot be converted into a pass (0.557439ms)
+✔ cancellation is terminal for execution without deleting uncertain external effects (0.324102ms)
+✔ provider request capture detects byte-level payload drift (0.324713ms)
+(node:723364) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ two real child ShellPort runs join actual isolated file/test artifacts; parent inspects then accepts or rejects (656.958098ms)
+✔ delegation validates depth/model/resources/provenance and retains uncertain restart without replay (73.029058ms)
+(node:723373) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ attribution is separate from interpretation, social input carries no execution authority (56.617909ms)
+✔ old experience survives fifteen exchanges and reopen with explicit expansion and provenance (124.99973ms)
+✔ scope contains every recipient, including retrieval, derivation and bound tool arguments (69.08947ms)
+✔ whole-record byte limits preserve attribution and skip an oversized highest-ranked record (65.793261ms)
+✔ contradictions coexist and a correction supersedes retrieval without rewriting original evidence (68.243411ms)
+✔ a correction with narrower audience does not hide the public claim for another recipient (69.724745ms)
+✔ adopted preference changes a later fixture choice, revises with reasons, and persists after restart (103.643987ms)
+✔ self facets and old self revisions retain audience and source evidence boundaries (53.953304ms)
+✔ forgetting erases multilevel descendants, self revisions and jobs, and cannot resurrect IDs (76.115258ms)
+✔ retention deadlines propagate and expire removes derived content instead of merely excluding it (44.522106ms)
+✔ consolidation restarts from leased work and fences the interrupted worker (68.590917ms)
+✔ consolidation output and completion commit atomically; failed partial batches and widened scope roll back (79.357698ms)
+✔ forgetting during consolidation cancels output and source expiry prevents late completion (91.031809ms)
+✔ procedural learning keeps test observations and uncertainty instead of becoming an observation (48.690776ms)
+✔ C1 async adapter prevents metadata bypass and retrieval limit is available to memories (50.774104ms)
+✔ the consolidation tool binds audience and keeps queueing distinct from completed interpretation (39.860972ms)
+(node:723449) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ stale receiver grant cannot dispatch; payload identity conflicts rejected (55.408178ms)
+✔ late receipt after recovery/withdrawal settles old generation without allowing replay (83.883539ms)
+✔ reconciliation admission rejects stale grants while current generation can settle old effects (93.380016ms)
+(node:723520) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ goal revisions/dependencies/reasons survive reopen; terminal evidence and allowance cannot disappear (85.970375ms)
+✔ experience supplies all four adopted dimensions and concrete inquiry; no seeded questions or identities (152.402079ms)
+✔ targeted failure replans; self-agreement cannot complete without observed successful evidence (53.89821ms)
+✔ round robin preserves active conversation and inquiry under new input; windows preserve lifetime and restart queues (208.181671ms)
+✔ idle and future wakeups make no allocation or repeated model call; paused/blocked await explicit reconsideration (77.398694ms)
+✔ owes outcome independently of goal; confirmed report receipt alone clears it (137.518748ms)
+✔ machine plan retains Aeon Lane Task ownership/evidence and rejects dependency loops (82.131204ms)
+✔ model tool descriptors capture audience, enforce host resource ceiling and permit independent goal adoption (72.499578ms)
+✔ unattended actual Pi/runtime/memory cycles resume after window and restart with retained total physical usage (952.042155ms)
+ℹ unattended trace: 3 observations, 6 fixture model requests, 9 total physical requests retained across restart
+✔ restart during checkpointed inquiry resumes same runtime, goal allocation and observation without new message (254.428389ms)
+✔ targeted runtime failure changes next observation and goal lifetime accounting does not reset on later steps (384.234208ms)
+✔ bounded quantum yields to next conversation, and repeated empty progress stops at declared stall limit (323.607366ms)
+✔ progress callback retains owed outcome and backs off repeated delivery attempts (65.288763ms)
+✔ artifact identity survives source edits while frozen payload tampering invalidates admission (14.027817ms)
+✔ self-report, forged authentication, changed evidence and stale authority cannot admit (12.180127ms)
+✔ the candidate cannot replace controls judging the same transaction (9.018405ms)
+✔ frozen required cases cannot silently change and recovery bytes must be retained (12.986389ms)
+✔ hardlinks and escaping paths cannot smuggle mutable external files into a candidate (3.038766ms)
+(node:723534) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ retries, compaction, reviewers and children share ceiling; unknown usage survives reopen (79.374829ms)
+✔ cancelled child does not cancel parent; cancelled parent bars every descendant (66.935681ms)
+✔ request immutable identity and deadline enforced before dispatch; over-ceiling usage freezes budget (59.817826ms)
+✔ narrow child grant cannot borrow unallocated requests from a roomy parent (86.5174ms)
+(node:723541) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ duplicate admission retains one run; multi-step failure changes action and completes (183.145021ms)
+✔ SIGKILL after checkpoint reopens SQLite and resumes from actual retained observation (831.946289ms)
+✔ SIGKILL during dispatch preserves uncertainty and never replays; old grant reconciliation permits takeover (667.174906ms)
+✔ cancellation withdraws run effects and persists through reopen (82.614439ms)
+✔ bridges reject foreign physical receipts and checkpoint artifacts; cancelled checkpoint writes are refused (87.922531ms)
+✔ shell results cannot invent authoritative observation receipts (71.401584ms)
+✔ shell results cannot invent authoritative checkpoint receipts (72.935216ms)
+✔ SIGKILL at pending permits explicit adoption of never-dispatched effects (686.46165ms)
+✔ SIGKILL at authorized permits explicit adoption of never-dispatched effects (668.588425ms)
+✔ SIGKILL at resource-dispatched permits explicit adoption of never-dispatched effects (672.315405ms)
+✔ resource and effect dispatch intent commit together before the receiver and roll back together on failure (129.371239ms)
+(node:723548) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ selected Pi shell + durable bridge observe failure, repair and verify with complete request accounting (639.672595ms)
+✔ selected shell resumes a persisted assistant tool call after unknown outcome reconciliation without effect replay (293.383043ms)
+✔ SIGKILL of selected Pi host reopens retained checkpoint and continues without repeating inspection (886.961541ms)
+(node:723584) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ atomic projection/event rollback, CAS and reopened artifacts (70.717694ms)
+✔ checkout state and asynchronous transactions are refused (40.832378ms)
+✔ dot-dot named checkout children and symlink aliases are rejected (1.53394ms)
+✔ incompatible and partially forged schemas produce open diagnostics (100.118354ms)
+(node:723598) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ independent receivers fence an old worker and persist withdrawal across restart (56.924933ms)
+✔ recovery can grant retained code a newer authority without a model (50.47677ms)
+✔ real confined process can edit workspace but cannot see private state, host env or host processes (66.638807ms)
+✔ overlapping state mount is refused before spawning (1.696371ms)
+✔ a preexisting hardlink into protected state is refused before spawning (0.929742ms)
+✔ timeout terminates the namespace including a child that creates a new process group (1418.065099ms)
+✔ stream output and cancellation limits stop real commands (118.302684ms)
+(node:723612) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ exclusive supervisor lease rejects overlap and recovers after actual process death (153.438491ms)
+✔ isolated worker receives only host-approved RPC results (57.73509ms)
+✔ duplicate RPC IDs and malformed protocol cannot bypass the host (50.983172ms)
+✔ worker refusal is redacted and cancellation reaches an in-flight handler (67.228235ms)
+(node:723688) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real discover/search/read/CAS patch/move/diff/delete and symlink/hardlink boundaries (700.940594ms)
+✔ ordinary durable shell bridge inspects, observes failed real test, edits, repairs, verifies and retains restart artifacts (377.958185ms)
+✔ bounded commands cancel descendants, enforce output limit and reject ungranted executable (1234.594077ms)
+✔ public research validation rejects credentials, private IPs, mapped IPv6, host and redirect targets (9.693391ms)
+✔ queued effect rechecks authority at actual dispatch and explicit speech delegates to its receiver (289.284291ms)
+ℹ tests 145
+ℹ suites 2
+ℹ pass 145
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10184.247309
+
+> palimpsest@0.2.0 build
+> tsc --noEmit false --rewriteRelativeImportExtensions --outDir dist
+

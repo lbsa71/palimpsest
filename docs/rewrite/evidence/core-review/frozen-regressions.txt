@@ -1,0 +1,392 @@
+(node:724075) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real isolated Pi worker uses durable host tools and trusted model receipts (compaction: false) (1717.210077ms)
+✔ real isolated Pi worker uses durable host tools and trusted model receipts (compaction: true) (1186.586724ms)
+✔ a hostile worker cannot publish invented observations or call the provider without a reservation (106.863702ms)
+✖ host broker rejects forged prompt provenance and owns receipts: system (74.038486ms)
+✖ host broker rejects forged prompt provenance and owns receipts: manifest (62.154945ms)
+✖ host broker rejects forged prompt provenance and owns receipts: tools (58.838772ms)
+✖ host broker rejects forged prompt provenance and owns receipts: digest (59.838449ms)
+✖ host broker rejects forged prompt provenance and owns receipts: skip-settle (80.686022ms)
+✖ host broker rejects forged prompt provenance and owns receipts: crash-after-fetch (126.594485ms)
+✔ real Pi loop observes tool failure, repairs it, verifies and completes with owned final payloads (95.349697ms)
+✔ physical 429 retry receives its own reservation; uncertain network failure is never retried (5.036805ms)
+✔ reservation and dispatch-fence failure prevents fetch; physical request limit blocks continuation (8.987052ms)
+✔ cancel propagates to fetch and accounts ambiguous dispatched outcome (3.456789ms)
+✔ pending effect is reconciled on restart using stable call id and current prompt replacement (14.334544ms)
+✔ uncertain effect blocks further tool dispatch and remains pending for reconciliation (6.23221ms)
+✔ provider tool IDs reused across turns remain distinct durable effects on restart (26.241736ms)
+✔ context reduction uses the same counted transport and preserves paired observations (5.716255ms)
+✔ explicit reasoning profile preserves complete native thinking chunks through tools and restart (12.791767ms)
+✔ reasoning compaction stores native metadata privately and uses only summary text as new context (11.1613ms)
+✔ steering becomes an observed request input before next model request (7.343984ms)
+✔ checkpoint corruption and cross-run replay fail before dispatch (5.505448ms)
+✔ tool argument validation and length-truncated calls never dispatch an effect (23.754312ms)
+✖ explicit continuation recovers error without replaying incomplete calls or deleting audit history (14.429197ms)
+✖ explicit continuation recovers aborted without replaying incomplete calls or deleting audit history (3.923861ms)
+✖ explicit continuation recovers length without replaying incomplete calls or deleting audit history (2.552536ms)
+✖ explicit continuation recovers truncated-tool without replaying incomplete calls or deleting audit history (5.787741ms)
+✖ a final assistant checkpoint interrupted before terminal status resumes without another paid request (4.51245ms)
+(node:724088) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ stale receiver grant cannot dispatch; payload identity conflicts rejected (38.424075ms)
+✔ late receipt after recovery/withdrawal settles old generation without allowing replay (38.471021ms)
+✖ reconciliation admission rejects stale grants while current generation can settle old effects (34.971482ms)
+(node:724133) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ duplicate admission retains one run; multi-step failure changes action and completes (341.819163ms)
+✔ SIGKILL after checkpoint reopens SQLite and resumes from actual retained observation (1216.285392ms)
+✔ SIGKILL during dispatch preserves uncertainty and never replays; old grant reconciliation permits takeover (788.243195ms)
+✔ cancellation withdraws run effects and persists through reopen (80.123526ms)
+✔ bridges reject foreign physical receipts and checkpoint artifacts; cancelled checkpoint writes are refused (108.240483ms)
+✖ shell results cannot invent authoritative observation receipts (101.070985ms)
+✖ shell results cannot invent authoritative checkpoint receipts (92.127537ms)
+✖ SIGKILL at pending permits explicit adoption of never-dispatched effects (990.199457ms)
+✖ SIGKILL at authorized permits explicit adoption of never-dispatched effects (981.261169ms)
+✖ SIGKILL at resource-dispatched permits explicit adoption of never-dispatched effects (863.971486ms)
+✖ resource and effect dispatch intent commit together before the receiver and roll back together on failure (108.77463ms)
+ℹ tests 41
+ℹ suites 0
+ℹ pass 23
+ℹ fail 18
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7010.890331
+
+✖ failing tests:
+
+test at deployment/broker-shell.test.ts:100:3
+✖ host broker rejects forged prompt provenance and owns receipts: system (74.038486ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/deployment/broker-shell.test.ts:140:19)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at deployment/broker-shell.test.ts:100:3
+✖ host broker rejects forged prompt provenance and owns receipts: manifest (62.154945ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/deployment/broker-shell.test.ts:140:19)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at deployment/broker-shell.test.ts:100:3
+✖ host broker rejects forged prompt provenance and owns receipts: tools (58.838772ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/deployment/broker-shell.test.ts:140:19)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at deployment/broker-shell.test.ts:100:3
+✖ host broker rejects forged prompt provenance and owns receipts: digest (59.838449ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/deployment/broker-shell.test.ts:140:19)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at deployment/broker-shell.test.ts:100:3
+✖ host broker rejects forged prompt provenance and owns receipts: skip-settle (80.686022ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/deployment/broker-shell.test.ts:142:42)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at deployment/broker-shell.test.ts:100:3
+✖ host broker rejects forged prompt provenance and owns receipts: crash-after-fetch (126.594485ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/deployment/broker-shell.test.ts:142:42)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/agent-shell/agent-shell.test.ts:194:3
+✖ explicit continuation recovers error without replaying incomplete calls or deleting audit history (14.429197ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'blocked'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/agent-shell/agent-shell.test.ts:211:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'blocked',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/agent-shell/agent-shell.test.ts:194:3
+✖ explicit continuation recovers aborted without replaying incomplete calls or deleting audit history (3.923861ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'blocked'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/agent-shell/agent-shell.test.ts:211:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'blocked',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/agent-shell/agent-shell.test.ts:194:3
+✖ explicit continuation recovers length without replaying incomplete calls or deleting audit history (2.552536ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'blocked'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/agent-shell/agent-shell.test.ts:211:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'blocked',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/agent-shell/agent-shell.test.ts:194:3
+✖ explicit continuation recovers truncated-tool without replaying incomplete calls or deleting audit history (5.787741ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/agent-shell/agent-shell.test.ts:205:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/agent-shell/agent-shell.test.ts:220:1
+✖ a final assistant checkpoint interrupted before terminal status resumes without another paid request (4.51245ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'blocked'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/agent-shell/agent-shell.test.ts:227:10)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'blocked',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/effects/test/effects.test.ts:24:1
+✖ reconciliation admission rejects stale grants while current generation can settle old effects (34.971482ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/effects/test/effects.test.ts:29:4)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /authority/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at packages/runtime/test/runtime.test.ts:54:62
+✖ shell results cannot invent authoritative observation receipts (101.070985ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+  
+  'completed'
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/runtime/test/runtime.test.ts:61:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'completed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages/runtime/test/runtime.test.ts:54:62
+✖ shell results cannot invent authoritative checkpoint receipts (92.127537ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+  
+  'completed'
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/runtime/test/runtime.test.ts:61:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'completed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at packages/runtime/test/runtime.test.ts:67:74
+✖ SIGKILL at pending permits explicit adoption of never-dispatched effects (990.199457ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'waiting'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/runtime/test/runtime.test.ts:77:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'waiting',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/runtime/test/runtime.test.ts:67:74
+✖ SIGKILL at authorized permits explicit adoption of never-dispatched effects (981.261169ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'waiting'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/runtime/test/runtime.test.ts:77:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'waiting',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/runtime/test/runtime.test.ts:67:74
+✖ SIGKILL at resource-dispatched permits explicit adoption of never-dispatched effects (863.971486ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'waiting'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/runtime/test/runtime.test.ts:77:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'waiting',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at packages/runtime/test/runtime.test.ts:85:1
+✖ resource and effect dispatch intent commit together before the receiver and roll back together on failure (108.77463ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'dispatched'
+  - 'reserved'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/core-review/packages/runtime/test/runtime.test.ts:97:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'dispatched',
+    expected: 'reserved',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
