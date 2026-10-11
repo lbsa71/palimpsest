@@ -1,6 +1,6 @@
 # A1-L02 — selected agent shell and qualification
 
-Status: **implementing**. Session owner for implementation: **Codex /root/a1_shell**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); [ADR 0032](../../adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi agent core; [qualification](../agent-shell-decision.md) defines Q1–Q5. The 2026-10-11 source/decision subtask is recorded, not completion of this lane.
+Status: **reviewing engineering disposition; live Q3 remains open**. Current disposition owner: **Codex /root/a1_shell_disposition**; original implementation owner: **Codex /root/a1_shell**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); [ADR 0032](../../adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi agent core; [qualification](../agent-shell-decision.md) defines Q1–Q5. The 2026-10-11 source/decision subtask is recorded, not completion of this lane.
 
 Requirements: [RW01, RW02, RW04, RW05, RW13, RW16, RW17, RW19, RW21](../../../REQUIREMENTS.md).
 
@@ -39,12 +39,12 @@ Owned by the lead who claims implementation; update before concurrent edits.
 
 | Field | Current value |
 |---|---|
-| Owner session | Codex /root/a1_shell; implementation session 1, deterministic fixtures only |
-| Branch / worktree | `codex/a1-shell-20261011`; `/home/palimpsest/migration/aeon-1-20261011/shell` |
-| Base source / contract revision | Base `14c7420`; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9`; C1 being coordinated with L01 |
+| Owner session | Codex /root/a1_shell_disposition; finite static E3 qualification disposition (original implementation: /root/a1_shell) |
+| Branch / worktree | `codex/a1-shell-disposition-20261011`; `/home/palimpsest/migration/aeon-1-20261011/shell-disposition` |
+| Base source / contract revision | Disposition source `fbaa610`; C1 `aeon1.c1.v1`, separately accepted by L01/root; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9` |
 | Additional path reservations | None; use the exclusive scope above and L09 for shared build files |
-| Last handoff / evidence | Session 1 implementation `6d806a7`, review/reasoning corrections `44ca88c`, 22 passing mechanical cases; [evidence](../evidence/A1-L02/2026-10-11-implementation.md) and [dependency reassessment](../evidence/A1-L02/2026-10-11-typebox-reassessment.md) |
-| Blockers / next eligible task | T01/T02/T03/T05 executable foundation implemented against C1 f11a25b; Q1 whole-dependency edit ownership, Q3 live screen, integrated Q4 and independent Q5 remain. L03/L06/L09 integration next. |
+| Last handoff / evidence | [Current Q1–Q5/T01–T06 disposition](../evidence/A1-L02/qualification-disposition.md), source `fbaa610`; final independent dependency review `79b6df2`, execution `c7ca96e` (1/1, 27.689 s). Original reports and failures remain historical evidence. |
+| Blockers / next eligible task | T01/T02/T03/T05 integrated; bounded Q1/Q2/Q4 engineering evidence mapped, Q5 recommends continuing Pi. Root E1 owns final integrated checks. T04/Q3 live twelve-case Mistral screen remains unexecuted without a configured grant; final outcome-dependent Q5/full lane acceptance stays open. No new source gap or Rig trigger established. |
 
 ### Exact dependency succession evidence task — 2026-10-11
 
@@ -52,4 +52,12 @@ Root assigned `/root/a1_dependency_succession` a finite T06 engineering subtask 
 
 `/goal Close the exact retained-dependency/admitted-successor evidence gap: edit an invoked locally owned validator in disposable source, pass pinned check/build, admit and execute those bytes under prior controls, preserve latest memory/goals/obligations, and hand off a reviewable fixture with actual results and exact manifest limitations.` Actual finite goal created without a token budget. Read/write/check preparation can proceed independently; root serializes the heavy fixture window and aggregate/installed reruns. Existing fresh-process schema probes and unrelated runtime/bootstrap succession do not jointly establish this exact witness. Live screen, independent qualification and comparator gates remain open.
 
-Bounded author task is **fixture-verified** at `b8ade3a8849de990a4a3bffd8ef385f876f2f800`: real confined retained-validator edit → actual failed/repaired pinned check/build → old-control staged successor and fresh old-policy probation → changed function invoked by ordinary service/broker/tools at epochs 1→3→5 with latest real memory/goals/owed obligations retained. Case passed 1/1, zero skips, 24.309 seconds. Two original fixture failures remain preserved. [Exact evidence and review instructions](../evidence/A1-L02/dependency-succession.md). Fresh final reviewer `/root/a1_engineering_proof_review` owns the next independently scheduled targeted rerun. This closes the author's exact binding demonstration only; full T06 pending-effect reconciliation, Q1–Q5 live/complexity disposition and lane acceptance remain root/L02 gates.
+Bounded author task is **fixture-verified** at `b8ade3a8849de990a4a3bffd8ef385f876f2f800`: real confined retained-validator edit → actual failed/repaired pinned check/build → old-control staged successor and fresh old-policy probation → changed function invoked by ordinary service/broker/tools at epochs 1→3→5 with latest real memory/goals/owed obligations retained. Case passed 1/1, zero skips, 24.309 seconds. Two original fixture failures remain preserved. [Exact evidence and review instructions](../evidence/A1-L02/dependency-succession.md). Fresh final reviewer `/root/a1_engineering_proof_review` subsequently reproduced the unchanged fixture at `c7ca96e`: 1/1, 27.689 seconds; final review `79b6df2` recommends accepting this bounded witness. The current Q1–Q5/T06 disposition below maps the separate real pending-effect and prompt evidence; full lane acceptance remains open on live Q3 and applicable final integration checks.
+
+### Qualification disposition claim — 2026-10-11
+
+Root assigned `/root/a1_shell_disposition` a finite E3/T01–T06 synthesis at source `fbaa610`, branch `codex/a1-shell-disposition-20261011`, worktree `/home/palimpsest/migration/aeon-1-20261011/shell-disposition`. Exclusive writes: new `docs/rewrite/evidence/A1-L02/qualification-disposition.md` and this lane's status/coordination. Source, shared ADRs and root acceptance remain with their owners.
+
+`/goal Consolidate the exact Q1–Q5/T01–T06 source, evidence and complexity disposition; identify remaining engineering versus live gates; persist an executable handoff and reasoned Pi continue/fallback decision without accepting missing evidence.` Actual finite goal created without a token budget. This task uses bounded static reads and existing observations only; no build, freeze, mount, paid/authenticated request, external message or production action.
+
+Disposition task complete: [qualification-disposition.md](../evidence/A1-L02/qualification-disposition.md) maps all gates/tasks, current request ownership, actual journal evidence, reproducible inventory, measured build observations and exact successor identities. It distinguishes the real L03 uncertain-effect witness from arbitrary fixture storage markers, records batch-delegation/schema and cumulative comparator updates, and gives the next owners/entry gates. Continue Pi; do not infer full L02 acceptance without live Q3. Only read-only source/inventory checks and documentation consistency validation were performed in this task. Exact handoff is the commit containing this report and lane update, returned to root; root owns integration and central E3/E1 status.
