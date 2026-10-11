@@ -1,6 +1,6 @@
 # A1-L01 — contracts and architecture foundations
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md). Phase and dependencies: [Aeon 1](../aeon-1.md).
+Status: **reviewing**. Session owner: **Codex /root/a1_contracts**. Accountable actor: Codex. Governing method: [workflow](../workflow.md). Phase and dependencies: [Aeon 1](../aeon-1.md).
 
 Requirements: [RW01, RW04, RW09, RW12, RW15, RW16, RW19, RW21](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | Codex /root/a1_contracts; finite tool goal active |
+| Branch / worktree | `codex/a1-contracts-20261011` / `/home/palimpsest/migration/aeon-1-20261011/contracts` |
+| Base source / contract revision | `14c742041270bb2acb15b4903a970394a140493c`; C1 draft v1 |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Last handoff / evidence | Implemented draft C1 v1; 17/17 conformance tests and strict TypeScript check pass; see ../evidence/A1-L01/implementation.md |
+| Blockers / next eligible task | Draft implementation complete; L03–L07 acknowledgements, final L02/L09 integration and independent review required for C1 acceptance |
