@@ -41,7 +41,7 @@ test('authenticated synthetic observer invokes actual confined application and p
     const policy = { ...policyBase, policyDigest: admissionPolicyIdentity(policyBase) };
     const trust: QualificationTrust = { issuerKeys: new Map([['synthetic-issuer', issuerKey]]), policy, observerArtifact: implementation.artifact, objectiveCases: new Map([[packet.task.id, identity(packet)]]), protocolDigest, calibrationPlans: new Set([calibrationPlanDigest]) };
     const issued = Date.now() - 1000;
-    const e: Experiment = { version: 1, id: 'synthetic-composition', grantId: 'one-original-synthetic-grant', kind: 'integration', candidate: candidate.manifest, configurationDigest: hashBytes(JSON.stringify(config)), protocolDigest, calibrationPlanDigest,
+    const e: Experiment = { version: 1, id: 'synthetic-composition', grantId: 'one-original-synthetic-grant', kind: 'integration', candidate: candidate.manifest, configurationDigest: identity(JSON.parse(JSON.stringify(config))), protocolDigest, calibrationPlanDigest,
       privatePacketDigest: identity(packet), observerArtifactDigest: implementation.artifact.sha256, evaluatorId: 'synthetic-observer', priorPolicyDigest: policy.policyDigest, resources, issuedAt: new Date(issued).toISOString(), expiresAt: new Date(issued + resources.maxElapsedMs).toISOString(), maxEvidenceBytes: 8 * 1024 * 1024, maxArtifactBytes: 1_000_000 };
     let calls = 0; const transport = boundedCodingFixture();
     const options = { experiment: signDocument('aeon.qualification.experiment.v1', e, 'synthetic-issuer', issuerKey), trust, store, privateRoot, packetFile, host, authorityStore, authority, secrets: { mistralApiKey: 'fixture-not-a-provider-key', directToken: 'private-fixture-direct' } };

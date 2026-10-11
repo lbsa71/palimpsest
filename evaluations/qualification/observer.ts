@@ -31,6 +31,7 @@ export interface QualificationTrust {
 export interface ObservationBundle {
   version: 1; experiment: Signed<Experiment>; kind: Experiment['kind'];
   startedAt: string; endedAt: string; observerArtifact: ArtifactRef;
+  configurationJson: string | null;
   originalAdapterReport: ArtifactRef; observation: ArtifactRef; privatePacket: ArtifactRef;
   artifacts: { path: string; artifact: ArtifactRef }[];
   commands: { id: string; requestId: string; artifact: ArtifactRef }[];
@@ -123,7 +124,8 @@ async function observeApplication(options: LiveOptions, performRequest?: NonNull
   verifyInvokedHost(candidate.files, implementation.bytes);
   const config = materializeConfiguration(candidate, options.host);
   invariant(hashBytes(readFileSync(config.nodeBinary)) === hashBytes(readFileSync(process.execPath)), 'Actual observer/application runtime differs from candidate runtime');
-  invariant(hashBytes(JSON.stringify(config)) === e.configurationDigest && identity(config.resources) === identity(e.resources), 'Actual configuration/operating ledger differs from signed grant');
+  const configurationJson = JSON.stringify(config);
+  invariant(identity(JSON.parse(configurationJson)) === e.configurationDigest && identity(config.resources) === identity(e.resources), 'Actual configuration/operating ledger differs from signed grant');
   invariant((performRequest || config.resourceLimits) && !config.slack && config.direct.port === 0 && config.bootstrapInitiative === false, 'Qualified case needs kernel enforcement, isolated direct surface and no unrelated developmental dispatch');
   options.authorityStore.assert(options.authority);
   invariant(options.authority.controlRevision === e.candidate.controls && options.authorityStore.current()?.artifactId === e.candidate.id, 'Qualification invocation lacks exact host-issued candidate authority');
@@ -197,7 +199,7 @@ async function observeApplication(options: LiveOptions, performRequest?: NonNull
   }
   const endedAt = new Date().toISOString();
   if (Date.parse(endedAt) > Date.parse(e.expiresAt)) failure ??= 'Original experiment deadline exceeded';
-  return seal(store, { version: 1, experiment: signedExperiment, kind: e.kind, startedAt, endedAt, observerArtifact,
+  return seal(store, { version: 1, experiment: signedExperiment, kind: e.kind, startedAt, endedAt, observerArtifact, configurationJson,
     originalAdapterReport: retain(JSON.parse(JSON.stringify(report))), observation: retain(JSON.parse(JSON.stringify(observation))), privatePacket, artifacts, commands, assessment, failure, ledger }, trust);
 }
 
@@ -207,7 +209,7 @@ export function recordSynthetic(experiment: Signed<Experiment>, trust: Qualifica
   const e = verifyExperiment(experiment, trust.issuerKeys); checkTrust(e, trust); invariant(e.kind === 'integration', 'Synthetic records cannot use a live manifest');
   store.claim(e.id, e.grantId, experiment);
   const now = new Date().toISOString(), absent = store.put(null);
-  return seal(store, { version: 1, experiment, kind: 'integration', startedAt: now, endedAt: now, observerArtifact: trust.observerArtifact,
+  return seal(store, { version: 1, experiment, kind: 'integration', startedAt: now, endedAt: now, observerArtifact: trust.observerArtifact, configurationJson: null,
     originalAdapterReport: store.put(originalReport), observation: absent, privatePacket: absent, artifacts: [], commands: [], assessment: null, failure: 'Synthetic observation is ineligible for live qualification', ledger: null }, trust);
 }
 
@@ -227,7 +229,8 @@ export function toReleaseEvidence(receipt: ObserverReceipt, trust: Qualification
   invariant(trust.objectiveCases.get(packet.task.id) === e.privatePacketDigest && trust.policy.requiredCases.includes(packet.task.id), 'Objective case lacks prior-policy qualification');
   const report = JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8')) as Awaited<ReturnType<typeof runApplicationCase>>;
   invariant(report?.independent === false && report.admissionEligible === false && report.evidenceKind === 'live-product' && report.transportFixtures === null && report.verdict === 'case-pass', 'Original author adapter provenance/result changed');
-  invariant(report.taskId === packet.task.id && report.observerId === e.evaluatorId && report.identities.source === e.candidate.source && report.identities.dependencies === e.candidate.dependencies && report.identities.protocol === e.protocolDigest && report.identities.configuration === e.configurationDigest && report.identities.evaluator === e.observerArtifactDigest && report.identities.task === e.privatePacketDigest && identity(report.candidateModel) === e.candidate.model, 'Adapter invocation does not bind the experiment');
+  invariant(bundle.configurationJson && identity(JSON.parse(bundle.configurationJson)) === e.configurationDigest, 'Exact invoked configuration differs from canonical grant');
+  invariant(report.taskId === packet.task.id && report.observerId === e.evaluatorId && report.identities.source === e.candidate.source && report.identities.dependencies === e.candidate.dependencies && report.identities.protocol === e.protocolDigest && report.identities.configuration === hashBytes(bundle.configurationJson) && report.identities.evaluator === e.observerArtifactDigest && report.identities.task === e.privatePacketDigest && identity(report.candidateModel) === e.candidate.model, 'Adapter invocation does not bind the experiment');
   invariant(report.observation?.status === 'completed' && report.observation.physicalRequests.some(r => r.provider !== 'effect-receiver'), 'Live physical invocation is missing');
   invariant(bundle.ledger?.cancelled && identity(bundle.ledger.envelope) === identity(e.resources) && bundle.ledger.startedAt === Date.parse(e.issuedAt), 'Actual ledger does not preserve original finite grant');
   invariant(Date.parse(bundle.startedAt) >= Date.parse(e.issuedAt) && Date.parse(bundle.endedAt) <= Date.parse(e.expiresAt) && Date.parse(bundle.endedAt) >= Date.parse(bundle.startedAt), 'Observation outside original grant');
