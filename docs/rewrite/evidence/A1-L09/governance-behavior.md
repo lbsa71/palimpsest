@@ -18,7 +18,7 @@ Fresh review identified that probing only the core cannot qualify changes to its
 
 Fresh review also demonstrated that a canonical core source check alone does not bind an actual selected evaluator. The case now requires a frozen GovernanceProposal: only /reviewer/review-core.ts may change, mapped to the exact classified candidate core; executable, arguments, remaining mounts, signing authority and required cases stay inherited. Its next evaluator descriptor must match the proposed frozen policy. The sibling sees only copied selected core and bound adapter, with no /app mount; an undeclared relative dependency cannot borrow the full source tree. The physical fixture includes actual proposal creation and existing ReviewerRegistry preparation after old-judge admission. Registry selection, staging, later probation and recovery still retain separate evidence boundaries.
 
-Author implementation and bounded validation are complete at the revisions below; the independent reviewer owns its final retained-artifact audit. This document does not mark L09 or Aeon 1 complete.
+Author implementation and bounded validation are complete at the revisions below. The independent reviewer subsequently reported its retained-artifact audit passing 8/8 and final combined focused checks passing 29/29 with strict compilation; its separate review record owns those findings. This document does not mark L09 or Aeon 1 complete.
 
 ## Retained failure and review corrections
 
