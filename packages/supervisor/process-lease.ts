@@ -17,6 +17,9 @@ export class ProcessLease {
       this.#db.prepare('INSERT INTO owner VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET pid=excluded.pid').run(process.pid);
     } catch (cause) { this.#db.close(); throw new Error('Another supervisor holds the instance lease, or the lease store is unavailable', { cause }); }
   }
+  assertHeld(): void {
+    if (this.#closed) throw new Error('Exclusive process lease is closed');
+  }
   close(): void {
     if (this.#closed) return;
     this.#db.exec('ROLLBACK'); this.#db.close(); this.#closed = true;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { canonicalJson, candidateIdentity, identity, validateCandidate, type CandidateManifest, type JsonValue } from '../contracts/index.ts';
 
@@ -14,6 +14,11 @@ export interface CandidateInputs {
 }
 export interface FrozenCandidate { manifest: CandidateManifest; files: FrozenFile[]; inputs: CandidateInputs }
 export function hashBytes(bytes: string | Uint8Array): string { return createHash('sha256').update(bytes).digest('hex'); }
+
+function syncPath(path: string): void {
+  const fd = openSync(path, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
 
 function localPath(path: string): void {
   if (!path || isAbsolute(path) || path.split(/[\\/]/).some(p => p === '..' || p === '.' || p === '') || path.includes('\0')) {
@@ -54,15 +59,21 @@ export function freezeCandidate(sourceRoot: string, storeRoot: string, entries: 
   const staging = join(store, `.preparing-${randomUUID()}`);
   mkdirSync(staging, { mode: 0o700 });
   try {
+    const directories = new Set<string>([staging]);
     for (const file of files) {
       const bytes = readFileSync(join(source, file.path));
       if (hashBytes(bytes) !== file.sha256) throw new Error('Source changed during freeze');
       const target = join(staging, 'payload', file.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
       writeFileSync(target, bytes, { flag: 'wx', mode: file.executable ? 0o500 : 0o400 });
+      syncPath(target);
+      for (let directory = dirname(target); directory !== staging; directory = dirname(directory)) directories.add(directory);
     }
     writeFileSync(join(staging, 'candidate.json'), canonicalJson(candidate), { flag: 'wx', mode: 0o400 });
+    syncPath(join(staging, 'candidate.json'));
+    [...directories].sort((a, b) => b.length - a.length).forEach(syncPath);
     renameSync(staging, destination);
+    syncPath(store);
     verifyCandidate(store, candidate.manifest.id);
     return candidate;
   } catch (error) { rmSync(staging, { recursive: true, force: true }); throw error; }
@@ -72,6 +83,12 @@ export function freezeCandidate(sourceRoot: string, storeRoot: string, entries: 
 export function verifyCandidate(storeRoot: string, candidateId: string): FrozenCandidate {
   if (!/^[a-f0-9]{64}$/.test(candidateId)) throw new Error('Invalid candidate identity');
   const location = join(storeRoot, candidateId);
+  for (const path of [location, join(location, 'payload')]) {
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Artifact directories must be ordinary host-owned directories');
+  }
+  const descriptorStat = lstatSync(join(location, 'candidate.json'));
+  if (!descriptorStat.isFile() || descriptorStat.isSymbolicLink() || descriptorStat.nlink !== 1) throw new Error('Candidate descriptor must be an ordinary unlinked file');
   const candidate = JSON.parse(readFileSync(join(location, 'candidate.json'), 'utf8')) as FrozenCandidate;
   validateCandidate(candidate.manifest);
   if (candidate.manifest.id !== candidateId || identity(candidate.files) !== candidate.manifest.source) throw new Error('Candidate source manifest mismatch');
