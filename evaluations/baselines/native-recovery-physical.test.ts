@@ -116,24 +116,64 @@ function assertResult(kind: Kind, request: any, id: string, expected: string): v
     assert.ok(equal(results[0], { type: 'tool_result', tool_use_id: id, content: expected, is_error: false }), 'exact acquired successful Bash envelope required');
   }
 }
-function assertObservation(kind: Kind, request: any, phase: Phase): void {
-  const expected = tool(kind, phase);
-  const sequence = kind === 'codex' ? request.input : request.messages?.flatMap((message: any) => Array.isArray(message.content) ? message.content.map((part: any) => ({ ...part, messageRole: message.role })) : []);
-  assert.ok(Array.isArray(sequence));
-  const calls = sequence.filter((item: any) => kind === 'codex' ? item.type === 'custom_tool_call' && item.call_id === expected.call_id : item.type === 'tool_use' && item.id === expected.id);
-  assert.equal(calls.length, 1); const { messageRole, ...call } = calls[0];
-  if (kind === 'claude') assert.equal(messageRole, 'assistant');
-  assert.ok(equal(call, expected), 'original actual command differs from frozen public call');
-  const callIndex = sequence.indexOf(calls[0]);
-  const resultIndex = sequence.findIndex((item: any) => kind === 'codex' ? item.type === 'custom_tool_call_output' && item.call_id === expected.call_id : item.type === 'tool_result' && item.tool_use_id === expected.id && item.messageRole === 'user');
-  assert.ok(resultIndex > callIndex, 'tool result must follow its actual command');
-  assertResult(kind, request, kind === 'codex' ? expected.call_id : expected.id, marker);
+function protocolSequence(kind: Kind, request: any): { item: any; role: string | undefined }[] {
+  if (kind === 'codex') {
+    assert.ok(Array.isArray(request.input));
+    return request.input.map((item: any) => { assert.ok(item && typeof item === 'object' && !Array.isArray(item)); return { item, role: item.role }; });
+  }
+  assert.ok(Array.isArray(request.messages));
+  return request.messages.flatMap((message: any) => {
+    assert.ok(message && typeof message === 'object' && typeof message.role === 'string');
+    if (!Array.isArray(message.content)) { assert.equal(typeof message.content, 'string'); return []; }
+    return message.content.map((item: any) => { assert.ok(item && typeof item === 'object' && !Array.isArray(item)); return { item, role: message.role }; });
+  });
 }
-function assertHistory(kind: Kind, request: any): void {
-  assertObservation(kind, request, 'write');
+function operationSequence(kind: Kind, sequence: { item: any; role: string | undefined }[]) {
+  return sequence.filter(({ item }) => {
+    const supported = kind === 'codex' ? ['custom_tool_call', 'custom_tool_call_output'] : ['tool_use', 'tool_result'];
+    const operation = supported.includes(item.type) || typeof item.type === 'string' && /(?:_call(?:_output)?$|tool_use|tool_result)/.test(item.type)
+      || 'call_id' in item || 'tool_use_id' in item || 'name' in item && 'input' in item;
+    if (operation) assert.ok(supported.includes(item.type), 'unsupported operation frame in acquisition history');
+    return operation;
+  });
+}
+function assertNoObservation(kind: Kind, request: any): void {
+  assert.equal(operationSequence(kind, protocolSequence(kind, request)).length, 0, 'initial request cannot contain a prior command/result');
+}
+function assertObservation(kind: Kind, request: any, phase: Phase) {
+  const sequence = protocolSequence(kind, request), operations = operationSequence(kind, sequence);
+  const phases: Phase[] = phase === 'write' ? ['write'] : ['write', 'read'];
+  assert.equal(operations.length, phases.length * 2, 'complete exact allowed command/result set required');
+  for (const [index, observed] of phases.entries()) {
+    const expected = tool(kind, observed), call = operations[index * 2]!, result = operations[index * 2 + 1]!;
+    assert.equal(call.role, kind === 'codex' ? undefined : 'assistant');
+    assert.ok(equal(call.item, expected), 'original actual command differs from frozen public call/order');
+    assert.equal(result.role, kind === 'codex' ? undefined : 'user');
+    assert.equal(result.item.type, kind === 'codex' ? 'custom_tool_call_output' : 'tool_result');
+    assert.equal(kind === 'codex' ? result.item.call_id : result.item.tool_use_id, kind === 'codex' ? expected.call_id : expected.id);
+    if (kind === 'codex') assert.ok(Object.keys(result.item).every(key => ['type', 'id', 'call_id', 'output'].includes(key)), 'unsupported command-result fields');
+    assertResult(kind, request, kind === 'codex' ? expected.call_id : expected.id, marker);
+  }
+  const writeResultIndex = sequence.indexOf(operations[1]!), readCallIndex = phase === 'read' ? sequence.indexOf(operations[2]!) : undefined;
+  if (phase === 'read') assertWriteTerminal(kind, sequence, writeResultIndex, readCallIndex);
+  return { sequence, writeResultIndex, readCallIndex };
+}
+function assertWriteTerminal(kind: Kind, sequence: { item: any; role: string | undefined }[], writeResultIndex: number, readCallIndex?: number): void {
   const final = 'native-recovery-write-complete';
-  if (kind === 'codex') assert.ok(request.input.some((item: any) => item.type === 'message' && item.role === 'assistant' && item.content?.some((part: any) => part.type === 'output_text' && part.text === final)), 'prior terminal assistant history absent');
-  else assert.ok(request.messages.some((message: any) => message.role === 'assistant' && message.content?.some?.((part: any) => part.type === 'text' && part.text === final)), 'prior terminal assistant history absent');
+  const terminals = sequence.map(({ item, role }, index) => ({ item, role, index })).filter(({ item, role }) => {
+    if (role !== 'assistant') return false;
+    if (kind === 'claude') return item.type === 'text' && item.text === final;
+    return item.type === 'message' && Array.isArray(item.content) && item.content.length === 1 && item.content[0].type === 'output_text' && item.content[0].text === final;
+  });
+  assert.equal(terminals.length, 1, 'one original terminal assistant frame required');
+  assert.ok(terminals[0]!.index > writeResultIndex, 'prior terminal must follow its successful command result');
+  if (readCallIndex !== undefined) assert.ok(terminals[0]!.index < readCallIndex, 'prior terminal must precede current read command');
+}
+function assertHistory(kind: Kind, request: any, readObserved?: boolean): void {
+  const sequence = protocolSequence(kind, request), expectedRead = tool(kind, 'read');
+  const hasRead = readObserved ?? sequence.some(({ item }) => kind === 'codex' ? item.type === 'custom_tool_call' && item.call_id === expectedRead.call_id : item.type === 'tool_use' && item.id === expectedRead.id);
+  const checked = assertObservation(kind, request, hasRead ? 'read' : 'write');
+  assertWriteTerminal(kind, checked.sequence, checked.writeResultIndex, checked.readCallIndex);
 }
 function instructions(kind: Kind, request: any) {
   const { input, messages, ...control } = request;
@@ -251,6 +291,36 @@ test('acquisition history check rejects prompt-only marker, missing actual call 
     assert.equal(publicPlan(kind).phases[1]!.prompt.includes(marker), false);
   }
 });
+for (const kind of ['codex', 'claude'] as Kind[]) test(`${kind} complete acquisition history keeps ordered two-phase positive and rejects foreign/duplicate/role/type/order changes`, () => {
+  const observed = (phase: Phase) => {
+    if (kind === 'claude') return [{ role: 'assistant', content: [tool(kind, phase)] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tool_recovery_${phase}`, content: marker, is_error: false }] }];
+    const result = structuredClone(acquiredCodexResult); result.call_id = `call_recovery_${phase}`; const value = JSON.parse(result.output[1]!.text); value.output = `${marker}\n`; result.output[1]!.text = JSON.stringify(value);
+    return [tool(kind, phase), result];
+  };
+  const terminal = kind === 'codex' ? { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'native-recovery-write-complete' }] } : { role: 'assistant', content: [{ type: 'text', text: 'native-recovery-write-complete' }] };
+  const request = (sequence: any[]) => kind === 'codex' ? { input: sequence } : { messages: sequence };
+  const write = observed('write'); assertObservation(kind, request(write), 'write'); assertNoObservation(kind, request([])); assert.throws(() => assertNoObservation(kind, request(write)));
+  const firstRead = request([...observed('write'), terminal]); assertHistory(kind, firstRead, false);
+  const sequence = [...observed('write'), terminal, ...observed('read')];
+  assertHistory(kind, request(sequence)); assertHistory(kind, request(sequence), true); assertObservation(kind, request(sequence), 'read');
+  assert.throws(() => assertHistory(kind, request(sequence), false), 'first resumed request cannot contain current read observations');
+  for (const cause of ['foreign-call', 'foreign-result', 'duplicate-call', 'duplicate-result', 'reversed-result', 'read-before-write', 'final-before-write', 'final-after-read', 'call-role', 'result-role', 'call-type', 'result-type'] as const) {
+    const bad = structuredClone(sequence); const entry = (index: number) => kind === 'codex' ? bad[index] : bad[index].content[0];
+    if (cause === 'foreign-call') { const extra = structuredClone(bad[3]); const call = kind === 'codex' ? extra : extra.content[0]; call.id += '-foreign'; if (kind === 'codex') call.call_id += '-foreign'; bad.push(extra); }
+    if (cause === 'foreign-result') { const extra = structuredClone(bad[4]); const result = kind === 'codex' ? extra : extra.content[0]; if (kind === 'codex') result.call_id += '-foreign'; else { result.tool_use_id += '-foreign'; result.is_error = true; } bad.push(extra); }
+    if (cause === 'duplicate-call') bad.push(structuredClone(bad[3]));
+    if (cause === 'duplicate-result') bad.push(structuredClone(bad[4]));
+    if (cause === 'reversed-result') [bad[0], bad[1]] = [bad[1], bad[0]];
+    if (cause === 'read-before-write') [bad[0], bad[1], bad[3], bad[4]] = [bad[3], bad[4], bad[0], bad[1]];
+    if (cause === 'final-before-write') bad.unshift(bad.splice(2, 1)[0]);
+    if (cause === 'final-after-read') bad.push(bad.splice(2, 1)[0]);
+    if (cause === 'call-role') bad[3].role = 'user';
+    if (cause === 'result-role') bad[4].role = 'assistant';
+    if (cause === 'call-type') entry(3).type = kind === 'codex' ? 'function_call' : 'server_tool_use';
+    if (cause === 'result-type') entry(4).type = kind === 'codex' ? 'function_call_output' : 'server_tool_result';
+    assert.throws(() => assertHistory(kind, request(bad), true), cause);
+  }
+});
 test('acquisition stops third or overlapping requests and premature phase change', () => {
   const sequence = new Sequence(); assert.throws(() => sequence.resume()); assert.equal(sequence.enter(), 1); assert.throws(() => sequence.enter()); sequence.leave(); assert.equal(sequence.enter(), 2); sequence.leave(); sequence.resume(); assert.equal(sequence.enter(), 1); sequence.leave(); assert.equal(sequence.enter(), 2); sequence.leave(); assert.throws(() => sequence.enter());
 });
@@ -345,10 +415,11 @@ for (const kind of ['codex', 'claude'] as Kind[]) test(`physical one-shot ${kind
           const identity = artifact(attempt.value.nativeSession); json(join(root, `dispatch-${ordinal}.json`), { phase: sequence.phase, request: active[0], attempt, identity, nativeHttp: attempt.value.nativeHttp ? artifact(attempt.value.nativeHttp) : null, host: hostControl() });
           if (sequence.phase === 'read') {
             assert.equal(identity.sessionId, value(ready!, 'native-checkpoints', 'acquisition-write-ready').value.sessionId);
-            assertHistory(kind, request);
+            assertHistory(kind, request, turn === 2);
           }
           if (kind === 'claude') { assert.equal(protocol?.beta, PINNED_CLAUDE_DELEGATION_BETA); assert.equal(request.thinking.type, 'adaptive'); assert.equal(request.output_config.effort, 'high'); }
           if (turn === 1) {
+            if (sequence.phase === 'write') assertNoObservation(kind, request);
             if (sequence.phase === 'read') { const beforeInstructions = instructions(kind, captured[0]), resumedInstructions = instructions(kind, request); json(join(root, 'instruction-audit.json'), { equal: equal(beforeInstructions, resumedInstructions), before: beforeInstructions, resumed: resumedInstructions, fullBefore: captured[0], fullResumed: request }); assert.ok(equal(beforeInstructions, resumedInstructions), 'unknown effective instruction/control difference'); }
           } else assertObservation(kind, request, sequence.phase);
           const reply = plan.phases[sequence.phase === 'write' ? 0 : 1]!.replies[turn - 1]!;

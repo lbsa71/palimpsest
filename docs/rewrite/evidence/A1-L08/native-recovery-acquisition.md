@@ -80,3 +80,44 @@ Fresh review must cover the new driver/procedure, fixture cap and observed nativ
 Fresh reviewer `e0d005a0a9f6222475eb084380cf3dfd748eb204` withheld clearance at source `482d517`. Six causal controls prove that the matching-ID witness overlooked a foreign command or failed result in both products, and accepted a retained final before its original command/result. Original reviewer logs `acquisition-review-causal.log` and `acquisition-review-extended.log` remain immutable. Its frozen controls also require valid ordered write/final/read/result history for both products; no actual native acquisition was run.
 
 Pre-code bounded repair: modify only this driver/procedure. Verify complete ordered allowed call/result sets on each request: empty initial write request; write call then successful attributed write result on request 2; write call/result/final on resumed request 1; that same history followed by read call/result on resumed request 2. Foreign/duplicate calls/results, unsupported operation types and wrong roles fail. Final must follow the successful original result and precede a later read. Existing acquired result envelopes and public response bytes remain unchanged. Reproduce exact reviewer failures, add author phase/ordering/duplicate/role/type controls, then serial targeted checks and strict only. Ordinary observer, transport, native schemas, ledger/caps/runtime/worker source stay unchanged. Freeze the source for renewed same-reviewer clearance; goal remains ACTIVE and root's physical window is still required.
+
+### Safe initial freeze preparation
+
+Importing this `.test.ts` registers tests: Node runs its pure checks even without `--test`. They create and remove temporary marker fixtures. The cap module-mock test skips without its experimental flag; both physical cases skip without an acquisition flag. This read-only freeze preparation uses `env -i`, passes no acquisition flag or module-mock flag, writes JSON to a dedicated file rather than mixed JSON/TAP stdout, and asserts that **both fixed acquisition directories remain absent**. Run only on the clean frozen/joined source, outside competing physical work because pinned binary hashing reads the complete closures. This is preparation, not a native launch or root window assignment. Root independently adds the accepted `reviewRevision` and allocated `windowId` to form clearance.
+
+```sh
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --input-type=module - codex /home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence/codex-preparation-freeze.json > /home/palimpsest/migration/aeon-1-20261011/native-recovery-author-evidence/codex-preparation.log 2>&1 <<'NODE'
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+const product = process.argv[2], destination = process.argv[3];
+assert.ok(product === 'codex' || product === 'claude');
+const paths = ['codex', 'claude'].map(kind => `/home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence/${kind}-acquisition-1`);
+const untouched = () => { for (const path of paths) assert.equal(existsSync(path), false, `Acquisition directory already exists: ${path}`); };
+untouched();
+const { acquisitionFreeze } = await import('./evaluations/baselines/native-recovery-physical.test.ts');
+const freeze = acquisitionFreeze(product);
+mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+writeFileSync(destination, JSON.stringify({ freeze }, null, 2), { flag: 'wx', mode: 0o600 });
+untouched();
+process.on('exit', untouched);
+NODE
+```
+
+The analogous initial Claude preparation substitutes `claude` and its own dedicated output/log path. After Codex's actual attempt, a separately authorized Claude preparation must preserve Codex's immutable marker and assert only Claude remains unconsumed; the initial both-absent command deliberately refuses reuse then. No freeze-preparation command has been run by this author; fresh reviewer will independently verify the safe import behavior before clearance.
+
+### Ordered witness repair checkpoint
+
+Pre-code claim `58069ac` and frozen reviewer controls `e0d005a0a9f6222475eb084380cf3dfd748eb204` bound this repair. The exact reviewer file (SHA256 `ebe445ba82f3fac6cfdcaf23c8e2acd7bd1b0584f60003fbf0ff4a76d930a30c`) was copied temporarily, run without modification, and removed from the author worktree. Original author reproduction is retained in `acquisition-review-reproduction.log`: 9 passed, all six causal mutation controls failed. The immutable original independent logs remain in the reviewer evidence.
+
+The complete command/result witness now rejects extra, duplicate, foreign, wrongly typed or wrongly attributed operations. Resumed request 1 requires the ordered original write/result/final history and forbids a current read; request 2 requires the same history followed by the exact read/result. Successful result envelopes remain the acquired ones. New author controls first prove valid empty/write/resumed history for each product, then reject twelve individual phase, ordering, duplicate, foreign, role and type mutations. Public prompts/SSE bytes, ordinary runtime, observer, ledger, cap, workers and native schema remain unchanged.
+
+Final serial focused check: **23 passed, zero failed, 2 physical acquisitions skipped**, 4.946s, covering the original seven reviewer runtime controls, all six new regression controls, both valid ordered read-history controls and eight author checks. Strict TypeScript passes. Commands:
+
+```sh
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 evaluations/baselines/native-recovery-review.test.ts evaluations/baselines/native-recovery-physical.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+git diff --check
+```
+
+Retained final logs are `acquisition-ordered-repair-focused.log` and `acquisition-ordered-repair-strict.log` in the author evidence directory; the new `acquisition-ordered-repair-index.json` binds this source checkpoint without replacing earlier indexes. Safe initial freeze preparation is documented above but has not been run by this author. Both fixed attempt paths remain absent, no native/help process ran, and no physical clearance is claimed. The actual finite goal remains ACTIVE for renewed independent source/procedure review and root window assignment.
