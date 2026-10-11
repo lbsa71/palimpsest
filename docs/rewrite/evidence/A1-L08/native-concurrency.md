@@ -44,4 +44,33 @@ Additional pure adversarial checks reproduced a slow-reading sibling emitting RP
 
 The separately frozen `f9f55fb` bridge-only fixture stages an explicitly labelled fake native HTTP process behind each actual worker and the actual host observer. It has two requests, concurrency two, ten-second elapsed limit, one-second request limit, 240 tokens, zero prices and a one-USD synthetic ceiling; request/response caps are 4,096 bytes, CLI output is 65,536 bytes. Two replies wait for actual overlap; a third simultaneous HTTP body must be refused locally with 403 before RPC. Plans, hashes, originals, invocations and charges are retained. This can qualify bridge concurrency independently of the unavailable native child protocol, and cannot qualify native children.
 
-Bridge observations and the final exact artifact index follow after root allocates its separate physical window. Full L08, parity, actual development, live entitlement and H1 remain open.
+## Actual bridge checks and bounded handoff
+
+Root separately allocated exactly the two frozen bridge-only checks. Both passed, zero skips, in 1.361 seconds: Codex 0.548 seconds and Claude 0.616 seconds. Evidence roots are `codex-bridge-only-BV03rb` and `claude-bridge-only-MNaAzO`. In each actual namespace/HTTP bridge, host transport peak concurrency is two, exactly two requests settle with 10 input and 5 output synthetic tokens each, and the third HTTP body returns 403 without RPC. The actual worker invocation retains concurrency two and 4,096 request bytes. Each original grant is cancelled after completion and charges remain 30 tokens, two requests, zero USD. The fake native process label remains present in both outcomes and plans; no native child claim follows from this check. Transcript SHA-256: `14dd83c9f442a294dfcf29a96a13ee39f44121a89e61fd3ed62eefaa645bafab`.
+
+The read-only artifact audit verifies all four original plan grants against persisted grants/allocation envelopes, checks before/after native instruction/input/tool/cognition equality, resolves each response/refusal/native HTTP artifact, verifies payload digest/reservation identities and compares retained exact charges. Audit script and results remain in `/home/palimpsest/migration/aeon-1-20261011/native-concurrency-evidence`. Its `audit-summary.json` SHA-256 is `a1c8e3f335d78032ec554a4dabe568089214f9369015839160de839bb0b71417`. The complete 37-file `artifact-index.json`, including both first-failure transcripts and every retained trial, has SHA-256 `0b2ab2a150cc7fa88bc7b4a15fd2a4f81d0da8dcc081dbf91a47178bf85638b7`. Public fixture keys remain labelled dummy tokens; no account/key discovery, auth network, paid/model generation, external messaging, service activation, installation, dependency change or grant increase occurred.
+
+| Product family | Codex 0.162.1 retained status | Claude 2.1.296 selected high/adaptive retained status | Still unavailable |
+|---|---|---|---|
+| Coding/debugging | Prior actual native command/tool-result fixture remains evidence | Prior selected local coding/thinking/context fixture remains evidence | Held-out failure/repair workload quality, broader native tools and actual models |
+| Source-based research | Local source reads possible; native web search disabled | Local source reads possible; no qualified external research route | Attributed external research affordances and physical accounting |
+| Multistep operations | Prior local command path; new bridge HTTP concurrency is mechanical evidence | Prior local Bash path; new bridge HTTP concurrency is mechanical evidence | Independently assigned multistep operations and outcome quality |
+| Recovery/context continuity | Ephemeral private native home; original attempted state refuses replay | No session persistence; original attempted state refuses replay | Native durable continuation, actual interruption/context reduction under one original resource lineage |
+| Delegation | Host/bridge admits original concurrency 1..8; actual native spawn produces two child requests but `agent_message` is refused | Host/bridge admits original concurrency 1..8; selected bare invocation exposes Bash/Read and no Agent definition | Actual native child continuation, artifacts, parent receipt/integration and native cancellation/unknown-outcome qualification |
+
+The observed absence of Agent applies to this exact bare invocation. Root subsequently identified official bare-mode documentation as a configuration hypothesis for the next pinned-surface acquisition; it is not a general claim that Claude lacks delegation. No current runtime or grant changes on that basis.
+
+Exact author runtime commits: `7d77ca8e5eb14850410003d51b7abe3ceef57b88` and `b8d65f9e3b59e3b3e7b021030c64e5a5a722615f`; additional frozen bridge fixture commit `f9f55fb93f4bf5875bd1275bfa756a49889c2e67`; retained first native evidence update `53e1eb39d23db9d47fcd027f7ef56210da42362b`. Runtime source did not change after either physical plan froze. Fresh independent reviewer `/root/a1_native_concurrency_review` owns separate regression/evidence paths and reviews this source plus the retained failures/successes. Its disposition is a separate required integration gate, not author self-acceptance.
+
+Reproduction commands (physical commands require the separately assigned window and explicitly declared fresh fixture experiment; attempted state cannot replay):
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/baselines/native-concurrency.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-name-pattern='^(?!actual )' evaluations/baselines/*.test.ts
+PATH=/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin:$PATH npm run check
+AEON_NATIVE_BRIDGE_CONCURRENCY_RUN=1 AEON_NATIVE_CONCURRENCY_EVIDENCE=/home/palimpsest/migration/aeon-1-20261011/native-concurrency-evidence /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 evaluations/baselines/native-concurrency-bridge.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node /home/palimpsest/migration/aeon-1-20261011/native-concurrency-evidence/audit.mjs
+git diff --check
+```
+
+The bounded implementation/evidence handoff is complete; root owns integration, review disposition and the next finite native protocol/surface unit. Native child qualification remains unavailable. Kernel child enforcement, external research, native durable persistence/context reduction, compatible issued grants, exact paid Claude beta qualification, full L08, parity, actual development, live entitlement and H1 remain open. The 144,000-token proposal remains incompatible with full-context native reservation.
