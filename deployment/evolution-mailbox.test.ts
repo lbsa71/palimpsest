@@ -88,6 +88,9 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       } });
   try {
     app = createApp();
+    // Fault injection: the dying host cannot run its local recovery tick. The new
+    // application below uses the real implementation against the persisted crash gap.
+    if (lostLocalAcknowledgment) app.evolution.reconcileAcknowledgments = () => [];
     const run = app.communications.receive({ source: 'direct', externalId: 'finite', revision: '1', conversation: 'finite', text: 'Make the finite engineering change.', actor: { id: 'operator', scope: config.direct.scope, modificationEligible: true } }).run;
     const execution = app.resume(run.id);
     const evaluation = await eventually(() => {

@@ -197,13 +197,14 @@ test('host defers claiming a queued review until its successful local enqueue re
   try {
     const call = { id: 'enqueue', runId: f.run.id, stepId: 'step', name: 'candidate_evaluate', arguments: { changeId: f.request.proposal.id } };
     const effectId = `tool:${call.id}`;
-    const receipt = f.store.putJsonArtifact({ pending: true });
+    const value = { proposal: f.request.proposal, evaluation: f.mailbox.readEvaluation(f.request) };
+    const receipt = f.store.putJsonArtifact(value as any);
     const effects = new EffectJournal(f.store, f.authorities, { async dispatch() { return { outcome: 'succeeded', receipt }; }, async reconcile() { throw Error('No physical retry'); } });
     effects.create({ id: effectId, runId: f.run.id, stepId: call.stepId, kind: call.name, payload: call.arguments, scope: f.scope, authority: f.authority, status: 'pending', revision: 0 });
     const request: PhysicalRequest = { id: effectId, runId: f.run.id, purpose: 'reasoning', provider: 'effect-receiver', model: call.name, promptManifestId: effectId,
       requestDigest: identity(call), reservationId: effectId, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
     f.resources.reserve(request); effects.authorize(effectId, effectId, f.authority);
-    recordEvaluationAcknowledgment(f.store, effectId, f.request, call.arguments, { proposal: f.request.proposal, evaluation: f.mailbox.readEvaluation(f.request) });
+    recordEvaluationAcknowledgment(f.store, effectId, f.request, call.arguments, value);
     await effects.dispatch(effectId, f.authority, undefined, () => f.resources.dispatched({ ...request, status: 'dispatched' }));
     assert.equal(effects.get(effectId)!.status, 'succeeded'); assert.equal(f.resources.snapshot(f.run.id).concurrent, 1);
     dispatcher = new EvaluationDispatcher({ mailbox: f.mailbox, host: { stateDirectory: f.root, workspaceDirectory: join(f.root, 'workspace'), artifactStore: join(f.root, 'artifacts'), nodeBinary: process.execPath },
@@ -212,7 +213,11 @@ test('host defers claiming a queued review until its successful local enqueue re
       async release() { throw Error('No release'); }, async stageControl() { throw Error('No stage'); } });
     assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), true);
     await dispatcher.processPending(); assert.equal(f.mailbox.status(f.request.requestId)!.status, 'pending'); assert.equal(dispatcher.status().uncertain, 0);
-    f.resources.settle({ ...request, status: 'succeeded' });
+    // A host crash after the effect success but before ledger settlement loses only
+    // the receiver usage observation; the exact archived return still proves success.
+    f.resources.recoverDispatched(); assert.equal(f.resources.request(effectId)!.status, 'uncertain');
+    assert.deepEqual(f.continuations.reconcileAcknowledgments(), [effectId]); assert.deepEqual(f.continuations.reconcileAcknowledgments(), []);
+    assert.equal(f.resources.request(effectId)!.usage.elapsedMs, 100);
     assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), false); assert.equal(f.resources.snapshot(f.run.id).concurrent, 0);
   } finally { await dispatcher?.close(); f.close(); }
 });

@@ -75,31 +75,34 @@ export class EvolutionContinuations {
       const acknowledgment = row.value;
       try { this.authorityStore.dispatch(acknowledgment.authority, () => this.store.transaction(() => {
         const effect = this.runtime.effects.get(acknowledgment.effectId);
-        if (effect?.status !== 'uncertain') return;
+        if (!effect || !['uncertain', 'succeeded'].includes(effect.status)) return;
         invariant(effect.id.startsWith('tool:') && effect.kind === 'candidate_evaluate' && effect.runId === acknowledgment.runId && identity(effect.payload) === identity(acknowledgment.payload) &&
           identity(effect.scope) === identity(acknowledgment.scope) && identity(effect.authority) === identity(acknowledgment.authority), 'Local evaluation effect binding mismatch');
         const run = this.runtime.getRun(effect.runId);
-        if (!run || ['completed', 'cancelled', 'running'].includes(run.status)) return;
+        if (!run || ['cancelled', 'running'].includes(run.status) || run.status === 'completed' && effect.status !== 'succeeded') return;
         invariant(identity(run.scope) === identity(acknowledgment.scope), 'Local evaluation effect audience mismatch');
         const job = this.store.get<EvolutionJob>('host.evolution-jobs', acknowledgment.requestId)?.value;
         invariant(job?.kind === 'evaluation' && job.requestDigest === acknowledgment.requestDigest, 'Committed local evaluation job required');
         const request = this.store.readJsonArtifact<EvaluationRequest>(job.request);
         invariant(identity(request) === acknowledgment.requestDigest && request.proposal.runId === effect.runId &&
           identity(request.proposal.scope) === identity(effect.scope) && identity(request.proposal.authority) === identity(effect.authority), 'Local evaluation request binding mismatch');
+        invariant(effect.payload && typeof effect.payload === 'object' && !Array.isArray(effect.payload) && effect.payload.changeId === request.proposal.id, 'Local evaluation proposal/payload mismatch');
         assertReviewLineage(this.store, request);
         const receipt = this.store.readJsonArtifact<{ proposal: ChangeRecord; evaluation: { requestId: string; candidateId: string; policyDigest: string } }>(acknowledgment.receipt);
+        if (effect.status === 'succeeded') invariant(effect.receipt && identity(this.store.readJsonArtifact(effect.receipt)) === identity(receipt), 'Successful local enqueue effect receipt changed');
         invariant(receipt.proposal.id === request.proposal.id && receipt.proposal.runId === effect.runId && identity(receipt.proposal.candidate) === identity(request.candidate.manifest) &&
           receipt.proposal.judgingPolicyDigest === request.policyDigest && identity(receipt.proposal.scope) === identity(effect.scope) &&
           identity(receipt.proposal.authority) === identity(effect.authority) && receipt.evaluation.requestId === job.id && receipt.evaluation.candidateId === job.candidateId &&
           receipt.evaluation.policyDigest === job.policyDigest, 'Local evaluation acknowledgment binding mismatch');
         const reservation = this.store.get<{ request: PhysicalRequest; ceiling: { elapsedMs: number }; charged: { elapsedMs: number } }>('requests', effect.reservationId!)?.value;
+        if (effect.status === 'succeeded' && reservation?.request.status === 'succeeded') return;
         invariant(reservation && reservation.request.id === effect.id && reservation.request.reservationId === effect.reservationId && reservation.request.purpose === 'reasoning' &&
           reservation.request.promptManifestId === effect.id && reservation.request.runId === effect.runId && reservation.request.provider === 'effect-receiver' &&
           reservation.request.model === 'candidate_evaluate' && reservation.request.requestDigest === identity({ id: effect.id.slice(5), runId: effect.runId, stepId: effect.stepId, name: effect.kind, arguments: effect.payload }) &&
           ['dispatched', 'uncertain'].includes(reservation.request.status), 'Local enqueue receiver reservation required');
         // Keep the persisted upper charge when elapsed observation was lost; never invent zero.
         const elapsedMs = Math.max(reservation.request.usage.elapsedMs, reservation.ceiling.elapsedMs, reservation.charged.elapsedMs);
-        this.runtime.effects.recordReconciliation(effect.id, acknowledgment.authority, 'succeeded', acknowledgment.receipt);
+        if (effect.status === 'uncertain') this.runtime.effects.recordReconciliation(effect.id, acknowledgment.authority, 'succeeded', acknowledgment.receipt);
         this.runtime.resources.settle({ ...reservation.request, status: 'succeeded', usage: { ...reservation.request.usage, elapsedMs } });
         this.store.append({ id: `local-enqueue-reconciled:${effect.id}`, stream: effect.runId, type: 'local-enqueue-reconciled',
           data: { effectId: effect.id, requestId: job.id, elapsedMs, elapsedBasis: 'retained reservation ceiling; original elapsed observation unavailable', reviewerRedispatched: false } });
