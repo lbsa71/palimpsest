@@ -59,7 +59,7 @@ test('shared control closures are idempotent while conflicting retained records 
     assert.deepEqual(store.get('host.derived-policies', next.policyDigest), original);
     const conflicting = { ...original.value, descriptor: { ...original.value.descriptor, requiredCases: [] } };
     store.put('host.derived-policies', next.policyDigest, conflicting, original.revision);
-    assert.throws(() => registry.get(next.policyDigest), /changed its judging rules/);
+    assert.throws(() => registry.get(next.policyDigest), /Explicit bounded unique governance cases/);
     assert.throws(() => registry.prepare(f.policy.policyDigest, first), /Conflicting derived policy/);
     assert.deepEqual(store.get('host.derived-policies', next.policyDigest)!.value, conflicting, 'Failed registration never overwrites conflicting evidence');
     assert.throws(() => registry.get('not-a-digest'), /Exact policy digest/);
@@ -93,12 +93,12 @@ test('registration rejects mismatched immutable candidate and control identities
     }
   } finally { store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
-test('derived policies cannot weaken cases, replace evaluators or substitute a configured key authority', () => {
+test('without a source-bound reviewer registry governance changes are unavailable and configured authority remains fixed', () => {
   const f = fixture(), store = new OperationalStore({ filename: f.filename });
   try {
     const registry = new DerivedPolicyRegistry(store, f.get), descriptor = policyDescriptor(f.policy);
-    const changes: Record<string, JsonValue>[] = [{ requiredCases: [] }, { kind: 'product' }, { evaluatorArtifacts: [['reviewer', identity('author-evaluator')]] }, { evaluatorKeyDigests: [['reviewer', identity('author-key')]] }, { extraAuthority: true }];
-    for (const change of changes) assert.throws(() => registry.prepare(f.policy.policyDigest, f.candidate('changed', { ...(descriptor as Record<string, JsonValue>), ...change })), /Changed governance/);
+    const changes: [Record<string, JsonValue>, RegExp][] = [[{ requiredCases: [] }, /Explicit bounded unique governance/], [{ requiredCases: ['changed-case'] }, /source-bound reviewer registry/], [{ kind: 'product' }, /qualification kind/], [{ evaluatorArtifacts: [['reviewer', identity('author-evaluator')]] }, /source-bound reviewer registry/], [{ evaluatorKeyDigests: [['reviewer', identity('author-key')]] }, /signing-key authority/], [{ extraAuthority: true }, /Exact public governance/]];
+    for (const [change, diagnosis] of changes) assert.throws(() => registry.prepare(f.policy.policyDigest, f.candidate('changed', { ...(descriptor as Record<string, JsonValue>), ...change })), diagnosis);
     const next = registry.prepare(f.policy.policyDigest, f.candidate('valid'));
     const row = store.get<any>('host.derived-policies', next.policyDigest)!;
     store.put('host.derived-policies', next.policyDigest, { ...row.value, controlRevision: identity('tampered') }, row.revision);

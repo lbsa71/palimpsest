@@ -13,6 +13,7 @@ import { availableModelProfiles, selectModelProfile, type ModelProfile } from '.
 import { watchEvaluation, reconcileEvaluationWatch, recordEvaluationAcknowledgment } from './evolution-continuation.ts';
 import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
 import type { EvolutionJob } from './evolution-mailbox.ts';
+import { governanceProposal, governanceProposalPath, validateReviewerMetadata, type ReviewerMetadata } from './reviewer-registry.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority; effectId?: string }
 /** Issued by accepted host bootstrap or a host wrapper observing genuinely autonomous goal creation, never from Goal.origin alone. */
@@ -30,6 +31,8 @@ export interface EvolutionOptions {
   maxFiles: number; maxBytes: number; eligibleHumanAuthors: ReadonlySet<string>; allowedModelProfiles?: readonly ModelProfile[];
   /** Separate bounded runtime staging grant; source/compiler quota is unchanged. */
   runtimeMaxBytes?: number;
+  /** Public descriptor and existing reviewer limits only; never host paths or signing keys. */
+  reviewer?: ReviewerMetadata;
   assertAuthority(authority: Authority): void;
   /** A trusted origin claim must match the admitted/steering input and, for self, the host initiative execution. */
   provenanceForRun(context: EvolutionContext): ChangeProvenance;
@@ -138,6 +141,11 @@ function frozenInputs(staging: string, workspace: string, accepted: FrozenCandid
     }
   }
   const controls = accepted.inputs.controls as unknown as { runtime: DeploymentInputs['runtime']; policy: JsonValue };
+  let policy = controls.policy;
+  if (deploymentNames.includes('governance-proposal.json')) {
+    const bytes = readFileSync(join(staging, governanceProposalPath)); invariant(bytes.length <= 65536, 'Bounded governance proposal required');
+    policy = governanceProposal(JSON.parse(bytes.toString('utf8')), controls.policy).policy as unknown as JsonValue;
+  }
   let runtime = controls.runtime;
   if (runtimeProposal && runtime.bundle) {
     const { workspacePath, ...proposed } = runtimeProposal;
@@ -152,7 +160,7 @@ function frozenInputs(staging: string, workspace: string, accepted: FrozenCandid
   } else if (runtime.bundle) {
     runtime = stageRuntimeBundle(join(options.artifactStore, accepted.manifest.id, 'payload'), runtimeBundlePath, staging, runtime, maxRuntimeBytes);
   }
-  return { configuration, prompts: { mind: readFileSync(join(staging, 'deployment/prompts/mind.md'), 'utf8'), compaction: readFileSync(join(staging, 'deployment/prompts/compaction.md'), 'utf8') }, runtime, policy: controls.policy, createdBy };
+  return { configuration, prompts: { mind: readFileSync(join(staging, 'deployment/prompts/mind.md'), 'utf8'), compaction: readFileSync(join(staging, 'deployment/prompts/compaction.md'), 'utf8') }, runtime, policy, createdBy };
 }
 
 /** Install through ApplicationOptions.additionalTools. Author workspaces never receive store paths, policy keys or activation authority. */
@@ -201,6 +209,15 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       const accepted = verifyApplication(options.artifactStore, options.acceptedCandidateId, options.nodeBinary);
       const current = (accepted.inputs.configuration as unknown as DeploymentInputs['configuration']).model;
       return { current, allowed: availableModelProfiles(current, options.allowedModelProfiles), qualification: 'Host permission only; independent candidate evaluation remains required.' };
+    },
+  }, { name: 'governance_profile', description: 'Inspect the accepted public evaluation policy, reviewer mount hashes and existing limits. Propose changed cases or reviewer source through deployment/governance-proposal.json; original policy still judges admission and fresh probation. No signing secrets or private host paths are exposed.', inputSchema: schema({}, []),
+    execute(args, signal) {
+      allowed(signal); object(args, []);
+      const accepted = verifyApplication(options.artifactStore, options.acceptedCandidateId, options.nodeBinary);
+      const policy = (accepted.inputs.controls as { policy: JsonValue }).policy, metadata = options.reviewer ? validateReviewerMetadata(options.reviewer) : undefined;
+      invariant(!metadata || identity(metadata.policy) === identity(policy), 'Reviewer metadata differs from accepted governance');
+      return { proposalPath: governanceProposalPath, policy, reviewer: metadata ? metadata.reviewer as unknown as JsonValue : null,
+        bounds: metadata ? { pollMs: metadata.bounds.pollMs, maxElapsedMs: metadata.bounds.maxElapsedMs, maxOutputBytes: metadata.bounds.maxOutputBytes, maxClosureBytes: metadata.bounds.maxClosureBytes, memoryBytes: metadata.bounds.memoryBytes } : null };
     },
   }, { name: 'change_propose', description: 'Record a justified finite source change proposal with visible experience evidence. Origin and human eligibility come from authenticated host provenance; workspace edits confer no production authority.',
     inputSchema: schema({ changeId: string, justification: string, objective: string, successCriteria: { type: 'array', items: string, minItems: 1, maxItems: 32 }, experienceIds: { type: 'array', items: string, maxItems: 32 } }, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']),

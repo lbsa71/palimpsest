@@ -20,6 +20,8 @@ import { candidateNodeBinary, freezeApplication, verifyApplication, type Deploym
 import { evolutionTools, goalDefinitionIdentity, type EvolutionContext, type EvolutionOptions, type EvaluationReceipt, type EvaluationRequest, type EvaluationState, type SubmissionReceipt } from './evolution-tools.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceProcess } from './service-process.ts';
+import { reviewerDescriptor } from './evaluation-dispatch.ts';
+import type { PublicPolicy, ReviewerMetadata } from './reviewer-registry.ts';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const scope = { kind: 'restricted' as const, principals: ['operator'] };
@@ -36,6 +38,45 @@ function completed(req: EvaluationRequest, receipt: EvaluationReceipt): Evaluati
 }
 const proposal = (id = 'change') => ({ changeId: id, justification: 'The fixture verifies actual dependency edit/load and the independent admission boundary.', objective: 'Build and submit one exact dependency candidate.', successCriteria: ['external build loads the modified dependency', 'admission uses the previously accepted policy'], experienceIds: [] });
 function copySource(source: string, target: string): void { for (const entry of rewriteSourceEntries) if (existsSync(join(source, entry))) { mkdirSync(dirname(join(target, entry)), { recursive: true }); cpSync(join(source, entry), join(target, entry), { recursive: true }); } }
+
+test('ordinary governance source proposals freeze changed cases under the prior judge and expose only public reviewer metadata', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-governance-tools-')), source = join(root, 'source'), artifactStore = join(root, 'artifacts');
+  const store = new OperationalStore({ filename: join(root, 'state/operational.sqlite') });
+  try {
+    for (const entry of ['deployment/prompts/mind.md', 'deployment/prompts/compaction.md', 'package-lock.json', 'node_modules/typescript/fixture', 'node_modules/@types/node/fixture', 'node_modules/undici-types/fixture', `node_modules/@typescript/typescript-${process.platform}-${process.arch}/fixture`]) {
+      mkdirSync(dirname(join(source, entry)), { recursive: true }); writeFileSync(join(source, entry), 'Bounded source fixture; no compiler or service execution.');
+    }
+    const reviewer = { evaluatorId: 'reviewer', executable: '/reviewer/run', args: [], files: [{ mount: '/reviewer/run', sha256: hashBytes('existing reviewer'), inherit: true as const }] };
+    const artifact = hashBytes(reviewerDescriptor({ ...reviewer, files: reviewer.files.map(file => ({ ...file, path: '/unused' })), keyFile: '/private/not-exposed', pollMs: 1, maxElapsedMs: 1, maxOutputBytes: 1, maxClosureBytes: 1, memoryBytes: 1 }));
+    const rules = { kind: 'engineering' as const, requiredCases: ['original-case'], evaluatorKeys: new Map([['reviewer', Buffer.alloc(32, 31)]]), evaluatorArtifacts: new Map([['reviewer', artifact]]) };
+    const resources = { maxRequests: 0, maxTokens: 0, maxCostUsd: 0, maxElapsedMs: 1000, maxConcurrency: 1 };
+    const inputs: DeploymentInputs = { createdBy: 'bootstrap', policy: policyDescriptor(rules), runtime: { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch }, prompts: { mind: 'fixture', compaction: 'fixture' },
+      configuration: { model: { id: 'fixture', reasoning: false, effort: 'none', contextWindow: 8192, maxRequestsPerSlice: 1, maxOutputTokens: 256, timeoutMs: 1000, pricesPerMillion: { input: 0, output: 0 } }, resources, conversationResources: resources, scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 1000, idleRetryMs: 1000, maxStalls: 1, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: [], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'operator', scope, modificationEligible: true } } };
+    const accepted = freezeApplication(source, artifactStore, inputs), authority = { generation: 'author', epoch: 1, controlRevision: accepted.manifest.controls };
+    const policy = { ...rules, controlRevision: authority.controlRevision, policyDigest: admissionPolicyIdentity({ ...rules, controlRevision: authority.controlRevision }) };
+    const metadata: ReviewerMetadata = { version: 1, policy: policyDescriptor(policy) as unknown as PublicPolicy, reviewer, bounds: { pollMs: 10, maxElapsedMs: 1000, maxOutputBytes: 65536, maxClosureBytes: 65536, memoryBytes: 64 * 1024 * 1024 } };
+    const ctx = context(root, store, authority, 'governance'); copySource(source, ctx.workspace);
+    let judged: EvaluationRequest | undefined;
+    const options: EvolutionOptions = { artifactStore, acceptedCandidateId: accepted.manifest.id, nodeBinary: process.execPath, policyDigest: policy.policyDigest, maxFiles: 100, maxBytes: 65536, eligibleHumanAuthors: new Set(['operator']), reviewer: metadata,
+      assertAuthority: actual => assert.deepEqual(actual, authority), provenanceForRun: ctx => ({ kind: 'human', inputId: input(ctx.runId).id, actorId: 'operator' }),
+      enqueueEvaluation(request) { judged = request; return { status: 'pending', requestId: request.requestId, candidateId: request.candidate.manifest.id, policyDigest: request.policyDigest }; }, readEvaluation() { throw Error('unused'); }, async submitRelease() { throw Error('unused'); } };
+    const profile = await call(ctx, options, 'governance_profile', {});
+    assert.deepEqual(profile.policy, metadata.policy); assert.deepEqual(profile.reviewer, reviewer); assert.ok(!JSON.stringify(profile).includes('/private/'));
+    const nextPolicy = { ...metadata.policy, requiredCases: ['future-case'] };
+    writeFileSync(join(ctx.workspace, 'deployment/governance-proposal.json'), JSON.stringify({ version: 1, policy: nextPolicy }));
+    await call(ctx, options, 'change_propose', proposal());
+    const frozen = await call(ctx, options, 'candidate_freeze', { changeId: 'change' }) as ChangeRecord;
+    const candidate = verifyCandidate(artifactStore, frozen.candidate!.id);
+    assert.deepEqual((candidate.inputs.controls as { policy: JsonValue }).policy, nextPolicy);
+    assert.notEqual(candidate.manifest.controls, authority.controlRevision); assert.equal(frozen.judgingPolicyDigest, policy.policyDigest);
+    await call(ctx, options, 'candidate_evaluate', { changeId: 'change', continueOnResult: false });
+    assert.equal(judged!.policyDigest, policy.policyDigest); assert.deepEqual(judged!.proposal.authority, authority);
+    const attack = context(root, store, authority, 'foreign-key'); copySource(source, attack.workspace);
+    writeFileSync(join(attack.workspace, 'deployment/governance-proposal.json'), JSON.stringify({ version: 1, policy: { ...nextPolicy, evaluatorKeyDigests: [['reviewer', identity('foreign-key')]] } }));
+    await call(attack, options, 'change_propose', proposal());
+    await assert.rejects(call(attack, options, 'candidate_freeze', { changeId: 'change' }), /signing-key authority/);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
 
 test('runtime adoption preserves authenticated self origin while requiring the successor grant', async () => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-evolution-adopt-'));
