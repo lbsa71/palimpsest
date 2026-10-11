@@ -6,27 +6,31 @@ import type { EvaluationRequest } from './evolution-tools.ts';
 const provider = 'external-offline-review';
 interface ReviewAllocation { parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt: number }
 export function reviewPhysicalId(jobId: string): string { return `external-review:${jobId}`; }
+/** Caller holds the operational transaction when accepting a result or launching a child. */
+export function assertReviewLineage(store: OperationalStore, request: EvaluationRequest, now = Date.now): void {
+  const run = store.get<Run>('runs', request.proposal.runId)?.value;
+  invariant(run && run.status !== 'cancelled' && identity(run.authority) === identity(request.proposal.authority), 'External reviewer author run is cancelled, absent or fenced');
+  invariant(!new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, now).snapshot(run.id).cancelled, 'External reviewer allocation is cancelled');
+  let id: string | undefined = run.id, depth = 0;
+  while (id) {
+    invariant(++depth <= 128, 'Bounded reviewer allocation lineage required');
+    const allocation: ReviewAllocation | undefined = store.get<ReviewAllocation>('allocations', id)?.value;
+    invariant(allocation && !allocation.cancelled && now() - allocation.startedAt <= allocation.envelope.maxElapsedMs, 'External reviewer allocation expired or cancelled');
+    id = allocation.parentRunId;
+  }
+}
 /** These offline reviewers have no network or provider credentials. Each review still consumes
  * one physical request, shared concurrency and measured wall time under the requester's lineage.
  */
 export async function accountedReview<T>(options: { store: OperationalStore; request: EvaluationRequest; evaluatorDigest: string; evaluatorId: string;
-  maxElapsedMs: number; assertAuthority(authority: Authority): void; signal?: AbortSignal; now?: () => number },
-operation: (gate: { signal: AbortSignal; beforeDispatch(): void }) => Promise<T>): Promise<T> {
+  maxElapsedMs: number; assertAuthority(authority: Authority): void; dispatchAuthority(authority: Authority, operation: () => void): void; signal?: AbortSignal; now?: () => number },
+operation: (gate: { signal: AbortSignal; dispatch(launch: () => void): void }) => Promise<T>): Promise<T> {
   const { request, store } = options, now = options.now ?? Date.now;
   const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now);
   const started = now(), controller = new AbortController(), signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   const assertLive = () => {
     signal.throwIfAborted(); options.assertAuthority(request.proposal.authority);
-    const run = store.get<Run>('runs', request.proposal.runId)?.value;
-    invariant(run && run.status !== 'cancelled' && identity(run.authority) === identity(request.proposal.authority), 'External reviewer author run is cancelled, absent or fenced');
-    invariant(!ledger.snapshot(run.id).cancelled, 'External reviewer allocation is cancelled');
-    let id: string | undefined = run.id, depth = 0;
-    while (id) {
-      invariant(++depth <= 128, 'Bounded reviewer allocation lineage required');
-      const allocation: ReviewAllocation | undefined = store.get<ReviewAllocation>('allocations', id)?.value;
-      invariant(allocation && !allocation.cancelled && now() - allocation.startedAt <= allocation.envelope.maxElapsedMs, 'External reviewer allocation expired or cancelled');
-      id = allocation.parentRunId;
-    }
+    assertReviewLineage(store, request, now);
     invariant(now() - started < options.maxElapsedMs, 'External reviewer reservation deadline exceeded');
   };
   assertLive();
@@ -39,9 +43,17 @@ operation: (gate: { signal: AbortSignal; beforeDispatch(): void }) => Promise<T>
   let dispatched = false;
   const monitor = setInterval(() => { try { assertLive(); } catch (error) { controller.abort(error); } }, 25);
   try {
-    const result = await operation({ signal, beforeDispatch() {
+    const result = await operation({ signal, dispatch(launch) {
+      // Both databases hold their write locks through the synchronous physical launch gate.
+      // Cross-process withdrawal/cancellation must serialize before or after this boundary.
       assertLive(); invariant(!dispatched, 'Physical external review already dispatched');
-      ledger.dispatched({ ...physical, status: 'dispatched' }); dispatched = true;
+      // Commit the uncertain-effect marker BEFORE launching. If the host dies during the
+      // locked launch, rolling back that transaction must not make the child free or replayable.
+      ledger.dispatched({ ...physical, status: 'dispatched' });
+      options.dispatchAuthority(request.proposal.authority, () => store.transaction(() => {
+        assertLive(); dispatched = true;
+        launch();
+      }));
     } });
     invariant(dispatched, 'External review completed without physical dispatch'); assertLive();
     ledger.settle({ ...physical, status: 'succeeded', usage: { ...physical.usage, elapsedMs: Math.max(0, now() - started) } });

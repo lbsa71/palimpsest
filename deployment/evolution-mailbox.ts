@@ -121,9 +121,10 @@ export class EvolutionMailbox {
     });
   }
   private failed(id: string): void { this.store.transaction(() => { if (this.status(id)?.status === 'dispatched') this.update(id, { status: 'uncertain' }); }); }
-  async processEvaluation(id: string, evaluate: (request: EvaluationRequest, signal?: AbortSignal) => Promise<ExternalEvaluation>, signal?: AbortSignal): Promise<void> {
+  async processEvaluation(id: string, evaluate: (request: EvaluationRequest, signal?: AbortSignal) => Promise<ExternalEvaluation>, signal?: AbortSignal,
+    complete?: (request: EvaluationRequest, result: ExternalEvaluation) => void): Promise<void> {
     signal?.throwIfAborted(); const request = this.claim(id, 'evaluation') as EvaluationRequest;
-    try { this.completeEvaluation(id, await evaluate(request, signal)); } catch (error) { this.failed(id); throw error; }
+    try { const result = await evaluate(request, signal); if (complete) complete(request, result); else this.completeEvaluation(id, result); } catch (error) { this.failed(id); throw error; }
   }
   /** Only a trusted external evaluator/operator may call this host API with an independently produced result. */
   completeEvaluation(id: string, result: ExternalEvaluation): void {

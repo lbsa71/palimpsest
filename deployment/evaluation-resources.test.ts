@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { identity, type PhysicalRequest } from '../packages/contracts/index.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
-import { accountedReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
+import { accountedReview, assertReviewLineage, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 
 function fixture(maxConcurrency = 3) {
@@ -18,7 +20,7 @@ function fixture(maxConcurrency = 3) {
   const authority = { generation: 'author', epoch: 1, controlRevision: 'prior' };
   store.put('runs', 'child', { id: 'child', status: 'running', revision: 0, scope: { kind: 'public' }, authority }, null);
   const request = { requestId: 'stable-job', proposal: { runId: 'child', authority } } as EvaluationRequest;
-  const options = { store, request, evaluatorDigest: identity('closure'), evaluatorId: 'qualified-offline-fixture', maxElapsedMs: 1000, assertAuthority: () => {}, now: () => now };
+  const options = { store, request, evaluatorDigest: identity('closure'), evaluatorId: 'qualified-offline-fixture', maxElapsedMs: 1000, assertAuthority: () => {}, dispatchAuthority: (_grant: unknown, operation: () => void) => operation(), now: () => now };
   return { directory, filename, store, ledger, options, setTime: (value: number) => { now = value; }, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 test('canceled/expired reviewer lineage dispatches zero physical operations', async () => {
@@ -28,7 +30,7 @@ test('canceled/expired reviewer lineage dispatches zero physical operations', as
       if (cancellation === 'allocation') f.ledger.cancel('parent');
       if (cancellation === 'run') { const row = f.store.get<any>('runs', 'child')!; f.store.put('runs', 'child', { ...row.value, status: 'cancelled' }, row.revision); }
       if (cancellation === 'expiry') f.setTime(10001);
-      await assert.rejects(accountedReview(f.options, async gate => { gate.beforeDispatch(); spawns++; }), /cancelled|expired/);
+      await assert.rejects(accountedReview(f.options, async gate => { gate.dispatch(() => { spawns++; }); }), /cancelled|expired/);
       assert.equal(spawns, 0); assert.equal(f.ledger.request(reviewPhysicalId('stable-job')), undefined);
     } finally { f.close(); }
   }
@@ -38,20 +40,20 @@ test('active tool receiver concurrency is retained; reviewer cannot silently bor
   try {
     const effect: PhysicalRequest = { id: 'tool:wait', runId: 'child', purpose: 'reasoning', provider: 'effect-receiver', model: 'candidate_evaluate', promptManifestId: 'tool:wait', requestDigest: identity('wait'), reservationId: 'tool:wait', status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
     f.ledger.reserve(effect); f.ledger.dispatched({ ...effect, status: 'dispatched' });
-    await assert.rejects(accountedReview(f.options, async gate => { gate.beforeDispatch(); spawns++; }), /budget exhausted|allocation exhausted/);
+    await assert.rejects(accountedReview(f.options, async gate => { gate.dispatch(() => { spawns++; }); }), /budget exhausted|allocation exhausted/);
     assert.equal(spawns, 0); assert.equal(f.ledger.request(effect.id)!.status, 'dispatched');
   } finally { f.close(); }
 });
 test('last-moment cancellation before launch is known undispatched; successful physical usage is measured', async () => {
   const f = fixture(); let spawns = 0;
   try {
-    await assert.rejects(accountedReview(f.options, async gate => { f.ledger.cancel('child'); gate.beforeDispatch(); spawns++; }), /cancelled/);
+    await assert.rejects(accountedReview(f.options, async gate => { f.ledger.cancel('child'); gate.dispatch(() => { spawns++; }); }), /cancelled/);
     assert.equal(spawns, 0); assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'failed');
     assert.equal(f.ledger.snapshot('parent').elapsedMs, 0);
   } finally { f.close(); }
   const success = fixture();
   try {
-    assert.equal(await accountedReview(success.options, async gate => { gate.beforeDispatch(); success.setTime(17); return 'signed result'; }), 'signed result');
+    assert.equal(await accountedReview(success.options, async gate => { gate.dispatch(() => {}); success.setTime(17); return 'signed result'; }), 'signed result');
     const physical = success.ledger.request(reviewPhysicalId('stable-job'))!;
     assert.equal(physical.purpose, 'review'); assert.equal(physical.status, 'succeeded'); assert.equal(physical.usage.elapsedMs, 17);
     assert.equal(success.ledger.snapshot('parent').requests, 1); assert.equal(success.ledger.snapshot('parent').concurrent, 0);
@@ -61,7 +63,7 @@ test('cancel during asynchronous physical review aborts it and retains unknown c
   const f = fixture(); let spawns = 0;
   try {
     const reviewing = accountedReview(f.options, async gate => {
-      gate.beforeDispatch(); spawns++;
+      gate.dispatch(() => { spawns++; });
       return await new Promise<void>((_accept, reject) => { gate.signal.addEventListener('abort', () => reject(gate.signal.reason), { once: true }); });
     });
     setTimeout(() => f.ledger.cancel('parent'), 5);
@@ -85,5 +87,48 @@ test('reopened reserved/dispatched review records become failed/uncertain withou
       assert.equal(ledger.snapshot('parent').elapsedMs, 1000); assert.equal(ledger.snapshot('parent').concurrent, 1);
       assert.throws(() => ledger.reserve(dispatched), /already used/);
     } finally { reopened.close(); }
+  } finally { f.close(); }
+});
+
+test('physical launch holds both authority and cancellation write locks across another process', async () => {
+  const f = fixture(), authorityPath = join(f.directory, 'authority.sqlite'), authorities = new AuthorityStore(authorityPath);
+  const grant = authorities.bootstrap('author', 'prior', 'artifact');
+  try {
+    const options = { ...f.options, assertAuthority: (authority: typeof grant) => authorities.assert(authority),
+      dispatchAuthority: (authority: typeof grant, operation: () => void) => authorities.dispatch(authority, operation) };
+    let launches = 0;
+    await accountedReview(options, async gate => {
+      gate.dispatch(() => {
+        launches++;
+        const observer = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+          import { DatabaseSync } from 'node:sqlite';
+          const locks = process.argv.slice(1).map(path => {
+            const db = new DatabaseSync(path); db.exec('PRAGMA busy_timeout=1');
+            try { db.exec('BEGIN IMMEDIATE'); db.exec('ROLLBACK'); return false; }
+            catch (error) { if (!/locked/.test(error.message)) throw error; return true; }
+            finally { db.close(); }
+          });
+          process.stdout.write(JSON.stringify(locks));
+        `, authorityPath, f.filename], { encoding: 'utf8', env: {} });
+        assert.equal(observer.status, 0, observer.stderr);
+        assert.deepEqual(JSON.parse(observer.stdout), [true, true]);
+      });
+    });
+    assert.equal(launches, 1);
+    authorities.withdraw(grant);
+    const request = { ...f.options.request, requestId: 'revoked-job' };
+    await assert.rejects(accountedReview({ ...options, request }, async gate => { gate.dispatch(() => { launches++; }); }), /withdrawn/);
+    assert.equal(launches, 1);
+  } finally { authorities.close(); f.close(); }
+});
+test('canceled late result cannot advance a receipt, while known physical usage remains retained', async () => {
+  const f = fixture();
+  try {
+    await accountedReview(f.options, async gate => { gate.dispatch(() => {}); f.setTime(17); });
+    f.ledger.cancel('parent'); let accepted = false;
+    assert.throws(() => f.store.transaction(() => { assertReviewLineage(f.store, f.options.request, () => 17); accepted = true; }), /cancelled/);
+    assert.equal(accepted, false);
+    assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'succeeded');
+    assert.equal(f.ledger.snapshot('parent').elapsedMs, 17);
   } finally { f.close(); }
 });

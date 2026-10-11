@@ -14,7 +14,7 @@ import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
-import { accountedReview, recoverReviewReservations } from './evaluation-resources.ts';
+import { accountedReview, assertReviewLineage, recoverReviewReservations } from './evaluation-resources.ts';
 
 /** All runnable bytes must be declared, including interpreters and dynamic libraries.
  * Nothing else on the host filesystem is mounted into the reviewer namespace.
@@ -56,7 +56,7 @@ export function loadReviewerFile(path: string, host: HostBindings): ReviewerFile
 
 /** One physical operation; failure may have occurred after review and is never retryable automatically. */
 export async function runExternalReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
-  policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal, beforeDispatch?: () => void): Promise<ReviewResponse> {
+  policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal, dispatch?: (launch: () => void) => void): Promise<ReviewResponse> {
   validateReviewer(config, host); signal?.throwIfAborted();
   const descriptor = Buffer.from(reviewerDescriptor(config)), descriptorDigest = hashBytes(descriptor);
   invariant(policy.policyDigest === request.policyDigest && admissionPolicyIdentity(policy) === request.policyDigest && policy.controlRevision === request.proposal.authority.controlRevision &&
@@ -88,14 +88,23 @@ export async function runExternalReview(config: ReviewerFile, host: HostBindings
     invariant(input.byteLength <= config.maxOutputBytes, 'External reviewer request exceeds bounds');
     // Authority is checked again after all verification/snapshot work, immediately before physical dispatch.
     assertAuthority(request.proposal.authority); signal?.throwIfAborted();
-    beforeDispatch?.();
-    const confined = acceptedLimits ? await spawnBounded(args, { workspace: host.workspaceDirectory, timeoutMs: config.maxElapsedMs,
-      resourceLimits: { ...acceptedLimits, memoryBytes: Math.min(acceptedLimits.memoryBytes, config.memoryBytes), pids: Math.min(acceptedLimits.pids, 32) }, input: 'pipe' }) : undefined;
-    const child = confined?.child ?? spawn('/usr/bin/setpriv', ['--pdeathsig', 'SIGKILL', '--no-new-privs', '/bin/sh', '-c',
-      '[ "$PPID" = "$1" ] || exit 125; shift; exec "$@"', 'aeon-review-gate', String(process.pid), '/usr/bin/prlimit',
-      `--as=${config.memoryBytes}:${config.memoryBytes}`, '--nofile=128:128', '--nproc=1024:1024', '--core=0:0', '--fsize=16777216:16777216',
+    let pendingConfined: ReturnType<typeof spawnBounded> | undefined;
+    let directChild: ReturnType<typeof spawn> | undefined;
+    const launch = () => {
+      // spawnBounded creates/places the child and releases its gate synchronously on success;
+      // capture its promise while authority and cancellation locks remain held, await afterward.
+      if (acceptedLimits) pendingConfined = spawnBounded(args, { workspace: host.workspaceDirectory, timeoutMs: config.maxElapsedMs,
+        resourceLimits: { ...acceptedLimits, memoryBytes: Math.min(acceptedLimits.memoryBytes, config.memoryBytes), pids: Math.min(acceptedLimits.pids, 32) }, input: 'pipe' });
+      else directChild = spawn('/usr/bin/setpriv', ['--pdeathsig', 'SIGKILL', '--no-new-privs', '/bin/sh', '-c',
+        '[ "$PPID" = "$1" ] || exit 125; shift; exec "$@"', 'aeon-review-gate', String(process.pid), '/usr/bin/prlimit',
+        `--as=${config.memoryBytes}:${config.memoryBytes}`, '--nofile=128:128', '--nproc=1024:1024', '--core=0:0', '--fsize=16777216:16777216',
         `--cpu=${Math.ceil(config.maxElapsedMs / 1000)}:${Math.ceil(config.maxElapsedMs / 1000)}`, '--', '/usr/bin/bwrap', ...args],
-      { detached: true, env: {}, stdio: ['pipe', 'pipe', 'pipe'] });
+        { detached: true, env: {}, stdio: ['pipe', 'pipe', 'pipe'] });
+    };
+    if (dispatch) dispatch(launch); else launch();
+    const confined = await pendingConfined;
+    const child = confined?.child ?? directChild as import('node:child_process').ChildProcessWithoutNullStreams;
+    invariant(child, 'External physical review was not launched');
     let output: Buffer;
     try { output = await new Promise<Buffer>((accept, reject) => {
       const chunks: Buffer[] = [], diagnostics: Buffer[] = []; let bytes = 0, failure: Error | undefined;
@@ -156,7 +165,7 @@ export interface DispatchOptions {
   mailbox: EvolutionMailbox; host: HostBindings; reviewer?: ReviewerFile;
   unavailableDiagnosis?: string;
   getPolicy(digest: string): AdmissionPolicy; policyDigests: readonly string[];
-  assertAuthority(authority: Authority): void; acceptedCandidateId(): string;
+  assertAuthority(authority: Authority): void; dispatchAuthority(authority: Authority, operation: () => void): void; acceptedCandidateId(): string;
   release(proof: ReleaseProof): Promise<Authority>; stageControl(proof: ReleaseProof, policyDigest: string): Promise<string>;
 }
 export interface DispatchStatus { available: boolean; activeJob?: string; pending: number; uncertain: number; diagnosis?: string }
@@ -214,12 +223,15 @@ export class EvaluationDispatcher {
     try {
       if (job.kind === 'evaluation') await mailbox.processEvaluation(job.id, async request => {
         const response = await accountedReview({ store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer!))),
-          evaluatorId: reviewer!.evaluatorId, maxElapsedMs: reviewer!.maxElapsedMs, assertAuthority: this.options.assertAuthority, signal: this.#abort.signal },
+          evaluatorId: reviewer!.evaluatorId, maxElapsedMs: reviewer!.maxElapsedMs, assertAuthority: this.options.assertAuthority, dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal },
         gate => runExternalReview(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest),
-          this.options.acceptedCandidateId(), this.options.assertAuthority, gate.signal, gate.beforeDispatch));
+          this.options.acceptedCandidateId(), this.options.assertAuthority, gate.signal, gate.dispatch));
         for (const blob of response.artifacts) mailbox.store.putArtifact(Buffer.from(blob.base64, 'base64'));
         return response.result;
-      }, this.#abort.signal);
+      }, this.#abort.signal, (request, result) => this.options.dispatchAuthority(request.proposal.authority, () => mailbox.store.transaction(() => {
+        this.#abort.signal.throwIfAborted(); assertReviewLineage(mailbox.store, request);
+        mailbox.completeEvaluation(job.id, result);
+      })));
       else await mailbox.processSubmission(job.id, async (request, proof) => {
         const policy = this.options.getPolicy(request.policyDigest);
         invariant(policy.controlRevision === request.proposal.authority.controlRevision, 'Submission must retain the exact prior policy');

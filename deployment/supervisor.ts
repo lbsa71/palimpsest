@@ -133,6 +133,7 @@ export class ServiceSupervisor {
     }
     this.#dispatcher = new EvaluationDispatcher({ mailbox: this.#mailbox!, host: this.#options.host, reviewer, unavailableDiagnosis,
       getPolicy: this.#options.getPolicy, policyDigests: configured?.policyDigests ?? [], assertAuthority: grant => this.#authority.assert(grant),
+      dispatchAuthority: (grant, operation) => this.#authority.dispatch(grant, operation),
       acceptedCandidateId: () => this.#controller.status()!.accepted.candidateId,
       release: proof => this.release(proof), stageControl: (proof, digest) => this.stageControl(proof, digest) });
     this.#dispatcher.start();
