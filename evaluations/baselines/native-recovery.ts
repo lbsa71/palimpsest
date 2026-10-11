@@ -25,6 +25,10 @@ export class NativeSessionEvents {
   private readonly seenTools = new Set<string>();
   private readonly startedItems = new Map<string, string>();
   private readonly completedItems = new Set<string>();
+  private readonly claudeTasks = new Map<string, { runId: string; toolUseId: string }>();
+  private readonly claudeToolParents = new Map<string, string | null>();
+  private readonly claudeToolNames = new Map<string, string>();
+  private readonly claudeAgentTasks = new Map<string, string>();
   private readonly kind: 'codex' | 'claude';
   private readonly expected?: string;
   private readonly maxBytes: number;
@@ -95,20 +99,39 @@ export class NativeSessionEvents {
         require(!this.completed && event.subtype === 'success' && event.is_error === false && this.tools.size === 0 && this.children.size === 0, 'Failed native result or active tools/children'); this.completed = true;
       } else if (event.type === 'assistant' || event.type === 'user') {
         require(!this.completed && Array.isArray(event.message?.content), 'Native message outside running turn');
+        const parent = event.parent_tool_use_id;
+        require(parent === null || typeof parent === 'string', 'Native parent call identity required');
+        if (event.agent_id !== undefined) {
+          const task = this.claudeTasks.get(event.agent_id);
+          require(task && this.children.has(event.agent_id) && task.toolUseId === parent, 'Native child parent attribution mismatch');
+        } else require(parent === null, 'Unattributed native child message');
         for (const part of event.message.content) {
           const key = `${event.agent_id ?? 'parent'}:${part.id ?? part.tool_use_id}`;
-          if (part.type === 'tool_use') { require(typeof part.id === 'string' && !this.seenTools.has(key), 'Duplicate native tool'); this.tools.add(key); this.seenTools.add(key); }
+          if (part.type === 'tool_use') { require(event.type === 'assistant' && typeof part.id === 'string' && typeof part.name === 'string' && !this.seenTools.has(key), 'Duplicate or unacquired native tool'); this.tools.add(key); this.seenTools.add(key); this.claudeToolParents.set(key, parent); this.claudeToolNames.set(key, part.name); }
           if (part.type === 'tool_result') {
-            require(typeof part.tool_use_id === 'string' && this.tools.has(key) && (part.is_error === false || event.tool_use_result?.status === 'completed'), 'Unmatched or failed native tool result');
+            require(event.type === 'user' && typeof part.tool_use_id === 'string' && this.tools.has(key) && this.claudeToolParents.get(key) === parent && part.is_error !== true && (part.is_error === false || part.is_error === undefined && event.tool_use_result?.status === 'completed'), 'Unmatched, misattributed or failed native tool result');
             if (event.tool_use_result?.status !== undefined) require(event.tool_use_result.status === 'completed', 'Unresolved native tool result');
+            if (this.claudeToolNames.get(key) === 'Agent') {
+              const taskId = this.claudeAgentTasks.get(key);
+              require(taskId && !this.children.has(taskId) && event.tool_use_result?.agentId === taskId, 'Native Agent result lacks its completed attributable child');
+            }
             this.tools.delete(key);
           }
         }
       } else if (event.type === 'system' && event.subtype === 'task_started') {
-        require(!this.completed && typeof event.task_id === 'string' && !this.children.has(event.task_id), 'Duplicate native child'); this.children.add(event.task_id);
+        require(!this.completed && typeof event.task_id === 'string' && typeof event.run_id === 'string' && event.run_id.length > 0 && typeof event.tool_use_id === 'string' && !this.claudeTasks.has(event.task_id), 'Duplicate or unacquired native child');
+        const call = `parent:${event.tool_use_id}`;
+        require(this.tools.has(call) && this.claudeToolNames.get(call) === 'Agent' && !this.claudeAgentTasks.has(call), 'Native child lacks an observed parent Agent call');
+        this.claudeAgentTasks.set(call, event.task_id); this.claudeTasks.set(event.task_id, { runId: event.run_id, toolUseId: event.tool_use_id }); this.children.add(event.task_id);
       } else if (event.type === 'system' && event.subtype === 'task_notification') {
-        require(this.children.has(event.task_id) && event.status === 'completed', 'Unmatched or failed native child'); this.children.delete(event.task_id);
-      } else require(event.type === 'system' && ['task_progress', 'task_updated'].includes(event.subtype), 'Unacquired native event');
+        const task = this.claudeTasks.get(event.task_id);
+        require(task && this.children.has(event.task_id) && task.runId === event.run_id && task.toolUseId === event.tool_use_id && event.status === 'completed', 'Unmatched, misattributed or failed native child');
+        require(![...this.tools].some(key => key.startsWith(`${event.task_id}:`)), 'Native child completed with active tools'); this.children.delete(event.task_id);
+      } else {
+        require(event.type === 'system' && ['task_progress', 'task_updated'].includes(event.subtype), 'Unacquired native event');
+        const task = this.claudeTasks.get(event.task_id);
+        require(task && this.children.has(event.task_id) && task.runId === event.run_id && (event.tool_use_id === undefined || event.tool_use_id === task.toolUseId), 'Native task update attribution mismatch');
+      }
     }
   }
   beforeProvider(): NativeSessionIdentity { require(!this.failed && this.identity && !this.completed, 'Native startup identity required before provider dispatch'); return { ...this.identity }; }
@@ -174,6 +197,9 @@ export interface NativeCheckpoint {
   ledger: string; native: ArtifactRef; workspace: ArtifactRef; manifest: ArtifactRef; result: ArtifactRef; cleanup: ArtifactRef;
   originalStartedAt: number; originalDeadline: number;
 }
+/** Trusted host-internal coordinator. Only runNativeBaseline admits public input and
+ * mints exit/cleanup observations after awaited runWorker cleanup. Caller artifact
+ * text is not an independently authenticated cleanup or admission proof. */
 export class NativeRecovery {
   private readonly observer: BaselineObserver;
   private readonly lease: ProcessLease;

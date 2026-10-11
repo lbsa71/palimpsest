@@ -1,6 +1,6 @@
 import { constants, chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { tmpdir } from 'node:os';
+import { tmpdir, release, version, platform, arch } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { canonicalJson, invariant, nonempty } from '../../packages/contracts/common.ts';
 import type { ArtifactRef, JsonValue } from '../../packages/contracts/common.ts';
@@ -135,7 +135,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       grant: observer.grant, prompt: store.putArtifact(input.prompt), workspace,
       native: { kind: input.kind, version: input.native.version, files },
       workerSha256: createHash('sha256').update(readFileSync(worker)).digest('hex'), nodeSha256: sha256(process.execPath),
-      nodeVersion: process.versions.node, sourceIdentity: sourceIdentity(),
+      nodeVersion: process.versions.node, kernelIdentity: { platform: platform(), architecture: arch(), release: release(), version: version() }, sourceIdentity: sourceIdentity(),
       hostTools: ['/usr/bin/bash', '/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit'].map(path => ({ path, sha256: sha256(realpathSync(path)) })),
       maxCliOutputBytes: input.maxCliOutputBytes, workerLimits: { maxConcurrency: observer.grant.resources.maxConcurrency, maxRequestBytes: observer.grant.maxRequestBytes }, protectedPaths: input.protectedPaths.map(path => realpathSync(path)),
       providerTransport: input.provider.kind,
