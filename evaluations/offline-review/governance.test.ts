@@ -43,7 +43,7 @@ export function governanceCase(): ReviewerCase {
 }
 const run = (c: ReviewerCase) => c.inputs.map(input => {
   try { return { kind: 'result', response: reviewOfflinePacket(input.packet, input.plan, Buffer.from(input.keyHex, 'hex')) }; }
-  catch { return { kind: 'refused' }; }
+  catch (error) { return { kind: (error as { code?: string })?.code === 'OFFLINE_REVIEW_REFUSED' ? 'refused' : 'error' }; }
 });
 const command = (output: unknown) => ({ exitCode: 0, signal: null, stdout: JSON.stringify(output), stderr: '', elapsedMs: 1 });
 
@@ -74,6 +74,8 @@ test('independent raw response assessment rejects forged binding, artifact, auth
   assert.equal(assessOffline(c, { ...command(run(c)), exitCode: 1 }), false);
   assert.equal(assessOffline(c, { ...command(run(c)), stoppedFor: 'timeout' }), false);
   assert.equal(assessOffline(c, command([{ kind: 'refused' }])), false, 'Missing results cannot be refusals');
+  const crashed = run(c); crashed[3] = { kind: 'error' };
+  assert.equal(assessOffline(c, command(crashed)), false, 'Unexpected function errors cannot satisfy expected refusal');
 });
 
 test('governance plan retains bounds, inert fields and nonrecursive packet provisioning', () => {

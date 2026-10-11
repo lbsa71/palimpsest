@@ -277,7 +277,7 @@ for (const path of ${JSON.stringify(privatePaths)}) { let exposed = false; try {
 `;
     const variants = [
       { name: 'good-private-isolation', code: privacy + original, verdict: 'pass' },
-      { name: 'always-refusing', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nexport function reviewOfflinePacket() { throw Error("always refuse"); }\n', verdict: 'fail' },
+      { name: 'always-refusing', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nexport function reviewOfflinePacket() { throw Object.assign(Error("always refuse"), { code: "OFFLINE_REVIEW_REFUSED" }); }\n', verdict: 'fail' },
       { name: 'always-accepting', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nlet first; export function reviewOfflinePacket(...args) { return first ??= originalReview(...args); }\n', verdict: 'fail' },
       { name: 'ignores-request-binding', code: original.replace('observation.requestId === r.requestId && ', ''), verdict: 'fail' },
       { name: 'promotes-failed-command', code: original.replace('const passed = commandPassed(c, observation.command);', 'const passed = true;').replace("passed === observation.passed && observation.physical.status", "observation.physical.status"), verdict: 'fail' },

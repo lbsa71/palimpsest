@@ -9,6 +9,6 @@ for (const input of inputs) {
   try {
     const response = reviewOfflinePacket(clone(input.packet), clone(input.plan), from(input.keyHex, 'hex'));
     results.push({ kind: 'result', response });
-  } catch { results.push({ kind: 'refused' }); }
+  } catch (error) { results.push({ kind: error?.code === 'OFFLINE_REVIEW_REFUSED' ? 'refused' : 'error' }); }
 }
 process.stdout.write(stringify(results));

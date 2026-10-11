@@ -15,7 +15,7 @@ export const canonical = (value: unknown): string => JSON.stringify(sort(value))
 export const digest = (value: unknown): string => createHash('sha256').update(canonical(value)).digest('hex');
 const hash = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 const same = (a: unknown, b: unknown): boolean => canonical(a) === canonical(b);
-const requireThat: (condition: unknown, message: string) => asserts condition = (condition, message) => { if (!condition) throw Error(message); };
+const requireThat: (condition: unknown, message: string) => asserts condition = (condition, message) => { if (!condition) throw Object.assign(Error(message), { code: 'OFFLINE_REVIEW_REFUSED' }); };
 
 /** Check raw returned evidence independently of the candidate's decision code. */
 function matchesResponse(input: ReviewerInput, raw: unknown, verdict: 'pass' | 'fail'): boolean {
