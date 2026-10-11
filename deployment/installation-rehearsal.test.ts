@@ -116,14 +116,18 @@ test('complete disposable installation retains current state, with optional inst
     assert.equal(health.alive, true); assert.equal(health.kernelLimitsConfigured, true);
     assert.equal(health.execution.admission, 'held'); assert.deepEqual(health.execution.reasons, ['allowance-exhausted']);
     assert.equal(health.execution.providerConnectivity, 'not-probed');
-    const store = new OperationalStore({ filename: join(state, 'operational.sqlite') });
-    store.put('fixture.current-state', 'latest', { experience: 'retained', uncertainEffect: 'unresolved fixture marker' }, null); store.close();
+    const withStore = <T>(operation: (store: OperationalStore) => T): T => {
+      const store = new OperationalStore({ filename: join(state, 'operational.sqlite') });
+      try { return operation(store); } finally { store.close(); }
+    };
+    withStore(store => store.put('fixture.current-state', 'latest', { experience: 'retained', uncertainEffect: 'unresolved fixture marker' }, null));
     stopInstallation(installation);
     execute('/usr/bin/systemctl', ['start', unitName]);
     const second = await ready(); assert.ok(second.ready.authority.epoch > first.ready.authority.epoch);
-    const reopened = new OperationalStore({ filename: join(state, 'operational.sqlite') });
-    assert.deepEqual(reopened.get('fixture.current-state', 'latest')!.value, { experience: 'retained', uncertainEffect: 'unresolved fixture marker' });
-    assert.equal(reopened.list('requests').length, 0, 'No physical model/tool request is authorized in this lifecycle fixture'); reopened.close();
+    withStore(reopened => {
+      assert.deepEqual(reopened.get('fixture.current-state', 'latest')!.value, { experience: 'retained', uncertainEffect: 'unresolved fixture marker' });
+      assert.equal(reopened.list('requests').length, 0, 'No physical model/tool request is authorized in this lifecycle fixture');
+    });
     if (successor && broken) {
       const boot = join(state, 'boot'), incumbentBoot = realpathSync(join(boot, 'rescue'));
       assert.equal(incumbentBoot, join(boot, 'targets', candidate.manifest.id));
@@ -169,9 +173,10 @@ test('complete disposable installation retains current state, with optional inst
       const bootReady = JSON.parse(readFileSync(join(selectedBoot, 'boot-ready.json'), 'utf8'));
       assert.deepEqual(bootReady.authority, successorBooted.release.authority); assert.equal(bootReady.target.candidateId, successor.manifest.id);
       assert.ok(successorBooted.ready.authority.epoch > successorRunning.ready.authority.epoch);
-      const current = new OperationalStore({ filename: join(state, 'operational.sqlite') });
-      current.put('fixture.current-state', 'latest', { experience: 'latest after installed succession', uncertainEffect: 'unresolved; do not retry' }, current.get('fixture.current-state', 'latest')!.revision);
-      const latest = current.get('fixture.current-state', 'latest'); current.close();
+      const latest = withStore(current => {
+        current.put('fixture.current-state', 'latest', { experience: 'latest after installed succession', uncertainEffect: 'unresolved; do not retry' }, current.get('fixture.current-state', 'latest')!.revision);
+        return current.get('fixture.current-state', 'latest');
+      });
       const brokenRunning = await promote(broken, successorBooted, candidatePolicy(successor), successor);
       assert.ok(brokenRunning.ready.authority.epoch > successorBooted.ready.authority.epoch);
       assert.equal(realpathSync(join(boot, 'active')), join(boot, 'targets', broken.manifest.id));
@@ -200,8 +205,7 @@ test('complete disposable installation retains current state, with optional inst
       for (const pid of [rescuePid, recovered.coordinator.processId, recovered.processId]) assert.equal(readlinkSync(`/proc/${pid}/exe`), join(incumbentBoot, 'node'));
       assert.equal(readFileSync(join(cgroupRoot, 'cgroup.procs'), 'utf8').trim(), '');
       assert.ok(readFileSync(join(cgroupRoot, 'host/cgroup.procs'), 'utf8').trim().split('\n').includes(String(rescuePid)));
-      const restored = new OperationalStore({ filename: join(state, 'operational.sqlite') });
-      assert.deepEqual(restored.get('fixture.current-state', 'latest'), latest); assert.equal(restored.list('requests').length, 0); restored.close();
+      withStore(restored => { assert.deepEqual(restored.get('fixture.current-state', 'latest'), latest); assert.equal(restored.list('requests').length, 0); });
       t.diagnostic(JSON.stringify({ kind: 'installed-succession-offline-rescue-engineering', incumbent: candidate.manifest.id, successor: successor.manifest.id, brokenBootstrap: broken.manifest.id,
         epochs: [first, second, successorRunning, successorBooted, brokenRunning, recovered].map(value => value.ready.authority.epoch), restartsBefore, restartsAfter,
         hostDataUsage: execute('/usr/bin/df', ['-B1', join(data, 'work')]).trim(), providerEnvironmentEntries: 0, liveProviderRequests: 0, externalMessages: 0 }));
