@@ -134,8 +134,11 @@ export class ServiceSupervisor {
       release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status(), controls: this.#controls?.records() };
   }
   #startControlContinuation(): void {
-    const reviewer = this.#options.controlReview;
-    if (!reviewer) return;
+    const reviewer = this.#options.controlReview ?? {
+      reserveProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.reserveProbation(review),
+      reviewProbation: (review: RunningProbationReview, signal: AbortSignal) => this.#dispatcher!.reviewProbation(review, signal),
+      readyToActivate: () => this.#dispatcher!.probationAvailable(),
+    };
     this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!,
       status: () => this.#controller.status()!, stagedControl: id => this.#controller.stagedControl(id),
       assertAuthority: authority => this.#authority.assert(authority), ...reviewer,
