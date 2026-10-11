@@ -1,0 +1,41 @@
+{
+  "observedAt": "2026-10-11",
+  "method": "read-only local executable/help/config allowlist inspection; no authenticated model call",
+  "baselines": [
+    {
+      "id": "codex",
+      "executable": "/home/palimpsest/.local/bin/codex",
+      "version": "codex-cli 0.162.1",
+      "installed": true,
+      "configuredModel": "gpt-6-astra",
+      "configuredEffort": "ultra",
+      "configurationUsedForRuns": null,
+      "effectivePromptDigest": null,
+      "contextPolicyDigest": null,
+      "toolsDigest": null,
+      "authentication": "file-present-validity-unverified",
+      "authorizedResourceGrant": null,
+      "sameModelFeasibility": "unverified",
+      "bestSystemRun": "not-run",
+      "notes": "Ambient danger-full-access/never settings are observed, not adopted by evaluation. Auth contents were not read."
+    },
+    {
+      "id": "claude-code",
+      "executable": null,
+      "version": null,
+      "installed": false,
+      "installationScope": "not found on current PATH; not proof of absence everywhere",
+      "configuredModel": null,
+      "configuredEffort": null,
+      "configurationUsedForRuns": null,
+      "effectivePromptDigest": null,
+      "contextPolicyDigest": null,
+      "toolsDigest": null,
+      "authentication": "unverified",
+      "authorizedResourceGrant": null,
+      "sameModelFeasibility": "unavailable",
+      "bestSystemRun": "unavailable"
+    }
+  ],
+  "parity": "unavailable"
+}
