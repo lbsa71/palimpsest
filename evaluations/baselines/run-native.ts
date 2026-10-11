@@ -92,6 +92,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       native: { kind: input.kind, version: input.native.version, files },
       workerSha256: createHash('sha256').update(readFileSync(worker)).digest('hex'), nodeSha256: sha256(process.execPath),
       nodeVersion: process.versions.node, sourceIdentity: sourceIdentity(),
+      hostTools: ['/usr/bin/bash', '/usr/bin/bwrap', '/usr/bin/setpriv', '/usr/bin/prlimit'].map(path => ({ path, sha256: sha256(realpathSync(path)) })),
       maxCliOutputBytes: input.maxCliOutputBytes, protectedPaths: input.protectedPaths.map(path => realpathSync(path)),
       providerTransport: input.provider.kind,
       qualification: input.provider.resourceLimits ? 'kernel-profile' as const : 'namespace-fixture' as const,

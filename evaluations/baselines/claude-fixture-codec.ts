@@ -31,7 +31,7 @@ function content(value: unknown, tools: boolean): void {
 }
 /** Native Messages transport rehearsal only. No paid Anthropic transport is exported. */
 export function validateClaudeFixturePayload(body: Record<string, unknown>, profile: BaselineProfile): void {
-  fields(body, ['model', 'messages', 'system', 'tools', 'tool_choice', 'max_tokens', 'stream', 'metadata', 'temperature', 'output_config']);
+  fields(body, ['model', 'messages', 'system', 'tools', 'tool_choice', 'max_tokens', 'stream', 'metadata', 'temperature', 'output_config', 'thinking']);
   invariant(body.model === profile.model, 'model differs from immutable host profile');
   if (body.system !== undefined) content(body.system, false);
   invariant(Array.isArray(body.messages), 'explicit Messages input required');
@@ -53,6 +53,7 @@ export function validateClaudeFixturePayload(body: Record<string, unknown>, prof
   if (body.output_config !== undefined) {
     const config = object(body.output_config); fields(config, ['effort']); invariant(config.effort === profile.effort, 'effort differs from fixture profile');
   }
+  if (body.thinking !== undefined) { const thinking = object(body.thinking); fields(thinking, ['type']); invariant(thinking.type === 'disabled', 'thinking must be explicitly disabled for fixture'); }
   if (body.metadata !== undefined) { const metadata = object(body.metadata); fields(metadata, ['user_id']); invariant(typeof metadata.user_id === 'string', 'invalid metadata'); }
   invariant(body.temperature === undefined || (typeof body.temperature === 'number' && body.temperature >= 0 && body.temperature <= 1), 'invalid temperature');
 }

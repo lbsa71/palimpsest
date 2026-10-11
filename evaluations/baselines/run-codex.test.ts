@@ -54,7 +54,7 @@ for (const kernel of [false, true]) test(kernel ? 'actual kernel-bounded native 
   timeout: 45_000,
 }, async context => {
   assert.ok(installed, 'Explicit native CLI required for opted-in kernel qualification');
-  const f = fixture(kernel ? process.env.AEON_CODEX_KERNEL_EVIDENCE : undefined); let calls = 0; let refusal: unknown;
+  const f = fixture(kernel ? process.env.AEON_CODEX_KERNEL_EVIDENCE : process.env.AEON_CODEX_FIXTURE_EVIDENCE); let calls = 0; let refusal: unknown;
   let limits: ResourceLimits | undefined;
   const observations: object[] = [];
   try {
@@ -142,6 +142,10 @@ print('native-kernel-proof')`;
       } catch (error) { refusal = error; throw error; }
     } };
     const result = await runCodexBaseline(f.input);
+    if (process.env.AEON_CODEX_FIXTURE_EVIDENCE) {
+      writeFileSync(join(f.root, 'outcome.json'), JSON.stringify(result, null, 2));
+      context.diagnostic(JSON.stringify({ evidence: f.root, physicalRequests: result.physicalRequests }));
+    }
     const outcome = result.outcome as { code: number; stdout: string; stderr: string; exceeded: boolean };
     assert.equal(outcome.code, 0, `${outcome.stderr}\n${String(refusal)}\n${outcome.stdout}`);
     assert.match(outcome.stdout, /baseline-runner-complete/); assert.equal(outcome.exceeded, false); assert.equal(result.physicalRequests, 2); assert.equal(result.qualification, kernel ? 'kernel-profile' : 'namespace-fixture');
