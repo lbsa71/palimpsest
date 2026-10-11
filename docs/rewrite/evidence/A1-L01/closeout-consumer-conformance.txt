@@ -1,0 +1,17 @@
+✔ C1 adapter preserves author-only mechanical evidence and checks referenced contents (11.117121ms)
+(node:808190) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ all actual host tool schemas validate ordinary complete arguments (6.662978ms)
+✔ invalid tool calls fail with useful nested paths and never alter their input (1.421801ms)
+✔ nested unions, uniqueItems, patterns, enum, required and additionalProperties are enforced (4.926553ms)
+✔ optional-null and primitive coercion policy is strict while explicit null remains intact (0.920713ms)
+✔ validation leaves emitted schemas and argument objects unchanged and rejects non-JSON values (1.294948ms)
+✔ nested arrays and referenced optional null reject invalid values without normalization (0.893553ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 294.71738

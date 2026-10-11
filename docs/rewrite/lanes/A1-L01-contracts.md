@@ -1,6 +1,6 @@
 # A1-L01 — contracts and architecture foundations
 
-Status: **reviewing**. Session owner: **Codex /root/a1_contracts**. Accountable actor: Codex. Governing method: [workflow](../workflow.md). Phase and dependencies: [Aeon 1](../aeon-1.md).
+Status: **accepted — C1 engineering interface gate only**. Session owner: **Codex /root/a1_contract_closeout**. Accountable actor: Codex. Governing method: [workflow](../workflow.md). Phase and dependencies: [Aeon 1](../aeon-1.md).
 
 Requirements: [RW01, RW04, RW09, RW12, RW15, RW16, RW19, RW21](../../../REQUIREMENTS.md).
 
@@ -10,7 +10,7 @@ Requirements: [RW01, RW04, RW09, RW12, RW15, RW16, RW19, RW21](../../../REQUIREM
 
 ## Ownership and interfaces
 
-Own `packages/contracts/`, `docs/rewrite/contracts/`, this lane file and `docs/rewrite/evidence/A1-L01/`. These are proposed new paths; freeze them at C1. Do not implement other modules or edit their owned interfaces without their owner. Coordinate root build scaffolding with L09. Record decisions in reserved ADRs through the lead.
+Own `packages/contracts/`, `docs/rewrite/contracts/`, this lane file and `docs/rewrite/evidence/A1-L01/`. These paths are frozen under C1 `aeon1.c1.v1`; coordinate revisions with affected consumers. Do not implement other modules or edit their owned interfaces without their owner. Coordinate root build scaffolding with L09. Record decisions in reserved ADRs through the lead.
 
 Specification dependencies: none; solicit needs from L02–L09, especially L09's authority and release boundary. Implementation dependencies: none; fixtures use deterministic in-memory implementations. Integration dependency: every consumer acknowledges the same C1 revision. C1 is a narrow interface gate, not a demand to solve every implementation choice first.
 
@@ -38,9 +38,13 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Codex /root/a1_contracts; finite tool goal active |
-| Branch / worktree | `codex/a1-contracts-20261011` / `/home/palimpsest/migration/aeon-1-20261011/contracts` |
-| Base source / contract revision | `14c742041270bb2acb15b4903a970394a140493c`; C1 draft v1 |
+| Owner session | Codex /root/a1_contract_closeout; fresh finite closeout delegated by integration owner; evidence/handoff recorded |
+| Branch / worktree | `codex/a1-contract-closeout-20261011` / `/home/palimpsest/migration/aeon-1-20261011/contract-closeout` |
+| Base source / contract revision | `dbab4be`; C1 `aeon1.c1.v1`; frozen consumer integration review |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | First handoff `f11a25bfc6583d9e20af629e2a0a46f776ebb15e`; implemented draft C1 v1; 17/17 conformance tests and strict TypeScript check pass; see ../evidence/A1-L01/implementation.md |
-| Blockers / next eligible task | Draft implementation complete; L03–L07 acknowledgements, final L09 integration and independent review required for C1 acceptance |
+| Last handoff / evidence | Closeout commit containing this lane update; frozen source `dbab4be4e05a6be358fae376b2ca19934b35e5d2`; C1 unchanged. Fresh 17/17 contract + 7/7 consumer-schema/envelope checks, zero skips, strict TypeScript pass; [review/matrix](../evidence/A1-L01/closeout.md), [manifest](../evidence/A1-L01/closeout-manifest.json). Original implementation handoff retained in [historical evidence](../evidence/A1-L01/implementation.md). |
+| Blockers / next eligible task | No remaining C1 interface blocker. Integration owner accepted fresh delegated L02–L09 conformance dispositions; these are not original-author acknowledgements. New batch/qualification consumer changes require acknowledgement and any API change a coordinated revision. Other lanes, live gates and H1 remain separate. |
+
+## Fresh closeout task and acceptance
+
+A1-L01-T05-closeout: at frozen `dbab4be`, inspect actual L02–L09 consumers and fresh review evidence, run bounded conformance/compilation checks, replace stale pending acknowledgements with explicitly delegated integration dispositions, and record the exact source/evidence handoff. Exclusive scope remained this lane, contracts documentation and L01 evidence; no shared API edit was needed. The integration owner received the recommendation and explicitly accepted C1 before this status change. T01–T04's unchanged executable contracts and scope map, plus T05's [fresh matrix and evidence](../evidence/A1-L01/closeout.md), satisfy the lane's engineering acceptance. No claim of full consumer-lane or Aeon 1 acceptance follows.

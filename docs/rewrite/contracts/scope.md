@@ -1,6 +1,6 @@
 # C1 scope and ownership
 
-Status: implemented draft `aeon1.c1.v1`, not an accepted integration or deployment. Requirements are authoritative; the interfaces below are the initial design. TypeScript ESM is adopted under ADR 0032; executable validators are pure and do not provide authentication, storage transactions or transport authority.
+Status: `aeon1.c1.v1` is an accepted engineering interface gate at frozen `dbab4be`; see [C1](C1.md) and its fresh consumer closeout. This is not full product integration, live qualification or deployment acceptance. Requirements remain authoritative. TypeScript ESM is adopted under ADR 0032; executable validators are pure and do not provide authentication, storage transactions or transport authority.
 
 | Requirements | Contract owner / consumer acceptance |
 |---|---|
@@ -24,6 +24,6 @@ Status: implemented draft `aeon1.c1.v1`, not an accepted integration or deployme
 | Node SHA256 and test runner | Retain platform primitives instead of implementing crypto or adding a test framework. | Node 24.13.0; `node:crypto`, `node:test`, `node:assert`; runtime license/dependency closure owned L09. |
 | Schema framework | Build minimal typed contracts and invariant validators. A second runtime dependency is unjustified for this boundary. | No external runtime packages; strict erasable TypeScript check. These are typed boundary validators, not a general untrusted JSON decoder. |
 | Pi shell | External decision adopted from ADR 0032, not bundled by L01. | L02 owns qualification and retained code/license evidence. `ShellPort` keeps its session identities out of authoritative run IDs. |
-| SQLite / storage | Deferred implementation choice to L03/L09. | Contracts require atomic compare-and-swap and durable receipts; no database dependency here. |
+| SQLite / storage | Consumer implementation owned by L03/L09 uses Node SQLite independently of this contract package. | Contracts require atomic compare-and-swap and durable receipts; no database dependency here. |
 
 No language-neutral network schema is promised: values are JSON-compatible and version-tagged by `CONTRACT_REVISION`; foreign-language adapters need their own validation. No data import, runtime implementation, live inference, message sending or deployment occurred in this lane.

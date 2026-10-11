@@ -1,0 +1,59 @@
+{
+  "sourceRevision": "dbab4be4e05a6be358fae376b2ca19934b35e5d2",
+  "contractRevision": "aeon1.c1.v1",
+  "node": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+  "nodeVersion": "v24.13.0",
+  "typescriptVersion": "7.0.2",
+  "sourceTrees": {
+    "packages/contracts": "4eea3c8b33f4f507f712efb64296f9cf43ccb893",
+    "packages/agent-shell": "f20039bba1e9750bd64bd34e2d602dd42ac512b0",
+    "packages/narrow-schema": "ebafdefe2d8997bd1f8f62b2799f805bfe1ddf94",
+    "packages/runtime": "0d07a77797ce606bef593f19ca7b1eca9c636870",
+    "packages/effects": "0249006e35796fcfb9530aef94192fb525536229",
+    "packages/storage": "b0c77f9335d71fd8a2a987560c2d827b80d3793b",
+    "packages/development": "48731e7aecc7d5f0685613b807ff08e6998b4cca",
+    "packages/initiative": "5038d68ea34be5b006e9302330f905696b6dfacb",
+    "packages/tools": "1297c84ad61381d60cb8423b9a6fd80391638ccc",
+    "packages/delegation": "338ca69d8f80e2af31be8c7689f80d2cc97a4425",
+    "packages/communications": "d5f0ebc8261a9c55f1145e8ded2a0cacf5135a06",
+    "evaluations": "c657ce8a0a731017e732e41908722d70e56347c8",
+    "packages/release": "496ea9959a5e383b96f419e0549d2ca6261024ec",
+    "deployment": "7be1b82d61f22659bac66ef2440273f9014bd47a"
+  },
+  "fileSha256": {
+    "package.json": "488aae75afa82ca630669d93e8a23e3ad24962b9681952e74b62425bbb86b17d",
+    "package-lock.json": "cc2956d305c7bbb1be7d58bde7b1d257ff8329ca73d55d1cfb8ee92d2712efc0",
+    "tsconfig.json": "12a6b5140c885108dfcf7975dd0c751d2939d28cd00cfd243800e2c16c7e4bd0",
+    "packages/contracts/common.ts": "90e4203850fe71bf0ef487c20c25ba0a0ae318d30a2247ca1e9c9d9c5524c9ae",
+    "packages/contracts/conformance/contracts.test.ts": "531223048ff9a508ae2e5744e3bb43023b7d69fb32b85f4e2672406d2ec6fef5",
+    "packages/contracts/conformance/fixtures.ts": "ffe2517f1f34469be60d06ecfc87ad1cd2690cb16d1d2996eec018854db8add5",
+    "packages/contracts/control/index.ts": "a63768932bd8b51f30a0dba03202c68befdddb5ecef0d79929fa14ccbafd24a3",
+    "packages/contracts/development/index.ts": "c35815629a1ef8a06fded297c6f047a1c32ce109b8f996b03b82bcebe0752b24",
+    "packages/contracts/execution/index.ts": "3d8240fe5dd363699c263681a99983f709e1d381fdc024d0cd1dd4e925207ba0",
+    "packages/contracts/index.ts": "e3e40fbd509308df243fb0b94ca85dea6026c1f784e25bcbbbd30c2301b925e8",
+    "packages/contracts/package.json": "f0a38e9d13e25dca5ad697d6a61633f123574f8faa849b623bfdb3a5c5c6988f"
+  },
+  "commands": [
+    {
+      "command": "node --test packages/contracts/conformance/contracts.test.ts",
+      "exitCode": 0,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "output": "closeout-conformance.txt"
+    },
+    {
+      "command": "node --test packages/agent-shell/schema-regression.test.ts evaluations/contract-envelope.test.ts",
+      "exitCode": 0,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "output": "closeout-consumer-conformance.txt"
+    },
+    {
+      "command": "node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0,
+      "output": "closeout-typecheck.txt"
+    }
+  ]
+}

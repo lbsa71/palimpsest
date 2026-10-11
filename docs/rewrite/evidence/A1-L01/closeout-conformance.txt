@@ -1,0 +1,25 @@
+✔ immutable identity ignores property order and rejects lossy JSON (1.866277ms)
+✔ duplicate intake has same identity while revision or source changes do not (0.575599ms)
+✔ uncertain delivery cannot dispatch again; reconciliation preserves effect identity (1.314595ms)
+✔ unresolved effects remain uncertain and confirmed nonapplication requires a new intent (0.392437ms)
+✔ stale generation is fenced even when epoch matches (0.418561ms)
+✔ checkpoint belongs to durable run and exact state revision, including cancelled run (0.436204ms)
+✔ a summary preserves provenance and cannot widen private audience or become an observation (0.780759ms)
+✔ paused goal and forgotten memory leave a separate owed obligation (0.56586ms)
+✔ goal completion needs evidence and waiting requires a wakeup (0.391951ms)
+✔ speech admission does not imply eligibility to originate human modifications (0.439236ms)
+✔ owned prompt instructions must be replaceable and final payload artifact must match (0.480675ms)
+✔ physical retries are separately accounted and unknown usage is not zero (0.450566ms)
+✔ candidate identity covers source, dependencies, prompts, model, config and controls (0.856693ms)
+✔ release rejects self-review, untrusted evidence and substituted candidates or controls (1.357797ms)
+✔ missing comparator or invalid evidence cannot be converted into a pass (0.449738ms)
+✔ cancellation is terminal for execution without deleting uncertain external effects (0.392615ms)
+✔ provider request capture detects byte-level payload drift (0.271751ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 196.149938
