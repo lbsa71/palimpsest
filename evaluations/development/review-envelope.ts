@@ -49,6 +49,12 @@ export interface DevelopmentReviewExecution {
 export interface DevelopmentReviewInput {
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string; behavior: DevelopmentBehavior;
 }
+export interface DevelopmentModelJudgment {
+  opportunities: { id: string; outcome: 'pass' | 'fail' | 'unavailable'; reason: string }[];
+  controls: { id: string; outcome: 'valid' | 'invalid' | 'unavailable'; reason: string }[];
+  boundaries: { id: string; outcome: 'valid' | 'invalid' | 'unavailable'; reason: string }[];
+  overall: 'pass' | 'fail' | 'unavailable'; reason: string;
+}
 /** Host transport attestation, never candidate/reviewer-reported usage. */
 export interface DevelopmentSettlement {
   version: 2; registrationDigest: string; requestIdentityDigest: string; observedAt: string;
@@ -119,7 +125,9 @@ export function developmentRequestIdentity(request: PhysicalRequest): string { c
 
 function registration(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, trust: DevelopmentEnvelopeTrust, now: number) {
   const r = authenticate(reviewEnvelopeDomains.registration, document, trust.behavior.issuers), m = manifest.value;
-  exact(r, 'version,attemptDigest,rootId,registeredAt,reviewDeadlineAt,observerClosureDigest,closureVerifierDigest,assignmentDigest,roles,originalRequests');
+  exact(r, 'version,attemptDigest,rootId,rootCancelled,registeredAt,reviewDeadlineAt,observerClosureDigest,closureVerifierDigest,assignmentDigest,roles,originalRequests');
+  invariant(typeof r.rootCancelled === 'boolean', 'Explicit original cancellation anchor required');
+  invariant(r.rootCancelled || !r.originalRequests.some(overrun), 'Original cancellation anchor erases known physical overrun');
   invariant(r.version === 2 && identity(r) === trust.acceptedRegistrationDigest && r.attemptDigest === identity(m) && identity(m) === trust.behavior.acceptedAttemptDigest, 'Unaccepted or changed registration/attempt'); id(r.rootId);
   for (const v of [r.observerClosureDigest, r.closureVerifierDigest, r.assignmentDigest]) digest(v);
   invariant(r.observerClosureDigest === trust.behavior.observer.artifactDigest && r.closureVerifierDigest === trust.closure.verifierDigest, 'Unqualified observer/closure verifier');
@@ -188,20 +196,29 @@ function budgets(states: readonly DevelopmentRequestState[], roles: ReadonlyMap<
   check(states, m.grant.resources);
   for (const role of roles.values()) check(states.filter(s => s.roleId === role.id), role.resources);
 }
-function replay(transitions: readonly DevelopmentAccountingTransition[], initial: readonly DevelopmentRequestState[], phase: 'behavior' | 'review', startAt: string, endAt: string, r: DevelopmentRegistration, m: DevelopmentAttempt, roles: ReadonlyMap<string, DevelopmentRoleBinding>, trust: DevelopmentEnvelopeTrust, read: BoundedArtifactReader) {
-  const latest = new Map(initial.map(s => [s.request.id, s])); let previousTime = at(startAt);
+function overrun(s: DevelopmentRequestState): boolean { return s.charged.tokens > s.ceiling.tokens || s.charged.costUsd > s.ceiling.costUsd || s.charged.elapsedMs > s.ceiling.elapsedMs; }
+function replay(transitions: readonly DevelopmentAccountingTransition[], initial: readonly DevelopmentRequestState[], initialCancelled: boolean, phase: 'behavior' | 'review', startAt: string, endAt: string, r: DevelopmentRegistration, m: DevelopmentAttempt, roles: ReadonlyMap<string, DevelopmentRoleBinding>, trust: DevelopmentEnvelopeTrust, read: BoundedArtifactReader) {
+  const latest = new Map(initial.map(s => [s.request.id, s])); let previousTime = at(startAt), rootCancelled = initialCancelled || initial.some(overrun);
   budgets([...latest.values()], roles, m);
     for (const event of transitions) {
       exact(event, 'beforeDigest,state,settlement'); const s = event.state, prior = latest.get(s.request.id), role = roles.get(s.roleId); invariant(role, 'Foreign tail role');
       invariant(at(s.observedAt) >= previousTime && at(s.observedAt) <= at(endAt), 'Tail ordering/deadline changed'); previousTime = at(s.observedAt);
       invariant(at(s.observedAt) >= at(m.grant.issuedAt), 'Physical transition precedes original grant');
       if (phase === 'behavior' && role.kind !== 'observer') invariant(at(s.observedAt) >= at(m.notBefore), 'Candidate/control transition before behavior start');
-      if (!prior) invariant(event.beforeDigest === null && s.request.status === 'reserved' && (phase === 'review' ? ['reviewer', 'observer'].includes(role.kind) : role.kind !== 'reviewer') && event.settlement === null, 'Duplicate/unregistered post-freeze physical request');
-      else {
+      if (!prior) {
+        invariant(!rootCancelled, 'Cancelled original root cannot reserve new work');
+        const elapsed = Math.max(at(s.observedAt) - at(m.grant.issuedAt), [...latest.values()].reduce((n, item) => n + item.charged.elapsedMs, 0));
+        invariant(elapsed + s.ceiling.elapsedMs <= m.grant.resources.maxElapsedMs, 'Original wall lifetime plus new elapsed reservation exceeds grant');
+        invariant(event.beforeDigest === null && s.request.status === 'reserved' && (phase === 'review' ? ['reviewer', 'observer'].includes(role.kind) : role.kind !== 'reviewer') && event.settlement === null, 'Duplicate/unregistered post-freeze physical request');
+      } else {
         invariant(event.beforeDigest === identity(prior), 'Missing exact authenticated request transition');
         const immutable = (v: DevelopmentRequestState) => ({ ...v, observedAt: '', request: developmentRequestIdentity(v.request), charged: null }); equal(immutable(prior), immutable(s), 'Transition changed immutable physical request/role/root');
         invariant((prior.request.status === 'reserved' && ['dispatched', 'failed'].includes(s.request.status)) || (['dispatched', 'uncertain'].includes(prior.request.status) && ['succeeded', 'failed', 'uncertain'].includes(s.request.status)), 'Settled request mutation or unauthorized replay');
-        if (s.request.status === 'dispatched') invariant((phase === 'review' ? ['reviewer', 'observer'].includes(role.kind) : role.kind !== 'reviewer'), 'Candidate/control dispatch continued after B');
+        if (s.request.status === 'dispatched') {
+          invariant(!rootCancelled, 'Cancelled original root cannot dispatch reserved work');
+          invariant(Math.max(at(s.observedAt) - at(m.grant.issuedAt), [...latest.values()].reduce((n, item) => n + item.charged.elapsedMs, 0)) <= m.grant.resources.maxElapsedMs, 'Original root expired before dispatch');
+          invariant((phase === 'review' ? ['reviewer', 'observer'].includes(role.kind) : role.kind !== 'reviewer'), 'Candidate/control dispatch continued after B');
+        }
       }
       let release = false;
       if (event.settlement) {
@@ -217,10 +234,10 @@ function replay(transitions: readonly DevelopmentAccountingTransition[], initial
         if (s.request.status === 'dispatched') equal(s.request.usage, prior.request.usage, 'Dispatch forged raw provider usage');
         else invariant(s.request.status === 'uncertain' && ['inputTokens', 'outputTokens', 'costUsd'].every(k => s.request.usage[k as 'inputTokens'] === null) && s.request.usage.elapsedMs >= prior.request.usage.elapsedMs, 'Settlement requires authenticated transport receipt');
       }
-      state(s, r, roles, read, release); latest.set(s.request.id, s); budgets([...latest.values()], roles, m);
+      state(s, r, roles, read, release); latest.set(s.request.id, s); rootCancelled ||= overrun(s); budgets([...latest.values()], roles, m);
       if (s.request.parentRequestId) invariant(latest.has(s.request.parentRequestId), 'Foreign/missing parent physical request');
     }
-  return { latest, previousTime };
+  return { latest, previousTime, rootCancelled };
 }
 
 /** Host collector returns an unsigned B; the qualified observer signs these exact bytes. */
@@ -232,7 +249,7 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
   for (const s of r.originalRequests) { state(s, r, roles, storage.read); invariant(at(s.observedAt) >= at(m.grant.issuedAt) && at(s.observedAt) <= at(r.registeredAt), 'Original inventory outside original clock anchor'); }
   accounting(m.grant.originalAccounting, r.originalRequests, m, m.registeredAt);
   for (const s of input.requests) { const role = state(s, r, roles, storage.read); invariant(role.kind !== 'reviewer' && at(s.observedAt) <= at(input.frozenAt), 'Reviewer work or late request inside B'); }
-  const history = replay(input.transitions, r.originalRequests, 'behavior', r.registeredAt, input.frozenAt, r, m, roles, trust, storage.read);
+  const history = replay(input.transitions, r.originalRequests, r.rootCancelled, 'behavior', r.registeredAt, input.frozenAt, r, m, roles, trust, storage.read);
   equal([...history.latest.values()].sort((a, b) => a.request.id.localeCompare(b.request.id)), [...r.originalRequests, ...input.requests].sort((a, b) => a.request.id.localeCompare(b.request.id)), 'Missing/incomplete behavioral physical transition history');
   const recorded = input.observations.filter(o => o.value.data.kind === 'request');
   equal(recorded.map(o => o.value.data.kind === 'request' ? o.value.data.request.id : '').sort(), input.requests.map(s => s.request.id).sort(), 'Behavior physical request inventory omitted or duplicated');
@@ -245,7 +262,7 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
   const end = input.observations.filter(o => o.value.data.kind === 'end'); invariant(end.length === 1 && at(end[0]!.value.observedAt) === at(input.frozenAt) && at(input.frozenAt) <= at(m.deadlineAt), 'B freeze must equal original behavioral stopping point');
   invariant(evidence.finalAccounting, 'Missing freeze-time A0'); accounting(evidence.finalAccounting, [...r.originalRequests, ...input.requests], m, input.frozenAt);
   storage.scan({ manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, originalRequests: r.originalRequests });
-  const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, evidence, artifactIndex: storage.index() };
+  const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, rootCancelled: history.rootCancelled, evidence, artifactIndex: storage.index() };
   invariant(Buffer.byteLength(canonicalJson(behavior)) + behavior.artifactIndex.reduce((n, a) => n + a.bytes, 0) <= m.limits.maxEvidenceBytes, 'Behavior evidence allowance exceeded');
   return behavior;
 }
@@ -257,14 +274,14 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
   try {
     exact(envelope, 'version,registration,behavior,reviews,accountingTail,closure'); invariant(envelope.version === 2, 'Unsupported envelope version');
     const observer = new Map([[trust.behavior.observer.id, trust.behavior.observer.key]]);
-    const b = authenticate(reviewEnvelopeDomains.behavior, envelope.behavior, observer); exact(b, 'version,registrationDigest,frozenAt,manifest,observations,requests,transitions,evidence,artifactIndex'); invariant(b.version === 2, 'Unsupported B version');
+    const b = authenticate(reviewEnvelopeDomains.behavior, envelope.behavior, observer); exact(b, 'version,registrationDigest,frozenAt,manifest,observations,requests,transitions,rootCancelled,evidence,artifactIndex'); invariant(b.version === 2, 'Unsupported B version');
     const { r, m, roles } = registration(envelope.registration, b.manifest, trust, now);
     const storage = retained(reader, m.limits, Buffer.byteLength(canonicalJson(envelope)));
     const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now); equal(b, collected, 'Changed immutable B/evidence/artifact index');
     const behaviorDigest = identity(b), reviews: Signed<DevelopmentReview>[] = []; invariant(envelope.reviews.length <= 2, 'At most two independent review bindings'); unique(envelope.reviews.map(v => v.signer));
     for (const signed of envelope.reviews) {
       const reviewer = trust.behavior.reviewers.get(signed.signer); invariant(reviewer, 'Unqualified reviewer'); const v = authenticate(reviewEnvelopeDomains.review, signed, new Map([[signed.signer, reviewer.key]]));
-      exact(v, 'version,registrationDigest,behaviorDigest,roleId,review'); const role = roles.get(v.roleId);
+      exact(v, 'version,registrationDigest,behaviorDigest,roleId,review,execution'); const role = roles.get(v.roleId);
       invariant(v.version === 2 && v.registrationDigest === identity(r) && v.behaviorDigest === behaviorDigest && role?.kind === 'reviewer' && role.assignmentId === signed.signer && v.review.signer === signed.signer, 'Review changed B/assigned role');
       invariant(at(v.review.value.reviewedAt) >= at(b.frozenAt) && at(v.review.value.reviewedAt) <= at(r.reviewDeadlineAt) && at(v.review.value.reviewedAt) <= now, 'Review outside original completion deadline'); reviews.push(v.review);
     }
@@ -273,11 +290,12 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     const tail = authenticate(reviewEnvelopeDomains.tail, envelope.accountingTail, observer); exact(tail, 'version,registrationDigest,behaviorDigest,transitions');
     invariant(tail.version === 2 && tail.registrationDigest === identity(r) && tail.behaviorDigest === behaviorDigest, 'Tail changed registration/B');
     invariant(b.observations.length + r.originalRequests.length + b.requests.length + b.transitions.length + tail.transitions.length + envelope.reviews.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
-    const { latest, previousTime } = replay(tail.transitions, [...r.originalRequests, ...b.requests], 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
+    const { latest, previousTime, rootCancelled } = replay(tail.transitions, [...r.originalRequests, ...b.requests], b.rootCancelled, 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
     storage.scan(envelope);
     if (!envelope.closure) findings.push({ code: 'closure', status: 'unavailable', detail: 'Missing final original-grant closure' });
     else {
-      const c = authenticate(reviewEnvelopeDomains.closure, envelope.closure, new Map([[trust.closure.id, trust.closure.key]])); exact(c, 'version,registrationDigest,behaviorDigest,tailDigest,reviewDigests,closedAt,requestStates,accounting');
+      const c = authenticate(reviewEnvelopeDomains.closure, envelope.closure, new Map([[trust.closure.id, trust.closure.key]])); exact(c, 'version,registrationDigest,behaviorDigest,tailDigest,reviewDigests,closedAt,rootCancelled,requestStates,accounting');
+      invariant(typeof c.rootCancelled === 'boolean' && c.rootCancelled === rootCancelled, 'Closure erased original root cancellation');
       invariant(c.version === 2 && c.registrationDigest === identity(r) && c.behaviorDigest === behaviorDigest && c.tailDigest === identity(tail), 'Closure changed B/T/registration');
       equal([...c.reviewDigests].sort(), envelope.reviews.map(v => identity(v.value)).sort(), 'Closure omits/changes independent judgments');
       invariant(at(c.closedAt) >= previousTime && envelope.reviews.every(v => at(v.value.review.value.reviewedAt) <= at(c.closedAt)) && at(c.closedAt) <= at(r.reviewDeadlineAt) && at(c.closedAt) <= at(m.grant.expiresAt) && at(c.closedAt) <= now, 'Closure after original expiry or before charged work');
