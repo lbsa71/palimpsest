@@ -7,7 +7,7 @@ The active direction is the **Aeon rewrite**, requested on 2026-10-11. Read [REQ
 - The user authorized a full rewrite with **no legacy support**. Existing source is evidence and a possible source of justified components, not a required architecture. Do not preserve old APIs, stores, deployment paths, prompts, test arrangements, or dependencies merely for compatibility.
 - Active specifications are the root entry points, `docs/rewrite/**`, and ADR 0031 or subsequent explicitly adopted rewrite ADRs. Other documentation, work items, protocols and ADRs describe the retired implementation. They are historical unless explicitly adopted with rationale in the new plan. [The prior entry points](docs/history/pre-aeon-2026-10-11/README.md) preserve that history.
 - Preserve historical lived data and credentials. Archival preservation is not a migration requirement. New operational state starts independently; any later import is a separately specified capability with provenance and privacy checks.
-- Documents do not confer host, network, spending, messaging or publication authority. The current planning task does not authorize implementing or deploying the entire rewrite. The old service has been decommissioned; do not restart it as a shortcut.
+- Documents do not confer host, network, spending, messaging or publication authority. On 2026-10-11 the user authorized implementing Aeon 1 with maximal useful parallelism and explicit subagent goals. Follow the active [execution record](docs/rewrite/execution.md). The old service has been decommissioned; do not restart it as a shortcut.
 
 ## Work through Aeons, lanes and tasks
 

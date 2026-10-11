@@ -1,6 +1,6 @@
 {
   "name": "palimpsest",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "An autark with durable memory, self-improvement, and governed succession",
@@ -8,11 +8,13 @@
     "node": ">=24.13.0 <25"
   },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "test": "node deployment/test.mjs",
     "check": "tsc --noEmit",
-    "start": "node src/cli.ts",
-    "self-improve": "node scripts/self-improve.ts",
-    "verify": "npm run check && npm test"
+    "build": "tsc --noEmit false --rewriteRelativeImportExtensions --outDir dist",
+    "verify": "npm run check && npm test && npm run build"
+  },
+  "dependencies": {
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

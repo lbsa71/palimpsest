@@ -1,6 +1,6 @@
 # A1-L09 — integration, whole-system evolution and handoff
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing**. Session owner: **/root**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21](../../../REQUIREMENTS.md).
 
@@ -53,9 +53,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
-| Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Owner session | `/root` — active full Aeon 1 implementation goal |
+| Branch / worktree | `codex/aeon-1-implementation-20261011`; `/home/palimpsest/src/palimpsest` |
+| Base source / contract revision | `14c7420`; C1 draft being coordinated with L01 |
+| Additional path reservations | Root configuration/lockfile, integration entry points and `docs/rewrite/execution.md` |
+| Last handoff / evidence | Initial supervisor checks in progress; see [boundary and failures](../evidence/A1-L09/boundary.md) |
+| Blockers / next eligible task | Build exact candidate/evidence admission; integrate C1 and component adapters. H1 remains open. |

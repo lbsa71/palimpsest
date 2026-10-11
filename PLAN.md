@@ -1,6 +1,6 @@
 # Aeon implementation and self-improvement plan
 
-Planning baseline: **2026-10-11**. Full rewrite; **no legacy support**. The old systemd installation is [decommissioned](docs/rewrite/decommission.md). The artifacts below are a complete planning baseline, not implemented or deployed capabilities. All implementation lanes begin planned and unclaimed.
+Planning baseline: **2026-10-11**. Full rewrite; **no legacy support**. The old systemd installation is [decommissioned](docs/rewrite/decommission.md). Aeon 1 implementation is now authorized and active; the [execution record](docs/rewrite/execution.md) identifies current claims, integration and evidence. Planning specifications alone do not establish implemented or deployed capabilities.
 
 The three dimensions are **Aeon → Lane → Task**: who carries the responsibility, which independent session owns an outcome, and what concrete work its subagents can complete. Maintaining this structure is itself [requirement RW19](REQUIREMENTS.md) and is enforced by [AGENTS.md](AGENTS.md) and the [planning workflow](docs/rewrite/workflow.md).
 

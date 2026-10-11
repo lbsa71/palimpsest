@@ -1,5 +1,9 @@
 # Current progress and evidence
 
+## 2026-10-11 — Aeon 1 implementation started
+
+The user authorized the full Aeon 1 implementation goal with maximal useful parallelism and goals for subagents. Contracts, Pi integration and evaluation are being implemented in three isolated worktrees while the lead implements supervisor/release foundations. The [execution record](rewrite/execution.md) tracks ownership, integration and remaining evidence. No replacement service is deployed; acceptance has not been claimed.
+
 ## 2026-10-11 — shell choice delegated and recorded
 
 The user prioritized autonomous dependency editing, simple builds/reloading and minimal justified scope, while excluding personal language aesthetics from the decision. [ADR 0032](adr/0032-select-pi-core-and-source-owned-dependencies.md) selects **Pi agent core with a narrow editable source closure and TypeScript/Node shell integration**. The final three-contender SWOT includes Rig as the first Rust fallback and AI SDK as the provider-oriented alternative. Codex, DeepAgentsJS and Claude Agent SDK retain explicit dispositions.

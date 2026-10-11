@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "rootDir": ".",
     "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -12,5 +13,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "experiments/coding-provider-adapter/session-provider/serving/*.test.ts"]
+  "include": ["packages/**/*.ts", "deployment/**/*.ts", "evaluations/**/*.ts", "experiments/agent-shell/**/*.ts"]
 }
