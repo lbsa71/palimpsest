@@ -96,6 +96,8 @@ export async function runOfflineCase(options: { config: ReviewerFile; host: Host
     const physical = new ResourceLedger(resource.store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).request(reviewOperationId(resource));
     invariant(physical?.status === 'succeeded', 'Original offline physical receipt unavailable');
     return { version: 1, requestId: request.requestId, candidateId: request.candidate.manifest.id, policyDigest: request.policyDigest,
-      evaluatorDigest: resource.evaluatorDigest, planDigest, runnerDigest: plan.runnerDigest, caseId: c.id, inputDigest: identity(c.inputs), command, physical, passed: assessOffline(c, command) };
+      evaluatorDigest: resource.evaluatorDigest, planDigest, runnerDigest: plan.runnerDigest, caseId: c.id, inputDigest: identity(c.inputs),
+      // CommandReceipt has optional undefined fields; persist its exact JSON representation.
+      command: JSON.parse(JSON.stringify(command)) as CommandReceipt, physical, passed: assessOffline(c, command) };
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 }

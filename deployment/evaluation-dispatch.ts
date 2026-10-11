@@ -197,15 +197,20 @@ export async function runAccountedExternalReview(config: ReviewerFile, host: Hos
   const accepted = verifyApplication(host.artifactStore, acceptedCandidateId, host.nodeBinary);
   const resourceLimits = materializeConfiguration(accepted, host).resourceLimits;
   const offline = loadOfflinePlan(config), observations: OfflineObservation[] = [];
+  invariant(!offline || policy.kind === 'engineering' || resourceLimits, 'Product behavioral review requires accepted kernel resource ceilings');
+  let continuedFrom: string | undefined;
   if (offline) {
     invariant(offline.plan.cases.every(c => policy.requiredCases.includes(c.id)), 'Offline cases must be declared in the original policy');
-    for (const [index, c] of offline.plan.cases.entries()) observations.push(await runOfflineCase({ config, host, request,
-      plan: offline.plan, planDigest: offline.digest, case: c, resourceLimits,
-      resource: { ...resource, prepared: !!resource.prepared && index === 0 } }));
+    for (const [index, c] of offline.plan.cases.entries()) {
+      const observed = await runOfflineCase({ config, host, request,
+        plan: offline.plan, planDigest: offline.digest, case: c, resourceLimits,
+        resource: { ...resource, continuedFrom, prepared: !!resource.prepared && index === 0 } });
+      observations.push(observed); continuedFrom = observed.physical.id;
+    }
     // Detect private plan/source changes after candidate execution and before the signer starts.
     invariant(identity(loadOfflinePlan(config)) === identity(offline), 'Offline plan changed during candidate observation');
   }
-  return accountedReview({ ...resource, operation: undefined, maxElapsedMs: config.maxElapsedMs, prepared: !!resource.prepared && !offline },
+  return accountedReview({ ...resource, operation: undefined, continuedFrom, maxElapsedMs: config.maxElapsedMs, prepared: !!resource.prepared && !offline },
     gate => runSealedReview(config, host, request, policy, acceptedCandidateId, resource.assertAuthority, gate.signal, gate.dispatch,
       resource.physicalAuthority ?? request.proposal.authority, offline ? observations : undefined));
 }

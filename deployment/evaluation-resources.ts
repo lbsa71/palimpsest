@@ -6,7 +6,7 @@ import type { EvaluationRequest } from './evolution-tools.ts';
 const provider = 'external-offline-review';
 const preparationNamespace = 'host.external-review-reservations';
 interface ReviewAllocation { parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt: number }
-interface PreparedReview { physical: PhysicalRequest; startedAt: number; maxElapsedMs: number; claimed?: boolean }
+interface PreparedReview { physical: PhysicalRequest; startedAt: number; maxElapsedMs: number; reviewDigest: string; claimed?: boolean }
 export interface ReviewResourceOptions {
   store: OperationalStore; request: EvaluationRequest; evaluatorDigest: string; evaluatorId: string;
   maxElapsedMs: number; assertAuthority(authority: Authority): void;
@@ -17,6 +17,8 @@ export interface ReviewResourceOptions {
   operation?: { id: string; digest: string };
   /** Host-checked probation continuation; judging authority in request remains unchanged. */
   physicalAuthority?: Authority;
+  /** For sequential post-transfer work, prove a completed operation of this same review. */
+  continuedFrom?: string;
 }
 export function reviewPhysicalId(jobId: string): string { return `external-review:${jobId}`; }
 export function reviewOperationId(options: Pick<ReviewResourceOptions, 'request' | 'operation'>): string {
@@ -53,7 +55,7 @@ export function prepareReview(options: ReviewResourceOptions): void {
     options.signal?.throwIfAborted(); options.assertAuthority(authority); assertReviewLineage(store, request, now, authority);
     options.commitReservation?.();
     new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now).reserve(physical);
-    store.put(preparationNamespace, id, { physical, startedAt: now(), maxElapsedMs: options.maxElapsedMs }, null);
+    store.put(preparationNamespace, id, { physical, startedAt: now(), maxElapsedMs: options.maxElapsedMs, reviewDigest: identity(request) }, null);
   }));
 }
 /** These offline reviewers have no network or provider credentials. Each review still consumes
@@ -63,12 +65,19 @@ export async function accountedReview<T>(options: ReviewResourceOptions & { prep
 operation: (gate: { signal: AbortSignal; dispatch(launch: () => void): void }) => Promise<T>): Promise<T> {
   const { request, store } = options, now = options.now ?? Date.now;
   const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now);
+  if (options.physicalAuthority && !options.prepared) {
+    const predecessor = options.continuedFrom && store.get<PreparedReview>(preparationNamespace, options.continuedFrom)?.value;
+    const physical = options.continuedFrom ? ledger.request(options.continuedFrom) : undefined;
+    invariant(predecessor && predecessor.claimed && predecessor.reviewDigest === identity(request) && physical?.status === 'succeeded' &&
+      physical.runId === request.proposal.runId && physical.model === options.evaluatorId && physical.promptManifestId === `reviewer-closure:${options.evaluatorDigest}`,
+    'Transferred review requires its original prepared reservation or completed same-review predecessor');
+  }
   if (!options.prepared) prepareReview(options);
   // Claim before asynchronous preparation. A duplicate must never enter the operation or
   // settle the owner's physical request after losing a race at the launch gate.
   const prepared = store.transaction(() => {
     const row = store.get<PreparedReview>(preparationNamespace, reviewOperationId(options)), prepared = row?.value;
-    invariant(row && prepared && !prepared.claimed && prepared.maxElapsedMs === options.maxElapsedMs && prepared.physical.requestDigest === operationDigest(options) &&
+    invariant(row && prepared && !prepared.claimed && prepared.reviewDigest === identity(request) && prepared.maxElapsedMs === options.maxElapsedMs && prepared.physical.requestDigest === operationDigest(options) &&
       prepared.physical.model === options.evaluatorId && prepared.physical.promptManifestId === `reviewer-closure:${options.evaluatorDigest}` &&
       identity(ledger.request(prepared.physical.id)) === identity(prepared.physical), 'Exact unused prepared review reservation required');
     store.put(preparationNamespace, prepared.physical.id, { ...prepared, claimed: true }, row.revision);

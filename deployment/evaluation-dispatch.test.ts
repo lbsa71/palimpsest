@@ -250,6 +250,24 @@ function fixtureGovernance(profile) {
   return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources, futureReviewerDigest, source, inputs };
 }
 
+test('offline direct bounded review retains actual command evidence', { timeout: 60000, skip: process.env.AEON_OFFLINE_REVIEW_FIXTURE !== '1' }, async () => {
+  const f = fixture(false, false, true), store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+  try {
+    const authority = f.options.bootstrap.proof.proposal.priorAuthority;
+    const request: EvaluationRequest = { requestId: 'direct-bounded-review', policyDigest: f.policy.policyDigest, candidate: f.incumbent,
+      proposal: { id: 'direct-proposal', runId: 'direct-author', scope: { kind: 'public' }, authority, provenance: { kind: 'self', inputId: 'fixture', goalId: 'fixture', actorId: 'fixture' },
+        justification: 'Bounded direct engineering observation', goal: { objective: 'observe', successCriteria: ['behavior'] }, experience: store.putArtifact('engineering-only'), state: 'frozen' } };
+    const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }); ledger.allocate(request.proposal.runId, { ...f.resources, maxConcurrency: 1 });
+    store.put('runs', request.proposal.runId, { id: request.proposal.runId, status: 'completed', revision: 0, scope: request.proposal.scope, authority }, null);
+    const response = await runAccountedExternalReview(f.reviewer, f.host, request, f.policy, f.incumbent.manifest.id,
+      { store, request, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId, maxElapsedMs: f.reviewer.maxElapsedMs,
+        assertAuthority: a => assert.deepEqual(a, authority), dispatchAuthority: (a, run) => { assert.deepEqual(a, authority); run(); } });
+    assert.equal(response.result.receipt.evidence[0]!.verdict, 'pass');
+    assert.equal(ledger.snapshot(request.proposal.runId).requests, 2);
+    assert.equal(ledger.snapshot(request.proposal.runId).concurrent, 0);
+  } finally { store.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test('offline behavioral reviewer confines candidate probes and reaches ordinary staged admission and fresh probation', { timeout: 180000, skip: process.env.AEON_OFFLINE_REVIEW_FIXTURE !== '1' }, async t => {
   const f = fixture(true, false, true); let supervisor: ServiceSupervisor | undefined;
   const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });

@@ -36,13 +36,14 @@ test('sibling probes and sealed reviewer each charge the original maxConcurrency
       dispatchAuthority: (value: unknown, run: () => void) => { assert.deepEqual(value, successor); run(); } };
     f.setTime(10);
     await accountedReview({ ...transferred, operation, prepared: true }, async gate => { gate.dispatch(() => {}); f.setTime(20); });
-    await accountedReview(transferred, async gate => { gate.dispatch(() => {}); f.setTime(30); });
+    await assert.rejects(accountedReview(transferred, async () => {}), /original prepared/);
+    await accountedReview({ ...transferred, continuedFrom: reviewOperationId(first) }, async gate => { gate.dispatch(() => {}); f.setTime(30); });
     assert.equal(f.ledger.request(reviewOperationId(first))!.usage.elapsedMs, 20);
     assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.usage.elapsedMs, 10);
     assert.deepEqual(f.store.get('allocations', 'parent'), parent); assert.deepEqual(f.store.get('allocations', 'child'), child);
     assert.equal(f.ledger.snapshot('parent').requests, 2); assert.equal(f.ledger.snapshot('parent').concurrent, 0);
     await assert.rejects(accountedReview({ ...transferred, operation, prepared: true }, async () => {}), /unused prepared/);
-    await assert.rejects(accountedReview(transferred, async () => {}), /already used/);
+    await assert.rejects(accountedReview({ ...transferred, continuedFrom: reviewOperationId(first) }, async () => {}), /already used/);
   } finally { f.close(); }
 });
 test('probe cancellation and restart preserve its distinct unknown charge and prevent a free signer', async () => {
