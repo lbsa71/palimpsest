@@ -1,0 +1,35 @@
+# A1-L08 pinned native delegation acquisition
+
+Owner `/root/a1_native_concurrency`; finite goal created before implementation, with no budget. Worktree `/home/palimpsest/migration/aeon-1-20261011/native-delegation`, branch `codex/a1-native-delegation-20261011`, frozen base `bfbf2db`. Previous concurrency worktree/evidence remain untouched. Root owns central status, integration, physical serialization and a fresh independent review. Exclusive changes are concrete baseline protocol/observer/runner/invocation plus focused new fixtures/tests and this evidence. Shared runtime/contracts/kernel/configuration and the independent concurrency review tests remain read-only.
+
+```text
+/goal Acquire and narrowly support the pinned native Codex child-message and Claude delegation surfaces, then demonstrate two actual child continuations and parent receipt under one original synthetic allowance per attempt; retain unsupported boundaries and hand off for independent review without granting live compatibility or comparator scores.
+```
+
+The fixed [native delegation specification](native-delegation-specification.md) predates code. Existing native binaries, observer, host ledger, namespace, worker RPC and original concurrency bound are retained; no new framework, dependency or provider route is needed.
+
+## First pure evidence
+
+The two original Codex refusals are copied byte-for-byte into `evaluations/baselines/fixtures/codex-child-0-0.162.1.json` and `codex-child-1-0.162.1.json`, each 54,499 bytes. SHA-256 values remain `ab55e3cee93fc5fd90cd7ed85197f7c8423beeb52836ad99770c4cd83fb779b9` and `04ef8c718640204d79a6a8256bf76e4b9be6712075685a448f7b10fa401d79a8`. The first pure run reproduced 11 failures / 12 passes on the pre-change source: both original child requests were refused, pin/transport guards were missing, and invocation remained bare. The transcript is retained outside the checkout in `/home/palimpsest/migration/aeon-1-20261011/native-delegation-evidence/first-pure-failure.txt`.
+
+Codex admission now accepts only the acquired `agent_message` fields and its text/opaque-string blocks, with bounded canonical native identities. It preserves original bytes, author and recipient without interpreting them as host authority. The new profile requires exact 0.162.1 CLI/helper digests, gpt-6-astra/high, the original full 200,000-input plus 4,096-output contract and explicit synthetic transport. The runner rejects a swapped closure/version and paid entry before state preparation; the direct OpenAI transport separately refuses this newly synthetic-only format before fetch. Plain coding behavior keeps its existing path. Unknown/media/server additions remain refused before reservation/transport.
+
+Claude's smallest proposed acquisition change replaces bare mode with native `--safe-mode`, retaining built-in native instructions and agents while disabling ambient customizations. The pinned retained help explicitly documents this switch. Existing empty setting sources/settings, strict empty MCP configuration, disabled skills, no session persistence, fresh namespace home and same-model role pins remain. The runner requires a blank initial workspace and pinned synthetic profile, then snapshots invocation options before asynchronous launch. No custom `--agents` or system/personality prompt is supplied.
+
+Current [bare-mode documentation](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode) and [subagent documentation](https://code.claude.com/docs/en/sub-agents), checked 2026-10-11, support the configuration investigation. They do not establish the pinned binary's actual Agent availability. Captured native instructions, tools, thinking, headers and results are decisive.
+
+## Frozen first physical plan
+
+Exactly one Codex full child-continuation attempt and one Claude acquisition-only attempt are proposed initially. Each new original fixture grant is declared and retained before dispatch: eight physical requests, concurrency four, 60,000 ms original elapsed limit, 10,000 ms request limit, synthetic cost ceiling 100 USD, request/response/CLI caps 1,000,000 bytes. Codex preserves 200,000+4,096 per-request tokens and total 1,632,768 tokens. Claude preserves full 1,000,000+4,096 per-request tokens and total 8,032,768 tokens. Neither original grant is replenished or replayed. Maximum three initial attempts per product governs this unit; any subsequent attempt requires an explicit retained defect/surface disposition and a newly frozen plan within those limits.
+
+Codex uses the previously pinned CLI/helper. Its actual spawn surface starts two actual children. Child attribution comes from native `agent_message` author/recipient fields, never task text or decoding opaque blocks. First child requests wait until two dispatched child identities simultaneously exist in the original host ledger. Each synthetic reply invokes the real command tool to write its own artifact. Continuation requires the exact tool call ID and observed output. Parent completion requires both directed native FINAL_ANSWER messages; opaque bytes are compared only to the emitted public synthetic final bytes, without decoding or making claims about opaque content. Original parent task text cannot satisfy the receipt check. A wait reply may consume the original allowance; exhaustion fails honestly.
+
+Claude uses the exact pinned 2.1.296 high/adaptive Opus profile and beta. The acquisition attempt captures the actual parent tool definitions/instructions and replies once with terminal public synthetic text. It emits no Agent call. The test then requires that an actual Agent definition was acquired, while preserving any absent-tool or protocol refusal. A later separately frozen full child fixture will use the acquired actual input schema and native child attribution.
+
+Root must assign the serialized physical window after inspecting the frozen source. Planned command:
+
+```sh
+AEON_NATIVE_DELEGATION_RUN=1 AEON_NATIVE_DELEGATION_EVIDENCE=/home/palimpsest/migration/aeon-1-20261011/native-delegation-evidence /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 evaluations/baselines/native-delegation-physical.test.ts
+```
+
+Actual observations, instruction-path audit, exact hashes and capability handoff follow after the bounded acquisition. No paid/auth-network/account inspection, external messaging, installs, services or publication are authorized. Live compatibility, model quality, external research, native persistent recovery, calibrated comparison and H1 remain unavailable.

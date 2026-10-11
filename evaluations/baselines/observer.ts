@@ -1,3 +1,5 @@
+import { validateCodexAgentMessage, validateCodexNativeProtocol } from './codex-native-protocol.ts';
+import type { CodexNativeProtocol } from './codex-native-protocol.ts';
 import { nativeProtocolHeaders } from './anthropic-native-protocol.ts';
 import type { AnthropicNativeProtocol, AnthropicProtocolHeaders } from './anthropic-native-protocol.ts';
 import { anthropicUsage, validateAnthropicPayload, validateAnthropicProfile } from './anthropic-codec.ts';
@@ -17,6 +19,8 @@ export interface BaselineProfile {
   contextContract: string; contextWindowTokens: number; maxOutputTokens: number;
   prices: { source: string; inputUsdPerMillion: number; cachedInputUsdPerMillion: number; outputUsdPerMillion: number; cacheWrite5mUsdPerMillion?: number; cacheWrite1hUsdPerMillion?: number };
   /** Selected explicit native thinking configuration; only global standard synchronous inference is priced. */
+  /** Exact acquired child-message protocol is synthetic-only until separate paid qualification. */
+  codexNativeProtocol?: CodexNativeProtocol;
   anthropic?: { thinking: 'adaptive' | 'enabled' | 'disabled'; thinkingBudgetTokens?: number; serviceTier: 'standard'; inferenceGeo: 'global'; speed: 'standard'; nativeProtocol?: AnthropicNativeProtocol };
 }
 export interface ObserverGrant {
@@ -41,6 +45,7 @@ function freeze<T>(value: T): T {
 function positive(value: number, name: string): void { invariant(Number.isSafeInteger(value) && value > 0, `finite positive ${name} required`); }
 export function validateObserverGrant(grant: ObserverGrant): void {
   nonempty(grant.id, 'grant.id'); invariant(['openai', 'anthropic-fixture', 'anthropic'].includes(grant.profile.provider), 'supported baseline profile required');
+  if (grant.profile.codexNativeProtocol !== undefined) validateCodexNativeProtocol(grant.profile);
   nonempty(grant.profile.model, 'model'); nonempty(grant.profile.contextContract, 'context contract');
   invariant((grant.profile.provider === 'anthropic' ? ['low', 'medium', 'high', 'xhigh', 'max'] : ['none', 'low', 'medium', 'high', 'xhigh']).includes(grant.profile.effort), 'invalid effort');
   positive(grant.profile.contextWindowTokens, 'context window'); positive(grant.profile.maxOutputTokens, 'output tokens');
@@ -97,6 +102,7 @@ function validatePayload(body: Record<string, unknown>, profile: BaselineProfile
   invariant(Array.isArray(body.input), 'explicit input array required');
   for (const raw of body.input) {
     const item = object(raw);
+    if (item.type === 'agent_message') { validateCodexAgentMessage(item, profile); continue; }
     if (item.type === 'additional_tools') { fields(item, ['type', 'id', 'role', 'tools']); tools(item.tools); continue; }
     if (item.type === 'message' || item.type === undefined) { fields(item, ['type', 'id', 'role', 'content', 'status']); invariant(['system', 'developer', 'user', 'assistant'].includes(String(item.role)), 'invalid text message role'); textContent(item.content); continue; }
     if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') { fields(item, ['type', 'id', 'call_id', 'output', 'status']); textContent(item.output); continue; }
@@ -113,8 +119,12 @@ function validatePayload(body: Record<string, unknown>, profile: BaselineProfile
 /** No URL, headers, credential file or retries are accepted from the worker. Never logs the key. */
 export function openAITransport(apiKey: string, fetcher: typeof fetch = fetch): BaselineTransport {
   invariant(typeof apiKey === 'string' && apiKey.length > 0 && !/[\r\n]/.test(apiKey), 'explicit host credential required');
-  return (payload, signal) => fetcher(OPENAI_RESPONSES_ENDPOINT, { method: 'POST', redirect: 'error', signal,
+  return async (payload, signal) => {
+    const body = object(JSON.parse(payload));
+    invariant(!Array.isArray(body.input) || !body.input.some(item => item?.type === 'agent_message'), 'native Codex child messages are synthetic-only; paid qualification unavailable');
+    return fetcher(OPENAI_RESPONSES_ENDPOINT, { method: 'POST', redirect: 'error', signal,
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: payload });
+  };
 }
 
 function count(value: unknown): number { invariant(Number.isSafeInteger(value) && (value as number) >= 0, 'invalid final usage'); return value as number; }
@@ -155,8 +165,9 @@ export class BaselineObserver {
   readonly store: OperationalStore; readonly ledger: ResourceLedger; readonly grant: ObserverGrant;
   private readonly transport: BaselineTransport; private readonly now: () => number;
   private readonly active = new Set<AbortController>();
-  constructor(options: { store: OperationalStore; grant: ObserverGrant; transport: BaselineTransport; now?: () => number }) {
+  constructor(options: { store: OperationalStore; grant: ObserverGrant; transport: BaselineTransport; transportKind?: 'fixture' | 'openai' | 'anthropic'; now?: () => number }) {
     validateObserverGrant(options.grant);
+    if (options.grant.profile.codexNativeProtocol) invariant(options.transportKind === 'fixture', 'pinned native Codex child protocol requires explicit synthetic fixture transport');
     this.store = options.store; this.grant = freeze(structuredClone(options.grant)); this.transport = options.transport; this.now = options.now ?? Date.now;
     const profile = this.grant.profile;
     this.ledger = new ResourceLedger(this.store, { tokens: profile.contextWindowTokens + profile.maxOutputTokens,

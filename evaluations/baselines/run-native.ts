@@ -8,6 +8,7 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 import { ProcessLease } from '../../packages/supervisor/process-lease.ts';
 import { runWorker } from '../../packages/supervisor/worker-process.ts';
 import type { ResourceLimits } from '../../packages/supervisor/resource-limits.ts';
+import type { ClaudeNativeOptions } from './claude-configuration.ts';
 import { claudeInvocation } from './claude-configuration.ts';
 import { anthropicTransport } from './anthropic-codec.ts';
 import { BaselineObserver, openAITransport, validateObserverGrant } from './observer.ts';
@@ -18,7 +19,7 @@ export interface NativeBaselineRun {
   privateStateRoot: string; checkoutRoot: string; workspace: string; protectedPaths: string[];
   native: { version: string; files: { path: string; name: string; sha256: string }[] };
   prompt: string; grant: ObserverGrant; maxCliOutputBytes: number;
-  claudeOptions?: { tools: string; modelRoles?: { haiku?: string; sonnet?: string; opus?: string; subagent?: string } };
+  claudeOptions?: ClaudeNativeOptions;
   provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits } | { kind: 'openai' | 'anthropic'; apiKey: string; resourceLimits: ResourceLimits };
   signal?: AbortSignal;
 }
@@ -51,12 +52,22 @@ function validate(input: NativeBaselineRun): void {
   invariant(Number.isSafeInteger(input.maxCliOutputBytes) && input.maxCliOutputBytes > 0 && input.maxCliOutputBytes <= 2_000_000, 'finite CLI output ceiling required');
   invariant(input.provider?.kind === 'fixture' || input.provider?.kind === 'openai' || input.provider?.kind === 'anthropic', 'explicit provider fixture or host credential required');
   invariant(input.kind === 'codex' ? input.grant.profile.provider === 'openai' && input.provider.kind !== 'anthropic' : (input.grant.profile.provider === 'anthropic-fixture' && input.provider.kind === 'fixture') || (input.grant.profile.provider === 'anthropic' && input.provider.kind !== 'openai'), 'native protocol/profile mismatch');
+  if (input.grant.profile.codexNativeProtocol) {
+    const protocol = input.grant.profile.codexNativeProtocol;
+    invariant(input.kind === 'codex' && input.native.version === protocol.codexVersion && input.native.files[0]?.sha256 === protocol.codexSha256 && input.native.files[1]?.sha256 === protocol.helperSha256, 'native Codex binary/version differs from pinned protocol');
+    invariant(input.provider.kind === 'fixture', 'pinned native Codex child protocol is synthetic-only');
+  }
   if (input.kind === 'claude' && input.grant.profile.provider === 'anthropic') {
     invariant(input.claudeOptions && typeof input.claudeOptions.tools === 'string' && input.claudeOptions.tools.length > 0, 'explicit real native Claude tool selection required');
-    invariant(Object.keys(input.claudeOptions).every(key => ['tools', 'modelRoles'].includes(key)) && Object.keys(input.claudeOptions.modelRoles ?? {}).every(key => ['haiku', 'sonnet', 'opus', 'subagent'].includes(key)), 'unknown native Claude options refused');
+    invariant(Object.keys(input.claudeOptions).every(key => ['tools', 'modelRoles', 'delegation'].includes(key)) && Object.keys(input.claudeOptions.modelRoles ?? {}).every(key => ['haiku', 'sonnet', 'opus', 'subagent'].includes(key)), 'unknown native Claude options refused');
     if (input.grant.profile.anthropic?.nativeProtocol) { const protocol = input.grant.profile.anthropic.nativeProtocol;
       invariant(input.native.version === protocol.claudeVersion && input.native.files[0]?.sha256 === protocol.claudeSha256, 'native binary/version differs from pinned protocol');
       invariant(input.provider.kind === 'fixture', 'pinned beta compatibility is synthetic-only; paid feature/pricing qualification required');
+    }
+    if (input.claudeOptions.delegation !== undefined) {
+      invariant(input.claudeOptions.delegation === 'isolated-native' && input.provider.kind === 'fixture' && input.grant.profile.anthropic?.nativeProtocol, 'native Claude delegation requires pinned synthetic-only profile');
+      claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, claudeOptions: input.claudeOptions }, 0);
+      invariant(readdirSync(input.workspace).length === 0, 'isolated native delegation requires a blank initial workspace without project configuration');
     }
     invariant(Object.values(input.claudeOptions.modelRoles ?? {}).every(model => model === input.grant.profile.model), 'multiple native models require separately priced/qualified profiles');
   } else invariant(input.claudeOptions === undefined, 'native options require separate real Claude profile');
@@ -67,6 +78,8 @@ function validate(input: NativeBaselineRun): void {
 
 /** Callable engineering runner. No ambient credential discovery, default grant, paid test or automatic resume. */
 export async function runNativeBaseline(input: NativeBaselineRun): Promise<NativeBaselineResult> {
+  // Snapshot invocation options before the asynchronous native launch.
+  input = { ...input, ...(input.claudeOptions ? { claudeOptions: structuredClone(input.claudeOptions) } : {}) };
   validate(input);
   const checkout = realpathSync(input.checkoutRoot), workspace = realpathSync(input.workspace);
   // Create private storage only after checking its nearest existing parent through realpath.
@@ -93,7 +106,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
   const pendingOperations = new Set<Promise<unknown>>();
   try {
     store = new OperationalStore({ filename: join(stateRoot, 'observer.sqlite'), checkoutRoot: checkout });
-    observer = new BaselineObserver({ store, grant: input.grant, transport: input.provider.kind === 'fixture' ? input.provider.transport : input.provider.kind === 'anthropic' ? anthropicTransport(input.provider.apiKey) : openAITransport(input.provider.apiKey) });
+    observer = new BaselineObserver({ store, grant: input.grant, transportKind: input.provider.kind, transport: input.provider.kind === 'fixture' ? input.provider.transport : input.provider.kind === 'anthropic' ? anthropicTransport(input.provider.apiKey) : openAITransport(input.provider.apiKey) });
     invariant(!observer.ledger.snapshot(input.grant.id).cancelled, 'baseline grant already cancelled or uncertain');
     const files = input.native.files.map(file => ({ ...file, path: realpathSync(file.path) }));
     for (const file of files) invariant(lstatSync(file.path).isFile() && sha256(file.path) === file.sha256, 'ordinary pinned native closure required');
@@ -112,7 +125,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       nativeInvocation: input.kind === 'claude' ? claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) }, 0) : null,
       nativeConfiguration: input.kind === 'codex'
         ? { ignoreUserConfig: true, ignoreRules: true, ephemeral: true, webSearch: 'disabled', requestRetries: 0, streamRetries: 0, credentials: 'dummy-bridge-token-only' }
-        : { bare: true, settingSources: '', tools: input.claudeOptions?.tools ?? 'Bash', effort: input.grant.profile.effort, modelRoles: input.claudeOptions?.modelRoles ?? (input.grant.profile.provider === 'anthropic-fixture' ? { haiku: input.grant.profile.model, sonnet: input.grant.profile.model, opus: input.grant.profile.model, subagent: input.grant.profile.model } : null), thinking: input.grant.profile.anthropic?.thinking ?? 'disabled', strictMcpConfig: true, disableSlashCommands: true, noSessionPersistence: true, nativePermissions: 'bypassed only inside namespace', retries: 'each observed separately; host grant unchanged', credentials: 'dummy-bridge-token-only', scope: input.grant.profile.provider === 'anthropic-fixture' ? 'synthetic Messages only' : 'first-party standard Messages engineering; native affordance/kernel/live qualification outstanding' },
+        : { bare: input.claudeOptions?.delegation === undefined, safeMode: input.claudeOptions?.delegation === 'isolated-native', delegation: input.claudeOptions?.delegation ?? null, suppliedAgents: null, settingSources: '', tools: input.claudeOptions?.tools ?? 'Bash', effort: input.grant.profile.effort, modelRoles: input.claudeOptions?.modelRoles ?? (input.grant.profile.provider === 'anthropic-fixture' ? { haiku: input.grant.profile.model, sonnet: input.grant.profile.model, opus: input.grant.profile.model, subagent: input.grant.profile.model } : null), thinking: input.grant.profile.anthropic?.thinking ?? 'disabled', strictMcpConfig: true, disableSlashCommands: true, noSessionPersistence: true, nativePermissions: 'bypassed only inside namespace', retries: 'each observed separately; host grant unchanged', credentials: 'dummy-bridge-token-only', scope: input.grant.profile.provider === 'anthropic-fixture' ? 'synthetic Messages only' : 'first-party standard Messages engineering; native affordance/kernel/live qualification outstanding' },
     };
     const previous = store.get<{ specification: typeof specification; status: string }>('baseline-run', 'run');
     if (previous) {
