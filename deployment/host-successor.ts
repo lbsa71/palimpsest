@@ -139,7 +139,9 @@ export async function launchHost(configPath: string, selectedBoot?: string, onRe
       throw new Error('Host execve returned');
     }
     const selectedModule = join(config.host.artifactStore, current.selected.candidateId, 'payload/deployment/host-successor.ts');
-    if (current.phase === 'requested') { current = { ...current, phase: 'booting' }; save(config, current); return replace(current); }
+    // A selected installed bootstrap already loaded this exact launcher. Re-execing the
+    // CLI here would discard its normal-boot readiness witness callback.
+    if (current.phase === 'requested') { current = { ...current, phase: 'booting' }; save(config, current); }
     if (resolve(fileURLToPath(import.meta.url)) !== selectedModule) return replace(current);
     verifyApplication(config.host.artifactStore, current.selected.candidateId, config.host.nodeBinary);
     // A killed launcher closes IPC; allow its old coordinator to drain before taking the lease.
