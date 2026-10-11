@@ -198,6 +198,7 @@ export class BaselineObserver {
       // Preserve bounded protocol-discovery failures without calling them provider dispatches.
       this.store.put('baseline-refusals', randomUUID(), { grantId: this.grant.id,
         request: this.store.putArtifact(Buffer.from(typeof attempt.payload === 'string' ? attempt.payload : '').subarray(0, this.grant.maxRequestBytes)),
+        ...(attempt.nativeHttp ? { nativeHttp: this.store.putArtifact(Buffer.from(canonicalJson(attempt.nativeHttp)).subarray(0, 16_384)) } : {}),
         reason: error instanceof Error ? error.message.slice(0, 256) : 'invalid native request' }, null);
       throw error;
     }

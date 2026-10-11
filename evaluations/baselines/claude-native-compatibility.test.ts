@@ -78,7 +78,9 @@ for (const [label, change] of Object.entries({
   arrayBeta: (a: ProviderAttempt): unknown => a.nativeHttp!.headers['anthropic-beta'] = [PINNED_CLAUDE_BETA],
   missingHttp: (a: ProviderAttempt): unknown => delete a.nativeHttp,
 })) test(`${label} refuses dispatch and preserves the original grant`, async () => {
-  const f = fixture(); try { const a = attempt(); change(a); await assert.rejects(f.observer.handle(a)); assert.equal(f.calls(), 0); assert.equal(f.observer.ledger.snapshot(f.g.id).requests, 0); assert.equal(f.store.list('baseline-refusals').length, 1); } finally { f.dispose(); }
+  const f = fixture(); try { const a = attempt(); change(a); await assert.rejects(f.observer.handle(a)); assert.equal(f.calls(), 0); assert.equal(f.observer.ledger.snapshot(f.g.id).requests, 0); assert.equal(f.store.list('baseline-refusals').length, 1);
+    const refusal = f.store.list<any>('baseline-refusals')[0]!.value; if (a.nativeHttp) assert.deepEqual(JSON.parse(Buffer.from(f.store.readArtifact(refusal.nativeHttp)).toString()), a.nativeHttp);
+  } finally { f.dispose(); }
 });
 for (const [label, change] of Object.entries({
   unsupportedContext: (b: any): unknown => b.context_management.edits.push({ type: 'compact_20260112' }),
