@@ -8,6 +8,13 @@ import { LocalLostReplyReceiver, lifecycleTransport, lifecycleWorkload, prepareP
 import { hash } from './adapter.ts';
 
 interface Boot { config: ApplicationConfig; authority: Authority; caseId: LifecycleCase; control: LifecycleControl; phase: 0 | 1; receiverPath: string; attemptId: string }
+/** Join the real turn, then execute an as-yet-unconsumed fixed correction once. */
+export async function joinLifecycleCorrection(app: AutarkApplication, runId: string, correctionSequence: number) {
+  await app.resume(runId);
+  const consumed = app.store.get<{ messageSequence?: number }>('execution', runId)?.value.messageSequence ?? 0;
+  if (consumed < correctionSequence && !['completed', 'cancelled'].includes(app.runtime.getRun(runId)!.status)) await app.resume(runId);
+  return app.runtime.getRun(runId);
+}
 /** Dedicated fixed public process fixture, with no arbitrary operation or callback accepted over IPC. */
 async function child() {
   invariant(process.send && process.argv.length === 3, 'Lifecycle child requires one host boot descriptor and IPC');
@@ -41,7 +48,14 @@ async function child() {
     } else if (command.type === 'correct') {
       invariant(command.externalId === boot.attemptId && boot.caseId !== 'S11', 'Correction only targets fixed declared conversation');
       const run = receive(boot.attemptId, '2', 'Authenticated revision-two correction: write value9, verify it and finish the public lifecycle task.');
-      notify({ type: 'reply', id: command.id, runId: run.id });
+      const steering = app.store.events(run.id).findLast(event => event.type === 'steering');
+      invariant(steering, 'Authenticated correction lacks its durable steering event');
+      // resume() joins the actual active turn. In the same-process control that can
+      // still be the old, aborted held turn; execute the unconsumed correction once.
+      const result = await joinLifecycleCorrection(app, run.id, steering.sequence);
+      // A checkpoint can advance messageSequence while work is still running. The
+      // IPC barrier therefore follows the real resume promise, never just a row.
+      notify({ type: 'reply', id: command.id, runId: run.id, correctionSequence: steering.sequence, result });
     } else if (command.type === 'reconcile') {
       invariant(receiver && boot.caseId === 'S11', 'Local reconciliation unavailable for this case');
       const attempt = app.store.get<{ runId: string }>('screen.lifecycle-attempts', boot.attemptId)!.value;

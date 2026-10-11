@@ -13,6 +13,8 @@ import { AuthorityStore } from '../../packages/supervisor/authority.ts';
 import { admitCandidate, type AdmissionPolicy } from '../../packages/release/admission.ts';
 import { materializeConfiguration } from '../../deployment/materialize.ts';
 import { fixtureConfiguration } from './fixture.ts';
+import type { AutarkApplication } from '../../deployment/application.ts';
+import { joinLifecycleCorrection } from './lifecycle-child.ts';
 
 /** Pure mechanics witnesses, never passed to the physical acquisition driver or represented as real runs. */
 function fixtureWitness(): LifecycleWitness {
@@ -158,6 +160,35 @@ test('ordinary compaction response does not consume a public note-read step', as
   const payload = JSON.stringify({ messages: [frame], tools: [{}] }); const first = JSON.parse((await transport(payload, signal)).body); assert.equal(JSON.parse(first.choices[0].message.tool_calls[0].function.arguments).path, 'notes/0.json');
   await transport(JSON.stringify({ messages: [{ role: 'system', content: compactionPrompt }, frame], tools: [] }), signal);
   const second = JSON.parse((await transport(payload, signal)).body); assert.equal(JSON.parse(second.choices[0].message.tool_calls[0].function.arguments).path, 'notes/1.json');
+});
+test('public compaction fixture retains observed sequence and speech route when the host frame is reclaimed', async () => {
+  const transport = lifecycleTransport({ caseId: 'S09', control: 'normal', phase: 0, model: 'fixture', actorId: 'fixture', boundary() { throw new Error('No process boundary'); } });
+  const frame = { role: 'user', content: JSON.stringify({ hostContext: { runId: 'public-fixed-run', target: { channel: 'original-public-channel', threadTs: 'public-thread' } } }) }, signal = new AbortController().signal;
+  const invoke = async (messages: any[], tools: any[] = [{}]) => JSON.parse((await transport(JSON.stringify({ messages, tools }), signal)).body).choices[0].message;
+  const args = (message: any) => JSON.parse(message.tool_calls[0].function.arguments);
+  for (let i = 0; i < 30; i++) assert.equal(args(await invoke([frame])).path, `notes/${i}.json`);
+  const summary = await invoke([{ role: 'system', content: compactionPrompt }, frame], []);
+  const reclaimed = [{ role: 'user', content: summary.content }];
+  assert.equal(args(await invoke(reclaimed)).path, 'notes/30.json'); assert.equal(args(await invoke(reclaimed)).path, 'notes/31.json');
+  assert.deepEqual(args(await invoke(reclaimed)), { path: 'answer.json', content: '{"origin":"indigo","notes":32}\n', expectedSha256: null });
+  assert.equal(args(await invoke(reclaimed)).path, 'answer.json');
+  const speech = args(await invoke(reclaimed)); assert.equal(speech.channel, 'original-public-channel'); assert.equal(speech.threadTs, 'public-thread');
+  assert.equal((await invoke(reclaimed)).content, 'Public lifecycle fixture turn finished.');
+});
+test('correction IPC joins the actual pending turn after a stale waiting result and a consumed checkpoint', async () => {
+  let sequence = 1, status = 'waiting', calls = 0, resolveTurn!: () => void;
+  const pendingTurn = new Promise<void>(resolve => { resolveTurn = resolve; });
+  const app = { store: { get: () => ({ value: { messageSequence: sequence } }) }, runtime: { getRun: () => ({ status }) }, resume: async () => { calls++; if (calls === 1) return { status }; sequence = 9; status = 'running'; await pendingTurn; status = 'completed'; return { status }; } } as unknown as AutarkApplication;
+  let replied = false; const joined = joinLifecycleCorrection(app, 'pure-fixed-run', 9).then(result => { replied = true; return result; });
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(calls, 2); assert.equal(sequence, 9); assert.equal(replied, false);
+  resolveTurn(); assert.equal((await joined)?.status, 'completed'); assert.equal(replied, true);
+});
+test('consumed failed or blocked corrected turns are retained without a second resume', async () => {
+  for (const status of ['blocked', 'waiting']) {
+    let calls = 0;
+    const app = { store: { get: () => ({ value: { messageSequence: 9 } }) }, runtime: { getRun: () => ({ status }) }, resume: async () => { calls++; return { status }; } } as unknown as AutarkApplication;
+    assert.equal((await joinLifecycleCorrection(app, 'pure-fixed-run', 9))?.status, status); assert.equal(calls, 1);
+  }
 });
 test('actual process identity reads PID and proc start identity without inventing an exit receipt', () => { const observed = processIdentity(process.pid); assert.equal(observed?.pid, process.pid); assert.match(observed!.start, /^\d+$/); assert.equal(processIdentity(2147483647), null); });
 test('pure prompt preparation freezes two complete closures, authenticates engineering admission and loads exact accepted bytes', () => {

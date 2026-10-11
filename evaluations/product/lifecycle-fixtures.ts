@@ -41,12 +41,20 @@ function receipt(messages: Message[]) { return JSON.parse(messages.findLast(m =>
 export interface FixtureOptions { caseId: LifecycleCase; control: LifecycleControl; phase: 0 | 1; model: string; actorId: string; boundary(runId: string): void }
 /** Public deterministic provider responses only. Effects and children execute in the real application. */
 export function lifecycleTransport(options: FixtureOptions): NonNullable<ApplicationOptions['performRequest']> {
-  let total = 0; const counts = new Map<string, number>(); let prepared: any, task: any, childResult: any;
+  let total = 0; const counts = new Map<string, number>(); let prepared: any, task: any, childResult: any, publicCompactionFrame: Record<string, any> | undefined;
   return async (payload, signal) => {
     invariant(++total <= 80, 'Public lifecycle fixture response ceiling exceeded');
-    const request = JSON.parse(payload), messages = request.messages as Message[], frame = context(messages), observed = receipt(messages);
+    const request = JSON.parse(payload), messages = request.messages as Message[], currentFrame = context(messages), observed = receipt(messages);
     const response = (message: unknown, finish_reason: string) => ({ status: 200, body: JSON.stringify({ model: options.model, choices: [{ finish_reason, message }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) });
     if (options.caseId === 'S09' && (request.tools ?? []).length === 0 && messages[0]?.content.includes(compactionPrompt)) return response({ role: 'assistant', content: 'Retained PUBLIC summary: origin tag indigo; sequential notes are read; write answer.json after note31.' }, 'stop');
+    // This fixed public case has one run. Genuine compaction can discard the
+    // original routing JSON; retain its observed fixture routing and sequence.
+    if (options.caseId === 'S09' && currentFrame.runId) {
+      invariant(!publicCompactionFrame || publicCompactionFrame.runId === currentFrame.runId, 'Compaction fixture received another undeclared run');
+      publicCompactionFrame ??= currentFrame;
+    }
+    const frame = options.caseId === 'S09' ? publicCompactionFrame : currentFrame;
+    invariant(frame, 'Compaction fixture lacks its initial observed public routing frame');
     const count = (counts.get(frame.runId ?? 'compaction') ?? 0) + 1; counts.set(frame.runId ?? 'compaction', count);
     const tool = (name: string, args: unknown) => response({ role: 'assistant', content: null, tool_calls: [{ id: `life${String(total).padStart(6, '0')}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] }, 'tool_calls');
     const stop = () => response({ role: 'assistant', content: 'Public lifecycle fixture turn finished.' }, 'stop');
