@@ -1,47 +1,47 @@
-# A1-L02 — agent shell, prompt control and selection
+# A1-L02 — selected agent shell and qualification
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); technology criteria: [agent-shell decision](../agent-shell-decision.md).
+Status: **architecture selected; implementation planned**. Session owner for implementation: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); [ADR 0032](../../adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi agent core; [qualification](../agent-shell-decision.md) defines Q1–Q5. The 2026-10-11 source/decision subtask is recorded, not completion of this lane.
 
-Requirements: [RW01, RW02, RW04, RW05, RW13, RW16, RW17, RW19](../../../REQUIREMENTS.md).
+Requirements: [RW01, RW02, RW04, RW05, RW13, RW16, RW17, RW19, RW21](../../../REQUIREMENTS.md).
 
 ```text
-/goal Complete A1-L02 by selecting and integrating a replaceable agent shell through a finite, reproducible comparison, demonstrating inspectable and replaceable local prompts, genuine tool-observation iteration, context continuation and complete provider accounting, with an ADR that justifies reuse, a maintained fork or a custom core from measured evidence.
+/goal Complete A1-L02 by integrating and independently qualifying the selected Pi agent core with a narrow locally editable dependency closure: demonstrate owned effective prompts, real tool-observation iteration, context continuation, physical request accounting, crash recovery and a dependency edit/build/successor-restart cycle under ADR 0032 Q1–Q5; retain evidence and invoke its bounded Rig fallback only if Pi fails those gates or proves excessively costly to maintain.
 ```
 
 ## Ownership and dependencies
 
-Own `packages/agent-shell/`, `experiments/agent-shell/`, this lane file and `docs/rewrite/evidence/A1-L02/`. Candidate spike subdirectories are disjoint; only the lead integrates the selected adapter. Own shell-specific prompt composition and audit instrumentation, not personality content in L04 or permission enforcement in L09.
+Own `packages/agent-shell/`, including the proposed `vendor/` source subtree, `experiments/agent-shell/`, this lane file and `docs/rewrite/evidence/A1-L02/`. Only the lead integrates the adapter. Own shell-specific prompt composition and audit instrumentation, not personality content in L04 or permission enforcement in L09. L09 serializes root workspace/build/lockfile integration.
 
-Specification dependency: C1 for the final adapter; audit and throwaway spikes start immediately. Implementation dependencies: L08 benchmark fixtures; L03/L06 adapters only for final integrated runs. Supply a fake tool receiver so framework selection does not block other modules. Consult L09 early about subprocess, cancellation and confinement requirements.
+Specification dependency: C1 for final adapter; source-closure/build/request fixtures can start now. Implementation dependencies: L08 screening cases; L03/L06 receivers for final integrated runs. Fake model/tool receivers allow independent work. Coordinate cancellation, recovery and supervisor boundaries early. No dependency on a five-framework bakeoff remains; ADR 0032 already records the engineering choice.
 
 ## Delegable tasks
 
 | Task | Deliverable and exclusive child scope | Model / effort | Dependencies | Acceptance |
 |---|---|---|---|---|
-| A1-L02-T01 | Source and license inventory, prompt injection map, fork/update cost and operational fit for each candidate in `experiments/agent-shell/audit/` | `gpt-6-astra` / high | None; verify current official sources and pinned candidate code | Inventory covers system/developer templates, built-in tool descriptions, middleware, discovered project files, subagent instructions, compaction, retry/reminder overlays, resumed sessions and provider request assembly; marks inaccessible behavior unknown; identifies which surfaces can actually be replaced |
-| A1-L02-T02 | Tiny deterministic prompt/effect-interception fixtures for the five reusable candidates in separate `experiments/agent-shell/audits/<candidate>/` scopes | `gpt-6.1-sol` / high | Draft execution boundary; T01 draft findings | At most one bounded audit session per candidate captures actual instruction replacement and interception behavior, including retry/resume; source ownership, provider fit and hard-gate failures are evidenced; unfinished audits remain unfinished |
-| A1-L02-T03 | At most two shortlisted bridge integrations in separate `experiments/agent-shell/integrations/<candidate>/` scopes, plus a small custom control | `gpt-6.1-sol` / high | T01–T02; C1 draft; L08 frozen screening cases | Selection follows hard-gate feasibility and estimated effort; at most two implementation sessions per shortlisted candidate establish the same tools, checkpoint, cancellation and prompt manifest; caps and actual authorized resources are frozen before work |
-| A1-L02-T04 | Ranked, bounded bakeoff and decision proposal in `experiments/agent-shell/results/` | `gpt-6-astra` / high | T03; L08 screening protocol, not its later integrated results | Applies the twelve-case, three-run maximum screen in the shell decision; uses same-model comparisons where supported, source/control audits and measured integration effort; hard-gate failures cannot average into a pass; selected option, fork burden and rejected alternatives have evidence; broader product parity is assessed later by L08/L09 |
-| A1-L02-T05 | Selected `AgentShell` adapter, default-free prompt assembly, full call/effect instrumentation and shell conformance checks in `packages/agent-shell/` | `gpt-6.1-sol` / high | C1; T04 decision | Multi-step tools, streaming/steering, cancellation, checkpoint reconstruction and context reduction work through application contracts; auxiliary compaction/review/subagent calls are accounted; library defaults cannot silently reintroduce removed persona instructions |
-| A1-L02-T06 | Fresh prompt/control and integration audit with upgrade regression fixtures | `gpt-6-astra` / xhigh | T05; L03/L06 integrated adapters | Audited effective requests at every supported inference surface match the declared manifest; realistic repair and interruption checks pass; opaque provider constraints remain explicitly documented; dependency upgrade changes are detectable |
+| A1-L02-T01 | Complete the selected-source/license/import/patch manifest under `experiments/agent-shell/audit/`, using the [recorded audit](../evidence/A1-L02/2026-10-11-source-audit.md) as input | `gpt-6-astra` / high | Source decision available; C1 draft helpful | Every retained module, provider, instruction source and build input has a reason/owner; distinguish core from broad pi-ai installation closure; preserve notices/tests and exclude optional loaders/OAuth/catalog refresh unless specifically justified |
+| A1-L02-T02 | Deterministic final-request, retry/transport, tool-preflight and resume fixtures in `experiments/agent-shell/audits/pi/` | `gpt-6.1-sol` / high | T01 draft; execution boundary draft | Actual emitted requests match owned manifest after replacement/resume; every physical attempt is intercepted before dispatch; before/after hooks alone are not claimed as durable effect enforcement; no live calls required for synthetic mechanics |
+| A1-L02-T03 | Narrow source workspace and screening-capable bridge proof (including prototype context/delegation hookups) under `experiments/agent-shell/integrations/pi/`; build requests to L09 for shared files | `gpt-6.1-sol` / high | T01; C1 draft; T02 fixtures can evolve in parallel | Q1/Q2 pass: clean reproducible selected closure, no routine network catalogue refresh, real loaded local dependency edit, measured build/configuration surface, bridge-only tools and owned transport; reassess after at most two bounded implementation sessions if hard gates remain unsatisfied |
+| A1-L02-T04 | Fixed screening/qualification results and decision disposition under `experiments/agent-shell/results/` | `gpt-6-astra` / high | T02–T03; L08 frozen twelve-case protocol; needed L03/L06 component adapters or explicit experimental equivalents | Q3 results retain failures/usage and at most three initial runs per case; source selection is not misreported as empirical success; update ADR only for evidenced changes; use the bounded Rig comparison if hard failures or excessive maintenance justify it |
+| A1-L02-T05 | Production `AgentShell` adapter and justified local source closure in `packages/agent-shell/`, including prompt assembly, context reduction and checkpoint bridge | `gpt-6.1-sol` / high | C1; T03 qualified bridge; T04 disposition | Real multi-step tools, steering/cancellation and continuation work; context summaries and child/reviewer calls are accounted; pending assistant/tool crash state reconstructs correctly; upstream conformance cases retained; dependency edits use ordinary evaluated source workflow |
+| A1-L02-T06 | Fresh Q4/Q5 prompt/effect, restart, dependency-replacement and upgrade-regression audit | `gpt-6-astra` / xhigh | T05; L03/L06 integrated adapters; L09 successor operation | Successor actually loads a changed local dependency, preserves current goals/memory/obligations and reconciles pending effects; final requests stay owned across upgrade/resume; exact source/build/evidence identities match; complexity and unresolved limits are honestly accepted or rejected |
 
-Candidate audits within T01/T02 run concurrently; shortlisted integrations within T03 run concurrently after the audit gate. Use the bounded stages in the [shell decision](../agent-shell-decision.md). A disqualified candidate needs evidence and a short disposition, not a full implementation. If no candidate qualifies, T04 must justify a custom core and scope it against the same fixtures; do not silently build another shallow wrapper.
+T01 closure work and T02 fixture design run concurrently. T03 can use fake receivers while L03/L06 develop. T04 does not await L08's eventual integrated product comparison. Pi's separate durable package or selected tool utilities may be evaluated as donors; adopting another whole state architecture requires a new explicit decision. A fallback has its own disjoint directory, fixed gate and resource envelope; do not silently introduce a second active shell.
 
 ## Completion evidence and exclusions
 
-Retain pinned source references, source licenses, redacted prompt manifests, request traces, real observations, comparison results, engineering effort estimates, chosen ADR and independent audit. Proposed parity is not accepted here; L08 owns product-level claims. A replacement prompt alone is insufficient if hidden local middleware or compaction subsequently restores a prescribed servant identity.
+Retain exact source/patch/license manifests, reduced build/import closure, actual request traces, transport reservations, tool observations, recovery outcomes, dependency edit/load proof, cold/warm build measurements, screening results, ADR disposition and independent review. L08 owns product-level parity; none is accepted merely by selecting Pi. Source code inspection and upstream tests are not executed integration evidence.
 
-Non-goals: bypassing inaccessible provider policies, asserting personality growth from prompt wording, requiring a specific framework because it is fashionable, hosting production, or inventing a new agent ecosystem before testing existing shells. Provider/model substitution and paid comparison runs require the actual configured authority and resources available to the implementing session.
+Non-goals: implementing all upstream optional capabilities, runtime hot-patching, manual installed-package edits, requiring upstream publication for a local change, unsupported provider policy bypass, fabricated growth, production hosting or silently weakening gates to fit a minimal codebase. Paid runs use configured authority/resources, not an entitlement created by this lane.
 
 ## Coordination
 
-Owned by the lead who claims this lane; update here before concurrent implementation.
+Owned by the lead who claims implementation; update before concurrent edits.
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
-| Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Owner session | Unclaimed for implementation; Codex completed the bounded architecture/source decision |
+| Branch / worktree | Decision on `codex/aeon-rewrite-plan-20261011`; implementation worktree not assigned |
+| Base source / contract revision | Decision follows planning commit `dfe9c3c`; C1 not yet implemented; pin implementation base at claim |
+| Additional path reservations | None; use the exclusive scope above and L09 for shared build files |
+| Last handoff / evidence | ADR 0032 and source audit; source choice complete, executable qualification outstanding |
+| Blockers / next eligible task | T01/T02 can begin; C1 required for final adapter, L03/L06/L09 for final integrated gates |

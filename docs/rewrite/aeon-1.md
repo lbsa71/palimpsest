@@ -1,6 +1,6 @@
 # Aeon 1 — build the conditions for an evolving autark
 
-Status: **planned; no rewrite implementation is accepted**. Owner: Codex-led implementation sessions. This is an implementation backlog, not a claim about the stopped installation. The [workflow](workflow.md) governs every lane and task. The [architecture](architecture.md) and [shell decision](agent-shell-decision.md) record proposed designs and unresolved technology choices.
+Status: **planned; no rewrite implementation is accepted**. Owner: Codex-led implementation sessions. This is an implementation backlog, not a claim about the stopped installation. The [workflow](workflow.md) governs every lane and task. The [architecture](architecture.md) and [shell decision](agent-shell-decision.md) record proposed designs and the Pi-core selection in ADR 0032; integration qualification and other technology choices remain open.
 
 Aeon 1 ends with an autark that can pursue a durable agenda, reason through real observations, act, verify, remember and revise its conduct across sessions. It must also conduct an independently checked improvement to its own system. Fluent descriptions of those abilities do not satisfy the gate. Coding is a required capability; it is not a prescribed identity or the only form of growth.
 
@@ -19,7 +19,7 @@ All owners begin unclaimed. Claim one lane through the [workflow](workflow.md), 
 | Lane | Outcome | Exclusive implementation ownership proposed for contract gate | Principal integration dependencies |
 |---|---|---|---|
 | [A1-L01](lanes/A1-L01-contracts.md) | Executable contracts and architecture decisions | `packages/contracts/`, `docs/rewrite/contracts/` | None; incorporates boundary proposals from all lanes |
-| [A1-L02](lanes/A1-L02-agent-shell.md) | Selected, replaceable agent shell with inspected prompt control | `packages/agent-shell/`, `experiments/agent-shell/` | L01 contracts; L08 shared fixtures |
+| [A1-L02](lanes/A1-L02-agent-shell.md) | Qualified selected Pi core with owned prompts and editable dependencies | `packages/agent-shell/`, `experiments/agent-shell/` | L01 contracts; L08 shared fixtures |
 | [A1-L03](lanes/A1-L03-durable-runtime.md) | Durable action/observation execution and recovery | `packages/runtime/`, `packages/effects/`, `packages/storage/` | L01 contracts; L02 binding at final integration |
 | [A1-L04](lanes/A1-L04-developmental-memory.md) | Retrieval, consolidation and revisable self-state | `packages/development/` | L01 contracts; L03 event and storage adapters |
 | [A1-L05](lanes/A1-L05-goals-and-drives.md) | Persistent goals, initiative, resource-aware scheduling | `packages/initiative/` | L01 contracts; L03 durable execution; L04 retrieval |
@@ -36,8 +36,8 @@ Dependencies have three distinct meanings: **specification** means an interface 
 
 | Wave | Work that can run in parallel | Gate to the next work |
 |---|---|---|
-| W0 — investigate and specify | L01 contract drafts; L02 source/prompt audits and shell spikes; L08 baseline design and comparator availability; L09 release/control threat and failure model; other lane owners propose their contract needs | Contract gate C1: schemas, ownership, executable examples and compatibility policy for the new interfaces are agreed |
-| W1 — build independent components | L03 persistence/effects with fake shell; L04 memory with fake event stream; L05 goals with fake clock/executor; L06 tools with fake effect receiver; L07 transport with fake runtime; L02 finishes shell selection; L08 builds held-out evaluations; L09 builds supervisor/release machinery | Each lane's component checks pass against C1. A shell decision is required for actual shell binding, not for all earlier work |
+| W0 — investigate and specify | L01 contract drafts; L02 selected-core extraction and prompt/transport audits; L08 baseline design and comparator availability; L09 release/control threat and failure model; other lane owners propose their contract needs | Contract gate C1: schemas, ownership, executable examples and compatibility policy for the new interfaces are agreed |
+| W1 — build independent components | L03 persistence/effects with fake shell; L04 memory with fake event stream; L05 goals with fake clock/executor; L06 tools with fake effect receiver; L07 transport with fake runtime; L02 qualifies the selected core; L08 builds held-out evaluations; L09 builds supervisor/release machinery | Each lane's component checks pass against C1. ADR 0032 supplies the shell choice; a qualified bridge is required for actual binding, not for all earlier work |
 | W2 — integrate vertical slices | L02+L03 real action loop; L04+L05 longitudinal initiative; L06 coding/delegation; L07 communication/recovery; L09 joins components incrementally; L08 independently evaluates frozen slices | An integrated candidate meets mechanical, authority, continuity and qualitative checks |
 | W3 — demonstrate and hand off | Fresh independent L08 evaluation; L09 whole-system self-change and offline recovery; Aeon 2 owners may inspect evidence and prepare experiments without claiming operational takeover | H1 handoff accepted with open limitations and operating envelope; all required comparator evidence exists |
 

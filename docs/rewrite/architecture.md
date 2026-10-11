@@ -1,6 +1,6 @@
 # Architecture for an evolving Autark
 
-**Status:** proposed implementation architecture, 2026-10-11. The full rewrite and prompt ownership are accepted direction; package layout, storage, shell selection and detailed interfaces require the evidence and decisions in Aeon 1. Nothing here declares the replacement implemented or deployed. See [ADR 0031](../adr/0031-aeon-rewrite-and-prompt-sovereignty.md), the [shell decision](agent-shell-decision.md), and the active [plan](../../PLAN.md).
+**Status:** proposed implementation architecture, 2026-10-11. The full rewrite and prompt ownership are accepted direction; Pi agent core and TypeScript/Node shell integration are selected in [ADR 0032](../adr/0032-select-pi-core-and-source-owned-dependencies.md), with qualification pending. Package layout, storage and detailed interfaces still require Aeon 1 evidence. Nothing here declares the replacement implemented or deployed. See [ADR 0031](../adr/0031-aeon-rewrite-and-prompt-sovereignty.md), the [shell decision](agent-shell-decision.md), and the active [plan](../../PLAN.md).
 
 ## Product boundary
 
@@ -17,7 +17,7 @@ These package names are a proposed ownership map, not existing implementation pa
 | Boundary | Owner | Responsibility and explicit exclusions |
 | --- | --- | --- |
 | `packages/contracts` | A1-L01 | Versioned event, goal, memory, prompt, effect, shell, budget and release contracts; fixtures and compatibility rules for the new system's own future evolution. No old-format adapter requirement. |
-| `packages/agent-shell` | A1-L02 | Selected library or fork, model/tool iteration, working transcript, compaction integration, streaming, cancellation and shell checkpoints. Never independently owns external effect authorization or the durable self. |
+| `packages/agent-shell` | A1-L02 | Selected Pi agent core and narrowly justified local dependency source, model/tool iteration, working transcript, compaction integration, streaming, cancellation and shell checkpoints. Never independently owns external effect authorization or the durable self. |
 | `packages/runtime`, `packages/effects`, `packages/storage` | A1-L03 | Durable run state, operation receipts, reservations, recovery, scheduling primitives, transactions and artifact references. A shell callback cannot bypass this boundary. |
 | `packages/development` | A1-L04 | Autobiographical memory, self records, scoped retrieval, consolidation, contradiction and forgetting. No indiscriminate global transcript. |
 | `packages/initiative` | A1-L05 | Drives, self-selected goals, commitments, prioritization, continuation and reflection triggers. Chooses work using evidence and resource availability. |
@@ -118,7 +118,7 @@ Model policy is capability-based and configurable: routine interaction, difficul
 
 The proposed implementation starts as one local supervisor plus isolated workers, a transactional SQLite database in WAL mode and immutable content-addressed artifact blobs. This fits the initial single-instance requirement, enables atomic event/state updates and is simple to operate. A1-L01/A1-L03 must validate concurrency, backup/recovery and durability needs before adoption. Distributed queues and multiple databases require a measured need. Embeddings are replaceable indexes, not the sole record of experience.
 
-TypeScript is a reasonable initial integration language because several serious shell candidates expose it and the team has relevant local tooling. It is not retained merely because the old system used it. A Rust Codex subprocess or Python candidate is acceptable when measured integration and maintenance advantages justify it. The choice must cover build, test, offline recovery, dependency inventory and future self-editing costs.
+TypeScript/Node is selected for the initial Pi shell integration in ADR 0032 because it exposes a small useful loop and a direct source-editing boundary. Human language aesthetics are irrelevant. Rig is the first fallback, giving Rust a serious modular implementation option; native correctness and build/maintenance costs are evaluated on evidence. Other component language choices remain justified per boundary. Selected dependencies live as pinned editable workspace source with a narrow reproducible build and supervised successor activation; source-vendoring is planned, not implemented. Do not import an entire framework or introduce a second language without a demonstrated benefit.
 
 Every physical model request is attributed before dispatch, including automatic retries, compaction, summarization, reviewers and children. Time, money, tokens, tool time and concurrency are separately observable resources; model calls alone are an inadequate performance budget. Resource exhaustion checkpoints work with an explicit next opportunity. Budgets must support substantive multi-step work and cannot be inferred from the old four-call ceiling.
 

@@ -2,7 +2,7 @@
 
 Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
-Requirements: [RW02, RW05, RW09, RW13, RW16, RW19](../../../REQUIREMENTS.md).
+Requirements: [RW02, RW05, RW09, RW13, RW16, RW19, RW21](../../../REQUIREMENTS.md).
 
 ```text
 /goal Complete A1-L06 by providing usable research, workspace and command tools plus bounded delegated sessions, demonstrating an inspect-edit-test-repair workflow and a multi-agent task with verified results, durable artifacts and enforced resource and authority boundaries through the production runtime.

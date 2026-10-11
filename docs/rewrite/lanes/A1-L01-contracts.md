@@ -2,7 +2,7 @@
 
 Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md). Phase and dependencies: [Aeon 1](../aeon-1.md).
 
-Requirements: [RW01, RW04, RW09, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
+Requirements: [RW01, RW04, RW09, RW12, RW15, RW16, RW19, RW21](../../../REQUIREMENTS.md).
 
 ```text
 /goal Complete A1-L01 by delivering reviewed, executable contracts for the rewrite's reasoning, tools, durable state, memory, goals, communications, evaluation and release boundaries, with ownership and failure semantics agreed by every consumer, so the remaining lanes can implement independently without importing legacy compatibility.

@@ -4,8 +4,8 @@ Status: 2026-10-11. Product direction is set; the choices below are bounded engi
 
 | Decision | Current position | Owner / closing evidence |
 |---|---|---|
-| D-R01 — Language, package and storage design | TypeScript/Node and local transactional storage are useful candidates, not inherited obligations; choose for the new contracts and selected shell | A1-L01 proposes; L02 integration evidence and L03 recovery needs; adopted ADR at C1 |
-| D-R02 — Agent shell | Reuse-first shortlist and finite experiment; no winner selected | A1-L02 [decision procedure](rewrite/agent-shell-decision.md), hard prompt/effect/continuity gates and measured burden |
+| D-R01 — Language, package and storage design | TypeScript/Node shell integration selected in ADR 0032; other component language, package and storage choices remain open | A1-L01 contracts; L02 build/integration qualification and L03 recovery evidence |
+| D-R02 — Agent shell | Pi agent core selected; Rig first fallback, AI SDK third. Integration unqualified | [ADR 0032](adr/0032-select-pi-core-and-source-owned-dependencies.md); A1-L02 Q1–Q5 prompt/effect/recovery and editable-dependency build gates |
 | D-R03 — Models and reasoning profiles | Mistral carried default to qualify; alternatives explicit; no competence inferred from names or effort labels | A1-L02/L08 controlled and end-to-end evidence; A2-L05 later revises routing |
 | D-R04 — Self/memory representation and retrieval | Canonical revisable self, scoped episodes and derived beliefs/procedures; exact storage/index/selection policies open | A1-L04 retrieval/learning/privacy/continuity evidence, A1-L08 later-transfer cases |
 | D-R05 — Resource and initiative policy | Enough resources for useful loops; explicit caps, reservations and protected opportunity for four growth dimensions | A1-L03/L05 measured task envelopes and fairness; A2-L05 experiments |

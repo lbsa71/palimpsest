@@ -65,7 +65,7 @@ Use separate evidence labels: **specified**, **implemented**, **fixture-verified
 
 The acceptance design is owned by A1-L08. Candidate authors may write useful tests; they cannot solely grade their own readiness or replace the held-out evaluator in the transaction being judged. Improvements to evaluation itself are separate work with frozen prior criteria and independent evidence.
 
-Every consequential architecture proposal includes a reuse/fork/build assessment. Every retained historical component gets a row in the [reuse ledger](reuse-ledger.md). Every changed requirement or direction updates its owning lane, affected contract, acceptance and dependency graph in the same work item. The Autark can improve this method with evidence, while preserving its purpose: parallel ownership, concrete goals, bounded delegation and verifiable continuity.
+Every consequential architecture proposal includes a reuse/fork/build assessment. Under RW21 and [ADR 0032](../adr/0032-select-pi-core-and-source-owned-dependencies.md), human language aesthetics carry no weight; dependency source must be locally editable and its build/check/activation closure simple, reproducible and measured. Do not count a small wrapper or unused framework capability as an automatic benefit. Every retained historical component gets a row in the [reuse ledger](reuse-ledger.md). Every changed requirement or direction updates its owning lane, affected contract, acceptance and dependency graph in the same work item. The Autark can improve this method with evidence, while preserving its purpose: parallel ownership, concrete goals, bounded delegation and verifiable continuity.
 
 ## Current planning-package acceptance
 

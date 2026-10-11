@@ -18,7 +18,7 @@ The [technical overview](docs/rewrite/aeon-1.md) defines contract gate C1, paral
 | Lane | Session outcome | Start condition |
 |---|---|---|
 | [A1-L01 — Contracts](docs/rewrite/lanes/A1-L01-contracts.md) | Executable boundaries, state/evidence contracts and justified design decisions | Ready for specification |
-| [A1-L02 — Agent shell](docs/rewrite/lanes/A1-L02-agent-shell.md) | Finite comparison, effective prompt audit, adopt/fork/build decision and replaceable adapter | Source audit can start now; integrated bridge uses C1 |
+| [A1-L02 — Agent shell](docs/rewrite/lanes/A1-L02-agent-shell.md) | Selected Pi core, prompt/transport qualification, editable dependencies and replaceable adapter | Choice recorded in ADR 0032; extraction/qualification can start, integrated bridge uses C1 |
 | [A1-L03 — Durable runtime](docs/rewrite/lanes/A1-L03-durable-runtime.md) | Resumable action/observation work, resource accounting and effect reconciliation | Boundary proposals now; implementation against C1 |
 | [A1-L04 — Memory and self](docs/rewrite/lanes/A1-L04-developmental-memory.md) | Developmental retrieval, consolidation, provenance and revisable self | Boundary proposals now; C1 and fake event stream |
 | [A1-L05 — Goals and drives](docs/rewrite/lanes/A1-L05-goals-and-drives.md) | Persistent goals, self-directed initiative, scheduling and obligations | Boundary proposals now; C1 and fake executor/clock |
@@ -27,7 +27,7 @@ The [technical overview](docs/rewrite/aeon-1.md) defines contract gate C1, paral
 | [A1-L08 — Evaluation](docs/rewrite/lanes/A1-L08-evaluation.md) | Independent competence, development and Codex/Claude comparisons | Workload and baseline design can start now |
 | [A1-L09 — Integration and evolution](docs/rewrite/lanes/A1-L09-integration-and-handoff.md) | Recoverable fresh installation, whole-system self-release and H1 | Control/release design now; final acceptance after L01–L08 |
 
-Run L01 contract design, L02 shell investigation, L08 baseline design and L09 control-boundary design in parallel first. Then build L03–L07 independently against agreed fixtures while shell selection finishes. Integrate progressively; L02 selection does not wait for the final product benchmark. L08's full comparisons and L09's end-to-end recovery/evolution demonstrations determine H1. Root configuration and lockfile changes are serialized by L09, while other code has disjoint ownership.
+Run L01 contract design, L02 selected-core qualification, L08 baseline design and L09 control-boundary design in parallel first. Then build L03–L07 independently against agreed fixtures while selected-core qualification proceeds. Integrate progressively; [ADR 0032](docs/adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi; its qualification does not wait for the final product benchmark. L08's full comparisons and L09's end-to-end recovery/evolution demonstrations determine H1. Root configuration and lockfile changes are serialized by L09, while other code has disjoint ownership.
 
 ```mermaid
 flowchart TD
@@ -36,7 +36,7 @@ flowchart TD
   C --> G["L05: goals/drives"]
   C --> T["L06: tools/delegation"]
   C --> S["L07: communication"]
-  B["L02: shell audit and selection"] --> I["L09: integrated candidate"]
+  B["L02: selected Pi core qualification"] --> I["L09: integrated candidate"]
   R --> I
   M --> I
   G --> I

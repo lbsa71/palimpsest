@@ -1,5 +1,11 @@
 # Current progress and evidence
 
+## 2026-10-11 — shell choice delegated and recorded
+
+The user prioritized autonomous dependency editing, simple builds/reloading and minimal justified scope, while excluding personal language aesthetics from the decision. [ADR 0032](adr/0032-select-pi-core-and-source-owned-dependencies.md) selects **Pi agent core with a narrow editable source closure and TypeScript/Node shell integration**. The final three-contender SWOT includes Rig as the first Rust fallback and AI SDK as the provider-oriented alternative. Codex, DeepAgentsJS and Claude Agent SDK retain explicit dispositions.
+
+Parallel source audits and a second Rig check informed the choice; [evidence](rewrite/evidence/A1-L02/2026-10-11-source-audit.md) distinguishes inspected source from unperformed build/behavior checks. RW21 and the affected lanes now require a real local dependency edit → check/build → successor activation demonstration. The former five-candidate selection exercise is replaced by focused Pi qualification and a bounded fallback. No packages were installed, implementation or paid model run performed, or service restarted. A1-L02 remains incomplete.
+
 ## 2026-10-11 — rewrite planning and decommission
 
 The user chose a full rewrite with no legacy support after reviewing the gap between operational mechanics and general reasoning/development. Current source remains the retired implementation. **No rewrite implementation lane is complete, and no replacement service is deployed.**
@@ -16,4 +22,4 @@ The preceding Slack recovery fix had already been pushed/deployed and recovered 
 
 [Planning validation](rewrite/validation.md) records checks and review dispositions for these artifacts. The [prior progress log](history/pre-aeon-2026-10-11/docs/progress.md) retains older results, including historical deployment statements that are no longer current.
 
-Next eligible work: A1-L01 contract specification, A1-L02 shell/source audits, A1-L08 baseline design and A1-L09 release-boundary design in parallel. Each fresh session claims its lane, reads its exact goal and dependencies, and works within its separately established authority.
+Next eligible work: A1-L01 contract specification, A1-L02 selected-core extraction/qualification, A1-L08 baseline design and A1-L09 release-boundary design in parallel. Each fresh session claims its lane, reads its exact goal and dependencies, and works within its separately established authority.

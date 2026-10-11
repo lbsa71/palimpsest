@@ -5,6 +5,10 @@
 - **Scope:** the active [rewrite plan](../../PLAN.md), [architecture](../rewrite/architecture.md) and [shell decision procedure](../rewrite/agent-shell-decision.md).
 - **Supersedes:** legacy compatibility and implementation-preservation assumptions in earlier ADRs. Earlier documents remain evidence of historical decisions and behavior; their concrete protocols and package choices do not constrain the rewrite.
 
+## Follow-up
+
+[ADR 0032](0032-select-pi-core-and-source-owned-dependencies.md) subsequently selects Pi agent core under the user’s delegated choice, with Rig and AI SDK as alternatives. Its focused qualification replaces the five-candidate selection procedure proposed here. Prompt ownership, full rewrite and whole-system evolution remain unchanged.
+
 ## Context
 
 The running seed had much stronger delivery, accounting and recovery machinery than general reasoning/action. Ordinary turns used one successful model completion; retries were not iterative thinking. Bounded reflection, weakly connected memory and fixed growth inquiries did not establish a continuing self with effective initiative. The user requires reasoning and action on par with or beyond Codex and Claude Code, and development that goes beyond a reactive assistant persona.

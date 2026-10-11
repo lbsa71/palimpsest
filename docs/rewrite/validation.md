@@ -1,5 +1,7 @@
 # Planning-package verification
 
+Historical receipt for initial planning commit `dfe9c3c`; the later shell-selection update is recorded with [its source evidence](evidence/A1-L02/2026-10-11-source-audit.md).
+
 Date: 2026-10-11. Scope: the documentation baseline and actual decommission, not implementation of the rewrite. Baseline source is `b5fb789`; this package is on branch `codex/aeon-rewrite-plan-20261011`.
 
 ## Executed checks
