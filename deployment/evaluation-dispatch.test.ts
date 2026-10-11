@@ -197,7 +197,7 @@ function fixture(activate = false, governance = false, offline: boolean | 'revie
       ], expected: [false, true, false, true, false, true, true, false] }] };
     const path = join(reviewerRoot, 'private-plan.json'); writeFileSync(path, canonicalJson(plan), { mode: 0o600 }); retain(path, offlinePlanMount);
   }
-  const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: [...(offline ? [] : ['--jitless']), '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
+  const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: [...(offline ? ['--disable-wasm-trap-handler'] : ['--jitless']), '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
     pollMs: 10, maxElapsedMs: 15000, maxOutputBytes: 8 * 1024 * 1024, maxClosureBytes: 256 * 1024 * 1024, memoryBytes: 8 * 1024 * 1024 * 1024 };
   const reviewerFile = join(reviewerRoot, 'config.json'); writeFileSync(reviewerFile, JSON.stringify(reviewer), { mode: 0o600 });
   const futureRules = "export const heldOutMarker = 'externalDispatchEngineeringFixture = true';\nexport const governanceRevision = 'source-owned-future-reviewer-v2';\n";
@@ -287,6 +287,7 @@ if (process.argv[1] === '/work/runner.mjs') for (const path of ${JSON.stringify(
       { name: 'good-private-isolation', code: privacy + original, verdict: 'pass' },
       { name: 'changed-entrypoint', code: original, verdict: 'fail' },
       { name: 'undeclared-dependency', code: "import './undeclared.mjs';\n" + original, verdict: 'fail' },
+      { name: 'undeclared-system-module', code: "import '/usr/share/nodejs/signal-exit/dist/mjs/browser.js';\n" + original, verdict: 'fail' },
       { name: 'always-refusing', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nexport function reviewOfflinePacket() { throw Object.assign(Error("always refuse"), { code: "OFFLINE_REVIEW_REFUSED" }); }\n', verdict: 'fail' },
       { name: 'always-accepting', code: original.replace('export function reviewOfflinePacket(', 'function originalReview(') + '\nlet first; export function reviewOfflinePacket(...args) { return first ??= originalReview(...args); }\n', verdict: 'fail' },
       { name: 'ignores-request-binding', code: original.replace('observation.requestId === r.requestId && ', ''), verdict: 'fail' },
@@ -321,16 +322,20 @@ if (process.argv[1] === '/work/runner.mjs') for (const path of ${JSON.stringify(
         t.diagnostic('Changed entrypoint refused before any new physical reservation or candidate import');
         continue;
       }
-      const response = await runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource);
+      const response = await runAccountedExternalReview(f.reviewer, f.host, current, f.policy, f.incumbent.manifest.id, resource).catch(error => {
+        retain(`${variant.name}-failure.json`, { message: String(error), cause: String(error.cause ?? ''), requests: store.list('requests'), reservations: store.list('host.external-review-reservations') });
+        throw error;
+      });
       retain(`${variant.name}-response.json`, response);
       retain(`${variant.name}-physical-ledger.json`, store.list('requests'));
       const evidence = response.result.receipt.evidence[0]!, observationHash = evidence.caseResults[0]!.observations.sha256;
       const observation = JSON.parse(Buffer.from(response.artifacts.find(a => a.sha256 === observationHash)!.base64, 'base64').toString('utf8')) as OfflineObservation;
-      assert.equal(observation.command.exitCode, variant.name === 'undeclared-dependency' ? 1 : 0, JSON.stringify(observation.command));
+      assert.equal(observation.command.exitCode, variant.name.startsWith('undeclared-') ? 1 : 0, JSON.stringify(observation.command));
       if (variant.name === 'undeclared-dependency') assert.match(observation.command.stderr, /ERR_MODULE_NOT_FOUND/);
+      if (variant.name === 'undeclared-system-module') assert.match(observation.command.stderr, /ERR_ACCESS_DENIED/);
       assert.equal(observation.command.stoppedFor, undefined);
       assert.equal(evidence.verdict, variant.verdict, JSON.stringify(observation.command));
-      const outputs = variant.name === 'undeclared-dependency' ? [] : JSON.parse(observation.command.stdout);
+      const outputs = variant.name.startsWith('undeclared-') ? [] : JSON.parse(observation.command.stdout);
       if (variant.name === 'good-private-isolation') assert.deepEqual(outputs.slice(0, 3).map((r: any) => r.response.result.receipt.evidence[0].verdict), ['pass', 'fail', 'fail']);
       if (variant.name === 'ignores-request-binding') assert.equal(outputs[3].kind, 'result', 'Seed actually accepts a wrong request observation');
       if (variant.name === 'promotes-failed-command') assert.equal(outputs[1].response.result.receipt.evidence[0].verdict, 'pass', 'Seed actually promotes failed behavior');

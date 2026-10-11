@@ -92,6 +92,9 @@ export function loadOfflinePlan(config: ReviewerFile): { plan: OfflinePlan; dige
 export function offlineOperation(planDigest: string, c: OfflineCase): { id: string; digest: string } {
   return { id: c.id, digest: identity({ planDigest, case: c }) };
 }
+export function offlineCommandArgs(kind: OfflineCase['kind']): string[] {
+  return ['--disable-proto=throw', ...(kind === 'reviewer-behavior' ? ['--permission', '--allow-fs-read=/work', '--disable-wasm-trap-handler'] : []), '/work/runner.mjs'];
+}
 export function assessOffline(c: OfflineCase, command: CommandReceipt): boolean {
   return commandPassed(c, command);
 }
@@ -129,7 +132,7 @@ export async function runOfflineCase(options: { config: ReviewerFile; host: Host
       let pending: Promise<CommandReceipt> | undefined;
       gate.dispatch(() => { pending = runConfined({ workspace, protectedPaths: [host.stateDirectory, config.keyFile, ...config.files.map(f => f.path)],
         ...(c.kind === 'validator-string-length' ? { applicationRoot: payload } : {}), nodeBinary: process.execPath,
-        executable: '/runtime/node', args: ['--disable-proto=throw', '/work/runner.mjs'], timeoutMs: c.timeoutMs,
+        executable: '/runtime/node', args: offlineCommandArgs(c.kind), timeoutMs: c.timeoutMs,
         maxOutputBytes: c.maxOutputBytes, signal: gate.signal, resourceLimits: options.resourceLimits }); });
       invariant(pending, 'Offline candidate command was not dispatched');
       return await pending;
