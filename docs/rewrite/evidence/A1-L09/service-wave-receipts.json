@@ -1,0 +1,42 @@
+{
+  "kind": "author-operated-evidence",
+  "productAdmission": false,
+  "liveModelCalls": 0,
+  "externalSpeechEffects": 0,
+  "artifacts": [
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/aeon-1-service-wave-verify.log",
+      "sourceRevision": "50c3c24",
+      "kind": "aggregate",
+      "tests": 357,
+      "passed": 356,
+      "skipped": 1,
+      "failed": 0,
+      "sha256": "8e3b433a8b05667daf1f822a1d3ebaea0184b328c20e5f3d4aec4133ae757978",
+      "bytes": 41305
+    },
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/slack-origin-before.log",
+      "sourceRevision": "50c3c24 plus failing transport regressions",
+      "kind": "preserved-failure",
+      "passed": 1,
+      "failed": 2,
+      "sha256": "8ab5cca75fc0b1593fdbd74b8e533f617e493f9a02df7ffd1b321821bb359843",
+      "bytes": 3331
+    },
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/slack-recovery-probe.mts",
+      "sourceRevision": "4aa0b72",
+      "kind": "read-only-live-probe-source",
+      "sha256": "ec162246daf33ed300868c13db2891e6d6081708b4409861ef774799d9fab8f7",
+      "bytes": 5334
+    },
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/slack-readonly/receipt.json",
+      "sourceRevision": "4aa0b72",
+      "kind": "read-only-live-Slack-recovery",
+      "sha256": "f9396c1914c86e9a0b72750b3b3ed7376023d8cb2b417348f588221885799797",
+      "bytes": 972
+    }
+  ]
+}
