@@ -1,6 +1,6 @@
+import { createTestShell } from '../../agent-shell/tool-instructions.test-fixture.ts';
 import { writeFileSync } from 'node:fs';
 import { setup, authority, envelope, input, prompt } from './fixtures.ts';
-import { createAgentShell } from '../../agent-shell/index.ts';
 import { identity } from '../../contracts/common.ts';
 import type { ShellPort } from '../../contracts/execution/index.ts';
 const [filename,marker,boundary]=process.argv.slice(2);
@@ -24,7 +24,7 @@ if (['pending', 'authorized', 'resource-dispatched'].includes(boundary)) {
 }
 if(boundary?.startsWith('selected-')) {
   let round=0;
-  shell=createAgentShell({resolveFragment:async()=>'',tools:[{name:'inspect',description:'Inspect project',parameters:{type:'object',properties:{path:{type:'string'}},required:['path']}}],apiKey:()=> 'fixture-key',maxRequests:3,fetch:async()=>{
+  shell=createTestShell({resolveFragment:async()=>'',tools:[{name:'inspect',description:'Inspect project',parameters:{type:'object',properties:{path:{type:'string'}},required:['path']}}],apiKey:()=> 'fixture-key',maxRequests:3,fetch:async()=>{
     if(round++>0){writeFileSync(marker,'selected checkpoint');await new Promise(()=>{});}
     return Response.json({id:'fixture',model:'fixture',choices:[{finish_reason:'tool_calls',message:{content:null,tool_calls:[{id:'call00001',type:'function',function:{name:'inspect',arguments:'{"path":"project"}'}}]}}],usage:{prompt_tokens:10,completion_tokens:4}});
   }});

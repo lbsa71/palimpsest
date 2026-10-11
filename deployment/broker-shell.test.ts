@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { identity } from '../packages/contracts/index.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
@@ -32,6 +33,7 @@ for (const compact of [false, true]) test(`real isolated Pi worker uses durable 
     protectedPaths: [state], nodeBinary: process.execPath, timeoutMs: 10000, maxPayloadBytes: 1024 * 1024,
     pricesPerMillion: { input: 1, output: 2 }, worker: { model: 'mistral-fixture-v1', maxRequests: 4, timeoutMs: 5000,
       maxOutputTokens: 512, ...(compact ? { compaction: { thresholdMessages: 5, retainMessages: 1, instruction: summaryFragment } } : {}), tools: [{ name: 'inspect', description: 'Read the assigned fixture', parameters: { type: 'object', properties: {} } }] },
+    retainToolInstructions: source => store.putArtifact(source),
     async resolveFragment(fragment) { return Buffer.from(store.readArtifact(fragment.artifact)).toString(); },
     assertAuthority(input) { authorityStore.assert(input.run.authority); },
     async performRequest(payload) {
@@ -67,7 +69,18 @@ for (const compact of [false, true]) test(`real isolated Pi worker uses durable 
     assert.equal(settled[0].usage.costUsd, 0.00002);
     assert.equal(settled[1].usage.inputTokens, 25);
     assert.equal(resources.snapshot(run.id).tokens, compact ? 52 : 47);
-    assert.ok(store.list('prompts').length >= 2);
+    const prompts = store.list<{ manifest: PromptManifest; artifact: import('../packages/contracts/index.ts').ArtifactRef }>('prompts');
+    assert.equal(prompts.length, compact ? 3 : 2);
+    const sources = prompts.map(row => {
+      const fragment = row.value.manifest.fragments.at(-1)!;
+      const source = Buffer.from(store.readArtifact(fragment.artifact)).toString();
+      const payload = JSON.parse(Buffer.from(store.readArtifact(row.value.artifact)).toString());
+      if (row.value.manifest.fragments.some(fragment => fragment.id === 'summary')) { assert.equal(source, '[]'); assert.equal(payload.tools, undefined); }
+      else { assert.match(source, /Read the assigned fixture/); assert.equal(payload.tools.length, 1); }
+      return fragment.artifact;
+    });
+    const reopened = new OperationalStore({ filename: join(state, 'state.sqlite') });
+    try { for (const ref of sources) assert.deepEqual(reopened.readArtifact(ref), store.readArtifact(ref)); } finally { reopened.close(); }
   } finally { store.close(); authorityStore.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -82,7 +95,7 @@ test('a hostile worker cannot publish invented observations or call the provider
   let providerCalls = 0;
   const shell = createBrokerShell({ applicationRoot: application, entrypoint: 'hostile.js', workspace: () => workspace, protectedPaths: [state],
     nodeBinary: process.execPath, timeoutMs: 3000, maxPayloadBytes: 65536, pricesPerMillion: { input: 1, output: 2 },
-    worker: { model: 'fixture-v1', maxRequests: 1, tools: [] }, resolveFragment: refuse, assertAuthority() {},
+    worker: { model: 'fixture-v1', maxRequests: 1, tools: [] }, retainToolInstructions: source => ({ uri: `aeon:artifact:${identity(JSON.parse(source))}`, sha256: identity(JSON.parse(source)) }), resolveFragment: async () => '[]', assertAuthority() {},
     async performRequest() { providerCalls++; throw new Error('Unreserved network dispatch'); }, recordTransport() {} });
   try {
     writeFileSync(join(application, 'hostile.js'), `process.stdin.once('data',()=>console.log(JSON.stringify({kind:'done',value:{status:'completed',observations:[{id:'invented',value:'fake success'}]}})));`);
@@ -112,7 +125,8 @@ for (const mutation of ['system', 'manifest', 'tools', 'digest', 'skip-settle', 
       async capturePrompt() { captures++; }, async reserve() {}, async dispatched() {}, async settle(receipt) { settlements.push(receipt); } };
     const shell = createBrokerShell({ applicationRoot: application, entrypoint: 'worker.js', workspace: () => workspace, protectedPaths: [state], nodeBinary: process.execPath,
       timeoutMs: 3000, maxPayloadBytes: 65536, pricesPerMillion: { input: 1, output: 2 }, worker: { model: 'fixture-v1', maxRequests: 1, tools: [] },
-      async resolveFragment() { return content; }, assertAuthority() {}, recordTransport() {}, async performRequest() { fetches++; return { status: 200, body: JSON.stringify({ model: 'fixture-v1', usage: { prompt_tokens: 7, completion_tokens: 2 } }) }; } });
+      retainToolInstructions: source => ({ uri: `aeon:artifact:${hash(source)}`, sha256: hash(source) }),
+    async resolveFragment(fragment) { return fragment.id === 'shell.tools' ? '[]' : content; }, assertAuthority() {}, recordTransport() {}, async performRequest() { fetches++; return { status: 200, body: JSON.stringify({ model: 'fixture-v1', usage: { prompt_tokens: 7, completion_tokens: 2 } }) }; } });
     writeFileSync(join(application, 'worker.js'), `
       const {createHash}=require('node:crypto');const {createInterface}=require('node:readline');
       const hash=s=>createHash('sha256').update(s).digest('hex');let seq=0;const pending=new Map();
@@ -120,7 +134,7 @@ for (const mutation of ['system', 'manifest', 'tools', 'digest', 'skip-settle', 
       createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.kind==='reply'){const p=pending.get(m.id);m.ok?p.resolve(m.value):p.reject(Error('refused'));}else main(m.value);});
       async function main(start){try{
         const mode=${JSON.stringify(mutation)};const toolHash=hash(JSON.stringify(start.options.tools));
-        const manifest={id:'capture',requestDigest:'',fragments:[...start.input.prompt.fragments,{id:'shell.tools',owner:'tool',role:'tool',order:1,artifact:{uri:'shell:tools:'+toolHash,sha256:toolHash},scope:start.input.run.scope,replaceable:true,derivedFrom:[]}]};
+        const manifest={id:'capture',requestDigest:'',fragments:[...start.input.prompt.fragments,{id:'shell.tools',owner:'tool',role:'tool',order:1,artifact:start.options.toolInstructions.tools,scope:start.input.run.scope,replaceable:true,derivedFrom:[]}]};
         const body={model:'fixture-v1',messages:[{role:'system',content:'Owned instructions'},{role:'user',content:'Proceed'}],stream:false,max_tokens:4096};
         if(mode==='system')body.messages[0].content='Unowned system instructions';
         if(mode==='manifest')manifest.fragments[0].owner='external';

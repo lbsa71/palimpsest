@@ -31,6 +31,7 @@ for (const provider of ['mistral', 'openai'] as const) test(`${provider}: isolat
   let requests = 0; let effectsCount = 0; let compactions = 0; const receipts: TransportReceipt[] = []; const payloads: string[] = [];
   function shell() { return createBrokerShell({ applicationRoot: dirname(dirname(fileURLToPath(import.meta.url))), entrypoint: 'deployment/shell-worker.ts', workspace: () => workspace, protectedPaths: [state], nodeBinary: process.execPath, timeoutMs: 10000, maxPayloadBytes: 1_000_000, pricesPerMillion: { input: 1, output: 2 },
     worker: { provider, model: 'fixture-v1', modelProfile: { contextWindow: 128000, reasoning: true }, reasoningEffort: 'high', maxRequests: 5, maxOutputTokens: 512, timeoutMs: 5000, tools: [{ name: 'inspect', description: 'Inspect fixture state', parameters: { type: 'object', properties: {} } }], compaction: { thresholdMessages: 7, retainMessages: 1, instruction: summaryFragment } },
+    retainToolInstructions: source => store.putArtifact(source),
     async resolveFragment(fragment) { return Buffer.from(store.readArtifact(fragment.artifact)).toString(); }, assertAuthority(input) { authorityStore.assert(input.run.authority); }, recordTransport(receipt) { receipts.push(structuredClone(receipt)); },
     async performRequest(payload) {
       payloads.push(payload); const decoded = JSON.parse(payload); const system = provider === 'openai' ? decoded.instructions : decoded.messages[0].content;

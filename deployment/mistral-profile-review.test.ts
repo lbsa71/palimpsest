@@ -28,7 +28,7 @@ const input: ShellInput = {
 };
 const manifest = { id: 'captured', requestDigest: digest(payload), fragments: [...input.prompt.fragments,
   { id: 'shell.tools', role: 'tool', owner: 'tool', order: 1, replaceable: true, derivedFrom: [], scope: input.run.scope,
-    artifact: { uri: `shell:tools:${digest('[]')}`, sha256: digest('[]') } }] };
+    artifact: { uri: `aeon:artifact:${digest('[]')}`, sha256: digest('[]') } }] };
 const request: PhysicalRequest = { id: 'attempt', reservationId: 'attempt', runId: 'review', purpose: 'reasoning', provider: 'mistral', model,
   promptManifestId: manifest.id, requestDigest: manifest.requestDigest, status: 'reserved',
   usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
@@ -56,7 +56,8 @@ for (const scenario of [
   const shell = createBrokerShell({ applicationRoot: root, entrypoint: 'unused.js', workspace: () => root, protectedPaths: [], nodeBinary: process.execPath,
     timeoutMs: 5000, maxPayloadBytes: 65536, pricesPerMillion: { input: 1, output: 2 },
     worker: { model, maxRequests: 8, maxOutputTokens: 32, timeoutMs: 5000, tools: [] },
-    async resolveFragment() { return instruction; }, assertAuthority() {},
+    retainToolInstructions: source => store.putArtifact(source),
+    async resolveFragment(fragment) { return fragment.id === 'shell.tools' ? Buffer.from(store.readArtifact(fragment.artifact)).toString() : instruction; }, assertAuthority() {},
     async performRequest(sent) { assert.equal(sent, payload); calls++; ready.resolve(); await release.promise; return { status: 200, body: raw }; },
     recordTransport(receipt) { store.put('review-receipts', receipt.requestId, structuredClone(receipt), store.get('review-receipts', receipt.requestId)?.revision ?? null); },
   });

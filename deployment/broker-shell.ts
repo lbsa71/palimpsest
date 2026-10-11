@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { identity, invariant, scopeAllows, validateCapturedPrompt, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
-  type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
+  type ArtifactRef, type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
 import { completedOpenAIOutput, openaiOutput } from '../packages/agent-shell/openai.ts';
 import type { ShellOptions } from '../packages/agent-shell/index.ts';
 import { runWorker } from '../packages/supervisor/worker-process.ts';
@@ -18,7 +18,7 @@ export interface TransportReceipt {
    * request-default inference, never an observation of the served tier. */
   responseServiceTier?: JsonValue;
 }
-type WorkerConfig = Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'endpoint'>;
+type WorkerConfig = Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'endpoint' | 'toolInstructions'>;
 export interface BrokerShellOptions {
   applicationRoot: string;
   entrypoint: string;
@@ -31,6 +31,7 @@ export interface BrokerShellOptions {
   maxPayloadBytes: number;
   pricesPerMillion: { input: number; output: number };
   resolveFragment(fragment: PromptFragment): Promise<string>;
+  retainToolInstructions(source: string): ArtifactRef;
   assertAuthority(input: ShellInput): void;
   performRequest(payload: string, signal: AbortSignal): Promise<{ status: number; body: string }>;
   recordTransport(receipt: TransportReceipt): void;
@@ -50,8 +51,9 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
   return {
     async run(input, bridge, signal) {
       options.assertAuthority(input);
+      const worker = structuredClone(options.worker);
       const fragments: Record<string, string> = {};
-      for (const fragment of [...input.prompt.fragments, ...(options.worker.compaction ? [options.worker.compaction.instruction] : [])]) {
+      for (const fragment of [...input.prompt.fragments, ...(worker.compaction ? [worker.compaction.instruction] : [])]) {
         invariant(scopeAllows(fragment.scope, input.run.scope), 'Worker prompt audience mismatch');
         const value = await options.resolveFragment(fragment);
         invariant(hash(value) === fragment.artifact.sha256, 'Worker prompt artifact changed');
@@ -59,13 +61,21 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
       }
       const baseFragments = [...input.prompt.fragments].sort((a, b) => a.order - b.order);
       invariant(baseFragments.every(fragment => fragment.role === 'system' || fragment.role === 'developer'), 'Unsupported broker instruction role');
-      const toolDigest = hash(JSON.stringify(options.worker.tools));
-      function expectedFragments(compaction: boolean): PromptFragment[] {
-        const instructions = compaction ? [...baseFragments, { ...options.worker.compaction!.instruction, order: Math.max(-1, ...baseFragments.map(fragment => fragment.order)) + 1 }] : baseFragments;
-        return [...instructions, { id: 'shell.tools', owner: 'tool', role: 'tool', order: Math.max(-1, ...instructions.map(fragment => fragment.order)) + 1,
-          artifact: { uri: `shell:tools:${toolDigest}`, sha256: toolDigest }, scope: input.run.scope, replaceable: true, derivedFrom: [] }];
+      async function retainTools(source: string): Promise<ArtifactRef> {
+        const artifact = options.retainToolInstructions(source);
+        invariant(artifact.sha256 === hash(source) && artifact.uri === `aeon:artifact:${artifact.sha256}`, 'Host retained another tool instruction artifact');
+        const fragment: PromptFragment = { id: 'shell.tools', owner: 'tool', role: 'tool', order: 0, artifact, scope: input.run.scope, replaceable: true, derivedFrom: [] };
+        invariant(await options.resolveFragment(fragment) === source, 'Host tool instruction artifact is unavailable or changed');
+        fragments[artifact.sha256] = source;
+        return artifact;
       }
-      const captured = new Map<string, { manifest: PromptManifest; payload: string }>();
+      const toolInstructions = { tools: await retainTools(JSON.stringify(worker.tools)), ...(worker.compaction ? { compaction: await retainTools('[]') } : {}) };
+      function expectedFragments(compaction: boolean): PromptFragment[] {
+        const instructions = compaction ? [...baseFragments, { ...worker.compaction!.instruction, order: Math.max(-1, ...baseFragments.map(fragment => fragment.order)) + 1 }] : baseFragments;
+        return [...instructions, { id: 'shell.tools', owner: 'tool', role: 'tool', order: Math.max(-1, ...instructions.map(fragment => fragment.order)) + 1,
+          artifact: compaction ? toolInstructions.compaction! : toolInstructions.tools, scope: input.run.scope, replaceable: true, derivedFrom: [] }];
+      }
+      const captured = new Map<string, { manifest: PromptManifest; payload: string; purpose: 'reasoning' | 'compaction' }>();
       const observed = new Map<string, JsonValue>();
       let lastCheckpoint = input.checkpoint;
       type RequestRecord = { request: PhysicalRequest; payload: string; fetched: boolean; receipt?: TransportReceipt; settled: boolean };
@@ -85,8 +95,8 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         command: { workspace: options.workspace(input), protectedPaths: options.protectedPaths, applicationRoot: options.applicationRoot,
           nodeBinary: options.nodeBinary, executable: '/runtime/node', args: [`/app/${options.entrypoint}`],
           timeoutMs: options.timeoutMs, maxOutputBytes: options.maxPayloadBytes * 64, resourceLimits: options.resourceLimits, signal },
-        initial: json({ input, options: options.worker, fragments }), maxMessageBytes: options.maxPayloadBytes,
-        maxRequests: Math.max(64, options.worker.maxRequests * 16),
+        initial: json({ input, options: { ...worker, toolInstructions }, fragments }), maxMessageBytes: options.maxPayloadBytes,
+        maxRequests: Math.max(64, worker.maxRequests * 16),
         async handle(method, args, workerSignal) {
           if (method !== 'settle') { options.assertAuthority(input); workerSignal.throwIfAborted(); }
           switch (method) {
@@ -102,10 +112,10 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               invariant(typeof payload === 'string' && Buffer.byteLength(payload) <= options.maxPayloadBytes, 'Provider payload too large');
               validateCapturedPrompt(manifest, payload);
               const normal = identity(manifest.fragments) === identity(expectedFragments(false));
-              const compaction = !!options.worker.compaction && identity(manifest.fragments) === identity(expectedFragments(true));
+              const compaction = !!worker.compaction && identity(manifest.fragments) === identity(expectedFragments(true));
               invariant(normal || compaction, 'Worker changed owned prompt provenance');
               const decoded = JSON.parse(payload) as Record<string, unknown>;
-              const expectedSystem = baseFragments.map(fragment => fragments[fragment.artifact.sha256]).join('\n\n') + (compaction ? `\n\n${fragments[options.worker.compaction!.instruction.artifact.sha256]}` : '');
+              const expectedSystem = baseFragments.map(fragment => fragments[fragment.artifact.sha256]).join('\n\n') + (compaction ? `\n\n${fragments[worker.compaction!.instruction.artifact.sha256]}` : '');
               let expectedTools: unknown[];
               if (provider === 'openai') {
                 invariant(Object.keys(decoded).every(key => ['model', 'instructions', 'input', 'tools', 'tool_choice', 'reasoning', 'store', 'include', 'stream', 'max_output_tokens'].includes(key)), 'Unqualified provider option');
@@ -117,36 +127,37 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                   else if (item.type === 'function_call_output') invariant(Object.keys(item).every(key => ['type', 'call_id', 'output'].includes(key)) && typeof item.call_id === 'string' && typeof item.output === 'string', 'Invalid Responses tool output');
                   else openaiOutput([item]);
                 }
-                expectedTools = compaction ? [] : options.worker.tools.map(tool => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }));
+                expectedTools = compaction ? [] : worker.tools.map(tool => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }));
                 invariant(decoded.store === false && identity(decoded.include) === identity(['reasoning.encrypted_content']), 'Unqualified Responses state profile');
-                invariant(identity(decoded.reasoning ?? null) === identity(options.worker.reasoningEffort ? { effort: options.worker.reasoningEffort } : null), 'Unqualified reasoning effort');
-                invariant(decoded.max_output_tokens === (options.worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
+                invariant(identity(decoded.reasoning ?? null) === identity(worker.reasoningEffort ? { effort: worker.reasoningEffort } : null), 'Unqualified reasoning effort');
+                invariant(decoded.max_output_tokens === (worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
               } else {
                 invariant(Object.keys(decoded).every(key => ['model', 'messages', 'tools', 'tool_choice', 'reasoning_effort', 'stream', 'max_tokens'].includes(key)), 'Unqualified provider option');
                 const messages = decoded.messages as { role: string; content: unknown }[];
                 invariant(Array.isArray(messages) && messages[0]?.role === 'system' && messages[0].content === expectedSystem && messages.slice(1).every(message => ['user', 'assistant', 'tool'].includes(message.role)), 'Worker changed owned system instructions');
-                expectedTools = compaction ? [] : options.worker.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
-                invariant(decoded.max_tokens === (options.worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
-                invariant(decoded.reasoning_effort === options.worker.reasoningEffort, 'Unqualified reasoning effort');
+                expectedTools = compaction ? [] : worker.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
+                invariant(decoded.max_tokens === (worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
+                invariant(decoded.reasoning_effort === worker.reasoningEffort, 'Unqualified reasoning effort');
               }
               invariant(identity(decoded.tools ?? []) === identity(expectedTools) && decoded.tool_choice === (expectedTools.length ? 'auto' : undefined), 'Worker changed owned tools');
-              invariant(decoded.model === options.worker.model && decoded.stream === false, 'Unqualified provider profile');
+              invariant(decoded.model === worker.model && decoded.stream === false, 'Unqualified provider profile');
               await bridge.capturePrompt(manifest, payload);
-              captured.set(manifest.id, { manifest, payload });
+              captured.set(manifest.id, { manifest, payload, purpose: compaction ? 'compaction' : 'reasoning' });
               return null;
             }
             case 'reserve': {
               const request = args[0] as unknown as PhysicalRequest;
               validatePhysicalRequest(request);
-              invariant(request.runId === input.run.id && request.provider === provider && request.model === options.worker.model, 'Foreign worker request');
+              invariant(request.runId === input.run.id && request.provider === provider && request.model === worker.model, 'Foreign worker request');
               invariant(!records.has(request.id), 'Duplicate worker request identity');
               const capture = captured.get(request.promptManifestId);
               invariant(capture?.manifest.requestDigest === request.requestDigest, 'Uncaptured worker request');
+              invariant(request.purpose === capture.purpose, 'Worker request purpose changed instruction surface');
               // A conservative byte bound includes framing; actual trusted provider usage settles later.
               const inputTokens = Buffer.byteLength(capture.payload) + 1024;
-              const outputTokens = options.worker.maxOutputTokens ?? 4096;
+              const outputTokens = worker.maxOutputTokens ?? 4096;
               const costUsd = (inputTokens * options.pricesPerMillion.input + outputTokens * options.pricesPerMillion.output) / 1_000_000;
-              const reserved = { ...request, usage: { requests: 1, inputTokens, outputTokens, costUsd, elapsedMs: options.worker.timeoutMs ?? 60_000 } };
+              const reserved = { ...request, usage: { requests: 1, inputTokens, outputTokens, costUsd, elapsedMs: worker.timeoutMs ?? 60_000 } };
               await bridge.reserve(reserved);
               records.set(request.id, { request: reserved, payload: capture.payload, fetched: false, settled: false });
               return null;
@@ -166,7 +177,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const payload = args[0]; invariant(typeof payload === 'string', 'Provider payload required');
               const record = [...records.values()].find(item => !item.fetched && !item.settled && item.request.status === 'dispatched' && item.payload === payload);
               invariant(record, 'Fetch lacks an unused dispatched reservation');
-              invariant(physicalRequests < options.worker.maxRequests, 'Host physical request ceiling exhausted');
+              invariant(physicalRequests < worker.maxRequests, 'Host physical request ceiling exhausted');
               // Consumption precedes network I/O. A second fetch can never reuse this reservation.
               record.fetched = true; physicalRequests++;
               const receipt: TransportReceipt = { requestId: record.request.id, dispatched: true, status: 'uncertain', httpStatus: null,
@@ -175,7 +186,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               record.receipt = receipt;
               options.recordTransport(receipt);
               const operation = (async () => { try {
-                const bounded = AbortSignal.any([workerSignal, AbortSignal.timeout(options.worker.timeoutMs ?? 60_000)]);
+                const bounded = AbortSignal.any([workerSignal, AbortSignal.timeout(worker.timeoutMs ?? 60_000)]);
                 const response = await options.performRequest(payload, bounded);
                 invariant(Buffer.byteLength(response.body) <= options.maxPayloadBytes, 'Provider response too large');
                 receipt.httpStatus = response.status; receipt.responseDigest = hash(response.body);
@@ -188,7 +199,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                     // Requests cannot select service_tier; Mistral documents its
                     // omitted default as standard_only. Unknown profiles remain
                     // uncertain with null usage, retaining the original charge.
-                    invariant(body.model === options.worker.model, 'Mistral response model differs from qualified host profile');
+                    invariant(body.model === worker.model, 'Mistral response model differs from qualified host profile');
                     invariant(receipt.responseServiceTier === undefined || receipt.responseServiceTier === 'standard', 'Unsupported Mistral served tier');
                   }
                   const inputTokens = usage?.[provider === 'openai' ? 'input_tokens' : 'prompt_tokens'];

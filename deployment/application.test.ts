@@ -9,7 +9,8 @@ import type { AddressInfo } from 'node:net';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { AutarkApplication } from './application.ts';
 import type { ApplicationConfig } from './config.ts';
-import type { Run } from '../packages/contracts/index.ts';
+import { identity, type Run, type PromptManifest, type ArtifactRef } from '../packages/contracts/index.ts';
+import type { OperationalStore } from '../packages/storage/index.ts';
 import { SlackError } from '../packages/communications/index.ts';
 
 function fixture() {
@@ -112,14 +113,31 @@ test('ordinary authenticated conversation uses actual confined tools and explici
     const grants = app.store.get<{ workspace: string }>('host.run-grants', admitted.run.id)!.value;
     assert.equal(readFileSync(join(grants.workspace, 'square.js'), 'utf8'), 'console.log(6 * 6)');
     const used = app.resources.snapshot(admitted.run.id); assert.equal(used.requests, 7); assert.equal(used.tokens, 480);
+    const toolRefs = retainedToolSources(app.store); assert.equal(toolRefs.size, 4);
     const memory = app.memory.context({ audience: f.config.direct.scope, query: 'square', maxRecords: 20, maxBytes: 32768 }); assert.ok(memory.memories.length >= 2);
     await app.close(); app = undefined;
     app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'private-fixture-key', directToken: 'direct-test' }, performRequest });
     assert.equal(app.resources.snapshot(admitted.run.id).requests, used.requests); assert.equal(app.output(admitted.run.id).length, 1);
     assert.ok(app.memory.context({ audience: f.config.direct.scope, query: 'square', maxRecords: 20, maxBytes: 32768 }).memories.length >= 2);
+    assert.deepEqual(retainedToolSources(app.store), toolRefs);
     assert.equal(calls, 4);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
+
+function retainedToolSources(store: OperationalStore): Map<string, ArtifactRef> {
+  const refs = new Map<string, ArtifactRef>();
+  for (const row of store.list<{ manifest: PromptManifest; artifact: ArtifactRef }>('prompts')) {
+    const fragment = row.value.manifest.fragments.find(fragment => fragment.id === 'shell.tools');
+    assert.ok(fragment, 'ordinary provider manifest must retain effective tool source');
+    const bytes = Buffer.from(store.readArtifact(fragment.artifact)).toString('utf8');
+    const tools = JSON.parse(bytes) as { name: string; description: string; parameters: unknown }[];
+    assert.equal(bytes, JSON.stringify(tools));
+    const payload = JSON.parse(Buffer.from(store.readArtifact(row.value.artifact)).toString('utf8'));
+    assert.equal(identity(payload.tools ?? []), identity(tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }))));
+    refs.set(row.key, fragment.artifact);
+  }
+  return refs;
+}
 
 function parsed(payload: string): any { return JSON.parse(payload); }
 function context(request: any): any { return request.messages.filter((m: any) => m.role === 'user').map((m: any) => { try { return JSON.parse(m.content); } catch { return {}; } }).findLast((m: any) => m.hostContext)?.hostContext; }
@@ -155,6 +173,12 @@ test('ordinary delegation runs a real bounded child, inspects actual artifacts a
     assert.equal(app.output(run.id).length, 0);
     const requests = app.store.list<any>('requests').map(row => row.value.request); assert.equal(requests.filter(r => r.provider === 'mistral').length, 7); assert.equal(requests.filter(r => r.provider === 'effect-receiver').length, 5);
     assert.equal(app.resources.snapshot(run.id).requests, 12);
+    const toolRefs = retainedToolSources(app.store); assert.equal(toolRefs.size, 7);
+    const parentRefs = requests.filter(r => r.provider === 'mistral' && r.runId === run.id).map(r => toolRefs.get(r.promptManifestId)!.sha256);
+    const childRefs = requests.filter(r => r.provider === 'mistral' && r.runId !== run.id).map(r => toolRefs.get(r.promptManifestId)!.sha256);
+    assert.equal(new Set(parentRefs).size, 1); assert.equal(new Set(childRefs).size, 1); assert.notEqual(parentRefs[0], childRefs[0]);
+    await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw Error('Completed child must not replay'); } });
+    assert.deepEqual(retainedToolSources(app.store), toolRefs);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -248,7 +272,10 @@ test('graceful close persists unfinished work before abort and restart resumes i
   try {
     app = new AutarkApplication({ ...f, secrets, performRequest }); await app.start(); const run = receive(app, f, 'restart', 'unfinished objective'); await ready;
     await app.close(); app = new AutarkApplication({ ...f, secrets, performRequest }); assert.ok(app.store.get('host.pending-runs', run.id)); assert.equal(app.runtime.getRun(run.id)?.status, 'waiting');
+    const before = retainedToolSources(app.store); assert.equal(before.size, 1);
     await app.start(); await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, 2); assert.equal(app.output(run.id).length, 0);
+    const after = retainedToolSources(app.store); assert.equal(after.size, 2); for (const [key, artifact] of before) assert.deepEqual(after.get(key), artifact);
+    assert.equal(new Set([...after.values()].map(ref => ref.sha256)).size, 1);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 

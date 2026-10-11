@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, identity, invariant, scopeAllows, validateCheckpoint, validateObservation, validatePromptManifest, validateRun } from '../contracts/index.ts';
-import type { JsonValue, Observation, PhysicalRequest, PromptFragment, PromptManifest, ResourceUsage, ShellBridge, ShellCheckpoint, ShellInput, ShellPort } from '../contracts/index.ts';
+import type { ArtifactRef, JsonValue, Observation, PhysicalRequest, PromptFragment, PromptManifest, ResourceUsage, ShellBridge, ShellCheckpoint, ShellInput, ShellPort } from '../contracts/index.ts';
 import { runAgentLoopContinue } from './vendor/pi/agent/agent-loop.ts';
 import type { AgentEvent, AgentTool } from './vendor/pi/agent/types.ts';
 import { normalizeContext, validateToolArguments } from './vendor/pi/ai/index.ts';
@@ -19,6 +19,8 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   provider?: ShellProvider;
   resolveFragment(fragment: PromptFragment): Promise<string>;
   tools: Tool[];
+  /** Exact serialized tool sources retained by the trusted host before execution. */
+  toolInstructions: { tools: ArtifactRef; compaction?: ArtifactRef };
   steering?: () => Promise<Message[]>;
   /** Explicit conservative host ceiling; unknown defaults require a runtime per-request ceiling. */
   reservationEstimate?: (attempt: Attempt) => ResourceUsage;
@@ -107,7 +109,11 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       let currentFragments = fragments;
       const transport = (provider === 'openai' ? createOpenAITransport : createMistralTransport)({ ...options,
         async reserve(attempt: Attempt) {
-          const toolFragment: PromptFragment = { id: 'shell.tools', owner: 'tool', role: 'tool', order: Math.max(-1, ...currentFragments.map(fragment => fragment.order)) + 1, artifact: { uri: `shell:tools:${digest(JSON.stringify(tools))}`, sha256: digest(JSON.stringify(tools)) }, scope: input.run.scope, replaceable: true, derivedFrom: [] };
+          const source = attempt.purpose === 'compaction' ? '[]' : JSON.stringify(tools);
+          const artifact = attempt.purpose === 'compaction' ? options.toolInstructions.compaction : options.toolInstructions.tools;
+          invariant(artifact && artifact.sha256 === digest(source) && artifact.uri === `aeon:artifact:${artifact.sha256}`, 'Tool instruction artifact does not match effective tools');
+          const toolFragment: PromptFragment = { id: 'shell.tools', owner: 'tool', role: 'tool', order: Math.max(-1, ...currentFragments.map(fragment => fragment.order)) + 1, artifact, scope: input.run.scope, replaceable: true, derivedFrom: [] };
+          invariant(await resolve(toolFragment) === source, 'Retained tool instruction bytes changed');
           const manifest: PromptManifest = { id: `${input.prompt.id}:${attempt.id}`, fragments: [...currentFragments, toolFragment], requestDigest: attempt.digest };
           validatePromptManifest(manifest);
           await bridge.capturePrompt(manifest, attempt.payload);
