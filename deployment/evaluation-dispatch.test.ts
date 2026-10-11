@@ -106,7 +106,7 @@ async function eventually<T>(read: () => T, accept: (value: T) => boolean): Prom
   const deadline = Date.now() + 30000;
   while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > deadline) throw Error('Fixture deadline: ' + JSON.stringify(value)); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
-function fixture() {
+function fixture(activate = false) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-external-dispatch-'));
   const source = join(root, 'source'); mkdirSync(source);
   for (const entry of rewriteSourceEntries) if (existsSync(join(repository, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(join(repository, entry), join(source, entry), { recursive: true }); }
@@ -132,8 +132,11 @@ function fixture() {
   // Frozen fixture transport replaces the provider completely. It exercises the ordinary service child/tools.
   const calls = [['source_checkout', {}], ['workspace_write', { path: markerPath, content: modifiedBytes, expectedSha256: hashBytes(readFileSync(join(source, markerPath))) }],
     ['change_propose', { changeId: 'finite', justification: 'Test physical hosted review dispatch.', objective: 'Stage exact source through prior controls.', successCriteria: ['held-out exact source observed by physical external process'], experienceIds: [] }],
-    ['candidate_freeze', { changeId: 'finite' }], ['candidate_evaluate', { changeId: 'finite' }], ['release_submit', { changeId: 'finite' }]];
-  const transport = `let fixtureCalls = 0; const fixtureSequence = ${JSON.stringify(calls)};\nasync function fixtureTransport() { const step = fixtureSequence[fixtureCalls++]; return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + fixtureCalls, type: 'function', function: { name: step[0], arguments: JSON.stringify(step[1]) } }] } : { role: 'assistant', content: 'Engineering fixture done.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }\n`;
+    ['candidate_freeze', { changeId: 'finite' }], ['candidate_evaluate', { changeId: 'finite' }], ['change_status', { changeId: 'finite' }], ['release_submit', { changeId: 'finite' }],
+    ...(activate ? [['control_activate', { changeId: 'finite' }]] : [])];
+  // Persisted model messages select the next step across service replacement; the fixture
+  // stops after enqueue and resumes only after the actual bound host result event.
+  const transport = `const fixtureSequence = ${JSON.stringify(calls)};\nasync function fixtureTransport(payload) { const messages = JSON.parse(payload).messages; const seen = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.function.name) ?? [])); let step = fixtureSequence.find(step => !seen.has(step[0])); if (step?.[0] === 'change_status' && !messages.some(message => message.role === 'user' && String(message.content).includes('external-evaluation-completed'))) step = undefined; return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + fixtureSequence.indexOf(step), type: 'function', function: { name: step[0], arguments: JSON.stringify(step[1]) } }] } : { role: 'assistant', content: 'Engineering fixture waiting or complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }\n`;
   const childPath = join(source, 'deployment/service-child.ts');
   writeFileSync(childPath, transport + readFileSync(childPath, 'utf8').replace('new AutarkApplication({ config,', 'new AutarkApplication({ performRequest: fixtureTransport, config,'));
   const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: 2 };
@@ -194,7 +197,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     const proof = store.readJsonArtifact<ReleaseProof>(evaluation.proof!);
     const observation = JSON.parse(Buffer.from(mailbox.readArtifact(proof.proposal.evidence[0]!.artifact.uri)).toString());
     assert.equal(observation.inheritedKeys, false); assert.match(observation.kind, /H1 unaccepted/);
-    await eventually(() => store.list('host-transport').length, value => value === 7);
+    await eventually(() => store.list('host-transport').length, value => value === 9);
 
     await t.test('lost actual staged controller reply is retained as uncertain and never restaged after restart', async () => {
       const request = { ...(mailbox.request(submission!.id) as SubmissionRequest), requestId: 'lost-submission' };
@@ -290,4 +293,46 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     });
   } catch (error) { throw Error(`${error instanceof Error ? error.message : error}; ${JSON.stringify(supervisor?.status().evaluation)}`, { cause: error }); }
   finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary author activates its exact stage and receives fresh physical probation under the original judge', { timeout: 120000 }, async () => {
+  const f = fixture(true); let supervisor: ServiceSupervisor | undefined;
+  const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+  try {
+    supervisor = await ServiceSupervisor.open(f.options);
+    const response = await fetch(`http://127.0.0.1:${supervisor.status().ready!.address.port}/inputs`, { method: 'POST',
+      headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ externalId: 'ordinary-control-cycle', revision: '1', conversation: 'control-cycle', text: 'Execute the finite engineering control lifecycle.' }) });
+    assert.equal(response.status, 202);
+    const { run } = await response.json() as { run: { id: string } };
+    const record = await eventually(() => {
+      const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
+      if (value && ['rejected', 'uncertain'].includes(value.status)) throw Error(JSON.stringify({ control: value.status, diagnosis: value.diagnosis, host: supervisor!.status().evaluation }));
+      return value;
+    }, value => value?.status === 'accepted');
+    assert.ok(record?.review && record.physicalAuthority && record.probationProof);
+    assert.equal(record.request.runId, run.id);
+    const status = supervisor.status();
+    assert.equal(status.release?.phase, 'accepted');
+    assert.equal(status.release?.accepted.candidateId, record.review.candidate.manifest.id);
+    assert.equal(status.release?.accepted.policyDigest, f.nextPolicy.policyDigest);
+    assert.ok(record.physicalAuthority.epoch > record.review.judgeAuthority.epoch);
+    const proof = store.readJsonArtifact<ReleaseProof>(record.probationProof);
+    assert.deepEqual(proof.proposal.priorAuthority, record.review.judgeAuthority);
+    assert.ok(proof.proposal.evidence.every(evidence => evidence.controlRevision === f.policy.controlRevision && !record.review!.admissionEvidenceIds.includes(evidence.id)));
+    const physical = store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').map(row => row.value.request).filter(value => value.provider === 'external-offline-review');
+    assert.equal(physical.length, 2, 'One admission review and one fresh probation review');
+    assert.ok(physical.every(value => value.status === 'succeeded' && value.runId === run.id));
+    for (const allocation of record.review.allocationLineage) {
+      const { cancelled, ...retained } = store.get<any>('allocations', allocation.id)!.value;
+      assert.equal(cancelled, false); assert.deepEqual({ id: allocation.id, ...retained }, allocation);
+    }
+    await eventually(() => store.events(run.id).filter(event => event.type === 'steering' && JSON.stringify(event.data).includes('control')).length, count => count > 0);
+    store.put('fixture.control-latest', 'lived', { retained: true, uncertainEffect: 'do-not-repeat' }, null);
+    await supervisor.close(); supervisor = undefined;
+    supervisor = await ServiceSupervisor.open(f.options);
+    assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
+    assert.deepEqual(store.get('fixture.control-latest', 'lived')!.value, { retained: true, uncertainEffect: 'do-not-repeat' });
+    assert.equal(store.list<{ request: { provider: string } }>('requests').filter(row => row.value.request.provider === 'external-offline-review').length, 2, 'Accepted physical reviews never repeat on restart');
+  } finally { await supervisor?.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });

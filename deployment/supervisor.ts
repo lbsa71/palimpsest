@@ -19,6 +19,7 @@ import { OperationalStore } from '../packages/storage/index.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
 import { assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type RunningProbationReview } from './control-continuation.ts';
+import { controlActivationAcknowledgmentPending } from './control-tools.ts';
 
 export interface SupervisorOptions {
   host: HostBindings;
@@ -137,7 +138,7 @@ export class ServiceSupervisor {
     const reviewer = this.#options.controlReview ?? {
       reserveProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.reserveProbation(review),
       reviewProbation: (review: RunningProbationReview, signal: AbortSignal) => this.#dispatcher!.reviewProbation(review, signal),
-      readyToActivate: () => this.#dispatcher!.probationAvailable(),
+      readyToActivate: (request: ControlActivationRequest) => this.#dispatcher!.probationAvailable() && !controlActivationAcknowledgmentPending(this.#evolutionStore!, request),
     };
     this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!,
       status: () => this.#controller.status()!, stagedControl: id => this.#controller.stagedControl(id),
