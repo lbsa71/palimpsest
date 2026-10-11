@@ -1,6 +1,6 @@
 # A1-L03 — durable runtime and recovery
 
-Status: **reviewing**. Session owner: **/root/a1_runtime_closeout**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **accepted — engineering runtime/recovery gate**. Session owner: **/root after author and fresh-review handoffs**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW05, RW10, RW11, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | /root/a1_runtime_closeout (finite root-assigned acceptance review) |
+| Owner session | /root, accepting author closeout and fresh /root/a1_engineering_proof_review recommendation |
 | Branch / worktree | codex/a1-runtime-closeout-20261011 / /home/palimpsest/migration/aeon-1-20261011/runtime-closeout |
 | Base source / contract revision | e542f49 / aeon1.c1.v1 (ACK; C1 engineering accepted at dbab4be, evidence cc72d1c) |
 | Additional path reservations | This closeout owns lane/evidence and packages/runtime/test/**; source repairs require root coordination. One joined actual process/tool/checkpoint proof, no application/supervisor/config changes. |
 | Last handoff / evidence | [Engineering acceptance closeout](../evidence/A1-L03/closeout.md), exact joined test 3eceef4; original [implementation](../evidence/A1-L03/implementation.md) retained as historical evidence |
-| Blockers / next eligible task | T01–T05 map and joined actual interrupted coding case complete; recommendation sent to root for fresh review and engineering disposition. Root owns integrated aggregate/installed evidence; live model/product gates remain separate. |
+| Blockers / next eligible task | T01–T05 engineering gate accepted by root after fresh review 3b7d507 (integrated 6c6d885). Exact unchanged recovery proof passed again: 1/1, zero skips, 3.246s; 28 pure contract/storage/effect/resource checks and strict compile passed. Explicit host-assisted reconciliation and cleanup are disclosed in the [fresh review](../evidence/A1-L09/engineering-proof-review.md). Root owns later integration and live product/H1 gates. |
