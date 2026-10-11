@@ -25,6 +25,16 @@ function fixture() {
   return { root, config, authorityStore, authority };
 }
 function tool(name: string, args: unknown) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: name.replaceAll('_', '').slice(0, 9), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
+
+test('close during application startup cannot leave a listener or background work alive', { timeout: 5000 }, async () => {
+  const f = fixture(); let calls = 0;
+  const app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'fixture', directToken: 'fixture' }, performRequest: async () => { calls++; throw new Error('Unexpected model request'); } });
+  try {
+    const starting = app.start(); const rejected = assert.rejects(starting, /stopped during startup/);
+    await app.close(); await rejected;
+    assert.equal(app.directApi.listening, false); assert.equal(calls, 0);
+  } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
 function stop(text: string) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: text } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
 async function eventually<T>(read: () => T, accept: (value: T) => boolean): Promise<T> { const end = Date.now() + 15000; while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > end) throw new Error(`Condition not reached: ${JSON.stringify(value)}`); await new Promise(resolve => setTimeout(resolve, 20)); } }
 

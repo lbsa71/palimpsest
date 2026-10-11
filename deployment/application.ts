@@ -206,7 +206,7 @@ export class AutarkApplication {
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);
     const child = this.store.get<{ allowedEffects: string[] }>('host.child-runs', runId)?.value;
-    return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, resourceLimits: this.config.resourceLimits },
+    return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, ...(this.config.resourceLimits ? { resourceLimits: this.config.resourceLimits } : {}) },
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
       actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
@@ -317,7 +317,14 @@ export class AutarkApplication {
   }
   async start(): Promise<void> {
     invariant(!this.loop && !this.closing, 'Application already started or closed');
-    await new Promise<void>((resolve, reject) => { this.directApi.once('error', reject); this.directApi.listen(this.config.direct.port, this.config.direct.host, () => { this.directApi.off('error', reject); resolve(); }); });
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { this.directApi.off('error', failed); this.directApi.off('close', stopped); };
+      const failed = (error: Error) => { cleanup(); reject(error); };
+      const stopped = () => failed(new Error('Application stopped during startup'));
+      this.directApi.once('error', failed); this.directApi.once('close', stopped);
+      this.directApi.listen(this.config.direct.port, this.config.direct.host, () => { cleanup(); resolve(); });
+    });
+    if (this.closing) { if (this.directApi.listening) await new Promise<void>(resolve => this.directApi.close(() => resolve())); throw new Error('Application stopped during startup'); }
     this.slackSocket?.start();
     this.loop = setInterval(() => { void this.tick().catch(error => this.store.append({ id: randomUUID(), stream: 'host', type: 'scheduler-error', data: { reason: error instanceof Error ? error.message : 'Unknown scheduler error' } })); }, this.config.pollMs);
     await this.tick();
