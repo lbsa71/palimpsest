@@ -1,6 +1,6 @@
 # A1-L03 — durable runtime and recovery
 
-Status: **reviewing**. Session owner: **/root/a1_runtime**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing**. Session owner: **/root/a1_runtime_closeout**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW05, RW10, RW11, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | /root/a1_runtime |
-| Branch / worktree | codex/a1-runtime-20261011 / /home/palimpsest/migration/aeon-1-20261011/runtime |
-| Base source / contract revision | 3398077 / aeon1.c1.v1 (ACK) |
-| Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | [Implementation and fixture proof](../evidence/A1-L03/implementation.md); shared storage 8dd8ee7 and component d072c15; final narrow-budget/bridge review fixes in subsequent handoff |
-| Blockers / next eligible task | Selected shell joined fixture proof passes; independent review, real tool/communication integration and live gates remain |
+| Owner session | /root/a1_runtime_closeout (finite root-assigned acceptance review) |
+| Branch / worktree | codex/a1-runtime-closeout-20261011 / /home/palimpsest/migration/aeon-1-20261011/runtime-closeout |
+| Base source / contract revision | e542f49 / aeon1.c1.v1 (ACK; C1 engineering accepted at dbab4be, evidence cc72d1c) |
+| Additional path reservations | This closeout owns lane/evidence and packages/runtime/test/**; source repairs require root coordination. One joined actual process/tool/checkpoint proof, no application/supervisor/config changes. |
+| Last handoff / evidence | [Engineering acceptance closeout](../evidence/A1-L03/closeout.md), exact joined test 3eceef4; original [implementation](../evidence/A1-L03/implementation.md) retained as historical evidence |
+| Blockers / next eligible task | T01–T05 map and joined actual interrupted coding case complete; recommendation sent to root for fresh review and engineering disposition. Root owns integrated aggregate/installed evidence; live model/product gates remain separate. |

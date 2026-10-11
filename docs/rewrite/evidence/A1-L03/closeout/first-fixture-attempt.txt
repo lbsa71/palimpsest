@@ -1,0 +1,32 @@
+(node:812378) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ one real confined inspect/edit/test/repair task survives lost repair receipt and interrupted provider through SQLite checkpoints (1718.837155ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1968.097265
+
+✖ failing tests:
+
+test at packages/runtime/test/recovery-composition.test.ts:30:1
+✖ one real confined inspect/edit/test/repair task survives lost repair receipt and interrupted provider through SQLite checkpoints (1718.837155ms)
+  AssertionError [ERR_ASSERTION]: {"revision":11,"value":{"checkpoint":{"artifact":{"sha256":"70ba716cc68a4b8c68613b83dfb5c7ef1ee7519b91799f5a0bc0c2ada12379ea","uri":"aeon:artifact:70ba716cc68a4b8c68613b83dfb5c7ef1ee7519b91799f5a0bc0c2ada12379ea"},"observationIds":["tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:e28a4646-41c1-4ba7-935d-4d9d47600f06:callrepair1","tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:30842ff1-2f0d-42f0-b364-050e1424f123:callrepair2","tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:98d9c01a-cb6b-4463-ac12-18c8df8584d5:callrepair3","tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:bf1fa15a-ae5d-4f70-bf53-b98f2aaf2d06:callrepair4"],"revision":9,"runId":"run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7","shell":"pi-89e5c2c/aeon-bridge-v1"},"lastResult":{"checkpoint":{"artifact":{"sha256":"70ba716cc68a4b8c68613b83dfb5c7ef1ee7519b91799f5a0bc0c2ada12379ea","uri":"aeon:artifact:70ba716cc68a4b8c68613b83dfb5c7ef1ee7519b91799f5a0bc0c2ada12379ea"},"observationIds":["tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:e28a4646-41c1-4ba7-935d-4d9d47600f06:callrepair1","tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:30842ff1-2f0d-42f0-b364-050e1424f123:callrepair2","tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:98d9c01a-cb6b-4463-ac12-18c8df8584d5:callrepair3","tool:run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7:assistant:bf1fa15a-ae5d-4f70-bf53-b98f2aaf2d06:callrepair4"],"revision":9,"runId":"run:fddf102da922e9e9ce9927fc41b5211e0f12f8e225184dab54771c2389f857f7","shell":"pi-89e5c2c/aeon-bridge-v1"},"observations":[],"status":"blocked"},"messageSequence":1}}
+  + actual - expected
+  
+  + 'blocked'
+  - 'completed'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/runtime-closeout/packages/runtime/test/recovery-composition.test.ts:57:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'blocked',
+    expected: 'completed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

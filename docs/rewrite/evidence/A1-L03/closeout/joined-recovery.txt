@@ -1,0 +1,12 @@
+(node:812551) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ one real confined inspect/edit/test/repair task survives lost repair receipt and interrupted provider through SQLite checkpoints (1819.678919ms)
+ℹ {"boundaries":["repair-applied-before-receipt","provider-dispatched-before-response"],"effects":5,"modelRequests":7,"totalRequests":12,"unknownProviderRequests":1,"originalRepairGrant":{"controlRevision":"fixture-controls","epoch":1,"generation":"first"},"finalGrant":{"generation":"third","epoch":5,"controlRevision":"fixture-controls"},"evidenceKind":"deterministic-model-real-process-storage-tools"}
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2077.222118
