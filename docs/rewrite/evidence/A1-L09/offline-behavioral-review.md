@@ -64,7 +64,7 @@ git diff --check
 
 The parent explicitly authorized completing this finite author goal with an honest component handoff before the independent replay. Reviewer `/root/a1_offline_review_audit` owns final corrected fixture confidentiality/lifecycle evidence, review-specific diagnostics and any independently reproduced repair. No final-code full lifecycle pass is claimed here. The last author physical window was released after the direct pair; temporary fixture roots were absent. No provider generation, native comparator, Slack message, production deployment, dependency installation or push occurred.
 
-The retained transcripts are read-only under the owner-private trial directory. Their hashes preserve both failures and successes:
+The retained author transcripts are read-only under the owner-private trial directory. Their hashes preserve both failures and successes. Integration removed a row accidentally captured from the fresh reviewer's still-growing transcript; the independent audit owns that completed transcript and its final hash:
 
 | Transcript | SHA-256 |
 |---|---|
@@ -78,7 +78,6 @@ The retained transcripts are read-only under the owner-private trial directory. 
 | `dispatcher-pure.tap` | `6fa2570c1975d31df5d66907d071b4c72af3fa1147dd40ba4dd9d2df25126e81` |
 | `final-focused.tap` | `566121962a667bc73603e61f3d0842a6d8b1b9121cc4789b3e72e474028c032c` |
 | `lifecycle-3.tap` | `26cb2a59237929b9083c29038fed5d7743f0b8b235dfaf61449ef9097a6c1fda` |
-| `reviewer-ea1813f-lifecycle.tap` | `959b5123d122e7e66580825d73dd1b0916bfe10c730662f675d2c0685a88c4ce` |
 
 ## Limits and downstream work
 
