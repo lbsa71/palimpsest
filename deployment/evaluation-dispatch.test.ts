@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ import { OperationalStore } from '../packages/storage/index.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
-import { reviewerDescriptor, runExternalReview, type ReviewerFile } from './evaluation-dispatch.ts';
+import { EvaluationDispatcher, reviewerDescriptor, runExternalReview, type ReviewerFile } from './evaluation-dispatch.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 import type { SubmissionRequest } from './evolution-tools.ts';
@@ -25,6 +25,57 @@ import { reviewPhysicalId } from './evaluation-resources.ts';
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const markerPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
 const marker = '\nexport const externalDispatchEngineeringFixture = true;\n';
+
+test('dispatcher failure diagnostics exclude private host exception text', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-review-diagnostics-'));
+  const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
+  for (const path of [host.stateDirectory, host.workspaceDirectory, host.artifactStore]) mkdirSync(path, { mode: 0o700 });
+  const store = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });
+  const mailbox = new EvolutionMailbox({ store, assertAuthority: () => {} });
+  const authority = { generation: 'author', epoch: 1, controlRevision: 'controls' };
+  const privateMarker = 'SECRETX';
+  const proof = store.putJsonArtifact({ proposal: {}, signed: [] });
+  store.put('host.evolution-jobs', 'evaluated', { id: 'evaluated', kind: 'evaluation', status: 'completed', proof }, null);
+  const request = store.putJsonArtifact({ requestId: 'submission', policyDigest: 'policy', proposal: { authority }, evaluation: { requestId: 'evaluated' } });
+  store.put('host.evolution-jobs', 'submission', { id: 'submission', kind: 'submission', status: 'pending', request, authority }, null);
+  const dispatcher = new EvaluationDispatcher({ mailbox, host, getPolicy() { JSON.parse(privateMarker); throw Error('unreachable'); },
+    policyDigests: [], assertAuthority: () => {}, acceptedCandidateId: () => 'accepted', release: async () => authority, stageControl: async () => 'stage' });
+  try {
+    await dispatcher.processPending();
+    assert.equal(mailbox.status('submission')!.status, 'uncertain');
+    const status = dispatcher.status(), persisted = store.get('host.evaluation-dispatch', 'current')!.value;
+    assert.ok(status.diagnosis);
+    assert.equal(JSON.stringify(status).includes(privateMarker), false, 'Public status must not echo private exception text');
+    assert.equal(JSON.stringify(persisted).includes(privateMarker), false, 'Shared operational state must not contain private exception text');
+  } finally { await dispatcher.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('interrupted snapshot cleanup never follows redirected roots or nested links', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-review-cleanup-'));
+  const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
+  for (const path of [host.stateDirectory, host.workspaceDirectory, host.artifactStore]) mkdirSync(path, { mode: 0o700 });
+  const store = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });
+  const mailbox = new EvolutionMailbox({ store, assertAuthority: () => {} });
+  const options = { mailbox, host, getPolicy: () => { throw Error('No policy needed'); }, policyDigests: [], assertAuthority: () => {}, acceptedCandidateId: () => 'accepted',
+    release: async () => { throw Error('No release expected'); }, stageControl: async () => 'stage' };
+  const outside = join(root, 'private-reviewer'), snapshots = join(host.stateDirectory, 'host-review-dispatch');
+  mkdirSync(outside, { mode: 0o700 }); writeFileSync(join(outside, 'keep'), 'retained private data', { mode: 0o600 });
+  try {
+    symlinkSync(outside, snapshots);
+    assert.throws(() => new EvaluationDispatcher(options));
+    assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'retained private data');
+    unlinkSync(snapshots); mkdirSync(snapshots, { mode: 0o700 });
+    symlinkSync(outside, join(snapshots, 'physical-ABC123'));
+    assert.throws(() => new EvaluationDispatcher(options), /Unexpected or unbounded/);
+    assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'retained private data');
+    unlinkSync(join(snapshots, 'physical-ABC123'));
+    const interrupted = mkdtempSync(join(snapshots, 'physical-'));
+    symlinkSync(outside, join(interrupted, 'nested'));
+    const dispatcher = new EvaluationDispatcher(options);
+    try { assert.deepEqual(readdirSync(snapshots), []); assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'retained private data'); }
+    finally { await dispatcher.close(); }
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
 const reviewerSource = String.raw`
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash, createHmac } from 'node:crypto';
@@ -148,7 +199,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       try {
         await assert.rejects(mailbox.submitRelease(request), /remains/);
         await eventually(() => mailbox.status(request.requestId), value => value?.status === 'uncertain');
-        assert.equal(calls, 1); assert.match(supervisor!.status().evaluation!.diagnosis!, /Lost actual controller reply/);
+        assert.equal(calls, 1); assert.match(supervisor!.status().evaluation!.diagnosis!, /submission dispatch failed/);
       } finally { supervisor!.stageControl = stage; }
       await supervisor!.close(); supervisor = undefined;
       supervisor = await ServiceSupervisor.open(f.options);
@@ -160,7 +211,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       const request = faultRequest('lost-review');
       await assert.rejects(mailbox.requestEvaluation(request), /remains/);
       await eventually(() => mailbox.status(request.requestId), value => value?.status === 'uncertain');
-      assert.match(supervisor!.status().evaluation!.diagnosis!, /without a complete response/);
+      assert.match(supervisor!.status().evaluation!.diagnosis!, /evaluation dispatch failed/);
       await supervisor!.close(); supervisor = undefined;
       supervisor = await ServiceSupervisor.open(f.options);
       assert.equal(mailbox.status(request.requestId)!.status, 'uncertain');

@@ -249,7 +249,11 @@ export class EvaluationDispatcher {
         return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status, receipt };
       }, this.#abort.signal);
       this.#diagnosis = undefined;
-    } catch (error) { this.#diagnosis = error instanceof Error ? error.message : 'External dispatch failed; reconcile stable job ID'; }
+    } catch {
+      // This status is shared with the application. Exceptions may contain private host paths
+      // or fragments of malformed reviewer stdout, including held-out inputs and signing data.
+      this.#diagnosis = `External ${job.kind} dispatch failed; reconcile stable job ID`;
+    }
     finally { this.#activeJob = undefined; this.#publish(); }
   }
   async close(): Promise<void> { this.#abort.abort(); await this.#loop; this.#publish(); }
