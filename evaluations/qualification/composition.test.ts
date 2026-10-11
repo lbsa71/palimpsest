@@ -28,7 +28,9 @@ test('authenticated synthetic observer invokes actual confined application and p
     const resources = { maxRequests: 64, maxTokens: 30000, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 2 };
     const inputs: DeploymentInputs = { createdBy: 'synthetic-author', prompts: { mind: 'Inspect and repair actual work; communicate explicitly.', compaction: 'Preserve attributed evidence.' }, policy: { kind: 'engineering' },
       runtime: { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch },
-      configuration: { model: { id: 'mistral-fixture-v2', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 1024, maxRequestsPerSlice: 12, timeoutMs: 10000, pricesPerMillion: { input: 0, output: 0 } }, resources, conversationResources: resources,
+      // Match the bounded coding fixture's synthetic output reservation so its final
+      // stop reply fits the unchanged grant after the ordinary tool transcript.
+      configuration: { model: { id: 'mistral-fixture-v2', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 256, maxRequestsPerSlice: 12, timeoutMs: 10000, pricesPerMillion: { input: 0, output: 0 } }, resources, conversationResources: resources,
         scheduler: { windowMs: 60000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], bootstrapInitiative: false,
         direct: { host: '127.0.0.1', port: 0, actorId: 'evaluator', scope: { kind: 'restricted', principals: ['evaluator'] }, modificationEligible: false } } };
     const candidate = freezeApplication(source, host.artifactStore, inputs), config = materializeConfiguration(candidate, host);
@@ -43,10 +45,11 @@ test('authenticated synthetic observer invokes actual confined application and p
     const issued = Date.now() - 1000;
     const e: Experiment = { version: 1, id: 'synthetic-composition', grantId: 'one-original-synthetic-grant', kind: 'integration', candidate: candidate.manifest, configurationDigest: identity(JSON.parse(JSON.stringify(config))), protocolDigest, calibrationPlanDigest,
       privatePacketDigest: identity(packet), observerArtifactDigest: implementation.artifact.sha256, evaluatorId: 'synthetic-observer', priorPolicyDigest: policy.policyDigest, resources, issuedAt: new Date(issued).toISOString(), expiresAt: new Date(issued + resources.maxElapsedMs).toISOString(), maxEvidenceBytes: 8 * 1024 * 1024, maxArtifactBytes: 1_000_000 };
-    let calls = 0; let transportFailure: string | null = null; const transport = boundedCodingFixture();
+    let calls = 0; let transportFailure: string | null = null; const transport = boundedCodingFixture(), payloadBytes: number[] = [];
     const options = { experiment: signDocument('aeon.qualification.experiment.v1', e, 'synthetic-issuer', issuerKey), trust, store, privateRoot, packetFile, host, authorityStore, authority, secrets: { mistralApiKey: 'fixture-not-a-provider-key', directToken: 'private-fixture-direct' } };
     const receipt = await observeSynthetic(options, async (payload, signal) => {
       calls++;
+      payloadBytes.push(Buffer.byteLength(payload));
       try {
         assert.equal(payload.includes('hidden-positive'), false, 'Private check ID entered model payload');
         // Match the private integer, not coincidental digits in timing decimals or digests.
@@ -56,12 +59,17 @@ test('authenticated synthetic observer invokes actual confined application and p
       } catch (error) { transportFailure = error instanceof Error ? error.stack ?? error.message : String(error); throw error; }
     });
     const bundle = JSON.parse(store.readArtifact(receipt.bundle).toString('utf8')) as ObservationBundle;
+    const original = JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8'));
     // Retain bounded synthetic diagnostics in the test transcript before assertions/cleanup.
-    console.log(JSON.stringify({ kind: bundle.kind, failure: bundle.failure, transportFailure, assessment: bundle.assessment, calls, commands: bundle.commands.length, physicalRequests: bundle.ledger?.requests.map(request => ({ id: request.id, provider: request.provider, status: request.status, usage: request.usage })), originalAdapterReport: JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8')) }));
+    console.log(JSON.stringify({ kind: bundle.kind, failure: bundle.failure, transportFailure, assessment: bundle.assessment, calls, payloadBytes, commands: bundle.commands.length, physicalRequests: bundle.ledger?.requests.map(request => ({ id: request.id, provider: request.provider, status: request.status, usage: request.usage })), originalAdapterReport: original }));
     assert.equal(bundle.kind, 'integration'); assert.equal(bundle.failure, null); assert.equal(bundle.assessment?.quality, 3);
     assert.equal(calls, 7); assert.equal(bundle.commands.length, 2); assert.equal(bundle.ledger?.startedAt, issued); assert.deepEqual(bundle.ledger?.envelope, resources); assert.equal(bundle.ledger?.cancelled, true);
     assert.equal(bundle.ledger?.requests.filter(request => request.provider === 'qualification-command').length, 2);
-    const original = JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8'));
+    // Objective artifact quality alone does not establish a completed model run.
+    assert.equal(original.verdict, 'case-pass'); assert.equal(original.observation?.status, 'completed');
+    assert.equal(original.observation.outputs.length, 1);
+    assert.equal(original.observation.outputs[0].delivered, true);
+    assert.equal(original.observation.outputs[0].text, 'Created sum.mjs, observed and repaired a failing check, and verified 2 + 3 = 5.');
     assert.equal(original.independent, false); assert.equal(original.admissionEligible, false); assert.equal(original.evidenceKind, 'integration');
     assert.throws(() => toReleaseEvidence(receipt, trust, store), /Synthetic\/author/);
     await assert.rejects(observeSynthetic(options, async () => { throw Error('Replay must never dispatch'); }), /fresh state|EEXIST/);
