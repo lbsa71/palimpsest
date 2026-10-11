@@ -337,12 +337,29 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
       writeFileSync(planFile.path, Buffer.from(original.toString().replace('"expected":[false', '"expected":[true')));
       try { assert.throws(() => loadOfflinePlan(f.reviewer), /differs from accepted/); }
       finally { writeFileSync(planFile.path, original); }
-      await assert.rejects(runExternalReview(f.reviewer, f.host, { requestId: 'omitted-probe' } as EvaluationRequest, f.nextPolicy, record.review!.candidate.manifest.id, () => {}), /requires original accounted/);
+      await assert.rejects(runExternalReview(f.reviewer, f.host, { requestId: 'omitted-probe', proposal: record.review!.proposal } as EvaluationRequest, f.nextPolicy, record.review!.candidate.manifest.id, () => {}), /requires original accounted/);
+    });
+    await t.test('cancelling a physically running candidate retains unknown original charge and never launches the signer', async () => {
+      writeFileSync(join(f.source, markerPath), "import { writeFileSync } from 'node:fs'; writeFileSync('/work/probe-started', 'started'); await new Promise(() => setInterval(() => {}, 1000)); export function ucs2length(s: string): number { return [...s].length; }\n");
+      const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs), r = resource('cancelled-probe', candidate);
+      const allocation = store.get('allocations', r.request.proposal.runId);
+      const running = runAccountedExternalReview(f.reviewer, f.host, r.request, f.nextPolicy, record.review!.candidate.manifest.id, r.options);
+      const rejected = assert.rejects(running, /cancelled/);
+      await eventually(() => readdirSync(f.host.workspaceDirectory).some(name => name.startsWith('offline-review-') && existsSync(join(f.host.workspaceDirectory, name, 'probe-started'))), value => value);
+      r.ledger.cancel(r.request.proposal.runId); await rejected;
+      const probes = physical().filter(p => p.runId === r.request.proposal.runId);
+      assert.equal(probes.length, 1); assert.equal(probes[0]!.status, 'uncertain');
+      assert.ok(probes[0]!.usage.elapsedMs >= 3000);
+      assert.equal(r.ledger.request(reviewPhysicalId(r.request.requestId)), undefined, 'No sealed reviewer was launched or reserved');
+      const { cancelled, ...fields } = store.get<any>('allocations', r.request.proposal.runId)!.value;
+      assert.equal(cancelled, true); assert.deepEqual({ ...fields, cancelled: false }, allocation!.value);
+      await assert.rejects(runAccountedExternalReview(f.reviewer, f.host, r.request, f.nextPolicy, record.review!.candidate.manifest.id, r.options), /cancelled/);
     });
     await supervisor.close(); supervisor = undefined;
     supervisor = await ServiceSupervisor.open(f.options);
     assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
-    assert.equal(physical().length, 8, 'Completed probe/reviewer pairs do not repeat on restart');
+    assert.equal(physical().length, 9, 'Completed pairs and interrupted probe do not repeat on restart');
+    assert.equal(physical().filter(p => p.status === 'uncertain').length, 1);
   } finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
