@@ -8,7 +8,7 @@ import { identity, type PhysicalRequest } from '../packages/contracts/index.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
-import { accountedReview, assertReviewLineage, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
+import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 
 function fixture(maxConcurrency = 3) {
@@ -134,4 +134,59 @@ test('canceled late result cannot advance a receipt, while known physical usage 
     assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'succeeded');
     assert.equal(f.ledger.snapshot('parent').elapsedMs, 17);
   } finally { f.close(); }
+});
+
+test('prepared probation retains the original judge and allocation clock after serving authority changes', async () => {
+  const f = fixture();
+  const successor = { generation: 'successor', epoch: 3, controlRevision: 'next' };
+  try {
+    const allocation = f.store.get('allocations', 'child');
+    prepareReview(f.options); f.setTime(70);
+    const row = f.store.get<any>('runs', 'child')!;
+    f.store.put('runs', 'child', { ...row.value, authority: successor, status: 'checkpointed' }, row.revision);
+    const seen: unknown[] = [];
+    await accountedReview({ ...f.options, prepared: true, physicalAuthority: successor,
+      assertAuthority: value => { assert.deepEqual(value, successor); seen.push(value); },
+      dispatchAuthority: (value, operation) => { assert.deepEqual(value, successor); operation(); },
+    }, async gate => { gate.dispatch(() => {}); f.setTime(90); });
+    assert.ok(seen.length > 0); assert.equal(f.options.request.proposal.authority.generation, 'author');
+    const physical = f.ledger.request(reviewPhysicalId('stable-job'))!;
+    assert.equal(physical.usage.elapsedMs, 90, 'Activation time is charged without resetting the review clock');
+    assert.equal(physical.requestDigest, identity(f.options.request));
+    assert.deepEqual(f.store.get('allocations', 'child'), allocation);
+    assert.equal(f.ledger.snapshot('parent').requests, 1);
+    await assert.rejects(accountedReview({ ...f.options, prepared: true, physicalAuthority: successor }, async () => {}), /unused prepared/);
+  } finally { f.close(); }
+});
+
+test('prepared review cannot change its bound request, reviewer or elapsed allowance', async () => {
+  for (const change of ['request', 'reviewer', 'elapsed'] as const) {
+    const f = fixture(); let launches = 0;
+    try {
+      prepareReview(f.options);
+      const options = { ...f.options, prepared: true,
+        ...(change === 'request' ? { request: { ...f.options.request, policyDigest: 'other-policy' } } : {}),
+        ...(change === 'reviewer' ? { evaluatorDigest: identity('other-reviewer') } : {}),
+        ...(change === 'elapsed' ? { maxElapsedMs: 2000 } : {}),
+      };
+      await assert.rejects(accountedReview(options, async gate => { gate.dispatch(() => { launches++; }); }), /unused prepared/);
+      assert.equal(launches, 0); assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'reserved');
+    } finally { f.close(); }
+  }
+});
+
+test('prepared review cancellation, expiry and process recovery never grant a fresh attempt', async () => {
+  for (const cause of ['cancel', 'expire', 'recover'] as const) {
+    const f = fixture(); let launches = 0;
+    try {
+      prepareReview(f.options);
+      if (cause === 'cancel') f.ledger.cancel('parent');
+      if (cause === 'expire') f.setTime(1001);
+      if (cause === 'recover') recoverReviewReservations(f.store);
+      await assert.rejects(accountedReview({ ...f.options, prepared: true }, async gate => { gate.dispatch(() => { launches++; }); }), /cancelled|deadline|unused prepared/);
+      assert.equal(launches, 0); assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status, 'failed');
+      assert.equal(f.ledger.snapshot('parent').requests, 1);
+      assert.throws(() => prepareReview(f.options), /cancelled|expired|already used/);
+    } finally { f.close(); }
+  }
 });
