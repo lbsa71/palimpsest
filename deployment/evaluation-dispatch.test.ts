@@ -330,12 +330,15 @@ if (process.argv[1] === '/work/runner.mjs') for (const path of ${JSON.stringify(
       retain(`${variant.name}-physical-ledger.json`, store.list('requests'));
       const evidence = response.result.receipt.evidence[0]!, observationHash = evidence.caseResults[0]!.observations.sha256;
       const observation = JSON.parse(Buffer.from(response.artifacts.find(a => a.sha256 === observationHash)!.base64, 'base64').toString('utf8')) as OfflineObservation;
-      assert.equal(observation.command.exitCode, variant.name.startsWith('undeclared-') ? 1 : 0, JSON.stringify(observation.command));
+      if (variant.name === 'always-accepting') {
+        assert.equal(observation.command.stoppedFor, 'output-limit', 'Cached oversized success responses are bounded-execution failure, not semantic refusal');
+        assert.notEqual(observation.command.exitCode, 0);
+      } else assert.equal(observation.command.exitCode, variant.name.startsWith('undeclared-') ? 1 : 0, JSON.stringify(observation.command));
       if (variant.name === 'undeclared-dependency') assert.match(observation.command.stderr, /ERR_MODULE_NOT_FOUND/);
       if (variant.name === 'undeclared-system-module') assert.match(observation.command.stderr, /ERR_ACCESS_DENIED/);
-      assert.equal(observation.command.stoppedFor, undefined);
+      if (variant.name !== 'always-accepting') assert.equal(observation.command.stoppedFor, undefined);
       assert.equal(evidence.verdict, variant.verdict, JSON.stringify(observation.command));
-      const outputs = variant.name.startsWith('undeclared-') ? [] : JSON.parse(observation.command.stdout);
+      const outputs = variant.name.startsWith('undeclared-') || variant.name === 'always-accepting' ? [] : JSON.parse(observation.command.stdout);
       if (variant.name === 'good-private-isolation') assert.deepEqual(outputs.slice(0, 3).map((r: any) => r.response.result.receipt.evidence[0].verdict), ['pass', 'fail', 'fail']);
       if (variant.name === 'ignores-request-binding') assert.equal(outputs[3].kind, 'result', 'Seed actually accepts a wrong request observation');
       if (variant.name === 'promotes-failed-command') assert.equal(outputs[1].response.result.receipt.evidence[0].verdict, 'pass', 'Seed actually promotes failed behavior');
