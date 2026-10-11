@@ -39,7 +39,7 @@ test('dispatcher failure diagnostics exclude private host exception text', async
   const request = store.putJsonArtifact({ requestId: 'submission', policyDigest: 'policy', proposal: { authority }, evaluation: { requestId: 'evaluated' } });
   store.put('host.evolution-jobs', 'submission', { id: 'submission', kind: 'submission', status: 'pending', request, authority }, null);
   const dispatcher = new EvaluationDispatcher({ mailbox, host, getPolicy() { JSON.parse(privateMarker); throw Error('unreachable'); },
-    policyDigests: [], assertAuthority: () => {}, acceptedCandidateId: () => 'accepted', release: async () => authority, stageControl: async () => 'stage' });
+    policyDigests: [], assertAuthority: () => {}, dispatchAuthority: (_authority, operation) => operation(), acceptedCandidateId: () => 'accepted', release: async () => authority, stageControl: async () => 'stage' });
   try {
     await dispatcher.processPending();
     assert.equal(mailbox.status('submission')!.status, 'uncertain');
@@ -56,7 +56,7 @@ test('interrupted snapshot cleanup never follows redirected roots or nested link
   for (const path of [host.stateDirectory, host.workspaceDirectory, host.artifactStore]) mkdirSync(path, { mode: 0o700 });
   const store = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });
   const mailbox = new EvolutionMailbox({ store, assertAuthority: () => {} });
-  const options = { mailbox, host, getPolicy: () => { throw Error('No policy needed'); }, policyDigests: [], assertAuthority: () => {}, acceptedCandidateId: () => 'accepted',
+  const options = { mailbox, host, getPolicy: () => { throw Error('No policy needed'); }, policyDigests: [], assertAuthority: () => {}, dispatchAuthority: (_authority: Authority, operation: () => void) => operation(), acceptedCandidateId: () => 'accepted',
     release: async () => { throw Error('No release expected'); }, stageControl: async () => 'stage' };
   const outside = join(root, 'private-reviewer'), snapshots = join(host.stateDirectory, 'host-review-dispatch');
   mkdirSync(outside, { mode: 0o700 }); writeFileSync(join(outside, 'keep'), 'retained private data', { mode: 0o600 });
@@ -95,8 +95,10 @@ const observation = Buffer.from(canonical({ kind: 'engineering fixture only; H1 
 const artifact = { uri: 'sha256:' + hash(observation), sha256: hash(observation) };
 const evidence = { id: 'external:' + r.requestId, candidateId: r.candidate.manifest.id, controlRevision: r.proposal.authority.controlRevision, evaluatorId: 'physical-engineering-reviewer', evaluatorArtifact: x.evaluatorArtifact, independent: true, verdict: 'pass', artifact,
  caseResults: [{ id: 'held-out-exact-source', status: 'pass', observations: artifact, usage: { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 1 }, interventions: ['Deterministic physical fixture; no independently qualified live reviewer or H1 claim.'] }] };
-if (r.requestId === 'deliberate-negative-review') { evidence.verdict = 'fail'; evidence.caseResults[0].status = 'fail'; }
-const authentication = createHmac('sha256', readFileSync('/reviewer-key')).update(canonical({ evidence, policyDigest: r.policyDigest })).digest('hex');
+if (['deliberate-negative-review', 'forged-negative-review'].includes(r.requestId)) { evidence.verdict = 'fail'; evidence.caseResults[0].status = 'fail'; }
+if (r.requestId === 'deliberate-inconclusive-review') { evidence.verdict = 'inconclusive'; evidence.caseResults[0].status = 'unavailable'; }
+let authentication = createHmac('sha256', readFileSync('/reviewer-key')).update(canonical({ evidence, policyDigest: r.policyDigest })).digest('hex');
+if (r.requestId === 'forged-negative-review') authentication = '0'.repeat(64);
 process.stdout.write(JSON.stringify({ result: { receipt: { requestId: r.requestId, candidateId: r.candidate.manifest.id, policyDigest: r.policyDigest, evidence: [evidence], receipt: { engineeringFixture: true } },
  proof: { proposal: { id: r.requestId, candidate: r.candidate.manifest, priorAuthority: r.proposal.authority, evidence: [evidence], recoveryArtifact: x.recoveryArtifact }, signed: [{ evidence, authentication }] } }, artifacts: [{ sha256: artifact.sha256, base64: observation.toString('base64') }] }));
 `;
@@ -265,6 +267,20 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     await t.test('authenticated negative review remains explicit feedback instead of uncertainty', async () => {
       const response = await runExternalReview(f.reviewer, f.host, { ...original, requestId: 'deliberate-negative-review' }, f.policy, f.incumbent.manifest.id, () => {});
       assert.equal(response.result.receipt.evidence[0]!.verdict, 'fail'); assert.equal(response.result.receipt.evidence[0]!.caseResults[0]!.status, 'fail');
+    });
+    await t.test('authenticated inconclusive review retains unavailable case evidence', async () => {
+      const response = await runExternalReview(f.reviewer, f.host, { ...original, requestId: 'deliberate-inconclusive-review' }, f.policy, f.incumbent.manifest.id, () => {});
+      const evidence = response.result.receipt.evidence[0]!;
+      assert.equal(evidence.verdict, 'inconclusive'); assert.equal(evidence.caseResults[0]!.status, 'unavailable');
+      assert.ok(response.artifacts.some(blob => blob.sha256 === evidence.artifact.sha256));
+    });
+    await t.test('negative verdict cannot bypass external response authentication', async () => {
+      await assert.rejects(runExternalReview(f.reviewer, f.host, { ...original, requestId: 'forged-negative-review' }, f.policy, f.incumbent.manifest.id, () => {}), /Invalid external reviewer authentication/);
+    });
+    await t.test('authority withdrawn before result acceptance fences a complete signed response', async () => {
+      let fences = 0;
+      await assert.rejects(runExternalReview(f.reviewer, f.host, original, f.policy, f.incumbent.manifest.id, () => { if (++fences === 2) throw Error('Withdrawn result authority'); }), /Withdrawn result authority/);
+      assert.equal(fences, 2);
     });
     await t.test('physical review timeout drains children and removes private key snapshots', async () => {
       await assert.rejects(runExternalReview(f.reviewer, f.host, { ...original, requestId: 'interrupted-review' }, f.policy, f.incumbent.manifest.id, () => {}), /deadline/);
