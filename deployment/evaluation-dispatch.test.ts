@@ -304,6 +304,7 @@ if (process.argv[1] === '/work/runner.mjs') for (const path of ${JSON.stringify(
       const selectedDigest = hashBytes(reviewerDescriptor({ ...f.reviewer, ...selected, files: selected.files.map(file => ({ ...file, path: '' })) }));
       const nextFields = { ...f.policy, evaluatorArtifacts: new Map(f.policy.evaluatorArtifacts).set(f.reviewer.evaluatorId, selectedDigest) };
       const proposal = { version: 1, policy: policyDescriptor(nextFields), reviewer: selected };
+      retain(`${variant.name}-proposal.json`, proposal);
       writeFileSync(join(f.source, governanceProposalPath), canonicalJson(proposal));
       const candidate = freezeApplication(f.source, f.host.artifactStore, { ...f.inputs, policy: proposal.policy });
       const next = { ...nextFields, controlRevision: candidate.manifest.controls, policyDigest: admissionPolicyIdentity({ ...nextFields, controlRevision: candidate.manifest.controls }) };
