@@ -1,0 +1,41 @@
+# Native Codex host observer and engineering runner
+
+2026-10-11. A1-L08-T02 child task, owned by Codex `/root/a1_baseline_observer`, `gpt-6.1-sol` / high, base `e77671d`, isolated worktree `/home/palimpsest/migration/aeon-1-20261011/baseline-observer`, branch `codex/a1-baseline-observer-20261011`. Exclusive writes: new `evaluations/baselines/observer.ts`, `observer.test.ts`, `run-codex.ts`, `run-codex.test.ts`, and this evidence file. Existing native worker, root configuration, dependencies and application source remain owned by their leads.
+
+```text
+/goal Implement and commit a durable native Codex baseline host observer and callable finite-grant engineering runner; prove physical-attempt budget enforcement, conservative recovery and request/instruction/usage evidence with deterministic no-paid-call tests, and record exact checks and limits.
+```
+
+The new observer reuses the existing `OperationalStore` and `ResourceLedger`; the runner reuses the existing exclusive `ProcessLease`, `runWorker`, namespace confinement and optional kernel resource enforcement. No framework or dependency was added. The [earlier native transport fixture](codex-transport-fixture.md) supplies the versioned native protocol evidence; this task adds the previously missing host accounting and callable engineering composition.
+
+## Implemented behavior
+
+The host explicitly supplies one immutable grant, OpenAI model/effort, provider input-context contract, output ceiling, price source and input/cache/output rates. All request, token, dollar, elapsed, concurrency, request-byte, response-byte and CLI-output ceilings are finite. The dedicated database refuses a different grant ID or changed grant/profile, and reopening uses the original persisted allocation and elapsed start. The runner allows at most 64 physical requests and 15 minutes. Neither a default grant nor ambient credential lookup exists.
+
+Each physical provider attempt receives its own random identity and full input-context plus maximum-output reservation before dispatch. This is a conservative reservation under the explicitly supplied provider contract, **not** a claim that JSON bytes establish billable-token bounds. Cached input reserves the uncached rate and settles at its separately pinned price. Repeated identical payloads are charged separately. CLI retries, continuations and any native child that uses its sole provider endpoint cross the same host pipe and ledger. Network isolation prevents alternate external endpoints; native hosted web search is disabled.
+
+The host pins `https://api.openai.com/v1/responses`, rejects redirects, and accepts no worker URL, headers or credentials. Known native custom/function tools, namespaces and `additional_tools` input are allowed. Paid hosted tools, opaque previous-response/conversation/item references, media, unknown input shapes, unpriced service tiers, and model/effort changes are refused before provider entry. This is a deliberately bounded text profile; it does not qualify other Responses modalities or tool products.
+
+Native effective instructions, input, reasoning settings and tool definitions survive verbatim as JSON values. Private content-addressed artifacts retain the exact original request bytes and the exact outgoing bytes after explicit `max_output_tokens`, `store:false` and `stream:true` controls. The ledger request digest binds outgoing bytes. Bounded raw response artifacts, HTTP status/content type, completed usage or explicit unknown outcome remain in the private operational database. The runner records pinned native binary/helper/worker/Node digests, prompt artifact, configuration, profile, protected paths and resource policy before executing, then records the actual native invocation and CLI result. Credentials are used only by the host transport closure and never enter those records or the worker image/environment.
+
+Only a consistent, completed SSE response with matching model/response identity and internally consistent input/output/cache/reasoning/total usage releases unused reservations. HTTP failures, missing or inconsistent usage, incomplete/truncated/duplicate finals, interrupted reads, timeouts, output overflows and cancellation become unknown with null measured tokens/cost; the worst-case reservation stays charged and the grant is permanently cancelled. Actual process-death recovery conservatively holds both dispatched and reserved records and forbids automatic continuation. Completed and interrupted runner invocations cannot replay a grant. No automatic retry or reconciliation that guesses zero usage is provided.
+
+The runner stages exact native CLI/helper/worker copies in a private read-only mounted image, starts with an empty native home and dummy bridge token, and protects external operational/evaluator paths. OpenAI execution requires explicit existing kernel `ResourceLimits`; unavailable cgroup or bounded-workspace enforcement fails before worker start. An explicitly injected synthetic transport has a separate `namespace-fixture` label. That fixture does **not** establish kernel-profile qualification.
+
+## Validation and preserved limitations
+
+Commands use `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node` from the isolated worktree:
+
+```sh
+node --test evaluations/baselines/observer.test.ts evaluations/baselines/run-codex.test.ts
+AEON_CODEX_RUNNER_FIXTURE=1 node --test evaluations/baselines/run-codex.test.ts
+node node_modules/typescript/bin/tsc --noEmit
+```
+
+The deterministic suite has 34 passing checks and one explicitly skipped opt-in native check. It includes every physical-budget dimension refusing transport entry, identical payloads consuming separate requests, changed-grant rejection, actual subprocess death after durable dispatch, unknown usage retention, forbidden context/media/hosted tools, bounded reads, timeout/concurrency/cancellation, exact effective-input preservation, endpoint/credential separation and runner preflight. Strict TypeScript passed. The opt-in native composition passed three checks with zero skips: actual installed Codex 0.162.1 and its helper performed a real native `functions.exec` command, wrote a workspace proof, received two synthetic Responses completions with separately settled usage, could not read the evaluator sentinel or ambient provider keys, and could not replay the completed grant. This first native pass took approximately 13 seconds; final validator changes require the recorded final rerun/review below.
+
+No paid model generation, auth/entitlement probe, live calibration, provider-profile attestation, installed service, Slack effect, push, parity score or H1 acceptance was attempted. Test prices and context contracts are explicitly synthetic. Paid execution still needs an authorized finite grant, verified exact model and current provider context/pricing contract, trusted private host setup, qualified kernel profile, independently sealed workload/evaluator and fresh review. Claude access remains a parent-session gate.
+
+Failures preserved during this task: the first local schema-inspection command had one extra closing parenthesis and failed with `SyntaxError`; the corrected metadata inspection succeeded. No behavioral test was weakened or failed during the recorded author checks. Native CLI transport failures predating this task remain in the earlier fixture report. Unknown provider outcomes are intentionally unrecoverable without a separately authorized reconciliation capability; this conservative stop can strand a grant even when a failed request was actually free. The callable runner is engineering infrastructure and returns evidence, not qualification or release admission.
+
+Fresh consequential review and integration remain the parent L09 session's next step. Exact handoff revision and final rerun disposition are appended when committed; author-run evidence is ineligible as independent acceptance.
