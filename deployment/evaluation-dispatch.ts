@@ -165,6 +165,8 @@ export interface DispatchOptions {
   mailbox: EvolutionMailbox; host: HostBindings; reviewer?: ReviewerFile;
   unavailableDiagnosis?: string;
   getPolicy(digest: string): AdmissionPolicy; policyDigests: readonly string[];
+  /** Derive unchanged judging rules for a new control closure; grants no activation authority. */
+  prepareControlPolicy?(request: EvaluationRequest): AdmissionPolicy;
   assertAuthority(authority: Authority): void; dispatchAuthority(authority: Authority, operation: () => void): void; acceptedCandidateId(): string;
   release(proof: ReleaseProof): Promise<Authority>; stageControl(proof: ReleaseProof, policyDigest: string): Promise<string>;
 }
@@ -242,8 +244,8 @@ export class EvaluationDispatcher {
         } else {
           const descriptor = (request.candidate.inputs.controls as { policy?: unknown }).policy;
           const next = this.options.policyDigests.map(digest => this.options.getPolicy(digest)).find(value => value.controlRevision === request.candidate.manifest.controls &&
-            identity(policyDescriptor(value)) === identity(descriptor));
-          invariant(next, 'Next control policy unavailable: exact candidate descriptor is absent from the host registry');
+            identity(policyDescriptor(value)) === identity(descriptor)) ?? this.options.prepareControlPolicy?.(request);
+          invariant(next && next.controlRevision === request.candidate.manifest.controls && identity(policyDescriptor(next)) === identity(descriptor), 'Next control policy unavailable: exact candidate descriptor is absent from the host registry');
           receipt = { stageId: await this.options.stageControl(proof, next.policyDigest), policyDigest: next.policyDigest }; status = 'staged';
         }
         return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status, receipt };

@@ -1,4 +1,5 @@
 import { validateModelGrants, type ModelProfile } from './model-grants.ts';
+import { DerivedPolicyRegistry } from './policy-registry.ts';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -64,6 +65,7 @@ export class ServiceSupervisor {
   readonly #authority: AuthorityStore;
   readonly #controller: ReleaseController;
   readonly #service: ServiceProcess;
+  readonly #policies: DerivedPolicyRegistry;
   #evolutionStore?: OperationalStore;
   #dispatcher?: EvaluationDispatcher;
   #mailbox?: EvolutionMailbox;
@@ -87,6 +89,7 @@ export class ServiceSupervisor {
     try {
       this.#authority = authority = new AuthorityStore(join(options.host.stateDirectory, 'authority.sqlite'));
       this.#evolutionStore = new OperationalStore({ filename: join(options.host.stateDirectory, 'operational.sqlite') });
+      this.#policies = new DerivedPolicyRegistry(this.#evolutionStore, options.getPolicy);
       this.#mailbox = new EvolutionMailbox({ store: this.#evolutionStore, assertAuthority: grant => this.#authority.assert(grant) });
       this.#service = new ServiceProcess(options.host, options.secrets, { mode: options.mode, onUnexpectedExit: () => {
         this.#ready = undefined;
@@ -95,7 +98,7 @@ export class ServiceSupervisor {
       } });
       this.#controller = new ReleaseController({ statePath: join(options.host.stateDirectory, 'release.sqlite'),
         artifactStore: options.host.artifactStore, operationalStatePath: options.host.stateDirectory,
-        authorityStore: this.#authority, exclusiveProcessLease: this.#lease, getPolicy: options.getPolicy,
+        authorityStore: this.#authority, exclusiveProcessLease: this.#lease, getPolicy: this.#policies.get,
         readArtifact: uri => { try { return this.#mailbox!.readArtifact(uri); } catch { return options.readArtifact(uri); } }, hooks: {
           stopAndDrain: async () => { this.#ready = undefined; await this.#service.stop(); await this.#drainExecutionLease(); },
           start: async target => {
@@ -132,9 +135,10 @@ export class ServiceSupervisor {
       catch { unavailableDiagnosis = 'External evaluation unavailable: configured reviewer file is missing or invalid'; }
     }
     this.#dispatcher = new EvaluationDispatcher({ mailbox: this.#mailbox!, host: this.#options.host, reviewer, unavailableDiagnosis,
-      getPolicy: this.#options.getPolicy, policyDigests: configured?.policyDigests ?? [], assertAuthority: grant => this.#authority.assert(grant),
+      getPolicy: this.#policies.get, policyDigests: configured?.policyDigests ?? [], assertAuthority: grant => this.#authority.assert(grant),
       dispatchAuthority: (grant, operation) => this.#authority.dispatch(grant, operation),
       acceptedCandidateId: () => this.#controller.status()!.accepted.candidateId,
+      prepareControlPolicy: request => this.#authority.dispatch(request.proposal.authority, () => this.#policies.prepare(request.policyDigest, request.candidate)),
       release: proof => this.release(proof), stageControl: (proof, digest) => this.stageControl(proof, digest) });
     this.#dispatcher.start();
   }
@@ -167,7 +171,7 @@ export class ServiceSupervisor {
   }); }
   stageControl(proof: ReleaseProof, policyDigest: string): Promise<string> {
     return this.#exclusive(async () => {
-      const policy = this.#options.getPolicy(policyDigest);
+      const policy = this.#policies.get(policyDigest);
       invariant(this.#options.mode === 'engineering' || policy.kind === 'product', 'Product control upgrade requires a product policy');
       return this.#controller.stageControlUpgrade(proof, policy);
     });
@@ -206,7 +210,7 @@ export class ServiceSupervisor {
     invariant(bootstrap, 'First startup requires an external signed proof and explicit host policy');
     const proof = bootstrap.proof, candidateId = proof.proposal.candidate.id;
     const candidate = verifyApplication(this.#options.host.artifactStore, candidateId, this.#options.host.nodeBinary);
-    const policy = this.#options.getPolicy(bootstrap.policyDigest);
+    const policy = this.#policies.get(bootstrap.policyDigest);
     invariant(identity((candidate.inputs.controls as { policy?: unknown }).policy) === identity(policyDescriptor(policy)), 'Bootstrap must bind the exact public host policy descriptor');
     invariant(this.#options.mode === 'engineering' || policy.kind === 'product', 'Product startup requires a product admission policy');
     const prior = proof.proposal.priorAuthority;

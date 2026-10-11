@@ -150,7 +150,9 @@ function fixture() {
   writeFileSync(join(source, markerPath), modifiedBytes);
   const expectedCandidate = freezeApplication(source, host.artifactStore, inputs);
   const nextPolicy = { ...fields, controlRevision: expectedCandidate.manifest.controls, policyDigest: admissionPolicyIdentity({ ...fields, controlRevision: expectedCandidate.manifest.controls }) };
-  const policies = new Map<string, AdmissionPolicy>([[policy.policyDigest, policy], [nextPolicy.policyDigest, nextPolicy]]);
+  // Only the incumbent policy is configured. Ordinary host-source changes must derive
+  // the same judging rules durably without an operator registering the next revision.
+  const policies = new Map<string, AdmissionPolicy>([[policy.policyDigest, policy]]);
   const options = { host, mode: 'engineering' as const, secrets: { mistralApiKey: 'no-paid-provider-access', directToken: 'fixture-token' }, readArtifact: contentAddressedEvidence(evidenceDirectory),
     getPolicy: (digest: string) => { const result = policies.get(digest); assert.ok(result, 'Unknown registered policy'); return result; }, bootstrap: { proof: bootstrapProof, policyDigest: policy.policyDigest },
     evaluationDispatcher: { reviewerFile, policyDigests: [...policies.keys()] } };
