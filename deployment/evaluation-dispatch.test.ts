@@ -296,7 +296,8 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
       const { cancelled, ...fields } = store.get<any>('allocations', original.id)!.value;
       assert.equal(cancelled, false); assert.deepEqual({ id: original.id, ...fields }, original);
     }
-    const observation = store.readJsonArtifact<OfflineObservation>(proof.proposal.evidence[0]!.caseResults[0]!.observations);
+    const evidenceReader = new EvolutionMailbox({ store, assertAuthority: a => authorityStore.assert(a) });
+    const observation = JSON.parse(Buffer.from(evidenceReader.readArtifact(proof.proposal.evidence[0]!.caseResults[0]!.observations.uri)).toString('utf8')) as OfflineObservation;
     assert.equal(observation.passed, true); assert.equal(observation.candidateId, record.review.candidate.manifest.id);
     assert.equal(observation.physical.usage.requests, 1); assert.equal(observation.physical.runId, record.request.runId);
 
