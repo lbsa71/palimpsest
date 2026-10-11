@@ -6,7 +6,7 @@ Registered on 2026-10-11 before any live candidate or comparator scoring. This v
 
 `mechanical` uses scripted actors and simulated tools. `integration` exercises the assembled application with controlled provider responses. `live-product` uses real model executions. `live-development` additionally observes actual elapsed operation and later behavior. Passing one class never passes another. The reference actor remains a mechanical check only.
 
-Full H1 still requires all gates in [acceptance](../../acceptance.md), including both named comparator claims, actual memory/initiative/continuity, complete prompt ownership, communication and evolution. A finite L08 engineering handoff or finite evaluation report can finish with **criterion unmet**, **unavailable** or **inconclusive**. Those statuses cannot accept H1. The finite developmental qualification below establishes the daily continuity needed to begin Aeon 2; it cannot establish continuing or weeks-long growth.
+Full H1 still requires all gates in [acceptance](../../acceptance.md), including both named comparator claims, actual memory/initiative/continuity, complete prompt ownership, communication and evolution. A finite L08 engineering handoff or finite evaluation report can finish with **criterion unmet**, **unavailable** or **inconclusive**. Those statuses cannot accept H1. The finite developmental qualification below tests operational continuity needed to begin Aeon 2; it cannot establish daily, weekly or continuing growth.
 
 ## Finite H1 continuity and delayed transfer
 
