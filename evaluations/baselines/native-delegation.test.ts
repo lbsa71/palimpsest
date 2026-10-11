@@ -132,13 +132,9 @@ test('Claude witness requires native child headers and attributed Agent results,
   const child = { ...parent, 'x-claude-code-agent-id': 'child_actual', 'x-claude-code-parent-agent-id': 'parent_original' };
   assert.equal(claudeChildIdentity(child, parent), 'child_actual'); assert.equal(claudeChildIdentity(parent, parent), undefined);
   for (const patch of [{ 'x-claude-code-agent-id': '' }, { 'x-claude-code-session-id': 'foreign' }, { 'x-claude-code-parent-agent-id': 'foreign' }]) assert.equal(claudeChildIdentity({ ...child, ...patch }, parent), undefined);
-  const part = { type: 'tool_result', tool_use_id: 'tool_spawn_0', content: [{ type: 'text', text: 'child-1-observed\n\nagentId: child_actual' }] };
-  const emitted = { role: 'assistant', content: [{ type: 'tool_use', name: 'Agent', id: 'tool_spawn_0' }, { type: 'tool_use', name: 'Agent', id: 'tool_spawn_1' }] };
-  assert.deepEqual(claudeParentReceipts({ messages: [emitted, { role: 'user', content: [part] }] }), ['child-1-observed']);
-  assert.deepEqual(claudeParentReceipts({ messages: [{ role: 'user', content: [part] }] }), []);
-  assert.deepEqual(claudeParentReceipts({ messages: [emitted, { role: 'user', content: [part, { ...part, content: [{ type: 'text', text: 'child-2-observed' }] }] }] }), []);
-  for (const patch of [{ tool_use_id: 'unattributed' }, { is_error: true }, { content: [{ type: 'text', text: 'NATIVE_CHILD_ONE child-1-observed' }] }]) assert.deepEqual(claudeParentReceipts({ messages: [emitted, { role: 'user', content: [{ ...part, ...patch }] }] }), []);
-  assert.deepEqual(claudeParentReceipts({ messages: [{ role: 'assistant', content: [part] }] }), []);
+  const acquired = JSON.parse(readFileSync(new URL('./fixtures/claude-handback-parent-2.1.296.json', import.meta.url), 'utf8'));
+  assert.deepEqual(claudeParentReceipts(acquired), ['child-2-observed', 'child-1-observed']);
+  assert.deepEqual(claudeParentReceipts({ messages: [{ role: 'user', content: [{ type: 'text', text: 'NATIVE_CHILD_ONE child-1-observed' }] }] }), []);
 });
 
 test('delegation beta cannot be substituted into the ordinary coding profile or sent to paid transport', async () => {
@@ -170,13 +166,10 @@ test('exact acquired child requests require paired omitted beta/display and nati
 });
 
 test('task-start witnesses bind actual child IDs to emitted Agent call IDs and returned finals', () => {
-  const starts = [0, 1].map(index => ({ type: 'system', subtype: 'task_started', task_type: 'local_agent', subagent_type: 'general-purpose', spawn_depth: 1, is_backgrounded: false, task_id: `native_${index}`, tool_use_id: `tool_spawn_${index}` }));
-  const request = { messages: [{ role: 'user', content: [0, 1].map(index => ({ type: 'tool_result', tool_use_id: `tool_spawn_${index}`, content: [{ type: 'text', text: `child-${index + 1}-observed\n\nagentId: native_${index} (native diagnostic)` }] })) }] };
-  const stdout = starts.map(event => JSON.stringify(event)).join('\n');
-  assert.equal(claudeTaskBindings(stdout, ['native_0', 'native_1'], request), true);
-  assert.equal(claudeTaskBindings(stdout, ['native_1', 'native_0'], request), false);
-  assert.equal(claudeTaskBindings(stdout, ['native_0', 'native_0'], request), false);
-  assert.equal(claudeTaskBindings(stdout, ['foreign', 'native_1'], request), false);
-  assert.equal(claudeTaskBindings(stdout.replace('tool_spawn_1', 'tool_spawn_0'), ['native_0', 'native_1'], request), false);
-  assert.equal(claudeTaskBindings(stdout, ['native_0', 'native_1'], { messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(request) }] }] }), false);
+  const request = JSON.parse(readFileSync(new URL('./fixtures/claude-handback-parent-2.1.296.json', import.meta.url), 'utf8'));
+  const stdout = readFileSync(new URL('./fixtures/claude-handback-stdout-2.1.296.ndjson', import.meta.url), 'utf8');
+  const { nativeChildIds, parentHeaders, childHeaders } = JSON.parse(readFileSync(new URL('./fixtures/claude-handback-identities-2.1.296.json', import.meta.url), 'utf8'));
+  assert.equal(claudeTaskBindings(stdout, nativeChildIds, request, parentHeaders, childHeaders), true);
+  assert.equal(claudeTaskBindings(stdout, [...nativeChildIds].reverse(), request, parentHeaders, childHeaders), false);
+  assert.equal(claudeTaskBindings(stdout, [nativeChildIds[0], nativeChildIds[0]], request, parentHeaders, childHeaders), false);
 });
