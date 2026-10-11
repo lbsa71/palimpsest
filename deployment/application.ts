@@ -167,7 +167,7 @@ export class AutarkApplication {
     this.scheduler = new FairScheduler(this.store, this.goals, this.obligations, 'ordinary', config.scheduler, Date.now());
     this.initiative = new InitiativeRunner({ scheduler: this.scheduler, runtime: this.runtime, memory: this.memory, authority: options.authority,
       prompt: () => this.prompt, deliver: (id, signal) => this.deliverObligation(id, signal), decide: () => ({ kind: 'block', reason: 'The accounted mind did not record an observation-grounded progress decision.' }) });
-    this.directApi = createDirectApi({ core: this.communications, authenticate: bearerAuthenticator([{ token: options.secrets.directToken, principal: { id: config.direct.actorId, scope: config.direct.scope, modificationEligible: config.direct.modificationEligible } }]), outputForRun: runId => this.output(runId) });
+    this.directApi = createDirectApi({ core: this.communications, authenticate: bearerAuthenticator([{ token: options.secrets.directToken, principal: { id: config.direct.actorId, scope: config.direct.scope, modificationEligible: config.direct.modificationEligible } }]), outputForRun: runId => this.output(runId), health: () => this.health() });
     if (config.slack) {
       invariant(botApi && (options.slackAppApi || options.secrets.slackAppToken), 'Configured Slack requires host credentials');
       this.slackIngress = new SlackIngress({ core: this.communications, ...config.slack });
@@ -252,6 +252,25 @@ export class AutarkApplication {
     }
   }
   output(runId: string): JsonValue[] { return this.store.list<{ runId: string; receipt: JsonValue }>('communications.direct-outbox').filter(row => row.value.runId === runId).map(row => row.value.receipt); }
+  /** Process liveness is separate from permission/capacity to admit more physical work.
+   * This read-only diagnosis never makes a provider call or exposes private run state. */
+  health(): JsonValue {
+    const reasons: string[] = [];
+    if (this.closing) reasons.push('stopping');
+    if (!this.directApi.listening) reasons.push('listener-unavailable');
+    try { this.options.authorityStore.assert(this.options.authority); this.lease.assertHeld(); }
+    catch { reasons.push('authority-unavailable'); }
+    try {
+      const usage = this.resources.snapshot(this.rootAllocation), limit = this.config.resources;
+      if (usage.cancelled) reasons.push('allowance-cancelled');
+      if (usage.requests >= limit.maxRequests || usage.tokens >= limit.maxTokens || usage.costUsd >= limit.maxCostUsd || usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
+      if (usage.concurrent >= limit.maxConcurrency || this.occupied() >= this.config.maxConcurrentRuns) reasons.push('capacity-occupied');
+    } catch { reasons.push('accounting-unavailable'); }
+    return { alive: true, execution: { admission: reasons.length ? 'held' : 'available', reasons,
+      meaning: 'Local authority and allowance check; each physical request still requires its full reservation.', providerConnectivity: 'not-probed' },
+      kernelLimitsConfigured: !!this.config.resourceLimits, slack: { configured: !!this.config.slack,
+        connectivity: this.config.slack ? 'not-probed' : 'disabled' } };
+  }
   private async deliverObligation(id: string, signal: AbortSignal): Promise<void> {
     const owed = this.obligations.obligation(id), target = this.conversationObligations.target(id);
     invariant(owed?.status === 'owed' && target, 'No registered owed conversation');

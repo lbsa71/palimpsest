@@ -35,6 +35,22 @@ test('close during application startup cannot leave a listener or background wor
     assert.equal(app.directApi.listening, false); assert.equal(calls, 0);
   } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
+test('authenticated health remains alive while cancelled allowance or withdrawn authority holds execution without probing a provider', async () => {
+  const f = fixture(); let calls = 0;
+  const app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'private-provider-key', directToken: 'health-token' }, performRequest: async () => { calls++; throw new Error('Health must not spend'); } });
+  try {
+    await app.start(); const url = `http://127.0.0.1:${(app.directApi.address() as AddressInfo).port}/health`;
+    assert.equal((await fetch(url)).status, 401);
+    const read = async () => { const response = await fetch(url, { headers: { authorization: 'Bearer health-token' } }); assert.equal(response.status, 200); return await response.json() as any; };
+    const available = await read(); assert.equal(available.alive, true); assert.equal(available.execution.admission, 'available');
+    app.resources.cancel('operating-envelope:v1');
+    const held = await read(); assert.equal(held.alive, true); assert.equal(held.execution.admission, 'held'); assert.ok(held.execution.reasons.includes('allowance-cancelled'));
+    f.authorityStore.withdraw(f.authority);
+    const fenced = await read(); assert.equal(fenced.alive, true); assert.ok(fenced.execution.reasons.includes('authority-unavailable'));
+    for (const hidden of ['private-provider-key', f.config.stateDirectory, f.authority.generation]) assert.equal(JSON.stringify(fenced).includes(hidden), false);
+    assert.equal(calls, 0);
+  } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
 function stop(text: string) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: text } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
 async function eventually<T>(read: () => T, accept: (value: T) => boolean): Promise<T> { const end = Date.now() + 15000; while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > end) throw new Error(`Condition not reached: ${JSON.stringify(value)}`); await new Promise(resolve => setTimeout(resolve, 20)); } }
 
