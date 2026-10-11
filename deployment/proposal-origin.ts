@@ -8,10 +8,16 @@ const originTable = 'host.release-self-origins';
 function inputs(context: EvolutionContext): InboundInput[] {
   return context.store.events<InboundInput>(context.runId).filter(event => ['admitted', 'steering'].includes(event.type)).map(event => event.data);
 }
+function trustedOrigin(context: EvolutionContext, origin: Pick<IndependentSelfOrigin, 'basis' | 'originRunId'>): boolean {
+  if (origin.basis === 'accepted-bootstrap') return true;
+  if (origin.basis !== 'independent-initiative' || !origin.originRunId) return false;
+  const originalInputs = inputs({ ...context, runId: origin.originRunId });
+  return originalInputs.some(input => input.authenticated && input.source === 'initiative') && !originalInputs.some(input => !input.authenticated || ['direct', 'slack'].includes(input.source));
+}
 function validOrigin(context: EvolutionContext, goalId: string): IndependentSelfOrigin | undefined {
   const goal = context.store.get<Goal>('initiative.goals', goalId)?.value;
   const origin = context.store.get<IndependentSelfOrigin>(originTable, goalId)?.value;
-  return goal && origin?.goalId === goalId && origin.goalDefinition === goalDefinitionIdentity(goal) ? origin : undefined;
+  return goal && origin?.goalId === goalId && origin.goalDefinition === goalDefinitionIdentity(goal) && trustedOrigin(context, origin) ? origin : undefined;
 }
 function independent(context: EvolutionContext): Pick<IndependentSelfOrigin, 'basis' | 'originRunId'> | undefined {
   const events = inputs(context);
@@ -31,7 +37,7 @@ export function bindGoalOrigins(context: EvolutionContext, tools: InitiativeTool
       const source = independent(context);
       const selection = tool.name === 'initiative_goal_select' && args && typeof args === 'object' && !Array.isArray(args) && typeof args.opportunityId === 'string' ? args.opportunityId : undefined;
       const opportunity = selection ? context.store.get<InquiryOpportunity>('initiative.opportunities', selection)?.value : undefined;
-      const inquiryOrigin = selection ? context.store.get<{ definition: string }>('host.release-inquiry-origins', selection)?.value : undefined;
+      const inquiryOrigin = selection ? context.store.get<{ definition: string } & Pick<IndependentSelfOrigin, 'basis' | 'originRunId'>>('host.release-inquiry-origins', selection)?.value : undefined;
       const goalId = args && typeof args === 'object' && !Array.isArray(args) && typeof args.id === 'string' ? args.id : undefined;
       const priorOrigin = goalId ? validOrigin(context, goalId) : undefined;
       const result = tool.execute(args);
@@ -43,7 +49,7 @@ export function bindGoalOrigins(context: EvolutionContext, tools: InitiativeTool
       const goal = result as Goal;
       invariant(goal?.id && context.store.get<Goal>('initiative.goals', goal.id), 'Goal mutation must return its persisted goal');
       const existing = context.store.get<IndependentSelfOrigin>(originTable, goal.id);
-      const creation = tool.name === 'initiative_goal_propose' || tool.name === 'initiative_goal_select' && opportunity && inquiryOrigin?.definition === inquiryIdentity(opportunity);
+      const creation = tool.name === 'initiative_goal_propose' || tool.name === 'initiative_goal_select' && opportunity && inquiryOrigin?.definition === inquiryIdentity(opportunity) && trustedOrigin(context, inquiryOrigin);
       if (source && (creation || priorOrigin)) {
         const marker: IndependentSelfOrigin = { goalId: goal.id, goalDefinition: goalDefinitionIdentity(goal), ...source };
         context.store.put(originTable, goal.id, marker, existing?.revision ?? null);

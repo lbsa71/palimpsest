@@ -88,7 +88,8 @@ function provenance(context: EvolutionContext, options: EvolutionOptions): Chang
   invariant(input?.authenticated && input.actorId === bound.actorId && identity(input.scope) === identity(context.scope), 'Proposal requires host-authenticated run provenance');
   if (bound.kind === 'human') invariant(['direct', 'slack'].includes(input.source) && options.eligibleHumanAuthors.has(input.actorId) && inputs.filter(input => ['direct', 'slack'].includes(input.source)).every(input => input.authenticated && options.eligibleHumanAuthors.has(input.actorId)), 'Human modification author is not configured eligible');
   else {
-    invariant(input.source === 'initiative' && input.actorId === context.authority.generation && input.externalId === bound.goalId && !inputs.some(input => ['direct', 'slack'].includes(input.source)), 'Self proposal cannot relabel a human request or steering input');
+    // An adopted run retains its original authenticated actor while the serving grant changes.
+    invariant(input.source === 'initiative' && input.externalId === bound.goalId && !inputs.some(input => ['direct', 'slack'].includes(input.source)), 'Self proposal cannot relabel a human request or steering input');
     const execution = context.store.get<{ runId: string }>('initiative.execution', bound.goalId)?.value;
     const goal = context.store.get<Goal>('initiative.goals', bound.goalId)?.value;
     invariant(execution?.runId === context.runId && goal?.origin.kind === 'self' && ['ready', 'running', 'waiting'].includes(goal.status) && identity(goal.scope) === identity(context.scope), 'Self proposal requires its independently originated finite initiative goal');
@@ -134,13 +135,23 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     invariant(run && !['cancelled', 'completed'].includes(run.status) && identity(run.scope) === identity(bound.scope), 'Run no longer authorized'); assertAuthority(run.authority, bound.authority);
   };
   const idArgs = (args: JsonValue): string => text(object(args, ['changeId']).changeId);
+  const requestId = (proposal: ChangeRecord, action: string): string => {
+    invariant(proposal.candidate, 'Candidate has not been frozen');
+    invariant(proposal.judgingPolicyDigest === options.policyDigest, 'Frozen judging policy changed; reconcile using the original host policy');
+    return identity({ change: proposals.key(proposal.id), candidate: proposal.candidate.id, action, policy: proposal.judgingPolicyDigest });
+  };
+  const validateReceipt = (receipt: EvaluationReceipt, proposal: ChangeRecord): void => {
+    invariant(receipt.requestId === requestId(proposal, 'evaluate') && receipt.candidateId === proposal.candidate!.id && receipt.policyDigest === proposal.judgingPolicyDigest && receipt.evidence.length > 0, 'External evaluator returned a mismatched receipt');
+    receipt.evidence.forEach(evidence => { validateEvaluation(evidence); invariant(evidence.candidateId === receipt.candidateId && evidence.controlRevision === proposal.authority.controlRevision && evidence.independent && evidence.evaluatorId !== proposal.candidate!.createdBy, 'Author/self or mismatched evaluator evidence rejected'); });
+  };
   const request = (proposal: ChangeRecord, action: string): EvaluationRequest => {
     invariant(proposal.candidate, 'Candidate has not been frozen'); assertAuthority(proposal.authority, bound.authority);
+    const id = requestId(proposal, action);
     invariant(identity(provenance(bound, options)) === identity(proposal.provenance), 'Proposal trusted provenance changed');
     const candidate = verifyApplication(options.artifactStore, proposal.candidate.id, options.nodeBinary);
     invariant(identity(candidate.manifest) === identity(proposal.candidate), 'Proposal manifest changed');
     const { evaluation, submission, ...frozenProposal } = proposal;
-    return { requestId: identity({ change: proposals.key(proposal.id), candidate: candidate.manifest.id, action, policy: options.policyDigest }), proposal: { ...frozenProposal, state: 'frozen' }, candidate, policyDigest: options.policyDigest };
+    return { requestId: id, proposal: { ...frozenProposal, state: 'frozen' }, candidate, policyDigest: proposal.judgingPolicyDigest! };
   };
   return [{ name: 'change_propose', description: 'Record a justified finite source change proposal with visible experience evidence. Origin and human eligibility come from authenticated host provenance; workspace edits confer no production authority.',
     inputSchema: schema({ changeId: string, justification: string, objective: string, successCriteria: { type: 'array', items: string, minItems: 1, maxItems: 32 }, experienceIds: { type: 'array', items: string, maxItems: 32 } }, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']),
@@ -170,7 +181,7 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
         snapshot(acceptedRoot, staging, ['node_modules'], { maxFiles: options.maxFiles - source.entries, maxBytes: options.maxBytes - source.bytes }, toolchain);
         const inputs = frozenInputs(staging, accepted, options, bound.authority.generation);
         const candidate = freezeApplication(staging, store, inputs); allowed(signal);
-        return proposals.transition(id, 'proposed', 'frozen', { candidate: candidate.manifest });
+        return proposals.transition(id, 'proposed', 'frozen', { candidate: candidate.manifest, judgingPolicyDigest: options.policyDigest });
       } finally { rmSync(staging, { recursive: true, force: true }); }
     },
   }, { name: 'candidate_evaluate', description: 'Request evaluation of the exact frozen candidate from the external host evaluator under previously accepted frozen policy. Author tests and model text cannot supply independent evidence.', inputSchema: schema({ changeId: string }, ['changeId']),
@@ -181,8 +192,7 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       const req = request(proposal, 'evaluate'); if (proposal.state === 'frozen') proposals.transition(id, 'frozen', 'evaluation-dispatched');
       try {
         const receipt = await options.requestEvaluation(req, signal);
-        invariant(receipt.requestId === req.requestId && receipt.candidateId === req.candidate.manifest.id && receipt.policyDigest === options.policyDigest && receipt.evidence.length > 0, 'External evaluator returned a mismatched receipt');
-        receipt.evidence.forEach(evidence => { validateEvaluation(evidence); invariant(evidence.candidateId === receipt.candidateId && evidence.controlRevision === bound.authority.controlRevision && evidence.independent && evidence.evaluatorId !== req.candidate.manifest.createdBy, 'Author/self or mismatched evaluator evidence rejected'); });
+        validateReceipt(receipt, proposal);
         allowed(signal); return proposals.transition(id, 'evaluation-dispatched', 'evaluated', { evaluation: proposals.artifact(receipt) });
       } catch (cause) { throw Object.assign(new Error(`External evaluation unresolved; reconcile durable request ID: ${cause instanceof Error ? cause.message : 'invalid host result'}`, { cause }), { mayHaveApplied: true }); }
     },
@@ -191,6 +201,7 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       allowed(signal); const id = idArgs(args), proposal = proposals.get(id); if (proposal.submission) return proposal;
       invariant(proposal.evaluation && ['evaluated', 'submission-dispatched'].includes(proposal.state), 'External evaluation required before submission');
       const evaluation = bound.store.readJsonArtifact<EvaluationReceipt>(proposal.evaluation);
+      validateReceipt(evaluation, proposal);
       invariant(evaluation.evidence.every(evidence => evidence.verdict === 'pass'), 'Failed or inconclusive evaluation cannot be submitted');
       const req: SubmissionRequest = { ...request(proposal, 'submit'), evaluation }; if (proposal.state === 'evaluated') proposals.transition(id, 'evaluated', 'submission-dispatched');
       try {

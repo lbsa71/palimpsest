@@ -6,7 +6,7 @@ export interface ChangeRecord {
   id: string; runId: string; scope: DataScope; authority: Authority;
   provenance: ChangeProvenance; justification: string; goal: { objective: string; successCriteria: string[] };
   experience: ArtifactRef; state: 'proposed' | 'frozen' | 'evaluation-dispatched' | 'evaluated' | 'submission-dispatched' | 'submitted';
-  candidate?: CandidateManifest; evaluation?: ArtifactRef; submission?: ArtifactRef;
+  candidate?: CandidateManifest; judgingPolicyDigest?: string; evaluation?: ArtifactRef; submission?: ArtifactRef;
 }
 /** The operational database and artifacts are host-private, outside author workspaces. */
 export class ChangeProposals {
@@ -22,12 +22,12 @@ export class ChangeProposals {
     invariant(record.runId === this.runId && identity(record.scope) === identity(this.scope), 'Proposal binding mismatch');
     const previous = this.store.get<ChangeRecord>('release.changes', this.key(record.id));
     if (previous) {
-      const { candidate, evaluation, submission, state, ...immutable } = previous.value;
+      const { candidate, judgingPolicyDigest, evaluation, submission, state, ...immutable } = previous.value;
       invariant(identity({ ...immutable, state: 'proposed' }) === identity(record), 'Changed proposal identity; use a new change ID'); return previous.value;
     }
     this.store.put('release.changes', this.key(record.id), record, null); return record;
   }
-  transition(id: string, from: ChangeRecord['state'], state: ChangeRecord['state'], patch: Partial<Pick<ChangeRecord, 'candidate' | 'evaluation' | 'submission'>> = {}): ChangeRecord {
+  transition(id: string, from: ChangeRecord['state'], state: ChangeRecord['state'], patch: Partial<Pick<ChangeRecord, 'candidate' | 'judgingPolicyDigest' | 'evaluation' | 'submission'>> = {}): ChangeRecord {
     return this.store.transaction(() => {
       const row = this.store.get<ChangeRecord>('release.changes', this.key(id)); invariant(row, 'Missing proposal');
       invariant(this.get(id).state === from, 'Proposal state changed or operation already dispatched');
