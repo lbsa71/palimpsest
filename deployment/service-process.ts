@@ -47,12 +47,19 @@ export class ServiceProcess {
     invariant(this.options.mode === 'engineering' || evolution, 'Product startup requires previously accepted evolution policy metadata');
     if (evolution) validateEvolutionMetadata(evolution);
     const authorityStore = new AuthorityStore(join(this.host.stateDirectory, 'authority.sqlite'));
-    try {
-      authorityStore.assert(authority);
-      invariant(authorityStore.current()?.artifactId === candidateId && authority.controlRevision === candidate.manifest.controls, 'Serving authority does not qualify this candidate');
-    } finally { authorityStore.close(); }
+    const assertCandidateAuthority = (store: AuthorityStore): void => {
+      store.assert(authority);
+      invariant(store.current()?.artifactId === candidateId && authority.controlRevision === candidate.manifest.controls, 'Serving authority does not qualify this candidate');
+    };
     const entrypoint = join(this.host.artifactStore, candidateId, 'payload/deployment/service-child.ts');
-    const child = spawn(candidateNodeBinary(candidate, this.host.artifactStore, this.host.nodeBinary), [entrypoint], { detached: true, env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    let child: ChildProcess;
+    try {
+      // Serialize launch with withdrawal; a checked grant cannot become stale before spawn.
+      child = authorityStore.dispatch(authority, () => {
+        assertCandidateAuthority(authorityStore);
+        return spawn(candidateNodeBinary(candidate, this.host.artifactStore, this.host.nodeBinary), [entrypoint], { detached: true, env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      });
+    } finally { authorityStore.close(); }
     this.child = child; this.stopping = false;
     let diagnostic = Buffer.alloc(0); child.stderr?.on('data', (chunk: Buffer) => { if (diagnostic.length < 32768) diagnostic = Buffer.concat([diagnostic, chunk.subarray(0, 32768 - diagnostic.length)]); });
     let ready = false;
@@ -64,7 +71,17 @@ export class ServiceProcess {
         child.once('error', error); child.once('exit', error);
         child.on('message', message => {
           const value = message as Partial<ServiceReady> | null;
-          if (value?.kind === 'ready' && value.candidateId === candidateId && value.authority?.epoch === authority.epoch && value.authority.generation === authority.generation && value.authority.controlRevision === authority.controlRevision && value.address && Number.isSafeInteger(value.address.port)) { ready = true; clearTimeout(timer); child.off('error', error); child.off('exit', error); resolve(value as ServiceReady); }
+          if (value?.kind === 'ready' && value.candidateId === candidateId && value.authority?.epoch === authority.epoch && value.authority.generation === authority.generation && value.authority.controlRevision === authority.controlRevision && value.address && Number.isSafeInteger(value.address.port)) {
+            const currentAuthority = new AuthorityStore(join(this.host.stateDirectory, 'authority.sqlite'));
+            try {
+              currentAuthority.dispatch(authority, () => {
+                assertCandidateAuthority(currentAuthority);
+                invariant(!this.stopping, 'Application stopped during startup');
+                ready = true; clearTimeout(timer); child.off('error', error); child.off('exit', error); resolve(value as ServiceReady);
+              });
+            } catch (cause) { clearTimeout(timer); reject(cause); }
+            finally { currentAuthority.close(); }
+          }
           else error();
         });
         child.send({ kind: 'start', mode: this.options.mode, bindings: this.host, candidateId, authority, secrets: this.secrets, ...(evolution ? { evolution } : {}) }, failure => { if (failure) error(); });
