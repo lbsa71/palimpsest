@@ -15,7 +15,7 @@ export interface CodexBaselineRun {
   privateStateRoot: string; checkoutRoot: string; workspace: string; protectedPaths: string[];
   native: { codex: string; helper: string; version: string; codexSha256: string; helperSha256: string };
   prompt: string; grant: ObserverGrant; maxCliOutputBytes: number;
-  provider: { kind: 'fixture'; transport: BaselineTransport } | { kind: 'openai'; apiKey: string; resourceLimits: ResourceLimits };
+  provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits } | { kind: 'openai'; apiKey: string; resourceLimits: ResourceLimits };
   signal?: AbortSignal;
 }
 export interface CodexBaselineResult {
@@ -78,8 +78,9 @@ export async function runCodexBaseline(input: CodexBaselineRun): Promise<CodexBa
       native: { version: input.native.version, codexSha256: input.native.codexSha256, helperSha256: input.native.helperSha256 },
       workerSha256: createHash('sha256').update(readFileSync(worker)).digest('hex'), nodeSha256: sha256(process.execPath),
       maxCliOutputBytes: input.maxCliOutputBytes, protectedPaths: input.protectedPaths.map(path => realpathSync(path)),
-      qualification: input.provider.kind === 'fixture' ? 'namespace-fixture' as const : 'kernel-profile' as const,
-      kernelLimits: input.provider.kind === 'fixture' ? null : input.provider.resourceLimits,
+      providerTransport: input.provider.kind,
+      qualification: input.provider.resourceLimits ? 'kernel-profile' as const : 'namespace-fixture' as const,
+      kernelLimits: input.provider.resourceLimits ?? null,
       nativeConfiguration: { ignoreUserConfig: true, ignoreRules: true, ephemeral: true, webSearch: 'disabled', requestRetries: 0, streamRetries: 0, credentials: 'dummy-bridge-token-only' },
     };
     const previous = store.get<{ specification: typeof specification; status: string }>('baseline-run', 'run');
@@ -103,7 +104,7 @@ export async function runCodexBaseline(input: CodexBaselineRun): Promise<CodexBa
       command: { workspace, applicationRoot: image, nodeBinary: process.execPath, protectedPaths: [stateRoot, ...specification.protectedPaths],
         executable: '/runtime/node', args: ['/app/codex-worker.mjs'], timeoutMs: remainingMs,
         maxOutputBytes: maxMessageBytes * (input.grant.resources.maxRequests + 1), signal: input.signal,
-        ...(input.provider.kind === 'openai' ? { resourceLimits: input.provider.resourceLimits } : {}) },
+        ...(input.provider.resourceLimits ? { resourceLimits: input.provider.resourceLimits } : {}) },
       initial: { prompt: input.prompt, model: input.grant.profile.model, effort: input.grant.profile.effort,
         maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes },
       maxMessageBytes, maxRequests: input.grant.resources.maxRequests,
