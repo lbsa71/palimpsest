@@ -7,7 +7,8 @@ import type { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { ApplicationTool } from './application.ts';
 import type { EvolutionContext } from './evolution-tools.ts';
 
-const namespace = 'host.rescue-rotations';
+const namespace = 'host.rescue-rotations', acknowledgments = 'host.rescue-rotation-acknowledgments';
+class ProducerActive extends Error {}
 export interface RescueRotationRequest { id: string; runId: string; scope: DataScope; authority: Authority; selected: ReleaseTarget }
 interface RotationAcknowledgment { effectId: string; payload: JsonValue; authority: Authority; receipt: ArtifactRef }
 export interface RescueRotationRecord {
@@ -18,13 +19,13 @@ function boundAuthor(store: OperationalStore, request: RescueRotationRequest): R
   const run = store.get<Run>('runs', request.runId)?.value;
   // Completing the requesting slice does not revoke its already committed explicit request.
   invariant(run && run.status !== 'cancelled' && identity(run.scope) === identity(request.scope) && identity(run.authority) === identity(request.authority), 'Rescue rotation author cancelled, fenced or outside its audience');
-  invariant(!new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).snapshot(run.id).cancelled, 'Rescue rotation allowance cancelled');
   let id: string | undefined = run.id; const seen = new Set<string>();
   while (id) {
     invariant(seen.size < 128 && !seen.has(id), 'Bounded rescue request allocation required'); seen.add(id);
     const allocation: { parentRunId?: string; cancelled: boolean; startedAt: number; envelope: { maxElapsedMs: number } } | undefined = store.get<{ parentRunId?: string; cancelled: boolean; startedAt: number; envelope: { maxElapsedMs: number } }>('allocations', id)?.value;
     invariant(allocation && !allocation.cancelled && Date.now() - allocation.startedAt < allocation.envelope.maxElapsedMs, 'Rescue rotation allowance expired or cancelled'); id = allocation.parentRunId;
   }
+  invariant(!new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).snapshot(run.id).cancelled, 'Rescue rotation allowance cancelled');
   return run;
 }
 export function rescueRotationStatus(store: OperationalStore, id: string, runId: string, scope: DataScope): RescueRotationRecord | undefined {
@@ -62,6 +63,9 @@ export function rescueRotationTools(context: EvolutionContext, options: { candid
           // The first producer remains the readiness gate; repeated status-equivalent requests
           // cannot replace its still-unsettled effect with a different effect identity.
           if (!old) bound.store.put(namespace, request.id, { ...record, acknowledgment }, null);
+          const priorAck = bound.store.get<{ requestId: string; acknowledgment: RotationAcknowledgment; settled: boolean }>(acknowledgments, acknowledgment.effectId);
+          invariant(!priorAck || priorAck.value.requestId === request.id && identity(priorAck.value.acknowledgment) === identity(acknowledgment), 'Exact rescue reply identity changed');
+          if (!priorAck) bound.store.put(acknowledgments, acknowledgment.effectId, { requestId: request.id, acknowledgment, settled: false }, null);
           return value;
         });
       } catch (cause) { throw Object.assign(Error(`Rescue rotation enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid binding'}`, { cause }), { mayHaveApplied: false }); }
@@ -89,7 +93,8 @@ export class RescueRotationHost {
   records(): RescueRotationRecord[] { return this.options.store.list<RescueRotationRecord>(namespace).map(row => row.value); }
   #update(id: string, patch: Partial<RescueRotationRecord>): void { const row = this.options.store.get<RescueRotationRecord>(namespace, id); invariant(row, 'Missing rescue request'); this.options.store.put(namespace, id, { ...row.value, ...patch }, row.revision); }
   #validate(request: RescueRotationRequest): void {
-    boundAuthor(this.options.store, request); this.options.authority.assert(request.authority);
+    const author = boundAuthor(this.options.store, request); this.options.authority.assert(request.authority);
+    if (author.status === 'running') throw new ProducerActive('Rescue requester has resumed a physical slice');
     const state = this.options.status();
     invariant(state.phase === 'accepted' && identity(state.accepted) === identity(request.selected) && identity(state.active) === identity(request.selected) &&
       identity({ generation: state.authority.generation, epoch: state.authority.epoch, controlRevision: state.authority.controlRevision }) === identity(request.authority) &&
@@ -111,26 +116,42 @@ export class RescueRotationHost {
     if (effect.status === 'succeeded') invariant(effect.receipt && identity(store.readJsonArtifact(effect.receipt)) === identity(receipt), 'Successful rescue acknowledgment changed');
     return { effect, physical: reservation.request, elapsedMs: Math.max(reservation.request.usage.elapsedMs, reservation.ceiling.elapsedMs, reservation.charged.elapsedMs) };
   }
-  #acknowledged(record: RescueRotationRecord): boolean {
+  #reconcileAcknowledgment(record: RescueRotationRecord): void {
     const { store, authority } = this.options;
     // Do not race the live bridge's own settlement after it has committed effect success.
-    if (store.get<Run>('runs', record.request.runId)?.value.status === 'running') return false;
-    const state = authority.current(); if (!state?.generation) return false;
+    if (store.get<Run>('runs', record.request.runId)?.value.status === 'running') return;
+    const state = authority.current(); if (!state?.generation) return;
     const serving: Authority = { generation: state.generation, epoch: state.epoch, controlRevision: state.controlRevision };
     authority.dispatch(serving, () => store.transaction(() => {
-      const ack = this.#ack(record); if (!ack || !['uncertain', 'succeeded'].includes(ack.effect.status) || !['dispatched', 'uncertain'].includes(ack.physical.status)) return;
-      if (ack.effect.status === 'uncertain') {
-        const effects = new EffectJournal(store, authority, { async dispatch() { throw Error('Local reconciliation never dispatches'); }, async reconcile() { throw Error('Committed local receipt only'); } });
-        effects.recordReconciliation(ack.effect.id, serving, 'succeeded', record.acknowledgment!.receipt);
+      if (store.get<Run>('runs', record.request.runId)?.value.status === 'running') return;
+      const ack = this.#ack(record); if (!ack || !['uncertain', 'succeeded'].includes(ack.effect.status)) return;
+      if (['dispatched', 'uncertain'].includes(ack.physical.status)) {
+        if (ack.effect.status === 'uncertain') {
+          const effects = new EffectJournal(store, authority, { async dispatch() { throw Error('Local reconciliation never dispatches'); }, async reconcile() { throw Error('Committed local receipt only'); } });
+          effects.recordReconciliation(ack.effect.id, serving, 'succeeded', record.acknowledgment!.receipt);
+        }
+        new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).settle({ ...ack.physical, status: 'succeeded', usage: { ...ack.physical.usage, elapsedMs: ack.elapsedMs } });
+        store.append({ id: `local-rescue-reconciled:${ack.effect.id}`, stream: record.request.runId, type: 'local-rescue-reconciled', data: { effectId: ack.effect.id, requestId: record.request.id, elapsedMs: ack.elapsedMs, externalReviewRetried: false } });
       }
-      new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).settle({ ...ack.physical, status: 'succeeded', usage: { ...ack.physical.usage, elapsedMs: ack.elapsedMs } });
-      store.append({ id: `local-rescue-reconciled:${ack.effect.id}`, stream: record.request.runId, type: 'local-rescue-reconciled', data: { effectId: ack.effect.id, requestId: record.request.id, elapsedMs: ack.elapsedMs, externalReviewRetried: false } });
+      const after = this.#ack(record), row = store.get<{ requestId: string; acknowledgment: RotationAcknowledgment; settled: boolean }>(acknowledgments, record.acknowledgment!.effectId);
+      if (row && after?.effect.status === 'succeeded' && after.physical.status === 'succeeded') store.put(acknowledgments, row.value.acknowledgment.effectId, { ...row.value, settled: true }, row.revision);
     }));
+  }
+  #reconcileAcknowledgments(): void {
+    for (const row of this.options.store.list<{ requestId: string; acknowledgment: RotationAcknowledgment; settled: boolean }>(acknowledgments).filter(row => !row.value.settled).slice(0, 32)) {
+      const record = this.options.store.get<RescueRotationRecord>(namespace, row.value.requestId)?.value;
+      // Malformed receipt records stay unresolved; they never free another physical slot.
+      if (record) try { this.#reconcileAcknowledgment({ ...record, acknowledgment: row.value.acknowledgment }); } catch { /* original activation validation preserves rejection separately */ }
+    }
+  }
+  #acknowledged(record: RescueRotationRecord): boolean {
+    this.#reconcileAcknowledgment(record);
     const ack = this.#ack(record);
-    return (!record.acknowledgment || !!ack && ack.effect.status === 'succeeded' && ack.physical.status === 'succeeded') && store.get<Run>('runs', record.request.runId)?.value.status !== 'running';
+    return (!record.acknowledgment || !!ack && ack.effect.status === 'succeeded' && ack.physical.status === 'succeeded') && this.options.store.get<Run>('runs', record.request.runId)?.value.status !== 'running';
   }
   async processPending(): Promise<void> {
     if (this.#processing || this.#abort.signal.aborted || !this.options.ready()) return;
+    this.#reconcileAcknowledgments();
     const record = this.records().find(value => value.status === 'pending'); if (!record) return;
     this.#processing = true; let entered = false;
     try {
@@ -146,8 +167,9 @@ export class RescueRotationHost {
         this.#update(record.request.id, { status: 'completed', decision });
       }));
       invariant(this.options.store.get<RescueRotationRecord>(namespace, record.request.id)?.value.status === 'completed', 'Rescue callback omitted its exact durable decision');
-    } catch {
-      if (this.options.store.get<RescueRotationRecord>(namespace, record.request.id)?.value.status !== 'completed') this.#update(record.request.id,
+    } catch (cause) {
+      if (cause instanceof ProducerActive && !entered) this.#update(record.request.id, { status: 'pending' });
+      else if (this.options.store.get<RescueRotationRecord>(namespace, record.request.id)?.value.status !== 'completed') this.#update(record.request.id,
         { status: entered ? 'uncertain' : 'rejected', diagnosis: entered ? 'Rescue pointer outcome unresolved; inspect retained host decision and snapshots before retry' : 'Rescue rotation rejected: current authority, audience, remaining allowance, accepted target or boot readiness did not satisfy host guards' });
     } finally { this.#processing = false; }
   }
