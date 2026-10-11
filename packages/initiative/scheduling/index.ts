@@ -12,9 +12,9 @@ export type SchedulingDecision = { kind: 'selected'; selection: Selection; seque
 const classes: ServiceClass[] = ['commitment', 'conversation', 'inquiry'];
 /** Durable cyclic service, including an inquiry turn even under continuous conversation admission. */
 export class FairScheduler {
-  readonly store: OperationalStore; readonly goals: InitiativeRegistry; readonly obligations: ObligationRegistry; readonly id: string; readonly policy: SchedulerPolicy;
-  constructor(store: OperationalStore, goals: InitiativeRegistry, obligations: ObligationRegistry, id: string, policy: SchedulerPolicy, at: number) {
-    this.store = store; this.goals = goals; this.obligations = obligations; this.id = id; this.policy = structuredClone(policy);
+  readonly store: OperationalStore; readonly goals: InitiativeRegistry; readonly obligations: ObligationRegistry; readonly id: string; readonly policy: SchedulerPolicy; readonly eligibleGoal?: (goal: Goal) => boolean;
+  constructor(store: OperationalStore, goals: InitiativeRegistry, obligations: ObligationRegistry, id: string, policy: SchedulerPolicy, at: number, eligibleGoal?: (goal: Goal) => boolean) {
+    this.store = store; this.goals = goals; this.obligations = obligations; this.id = id; this.policy = structuredClone(policy); this.eligibleGoal = eligibleGoal;
     for (const key of ['windowMs', 'maxSlicesPerWindow', 'maxLifetimeSlices', 'quantumMs', 'idleRetryMs', 'maxStalls'] as const) invariant(Number.isSafeInteger(policy[key]) && policy[key] > 0, `invalid scheduler ${key}`);
     invariant(Number.isFinite(at), 'invalid scheduler clock');
     const existing = store.get<SchedulerState>('initiative.schedulers', id);
@@ -23,7 +23,7 @@ export class FairScheduler {
   }
   snapshot(): SchedulerState { return this.store.get<SchedulerState>('initiative.schedulers', this.id)!.value; }
   private candidates(at: string, deliveries: boolean): Map<string, Selection> {
-    const ready = this.goals.readyNow(at), candidates = new Map<string, Selection>();
+    const ready = this.goals.readyNow(at).filter(goal => !this.eligibleGoal || this.eligibleGoal(goal)), candidates = new Map<string, Selection>();
     const due = this.obligations.all().filter(o => o.status === 'owed' && (o.dueAt === null || Date.parse(o.dueAt) <= Date.parse(at)));
     const dueGoals = new Set(due.flatMap(o => o.goalId ? [o.goalId] : []));
     for (const goal of ready.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))) {

@@ -2,7 +2,7 @@ import { canonicalJson, identity, invariant, validateArtifact, validateEvaluatio
 import type { ReleaseProof } from '../packages/release/controller.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
-import { evolutionTools, type EvolutionContext, type EvaluationRequest, type EvaluationReceipt, type SubmissionRequest, type SubmissionReceipt } from './evolution-tools.ts';
+import { evolutionTools, type EvolutionContext, type EvaluationRequest, type EvaluationReceipt, type EvaluationState, type SubmissionRequest, type SubmissionReceipt } from './evolution-tools.ts';
 import type { ApplicationConfig } from './config.ts';
 import type { ApplicationTool } from './application.ts';
 import { proposalProvenance } from './proposal-origin.ts';
@@ -88,6 +88,20 @@ export class EvolutionMailbox {
       });
     }
   }
+  /** Production author tools acknowledge only the committed job, never wait for a physical reviewer. */
+  enqueueEvaluation = (request: EvaluationRequest, signal?: AbortSignal): EvaluationState => {
+    signal?.throwIfAborted(); this.enqueue('evaluation', request); return this.readEvaluation(request);
+  };
+  readEvaluation = (request: EvaluationRequest): EvaluationState => {
+    this.options.assertAuthority(request.proposal.authority);
+    const job = this.status(request.requestId);
+    invariant(job?.kind === 'evaluation' && job.requestDigest === identity(request) && identity(this.request(job.id)) === identity(request), 'Evaluation job unavailable for this exact run/candidate/policy');
+    const binding = { requestId: job.id, candidateId: job.candidateId, policyDigest: job.policyDigest };
+    if (job.status === 'completed') return { ...binding, status: 'completed', evaluation: this.store.readJsonArtifact<EvaluationReceipt>(job.receipt!) };
+    const processor = this.store.get<{ available: boolean; diagnosis?: string }>('host.evaluation-dispatch', 'current')?.value;
+    const diagnosis = job.diagnosis ?? (processor?.available === false ? processor.diagnosis ?? 'External evaluation unavailable: no qualified reviewer is configured' : undefined);
+    return { ...binding, status: job.status, ...(diagnosis ? { diagnosis } : {}) };
+  };
   requestEvaluation = async (request: EvaluationRequest, signal?: AbortSignal): Promise<EvaluationReceipt> => this.wait<EvaluationReceipt>(this.enqueue('evaluation', request), signal);
   submitRelease = async (request: SubmissionRequest, signal?: AbortSignal): Promise<SubmissionReceipt> => {
     const evaluated = this.status(request.evaluation.requestId);
@@ -181,5 +195,5 @@ export function ordinaryServiceTools(context: EvolutionContext, host: { config: 
   return [...source, ...evolutionTools(context, { artifactStore: host.artifactStore, acceptedCandidateId: config.artifactId, nodeBinary: config.nodeBinary, policyDigest: host.evolution.policyDigest,
     maxFiles: 20000, maxBytes: 128 * 1024 * 1024, runtimeMaxBytes: maxRuntimeBytes, eligibleHumanAuthors: new Set([...(config.direct.modificationEligible ? [config.direct.actorId] : []), ...(config.slack?.eligibleHumanIds.map(id => `slack:${config.slack!.teamId}:${id}`) ?? [])]),
     allowedModelProfiles: host.evolution.allowedModelProfiles, assertAuthority: host.assertAuthority, provenanceForRun: proposalProvenance,
-    requestEvaluation: mailbox.requestEvaluation, submitRelease: mailbox.submitRelease })];
+    enqueueEvaluation: mailbox.enqueueEvaluation, readEvaluation: mailbox.readEvaluation, submitRelease: mailbox.submitRelease })];
 }

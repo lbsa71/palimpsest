@@ -17,7 +17,7 @@ import { setup as runtimeFixture, authority as priorAuthority, envelope as runti
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { candidateNodeBinary, freezeApplication, verifyApplication, type DeploymentInputs } from './candidate.ts';
-import { evolutionTools, goalDefinitionIdentity, type EvolutionContext, type EvolutionOptions, type EvaluationReceipt, type SubmissionReceipt } from './evolution-tools.ts';
+import { evolutionTools, goalDefinitionIdentity, type EvolutionContext, type EvolutionOptions, type EvaluationReceipt, type EvaluationRequest, type EvaluationState, type SubmissionReceipt } from './evolution-tools.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceProcess } from './service-process.ts';
 
@@ -31,6 +31,9 @@ function context(root: string, store: OperationalStore, authority: Authority, ru
   return { runId, store, authority, scope, workspace };
 }
 function call(ctx: EvolutionContext, options: EvolutionOptions, name: string, args: unknown): Promise<any> { const descriptor = evolutionTools(ctx, options).find(tool => tool.name === name)!; return Promise.resolve().then(() => descriptor.execute(args as JsonValue)); }
+function completed(req: EvaluationRequest, receipt: EvaluationReceipt): EvaluationState {
+  return { status: 'completed', requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest, evaluation: receipt };
+}
 const proposal = (id = 'change') => ({ changeId: id, justification: 'The fixture verifies actual dependency edit/load and the independent admission boundary.', objective: 'Build and submit one exact dependency candidate.', successCriteria: ['external build loads the modified dependency', 'admission uses the previously accepted policy'], experienceIds: [] });
 function copySource(source: string, target: string): void { for (const entry of rewriteSourceEntries) if (existsSync(join(source, entry))) { mkdirSync(dirname(join(target, entry)), { recursive: true }); cpSync(join(source, entry), join(target, entry), { recursive: true }); } }
 
@@ -47,7 +50,7 @@ test('runtime adoption preserves authenticated self origin while requiring the s
     new DevelopmentalMemory(fixture.store).ingest({ id: 'continuity-observation', runId: run.id, sourceId: 'fixture:observation', actorId: priorAuthority.generation, scope, at: new Date().toISOString(), channel: 'tool', content: 'A retained measured fixture observation.' });
     const authority = fixture.withdraw(); fixture.runtime.adopt(run.id, authority);
     const ctx = { runId: run.id, store: fixture.store, workspace: root, scope, authority };
-    const options: EvolutionOptions = { artifactStore: join(root, 'unused-artifacts'), acceptedCandidateId: identity('unused'), nodeBinary: process.execPath, policyDigest: identity('fixture-policy'), maxFiles: 100, maxBytes: 10000, eligibleHumanAuthors: new Set(), allowedModelProfiles: [], assertAuthority: grant => fixture.effects.fence.assert(grant), provenanceForRun: () => ({ kind: 'self', inputId: admitted.id, actorId: admitted.actorId, goalId: goal.id }), async requestEvaluation() { throw Error('Not used'); }, async submitRelease() { throw Error('Not used'); } };
+    const options: EvolutionOptions = { artifactStore: join(root, 'unused-artifacts'), acceptedCandidateId: identity('unused'), nodeBinary: process.execPath, policyDigest: identity('fixture-policy'), maxFiles: 100, maxBytes: 10000, eligibleHumanAuthors: new Set(), allowedModelProfiles: [], assertAuthority: grant => fixture.effects.fence.assert(grant), provenanceForRun: () => ({ kind: 'self', inputId: admitted.id, actorId: admitted.actorId, goalId: goal.id }), enqueueEvaluation() { throw Error('Not used'); }, readEvaluation() { throw Error('Not used'); }, async submitRelease() { throw Error('Not used'); } };
     const created = await call(ctx, options, 'change_propose', { ...proposal(), experienceIds: ['continuity-observation'] });
     assert.equal(created.provenance.actorId, priorAuthority.generation);
     assert.equal(created.authority.generation, authority.generation);
@@ -85,16 +88,16 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
   let evaluations = 0, submissions = 0, failOnce = false;
   const durableEvaluations = new Map<string, EvaluationReceipt>(), durableSubmissions = new Map<string, SubmissionReceipt>();
   const requestBodies = new Map<string, string>();
-  function stableRequest(req: Parameters<EvolutionOptions['requestEvaluation']>[0]): void {
+  function stableRequest(req: Parameters<EvolutionOptions['enqueueEvaluation']>[0]): void {
     const previous = requestBodies.get(req.requestId);
     if (previous) assert.equal(identity(req), previous, 'A reconciled request keeps its complete canonical body');
     else requestBodies.set(req.requestId, identity(req));
   }
   const nextModel: DeploymentInputs['configuration']['model'] = { ...inputs.configuration.model, id: 'fixture-v2', provider: 'openai', reasoning: true, effort: 'high', pricesPerMillion: { input: 3, output: 7 } };
   const options: EvolutionOptions = { artifactStore, acceptedCandidateId: accepted.manifest.id, nodeBinary: process.execPath, policyDigest: policy.policyDigest, maxFiles: 20000, maxBytes: 128 * 1024 * 1024, eligibleHumanAuthors: new Set(['operator']), allowedModelProfiles: [nextModel], assertAuthority: grant => authorityStore.assert(grant), provenanceForRun: ctx => ({ kind: 'human', inputId: input(ctx.runId).id, actorId: 'operator' }),
-    async requestEvaluation(req) {
+    enqueueEvaluation(req) {
       stableRequest(req);
-      const previous = durableEvaluations.get(req.requestId); if (previous) return previous;
+      const previous = durableEvaluations.get(req.requestId); if (previous) return completed(req, previous);
       evaluations++; assert.equal(identity(verifyCandidate(artifactStore, req.candidate.manifest.id).manifest), identity(req.candidate.manifest)); assert.equal(req.policyDigest, policy.policyDigest);
       const payload = join(artifactStore, req.candidate.manifest.id, 'payload'), build = join(root, `build-${evaluations}`);
       const checked = spawnSync(process.execPath, [join(payload, 'node_modules/typescript/bin/tsc'), '--project', join(payload, 'tsconfig.json'), '--noEmit', 'false', '--rewriteRelativeImportExtensions', '--outDir', build], { encoding: 'utf8', timeout: 30000 });
@@ -104,8 +107,9 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
       const observed = evidence(req.candidate.manifest.id, JSON.parse(JSON.stringify({ compilerExit: checked.status, loaded: JSON.parse(loaded.stdout), exactManifest: req.candidate.manifest })) as JsonValue);
       signed.set(req.candidate.manifest.id, [signEvaluation(observed, evaluatorKey, policy.policyDigest)]);
       const receipt = { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: policy.policyDigest, evidence: [observed], receipt: { kind: 'engineering-fixture', compilerExit: 0 } };
-      durableEvaluations.set(req.requestId, receipt); if (failOnce) { failOnce = false; throw Error('Lost response after external evaluation finished'); } return receipt;
+      durableEvaluations.set(req.requestId, receipt); if (failOnce) { failOnce = false; return { status: 'uncertain', requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest }; } return completed(req, receipt);
     },
+    readEvaluation(req) { stableRequest(req); return completed(req, durableEvaluations.get(req.requestId)!); },
     async submitRelease(req) {
       stableRequest(req);
       const previous = durableSubmissions.get(req.requestId); if (previous) return previous;
@@ -133,17 +137,17 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
     assert.equal(existsSync(join(ctx.workspace, 'node_modules')), false);
     writeFileSync(dependency, 'The workspace changed after freezing.');
     failOnce = true;
-    await assert.rejects(call(ctx, options, 'candidate_evaluate', { changeId: 'change' }), error => (error as { mayHaveApplied?: boolean }).mayHaveApplied === true);
-    assert.equal((await call(ctx, options, 'change_status', { changeId: 'change' })).proposal.state, 'evaluation-dispatched');
+    assert.equal((await call(ctx, options, 'candidate_evaluate', { changeId: 'change' })).evaluation.status, 'uncertain');
+    assert.equal(store.get<ChangeRecord>('release.changes', identity({ runId: ctx.runId, id: 'change' }))!.value.state, 'evaluation-dispatched');
     await t.test('changed host policy cannot redispatch an uncertain evaluation under a new identity', async () => {
       let redispatched = false;
       const reopened = new OperationalStore({ filename: store.filename });
       try {
-        await assert.rejects(call({ ...ctx, store: reopened }, { ...options, policyDigest: hashBytes('different policy'), async requestEvaluation() { redispatched = true; throw Error('Operation dispatched again'); } }, 'candidate_evaluate', { changeId: 'change' }), /Frozen judging policy changed/);
+        await assert.rejects(call({ ...ctx, store: reopened }, { ...options, policyDigest: hashBytes('different policy'), enqueueEvaluation() { redispatched = true; throw Error('Operation dispatched again'); } }, 'candidate_evaluate', { changeId: 'change' }), /Frozen judging policy changed/);
         assert.equal(redispatched, false);
       } finally { reopened.close(); }
     });
-    await call(ctx, options, 'candidate_evaluate', { changeId: 'change' });
+    await call(ctx, options, 'change_status', { changeId: 'change' });
     assert.equal(evaluations, 1, 'Reconcile exact request instead of running the external operation twice');
     const submitted = await call(ctx, options, 'release_submit', { changeId: 'change' });
     assert.equal(submitted.state, 'submitted'); assert.equal((await call(ctx, options, 'change_status', { changeId: 'change' })).submission.status, 'staged');
@@ -241,14 +245,46 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
       finally { mock.mock.restore(); syncBuiltinESMExports(); }
       assert.equal((await call(growing, options, 'change_status', { changeId: 'change' })).proposal.state, 'proposed');
     });
+    await t.test('durable pending acknowledgment reconciles through change_status without evaluator redispatch', async () => {
+      const record = store.get<ChangeRecord>('release.changes', identity({ runId: ctx.runId, id: 'change' }))!;
+      const pending = { ...record.value, id: 'async-evaluation', state: 'frozen' as const }; delete pending.submission; delete pending.evaluation;
+      store.put('release.changes', identity({ runId: ctx.runId, id: pending.id }), pending, null);
+      let enqueues = 0, reads = 0, finished = false, stable: string | undefined;
+      const asynchronous = { ...options,
+        enqueueEvaluation(req: EvaluationRequest): EvaluationState {
+          enqueues++; stable = identity(req);
+          return { status: 'pending', requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest };
+        },
+        readEvaluation(req: EvaluationRequest): EvaluationState {
+          reads++; assert.equal(identity(req), stable);
+          if (!finished) return { status: 'pending', requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest };
+          return completed(req, { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest,
+            evidence: [evidence(req.candidate.manifest.id, { fixture: 'known-async-result' })], receipt: {} });
+        } };
+      const queued = await call(ctx, asynchronous, 'candidate_evaluate', { changeId: pending.id });
+      assert.equal(queued.evaluation.status, 'pending'); assert.equal(queued.proposal.state, 'evaluation-dispatched');
+      await call(ctx, asynchronous, 'candidate_evaluate', { changeId: pending.id }); assert.equal(enqueues, 1);
+      assert.equal((await call(ctx, asynchronous, 'change_status', { changeId: pending.id })).evaluation.status, 'pending');
+      finished = true;
+      const foreign = { ...asynchronous, readEvaluation(req: EvaluationRequest): EvaluationState {
+        return { status: 'completed', requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest,
+          evaluation: { requestId: 'foreign-run-result', candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest,
+            evidence: [evidence(req.candidate.manifest.id, {})], receipt: {} } };
+      } };
+      await assert.rejects(call(ctx, foreign, 'change_status', { changeId: pending.id }), /mismatched receipt/);
+      assert.equal(store.get<ChangeRecord>('release.changes', identity({ runId: ctx.runId, id: pending.id }))!.value.state, 'evaluation-dispatched');
+      const reconciled = await call(ctx, asynchronous, 'change_status', { changeId: pending.id });
+      assert.equal(reconciled.proposal.state, 'evaluated'); assert.equal(reconciled.evaluation.policyDigest, policy.policyDigest);
+      await call(ctx, asynchronous, 'change_status', { changeId: pending.id }); assert.equal(enqueues, 1); assert.equal(reads, 3);
+    });
     await t.test('external callback self evidence and malformed receipt cannot submit; dispatch remains durable', async () => {
       const record = store.get<ChangeRecord>('release.changes', identity({ runId: ctx.runId, id: 'change' }))!;
       const victim = { ...record.value, id: 'bad-evidence', state: 'frozen' as const }; delete victim.evaluation; delete victim.submission;
       store.put('release.changes', identity({ runId: ctx.runId, id: victim.id }), victim, null);
-      const bad = { ...options, async requestEvaluation(req: Parameters<EvolutionOptions['requestEvaluation']>[0]) { return { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: policy.policyDigest, evidence: [{ ...evidence(req.candidate.manifest.id, {}), evaluatorId: authority.generation }], receipt: {} }; } };
+      const bad = { ...options, enqueueEvaluation(req: Parameters<EvolutionOptions['enqueueEvaluation']>[0]) { return completed(req, { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: policy.policyDigest, evidence: [{ ...evidence(req.candidate.manifest.id, {}), evaluatorId: authority.generation }], receipt: {} }); } };
       await assert.rejects(call(ctx, bad, 'candidate_evaluate', { changeId: victim.id }), /Author\/self/);
-      assert.equal((await call(ctx, options, 'change_status', { changeId: victim.id })).proposal.state, 'evaluation-dispatched');
-      await assert.rejects(call(ctx, { ...bad, async requestEvaluation(req) { return { requestId: req.requestId, candidateId: accepted.manifest.id, policyDigest: policy.policyDigest, evidence: [evidence(req.candidate.manifest.id, {})], receipt: {} }; } }, 'candidate_evaluate', { changeId: victim.id }), error => (error as { mayHaveApplied?: boolean }).mayHaveApplied === true && /mismatched receipt/.test((error as Error).message));
+      assert.equal((await call(ctx, options, 'change_status', { changeId: victim.id })).proposal.state, 'frozen');
+      await assert.rejects(call(ctx, { ...bad, enqueueEvaluation(req) { return completed(req, { requestId: req.requestId, candidateId: accepted.manifest.id, policyDigest: policy.policyDigest, evidence: [evidence(req.candidate.manifest.id, {})], receipt: {} }); } }, 'candidate_evaluate', { changeId: victim.id }), error => (error as { mayHaveApplied?: boolean }).mayHaveApplied === false && /mismatched receipt/.test((error as Error).message));
       await assert.rejects(call(ctx, options, 'release_submit', { changeId: victim.id }), /External evaluation required/);
       await assert.rejects(call(ctx, options, 'candidate_evaluate', { changeId: victim.id, evidence: [] }), /Invalid evolution arguments/);
     });
@@ -256,7 +292,7 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
       const record = store.get<ChangeRecord>('release.changes', identity({ runId: ctx.runId, id: 'change' }))!;
       const pending = { ...record.value, id: 'uncertain-submit', state: 'frozen' as const }; delete pending.submission; delete pending.evaluation;
       store.put('release.changes', identity({ runId: ctx.runId, id: pending.id }), pending, null);
-      await call(ctx, { ...options, async requestEvaluation(req) { return { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest, evidence: [evidence(req.candidate.manifest.id, { fixture: 'submission-retry' })], receipt: {} }; } }, 'candidate_evaluate', { changeId: pending.id });
+      await call(ctx, { ...options, enqueueEvaluation(req) { return completed(req, { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest, evidence: [evidence(req.candidate.manifest.id, { fixture: 'submission-retry' })], receipt: {} }); } }, 'candidate_evaluate', { changeId: pending.id });
       let dispatches = 0; const receipts = new Map<string, SubmissionReceipt>();
       const uncertain = { ...options, async submitRelease(req: Parameters<EvolutionOptions['submitRelease']>[0]) { if (receipts.has(req.requestId)) return receipts.get(req.requestId)!; dispatches++; receipts.set(req.requestId, { requestId: req.requestId, candidateId: req.candidate.manifest.id, status: 'rejected', receipt: { reason: 'bounded fixture decision' } }); throw Error('Lost reply after host decision'); } };
       await assert.rejects(call(ctx, uncertain, 'release_submit', { changeId: pending.id }), error => (error as { mayHaveApplied?: boolean }).mayHaveApplied === true);
@@ -274,22 +310,20 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
       await assert.rejects(call(ctx, { ...options, async submitRelease() { dispatched = true; throw Error('Must never dispatch'); } }, 'release_submit', { changeId: forged.id }), /mismatched receipt/);
       assert.equal(dispatched, false);
     });
-    await t.test('cancellation after evaluator completion preserves uncertainty and the original retry request', async () => {
+    await t.test('aborted durable enqueue rolls back its proposal transition without inventing an external operation', async () => {
       const record = store.get<ChangeRecord>('release.changes', identity({ runId: ctx.runId, id: 'change' }))!;
       const pending = { ...record.value, id: 'cancel-evaluation', state: 'frozen' as const }; delete pending.evaluation; delete pending.submission;
       store.put('release.changes', identity({ runId: ctx.runId, id: pending.id }), pending, null);
-      const abort = new AbortController(); let received: EvaluationReceipt | undefined, originalRequest: string | undefined, completed = 0;
-      const interrupted = { ...options, async requestEvaluation(req: Parameters<EvolutionOptions['requestEvaluation']>[0]) {
-        if (received) { assert.equal(identity(req), originalRequest); return received; }
-        completed++; originalRequest = identity(req);
-        received = { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest, evidence: [evidence(req.candidate.manifest.id, { fixture: 'cancel-after-completion' })], receipt: {} };
-        abort.abort(); return received;
+      const abort = new AbortController(); let enqueues = 0;
+      const interrupted = { ...options, enqueueEvaluation(req: EvaluationRequest) {
+        enqueues++; abort.abort();
+        return completed(req, { requestId: req.requestId, candidateId: req.candidate.manifest.id, policyDigest: req.policyDigest,
+          evidence: [evidence(req.candidate.manifest.id, { fixture: 'enqueue-aborted' })], receipt: {} });
       } };
       const tool = evolutionTools(ctx, interrupted).find(tool => tool.name === 'candidate_evaluate')!;
-      await assert.rejects(Promise.resolve().then(() => tool.execute({ changeId: pending.id }, abort.signal)), error => (error as { mayHaveApplied?: boolean }).mayHaveApplied === true);
-      assert.equal((await call(ctx, options, 'change_status', { changeId: pending.id })).proposal.state, 'evaluation-dispatched');
-      const evaluated = await call(ctx, interrupted, 'candidate_evaluate', { changeId: pending.id });
-      assert.equal(evaluated.state, 'evaluated'); assert.equal(completed, 1);
+      await assert.rejects(Promise.resolve().then(() => tool.execute({ changeId: pending.id }, abort.signal)), error => (error as { mayHaveApplied?: boolean }).mayHaveApplied === false);
+      assert.equal((await call(ctx, options, 'change_status', { changeId: pending.id })).proposal.state, 'frozen');
+      assert.equal(enqueues, 1);
     });
     // A new database handle/factory can retrieve exact artifacts after restart.
     const reopened = new OperationalStore({ filename: store.filename });

@@ -10,6 +10,7 @@ import { freezeApplication, verifyApplication, type DeploymentInputs } from './c
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { isHumanInput } from './input-origin.ts';
 import { availableModelProfiles, selectModelProfile, type ModelProfile } from './model-grants.ts';
+import { watchEvaluation, reconcileEvaluationWatch } from './evolution-continuation.ts';
 import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority }
@@ -18,6 +19,8 @@ export interface IndependentSelfOrigin { goalId: string; goalDefinition: string;
 export function goalDefinitionIdentity(goal: Goal): string { return identity({ id: goal.id, origin: goal.origin, purpose: goal.purpose, scope: goal.scope, successCriteria: goal.successCriteria }); }
 export interface EvaluationRequest { requestId: string; proposal: ChangeRecord; candidate: FrozenCandidate; policyDigest: string }
 export interface EvaluationReceipt { requestId: string; candidateId: string; policyDigest: string; evidence: EvaluationEvidence[]; receipt: JsonValue }
+export type EvaluationState = { requestId: string; candidateId: string; policyDigest: string } &
+  ({ status: 'pending' | 'dispatched' | 'uncertain'; diagnosis?: string } | { status: 'completed'; evaluation: EvaluationReceipt });
 export interface SubmissionRequest extends EvaluationRequest { evaluation: EvaluationReceipt }
 export interface SubmissionReceipt { requestId: string; candidateId: string; status: 'admitted' | 'staged' | 'rejected'; receipt: JsonValue }
 export interface EvolutionOptions {
@@ -30,7 +33,8 @@ export interface EvolutionOptions {
   /** A trusted origin claim must match the admitted/steering input and, for self, the host initiative execution. */
   provenanceForRun(context: EvolutionContext): ChangeProvenance;
   /** These callbacks must enforce frozen external policy and idempotently reconcile requestId; no author credentials enter the workspace. */
-  requestEvaluation(request: EvaluationRequest, signal?: AbortSignal): Promise<EvaluationReceipt>;
+  enqueueEvaluation(request: EvaluationRequest, signal?: AbortSignal): EvaluationState;
+  readEvaluation(request: EvaluationRequest): EvaluationState;
   submitRelease(request: SubmissionRequest, signal?: AbortSignal): Promise<SubmissionReceipt>;
 }
 const string = { type: 'string', minLength: 1, maxLength: 8192 };
@@ -169,6 +173,18 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     invariant(receipt.requestId === requestId(proposal, 'evaluate') && receipt.candidateId === proposal.candidate!.id && receipt.policyDigest === proposal.judgingPolicyDigest && receipt.evidence.length > 0, 'External evaluator returned a mismatched receipt');
     receipt.evidence.forEach(evidence => { validateEvaluation(evidence); invariant(evidence.candidateId === receipt.candidateId && evidence.controlRevision === proposal.authority.controlRevision && evidence.independent && evidence.evaluatorId !== proposal.candidate!.createdBy, 'Author/self or mismatched evaluator evidence rejected'); });
   };
+  const validateState = (state: EvaluationState, req: EvaluationRequest): void => {
+    invariant(state && ['pending', 'dispatched', 'uncertain', 'completed'].includes(state.status) && state.requestId === req.requestId &&
+      state.candidateId === req.candidate.manifest.id && state.policyDigest === req.policyDigest, 'External evaluator returned a mismatched durable job');
+    if (state.status === 'completed') validateReceipt(state.evaluation, req.proposal);
+  };
+  const acceptEvaluation = (proposal: ChangeRecord, req: EvaluationRequest, receipt: EvaluationReceipt): ChangeRecord => {
+    validateReceipt(receipt, proposal); allowed();
+    const current = proposals.get(proposal.id);
+    if (current.evaluation) { invariant(identity(bound.store.readJsonArtifact(current.evaluation)) === identity(receipt), 'External evaluation changed after reconciliation'); return current; }
+    const evaluated = proposals.transition(proposal.id, 'evaluation-dispatched', 'evaluated', { evaluation: proposals.artifact(receipt) });
+    reconcileEvaluationWatch(bound.store, req.requestId); return evaluated;
+  };
   const request = (proposal: ChangeRecord, action: string): EvaluationRequest => {
     invariant(proposal.candidate, 'Candidate has not been frozen'); assertAuthority(proposal.authority, bound.authority);
     const id = requestId(proposal, action);
@@ -216,17 +232,25 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
         return proposals.transition(id, 'proposed', 'frozen', { candidate: candidate.manifest, judgingPolicyDigest: options.policyDigest });
       } finally { rmSync(staging, { recursive: true, force: true }); }
     },
-  }, { name: 'candidate_evaluate', description: 'Request evaluation of the exact frozen candidate from the external host evaluator under previously accepted frozen policy. Author tests and model text cannot supply independent evidence.', inputSchema: schema({ changeId: string }, ['changeId']),
-    async execute(args, signal) {
-      allowed(signal); const id = idArgs(args), proposal = proposals.get(id);
-      if (proposal.evaluation) return proposal;
+  }, { name: 'candidate_evaluate', description: 'Durably queue evaluation of this exact frozen candidate under the prior accepted policy and immediately return known job status. Read change_status when the host result arrives. Set continueOnResult false to decline automatic continuation; this does not cancel a physical review. Author tests and text cannot supply independent evidence.', inputSchema: schema({ changeId: string, continueOnResult: { type: 'boolean' } }, ['changeId']),
+    execute(args, signal) {
+      allowed(signal); const a = object(args, ['changeId', 'continueOnResult']), id = text(a.changeId), proposal = proposals.get(id);
+      invariant(a.continueOnResult === undefined || typeof a.continueOnResult === 'boolean', 'Boolean evolution continuation required');
+      if (proposal.evaluation) {
+        const evaluation = bound.store.readJsonArtifact<EvaluationReceipt>(proposal.evaluation); validateReceipt(evaluation, proposal);
+        return { proposal, evaluation: { status: 'completed', requestId: evaluation.requestId, candidateId: evaluation.candidateId, policyDigest: evaluation.policyDigest, evaluation } };
+      }
       invariant(['frozen', 'evaluation-dispatched'].includes(proposal.state), 'Freeze before external evaluation');
-      const req = request(proposal, 'evaluate'); if (proposal.state === 'frozen') proposals.transition(id, 'frozen', 'evaluation-dispatched');
-      try {
-        const receipt = await options.requestEvaluation(req, signal);
-        validateReceipt(receipt, proposal);
-        allowed(signal); return proposals.transition(id, 'evaluation-dispatched', 'evaluated', { evaluation: proposals.artifact(receipt) });
-      } catch (cause) { throw Object.assign(new Error(`External evaluation unresolved; reconcile durable request ID: ${cause instanceof Error ? cause.message : 'invalid host result'}`, { cause }), { mayHaveApplied: true }); }
+      const req = request(proposal, 'evaluate');
+      // Queue, proposal status and wake subscription commit together; no review wait occupies a tool slice.
+      try { return bound.store.transaction(() => {
+        allowed(signal); const state = proposal.state === 'frozen' ? options.enqueueEvaluation(req, signal) : options.readEvaluation(req);
+        validateState(state, req); allowed(signal);
+        let current = proposal.state === 'frozen' ? proposals.transition(id, 'frozen', 'evaluation-dispatched') : proposal;
+        if (state.status === 'completed') current = acceptEvaluation(current, req, state.evaluation);
+        else watchEvaluation(bound.store, req, a.continueOnResult !== false && state.status !== 'uncertain');
+        return { proposal: current, evaluation: state };
+      }); } catch (cause) { throw Object.assign(new Error(`External evaluation enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid host result'}`, { cause }), { mayHaveApplied: false }); }
     },
   }, { name: 'release_submit', description: 'Submit this exact candidate and externally issued evaluation receipt to the admitted host release controller. The host decides rejection, ordinary admission or separately staged control upgrade; this tool grants no new authority.', inputSchema: schema({ changeId: string }, ['changeId']),
     async execute(args, signal) {
@@ -244,6 +268,17 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       } catch (cause) { throw Object.assign(new Error(`Release submission unresolved; reconcile durable host request ID: ${cause instanceof Error ? cause.message : 'invalid host result'}`, { cause }), { mayHaveApplied: true }); }
     },
   }, { name: 'change_status', description: 'Read this run’s durable change proposal, immutable candidate, and host evaluation/submission receipts, including unresolved dispatched operations.', inputSchema: schema({ changeId: string }, ['changeId']),
-    execute(args, signal) { allowed(signal); const proposal = proposals.get(idArgs(args)); return { proposal, evaluation: proposal.evaluation ? bound.store.readJsonArtifact(proposal.evaluation) : null, submission: proposal.submission ? bound.store.readJsonArtifact(proposal.submission) : null }; },
+    execute(args, signal) {
+      allowed(signal); const id = idArgs(args);
+      return bound.store.transaction(() => {
+        let proposal = proposals.get(id), state: EvaluationState | undefined;
+        if (!proposal.evaluation && proposal.state === 'evaluation-dispatched') {
+          const req = request(proposal, 'evaluate'); state = options.readEvaluation(req); validateState(state, req);
+          if (state.status === 'completed') proposal = acceptEvaluation(proposal, req, state.evaluation);
+        }
+        return { proposal, evaluation: proposal.evaluation ? bound.store.readJsonArtifact(proposal.evaluation) : state ?? null,
+          submission: proposal.submission ? bound.store.readJsonArtifact(proposal.submission) : null };
+      });
+    },
   }];
 }

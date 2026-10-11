@@ -36,7 +36,7 @@ function response(name?: string, args: unknown = {}) {
   return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: name ? 'tool_calls' : 'stop', message: name ? { role: 'assistant', content: null, tool_calls: [{ id: name.replaceAll('_', '').slice(0, 9), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Finite fixture finished.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
 }
 
-test('ordinary service model tools freeze exact source, wait for external proof and stage through the real controller', { timeout: 90000 }, async t => {
+test('ordinary service model tools queue evaluation, resume bound feedback and stage through the real controller', { timeout: 90000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-evolution-host-'));
   const source = join(root, 'source'); copySource(source);
   const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
@@ -66,8 +66,7 @@ test('ordinary service model tools freeze exact source, wait for external proof 
   let calls = 0, app: AutarkApplication | undefined;
   const modifiedPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
   const modifiedBytes = readFileSync(join(source, modifiedPath), 'utf8') + '\nexport const hostFixtureRevision = "external-build-bound";\n';
-  try {
-    app = new AutarkApplication({ config, authority, authorityStore, secrets: { mistralApiKey: 'no-provider-call', directToken: 'fixture' },
+  const createApp = () => new AutarkApplication({ config, authority, authorityStore, secrets: { mistralApiKey: 'no-provider-call', directToken: 'fixture' },
       additionalTools: context => ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, evolution: { policyDigest: policy.policyDigest }, assertAuthority: grant => authorityStore.assert(grant) }),
       performRequest: async payload => {
         const request = JSON.parse(payload);
@@ -78,9 +77,12 @@ test('ordinary service model tools freeze exact source, wait for external proof 
         if (calls === 3) return response('change_propose', { changeId: 'finite', justification: 'Verify exact candidate external build and host stage.', objective: 'Stage this bounded engineering source change.', successCriteria: ['exact candidate compiles under the accepted closure'], experienceIds: [] });
         if (calls === 4) return response('candidate_freeze', { changeId: 'finite' });
         if (calls === 5) return response('candidate_evaluate', { changeId: 'finite' });
-        if (calls === 6) return response('release_submit', { changeId: 'finite' });
+        if (calls === 7) return response('change_status', { changeId: 'finite' });
+        if (calls === 8) return response('release_submit', { changeId: 'finite' });
         return response();
       } });
+  try {
+    app = createApp();
     const run = app.communications.receive({ source: 'direct', externalId: 'finite', revision: '1', conversation: 'finite', text: 'Make the finite engineering change.', actor: { id: 'operator', scope: config.direct.scope, modificationEligible: true } }).run;
     const execution = app.resume(run.id);
     const evaluation = await eventually(() => {
@@ -88,6 +90,13 @@ test('ordinary service model tools freeze exact source, wait for external proof 
       if (!found && ['completed', 'blocked'].includes(app!.runtime.getRun(run.id)!.status)) throw Error(JSON.stringify({ calls, run: app!.runtime.getRun(run.id), resources: app!.resources.snapshot(run.id), lastResult: app!.store.get<{ lastResult?: { reason?: string; kind?: string; status?: string } }>('execution', run.id)?.value.lastResult?.reason, observations: app!.runtime.observations(run.id).map(value => ({ kind: value.kind, sourceId: value.sourceId, error: value.value && typeof value.value === 'object' && !Array.isArray(value.value) ? value.value.error : undefined })) }));
       return found;
     }, Boolean);
+    assert.equal((await execution).status, 'waiting');
+    assert.equal(calls, 6); assert.equal(app.effects.unresolved(run.id).length, 0);
+    assert.equal(mailbox.readEvaluation(mailbox.request(evaluation!.id) as EvaluationRequest).status, 'pending');
+    const usedBeforeRestart = app.resources.snapshot(run.id);
+    await app.close(); app = undefined;
+    // A known queued review can finish while no author process is alive.
+    await new Promise(resolve => setTimeout(resolve, 80));
     let engineeringResult: ExternalEvaluation | undefined;
     await mailbox.processEvaluation(evaluation!.id, async request => {
       const payload = join(host.artifactStore, request.candidate.manifest.id, 'payload');
@@ -96,6 +105,11 @@ test('ordinary service model tools freeze exact source, wait for external proof 
       assert.equal(checked.status, 0, checked.stdout + checked.stderr);
       engineeringResult = proof(request.requestId, request.candidate.manifest, JSON.parse(JSON.stringify({ compilerExit: checked.status, manifest: request.candidate.manifest })) as JsonValue); return engineeringResult;
     });
+    app = createApp();
+    assert.equal(app.runtime.getRun(run.id)!.status, 'waiting');
+    assert.deepEqual(app.resources.snapshot(run.id).requests, usedBeforeRestart.requests);
+    assert.equal(calls, 6, 'Restart does not repeat the author or reviewer request');
+    await app.tick();
     const submission = await eventually(() => mailbox.jobs().find(job => job.kind === 'submission'), Boolean);
     await mailbox.processSubmission(submission!.id, async (request, externalProof) => {
       assert.deepEqual(externalProof, engineeringResult!.proof);
@@ -104,7 +118,8 @@ test('ordinary service model tools freeze exact source, wait for external proof 
       const stageId = controller.stageControlUpgrade(externalProof, next);
       return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status: 'staged', receipt: { stageId, kind: 'engineering' } };
     });
-    assert.equal((await execution).status, 'completed'); assert.equal(calls, 7);
+    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, 9);
+    assert.equal(app.store.events(run.id).filter(event => event.type === 'steering' && (event.data as any).source === 'host.evolution').length, 1);
     assert.equal(controller.status()!.phase, 'accepted'); assert.equal(authorityStore.current()!.artifactId, accepted.manifest.id);
     assert.equal(mailbox.status(submission!.id)!.status, 'completed');
     const changes = app.store.list<{ state: string }>('release.changes'); assert.equal(changes[0]!.value.state, 'submitted');
