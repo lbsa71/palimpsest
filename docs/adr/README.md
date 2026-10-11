@@ -1,5 +1,7 @@
 # Architecture decision records
 
+**Active rewrite direction:** [ADR 0031](0031-aeon-rewrite-and-prompt-sovereignty.md), [requirements](../../REQUIREMENTS.md) and [Aeon plan](../../PLAN.md). ADRs 0001–0030 below describe the retired implementation and historical product directions. Their original statuses are preserved for provenance; they are not automatically adopted constraints or current deployment claims. Any retained mechanism needs an explicit rewrite decision.
+
 These records preserve the decisions and proposals recoverable from the [referenced conversation](../research/source-analysis.md), followed by implementation decisions discovered during development. Their status describes the decision; [progress](../progress.md) records actual runtime verification.
 
 **Accepted direction** means an explicit user mandate or the broad synthesis the user accepted. It does not convert every assistant implementation suggestion into a settled technical choice. **Proposed** means a supporting design presented by the assistant without a later explicit decision on that detail. No ADR here claims a deployed system or completed runtime validation.
