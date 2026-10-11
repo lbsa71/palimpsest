@@ -195,4 +195,6 @@ test('the consolidation tool binds audience and keeps queueing distinct from com
   const result = tool.execute({ id: 'queued', sourceIds: ['public'], dueAt: at }); assert.ok('state' in result);
   assert.equal(result.state, 'pending'); assert.deepEqual(result.scope, bob);
   assert.deepEqual(result.outputIds, []); assert.equal(memory.get('queued', bob), undefined);
+  const aliceJob = developmentTools(memory, alice)[1].execute({ id: 'queued', sourceIds: ['public'], dueAt: at }); assert.ok('state' in aliceJob);
+  assert.notEqual(aliceJob.id, result.id); assert.equal(aliceJob.state, 'pending');
 });

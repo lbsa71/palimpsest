@@ -224,7 +224,9 @@ export function developmentTools(memory: DevelopmentalMemory, audience: DataScop
       invariant(args !== null && typeof args === 'object' && !Array.isArray(args), 'expected object');
       invariant(Object.keys(args).every(key => ['id', 'sourceIds', 'dueAt'].includes(key)), 'unknown consolidation argument');
       invariant(typeof args.id === 'string' && typeof args.dueAt === 'string' && Array.isArray(args.sourceIds) && args.sourceIds.length <= 32 && args.sourceIds.every(id => typeof id === 'string'), 'invalid consolidation arguments');
-      return memory.scheduleConsolidation(args.id, args.sourceIds as string[], boundAudience, args.dueAt);
+      // Model-selected names cannot probe another audience's job namespace through CAS errors.
+      nonempty(args.id, 'job id');
+      return memory.scheduleConsolidation(`tool:${identity(boundAudience)}:${args.id}`, args.sourceIds as string[], boundAudience, args.dueAt);
     },
   }];
 }
