@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PromptManifest, type Run, type Observation, type ShellPort } from '../packages/contracts/index.ts';
+import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort } from '../packages/contracts/index.ts';
 import type { Tool } from '../packages/agent-shell/vendor/pi/ai/types.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
@@ -109,9 +109,25 @@ export class AutarkApplication {
         const grant = this.grant(runId); const childrenRoot = join(config.workspaceDirectory, `children-${identity(runId)}`); mkdirSync(childrenRoot, { recursive: true, mode: 0o700 });
         const parentTask = this.store.list<{ result?: { childRunId: string }; depth: number }>('delegations').find(row => row.value.result?.childRunId === runId);
         const assignedDepth = this.store.get<{ depth: number }>('host.child-runs', runId)?.value.depth ?? parentTask?.value.depth ?? 0;
+        const allocations = this.delegationAllocations(runId), resources = { ...allocations[0]!.envelope };
+        for (const allocation of allocations) for (const key of Object.keys(resources) as (keyof ResourceEnvelope)[]) resources[key] = Math.min(resources[key], allocation.envelope[key]);
+        const parentChild = this.store.get<{ taskId: string }>('host.child-runs', runId)?.value;
+        const maxDepth = parentChild ? Math.min(2, this.delegation.get(parentChild.taskId)!.task.maxDepth) : 2;
         // The waiting parent occupies a run slot and its delegation receiver a physical slot.
-        return { scope: grant.scope, writableRoots: [childrenRoot], allowedEffects: this.toolGrant(runId).actions.filter(name => name !== 'speech_send'), resources: config.conversationResources,
-          modelProfiles: [{ provider: config.model.provider ?? 'mistral', model: config.model.id, effort: config.model.reasoning ? config.model.effort : null }], currentDepth: assignedDepth, maxDepth: 2, maxChildren: 8, maxConcurrency: Math.min(2, config.maxConcurrentRuns - 1, config.conversationResources.maxConcurrency - 1, config.resources.maxConcurrency - 1) };
+        return { scope: grant.scope, writableRoots: [childrenRoot], allowedEffects: this.toolGrant(runId).actions.filter(name => name !== 'speech_send'), resources,
+          modelProfiles: [{ provider: config.model.provider ?? 'mistral', model: config.model.id, effort: config.model.reasoning ? config.model.effort : null }], currentDepth: assignedDepth, maxDepth, maxChildren: 8, maxConcurrency: Math.min(2, config.maxConcurrentRuns - 1, resources.maxConcurrency - 1) };
+      },
+      validateAdmission: tasks => {
+        invariant(this.occupied() + tasks.length <= config.maxConcurrentRuns, 'Application concurrency exhausted');
+        for (const task of tasks) {
+          invariant(task.writablePaths.length === 1, 'Current child runtime requires one exclusive workspace');
+          invariant(this.store.get<{ runId: string }>('host.prepared-workspaces', task.writablePaths[0]!)?.value.runId === task.parentRunId, 'Child workspace was not prepared by this parent');
+        }
+        for (const allocation of this.delegationAllocations(tasks[0]!.parentRunId)) {
+          const ids = new Set([allocation.runId, ...this.resources.descendants(allocation.runId)]);
+          const concurrent = this.store.list<{ request: { runId: string; status: string } }>('requests').filter(row => ids.has(row.value.request.runId) && ['reserved', 'dispatched', 'uncertain'].includes(row.value.request.status)).length;
+          invariant(!allocation.cancelled && concurrent + tasks.length <= allocation.envelope.maxConcurrency, 'Ancestor delegation concurrency exhausted or cancelled');
+        }
       },
       artifactScope: artifact => { const record = this.store.get<{ scope: DataScope }>('host.artifact-scopes', artifact.sha256); invariant(record, 'Artifact has no authenticated disclosure scope'); return record.value.scope; },
       executeChild: async (task, signal) => {
@@ -219,6 +235,16 @@ export class AutarkApplication {
     this.store.put('host.run-grants', runId, value, null); return value;
   }
   private managedElsewhere(runId: string): boolean { return !!this.store.get('host.child-runs', runId) || [...this.store.list<{ runId: string }>('initiative.execution'), ...this.store.list<{ runId: string }>('host.delivery-runs')].some(row => row.value.runId === runId); }
+  private delegationAllocations(runId: string): { runId: string; envelope: ResourceEnvelope; cancelled: boolean }[] {
+    const allocations: { runId: string; envelope: ResourceEnvelope; cancelled: boolean }[] = [];
+    for (let id: string | undefined = runId; id;) {
+      invariant(!allocations.some(allocation => allocation.runId === id), 'Cyclic delegation allocation');
+      const allocation: { envelope: ResourceEnvelope; parentRunId?: string; cancelled: boolean } | undefined = this.store.get<{ envelope: ResourceEnvelope; parentRunId?: string; cancelled: boolean }>('allocations', id)?.value;
+      invariant(allocation, 'Missing parent delegation allocation');
+      allocations.push({ runId: id, envelope: allocation.envelope, cancelled: allocation.cancelled }); id = allocation.parentRunId;
+    }
+    return allocations;
+  }
   private occupied(): number { return this.active.size + (this.initiativeTask ? 1 : 0); }
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);

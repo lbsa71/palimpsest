@@ -539,6 +539,69 @@ function childPacket(f: ReturnType<typeof fixture>, prepared: any, id: string) {
   return { id, parentRunId: prepared.parentRunId, parentGoalId: 'parallel-fixture', objective: `Execute bounded arithmetic evidence for ${id}.`, acceptanceCriteria: ['Command prints 36'], inputs: [], writablePaths: [prepared.workspace], allowedEffects: ['workspace_write', 'workspace_read', 'command_run'], resources: prepared.grant.resources, modelPolicy: prepared.grant.modelProfiles[0], scope: prepared.grant.scope, provenance: { sourceIds: ['authenticated-fixture'], actorId: f.authority.generation, recordedAt: new Date().toISOString(), derivation: 'interpreted' as const }, outputLocation: 'result.mjs', cancellationConditions: ['parent cancellation'], maxDepth: 1 };
 }
 
+test('delegation review registration rejects an unprepared second workspace before recording either sibling', async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3;
+  const app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw Error('No physical execution in registration review'); } });
+  try {
+    const run = app.runtime.admit({ id: 'review-parent', source: 'direct', externalId: 'review-parent', externalRevision: '1', actorId: 'operator', authenticated: true, scope: f.config.direct.scope, value: 'review' }, f.authority, f.config.conversationResources, 'operating-envelope:v1');
+    app.store.put('host.run-grants', run.id, { scope: run.scope, workspace: f.config.workspaceDirectory }, null);
+    const grant = app.delegation.options.grantForParent(run.id), a = join(grant.writableRoots[0]!, 'prepared'), b = join(grant.writableRoots[0]!, 'unprepared'); mkdirSync(a); mkdirSync(b);
+    app.store.put('host.prepared-workspaces', a, { runId: run.id }, null);
+    const packets = [a, b].map((workspace, i) => childPacket(f, { parentRunId: run.id, workspace, grant }, `review-${i}`));
+    assert.throws(() => app.delegation.createBatch(packets, run.id), /not prepared/);
+    assert.equal(app.store.list('delegations').length, 0); assert.equal(app.resources.descendants(run.id).length, 0);
+    app.store.put('host.prepared-workspaces', b, { runId: 'foreign-parent' }, null);
+    assert.throws(() => app.delegation.createBatch(packets, run.id), /not prepared/);
+    const bRow = app.store.get('host.prepared-workspaces', b)!; app.store.put('host.prepared-workspaces', b, { runId: run.id }, bRow.revision);
+    assert.throws(() => app.delegation.createBatch([packets[0]!, { ...packets[1]!, writablePaths: [a, b] }], run.id), /one exclusive workspace/);
+    assert.equal(app.store.list('delegations').length, 0);
+  } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('delegation review preflights the whole batch against occupied ancestor physical slots', async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3; f.config.resources = { ...f.config.resources, maxConcurrency: 3 }; f.config.conversationResources = f.config.resources; f.config.scheduler.resources = f.config.resources;
+  const app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw Error('No physical execution in capacity review'); } });
+  try {
+    const run = app.runtime.admit({ id: 'review-parent', source: 'direct', externalId: 'review-parent', externalRevision: '1', actorId: 'operator', authenticated: true, scope: f.config.direct.scope, value: 'review' }, f.authority, f.config.conversationResources, 'operating-envelope:v1');
+    const grant = app.delegation.options.grantForParent(run.id);
+    const packets = ['a', 'b'].map(id => { const workspace = join(grant.writableRoots[0]!, id); mkdirSync(workspace); app.store.put('host.prepared-workspaces', workspace, { runId: run.id }, null); return childPacket(f, { parentRunId: run.id, workspace, grant }, id); });
+    app.resources.allocate('other-parent', f.config.resources, 'operating-envelope:v1');
+    for (const [id, runId] of [['parent-receiver', run.id], ['other-unknown', 'other-parent']] as const) {
+      const request = { id, runId, purpose: 'reasoning' as const, provider: 'fixture', model: 'fixture', promptManifestId: 'fixture', requestDigest: 'a'.repeat(64), reservationId: id, status: 'reserved' as const, usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
+      app.resources.reserve(request); app.resources.dispatched({ ...request, status: 'dispatched' });
+      if (runId === 'other-parent') app.resources.settle({ ...request, status: 'uncertain' });
+    }
+    assert.equal(grant.maxConcurrency, 2);
+    assert.throws(() => app.delegation.createBatch(packets, run.id), /Ancestor delegation concurrency/);
+    assert.equal(app.store.list('delegations').length, 0); assert.equal(app.resources.descendants(run.id).length, 0);
+    assert.equal(app.resources.snapshot(run.id).requests, 2); assert.equal(app.resources.snapshot(run.id).concurrent, 2);
+  } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('delegation review grant follows the persisted parent and every ancestor allocation', async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3;
+  const app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw Error('No physical execution in grant review'); } });
+  try {
+    const ancestorResources = { ...f.config.resources, maxRequests: 40, maxConcurrency: 2 };
+    app.resources.allocate('review-ancestor', ancestorResources, 'operating-envelope:v1');
+    const parentResources = { ...f.config.conversationResources, maxTokens: 500_000, maxConcurrency: 3 };
+    const run = app.runtime.admit({ id: 'review-parent', source: 'direct', externalId: 'review-parent', externalRevision: '1', actorId: 'operator', authenticated: true, scope: f.config.direct.scope, value: 'review' }, f.authority, parentResources, 'review-ancestor');
+    app.store.put('host.run-grants', run.id, { scope: run.scope, workspace: f.config.workspaceDirectory }, null);
+    const grant = app.delegation.options.grantForParent(run.id);
+    assert.equal(grant.resources.maxTokens, parentResources.maxTokens);
+    assert.equal(grant.resources.maxRequests, ancestorResources.maxRequests);
+    assert.equal(grant.resources.maxConcurrency, 2); assert.equal(grant.maxConcurrency, 1);
+    const workspace = join(grant.writableRoots[0]!, 'bounded-child'); mkdirSync(workspace); app.store.put('host.prepared-workspaces', workspace, { runId: run.id }, null);
+    const packet = { ...childPacket(f, { parentRunId: run.id, workspace, grant }, 'depth-one'), allowedEffects: ['workspace_read'], maxDepth: 1 };
+    app.delegation.create(packet);
+    const child = app.runtime.admit({ id: 'review-child', source: 'delegation', externalId: 'review-child', externalRevision: '1', actorId: 'operator', authenticated: true, scope: run.scope, value: 'review' }, f.authority, grant.resources, run.id);
+    app.store.put('host.run-grants', child.id, { scope: child.scope, workspace }, null);
+    app.store.put('host.child-runs', child.id, { taskId: packet.id, depth: 1, allowedEffects: packet.allowedEffects }, null);
+    const childGrant = app.delegation.options.grantForParent(child.id);
+    assert.equal(childGrant.currentDepth, 1); assert.equal(childGrant.maxDepth, 1); assert.deepEqual(childGrant.allowedEffects, ['workspace_read']);
+  } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test('ordinary parallel delegation overlaps two confined child shells, inspects real command artifacts and integrates accepted evidence', { timeout: 30000 }, async () => {
   const f = fixture(); f.config.maxConcurrentRuns = 3;
   let app: AutarkApplication | undefined, parentCalls = 0, entered = 0, maxPhysical = 0;
@@ -609,6 +672,27 @@ test('ordinary parallel delegation grant rejects excess sibling concurrency befo
     await app.start(); const run = receive(app, f, 'excess-parallel');
     await eventually(() => app!.runtime.getRun(run.id)?.status, value => ['completed', 'blocked', 'waiting'].includes(value ?? ''));
     assert.equal(app.runtime.getRun(run.id)?.status, 'completed'); assert.equal(calls, 4);
+    assert.equal(app.store.list('delegations').length, 0); assert.equal(app.store.list('host.child-runs').length, 0); assert.equal(app.resources.descendants(run.id).length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary parallel delegation rejects a whole batch when another parent occupies a host run slot', { timeout: 20000 }, async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3;
+  let app: AutarkApplication | undefined, busy = false, calls = 0, childCalls = 0, preparedA: any;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async (payload, signal) => {
+      const request = parsed(payload), frame = context(request);
+      if (!frame.target) { childCalls++; throw Error('No partial sibling admission'); }
+      if (frame.target.channel === 'busy-parent') { busy = true; return await new Promise<never>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); }
+      calls++;
+      if (calls === 1 || calls === 2) { if (calls === 2) preparedA = receipt(request); return tool('delegation_prepare', {}); }
+      if (calls === 3) return tool('delegation_start_batch', { tasks: [childPacket(f, preparedA, 'occupied-a'), childPacket(f, receipt(request), 'occupied-b')] });
+      assert.match(receipt(request).error, /Application concurrency exhausted/); return stop('Wait for available sibling capacity.');
+    } });
+    await app.start(); receive(app, f, 'busy-parent'); await eventually(() => busy, value => value);
+    const run = receive(app, f, 'occupied-parallel');
+    await eventually(() => app!.runtime.getRun(run.id)?.status, value => ['completed', 'blocked', 'waiting'].includes(value ?? ''));
+    assert.equal(app.runtime.getRun(run.id)?.status, 'completed'); assert.equal(calls, 4); assert.equal(childCalls, 0);
     assert.equal(app.store.list('delegations').length, 0); assert.equal(app.store.list('host.child-runs').length, 0); assert.equal(app.resources.descendants(run.id).length, 0);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });

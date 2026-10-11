@@ -79,9 +79,40 @@ test('bounded batch registration is atomic and returns every completed or uncert
     assert.throws(()=>coordinator.createBatch([task('a',a),task('b',a)],'p'),/already owned/);
     assert.equal(store.list('delegations').length,0);assert.equal(calls,0);
     grant.maxConcurrency=1;assert.throws(()=>coordinator.createBatch([task('a',a),task('b',b)],'p'),/concurrency grant/);assert.equal(store.list('delegations').length,0);grant.maxConcurrency=2;
+    for (const invalid of [
+      {...task('b',b),id:'a'}, {...task('b',b),parentRunId:'foreign'},
+      {...task('b',b),modelPolicy:{...modelPolicy,model:'unavailable'}},
+      {...task('b',b),resources:{...envelope,maxRequests:101}},
+      {...task('b',b),maxDepth:0}, {...task('b',b),allowedEffects:['speech_send']},
+    ]) {
+      assert.throws(()=>coordinator.createBatch([task('a',a),invalid],'p'));
+      assert.equal(store.list('delegations').length,0);assert.equal(calls,0);
+    }
+    grant.maxChildren=1;assert.throws(()=>coordinator.createBatch([task('a',a),task('b',b)],'p'),/child count/);assert.equal(store.list('delegations').length,0);grant.maxChildren=2;
     const result=await coordinator.dispatch(effect);assert.equal(result.outcome,'uncertain');
     const receipt=store.readJsonArtifact(result.receipt!) as any;assert.equal(receipt.children.length,2);assert.equal(receipt.children[0].record.status,'completed');assert.equal(receipt.children[1].record.status,'uncertain');assert.match(receipt.children[1].error,/lost child response/);
     assert.equal((await coordinator.dispatch(effect)).outcome,'failed');assert.equal(calls,2);
     coordinator.recover();assert.equal(coordinator.get('b')?.status,'uncertain');
   }finally{store.close();rmSync(f.root,{recursive:true,force:true});}
+});
+
+test('bounded batch waits for a cancelled sibling to drain after another child loses its response',async()=>{
+  const f=fixture(),store=new OperationalStore({filename:join(f.state,'state.sqlite')}),a=join(f.work,'a'),b=join(f.work,'b');mkdirSync(a);mkdirSync(b);
+  const grant:DelegationGrant={scope:{kind:'public'},writableRoots:[f.work],allowedEffects:[],resources:envelope,modelProfiles:[modelPolicy],maxDepth:1,currentDepth:0,maxChildren:2,maxConcurrency:2};
+  let release!:()=>void,entered!:()=>void,finished=false,aborted=false;
+  const drain=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{entered=resolve;}),controller=new AbortController();
+  const coordinator=new DelegationCoordinator({store,fence:{assert(){}},grantForParent:()=>grant,artifactScope:()=>({kind:'public'}),executeChild:async(task,signal)=>{
+    if(task.id==='a')throw Error('lost first response');
+    signal!.addEventListener('abort',()=>{aborted=true;},{once:true});entered();await drain;
+    throw Error('cancelled sibling drained');
+  }});
+  const task=(id:string,path:string):DelegationTask=>({id,parentRunId:'p',parentGoalId:'g',objective:'finite',inputs:[],provenance:{sourceIds:['p'],actorId:'p',recordedAt:new Date().toISOString(),derivation:'observed'},scope:grant.scope,acceptanceCriteria:['artifact works'],writablePaths:[path],allowedEffects:[],resources:envelope,modelPolicy,outputLocation:'artifact',cancellationConditions:['parent cancellation'],maxDepth:1});
+  const pending=coordinator.dispatch({id:'batch',runId:'p',stepId:'s',kind:'delegation.start_batch',payload:{tasks:[task('a',a),task('b',b)]} as unknown as JsonValue,scope:grant.scope,authority,status:'authorized',revision:0},controller.signal).then(result=>{finished=true;return result;});
+  try {
+    await ready;controller.abort(new Error('parent cancelled'));await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(aborted,true);assert.equal(finished,false);assert.equal(coordinator.get('a')?.status,'uncertain');assert.equal(coordinator.get('b')?.status,'running');
+    release();const result=await pending;assert.equal(result.outcome,'uncertain');
+    assert.deepEqual((store.readJsonArtifact(result.receipt!) as any).children.map((child:any)=>child.record.status),['uncertain','cancelled']);
+    assert.equal((await coordinator.reconcile({id:'batch'} as any)).outcome,'unresolved');
+  }finally{release();await pending;store.close();rmSync(f.root,{recursive:true,force:true});}
 });

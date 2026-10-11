@@ -12,6 +12,8 @@ export interface DelegationOptions {
   store:OperationalStore; fence:AuthorityFence;
   grantForParent:(runId:string)=>DelegationGrant;
   artifactScope:(artifact:ArtifactRef)=>DataScope;
+  /** Synchronous host admission checks run for every packet and the complete batch before execution. */
+  validateAdmission?:(tasks:DelegationTask[])=>void;
   executeChild:(task:DelegationTask,signal?:AbortSignal)=>Promise<ChildResult>;
   cancelChild?:(childRunId:string,reason:string)=>void;
 }
@@ -40,6 +42,7 @@ export class DelegationCoordinator implements EffectReceiver {
     const paths=task.writablePaths.map(physical),roots=grant.writableRoots.map(physical);
     invariant(paths.length>0&&new Set(paths).size===paths.length&&paths.every(p=>roots.some(root=>contains(root,p))),'child workspace exceeds parent writable roots');
     invariant(paths.every((p,i)=>paths.every((q,j)=>i===j||!contains(p,q)&&!contains(q,p))),'child paths overlap');
+    this.options.validateAdmission?.([task]);
     const all=this.options.store.list<DelegationRecord>('delegations');
     const existing=this.get(task.id);if(existing){invariant(canonicalJson(existing.task)===canonicalJson(task),'task id changed');return existing;}
     invariant(all.filter(r=>r.value.task.parentRunId===task.parentRunId).length<grant.maxChildren,'child count exceeds grant');
@@ -84,7 +87,9 @@ export class DelegationCoordinator implements EffectReceiver {
     return this.options.store.transaction(()=> {
       const running=this.options.store.list<DelegationRecord>('delegations').filter(row=>row.value.task.parentRunId===parentRunId&&row.value.status==='running').length;
       invariant(running+tasks.length<=grant.maxConcurrency,'delegation concurrency exhausted');
-      return tasks.map(task=> {invariant(task.parentRunId===parentRunId,'foreign delegation parent');const record=this.create(task);invariant(record.status==='created','child is not ready; uncertain child cannot replay');return record;});
+      this.options.validateAdmission?.(tasks);
+      const records=tasks.map(task=> {invariant(task.parentRunId===parentRunId,'foreign delegation parent');const record=this.create(task);invariant(record.status==='created','child is not ready; uncertain child cannot replay');return record;});
+      return records;
     });
   }
   async dispatch(effect:Effect,signal?:AbortSignal):Promise<Awaited<ReturnType<EffectReceiver['dispatch']>>> {
