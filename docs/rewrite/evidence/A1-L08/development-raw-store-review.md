@@ -1,6 +1,6 @@
 # A1-L08 bounded raw-store independent review
 
-Status: **review finding reproduced; repair and final verification pending**. Fresh reviewer `/root/a1_development_raw_store_review`, branch `codex/a1-development-raw-store-review-20261011`, worktree `/home/palimpsest/migration/aeon-1-20261011/development-raw-store-review`. Root reservation `8e1ea65`. Inspected exact clean author handoff `6c6da87`, implementation `fd7ab1141d5a391ddb8334fcddafb2d9fbc80b74`, pre-code contract `b694edb`. Exclusive reviewer writes: [new review tests](../../../../evaluations/qualification/store-bounds-review.test.ts) and this record. All production/source, prior tests and historical evidence remain read-only. The reviewer created an actual finite goal before inspection; no further agent was spawned.
+Status: **independently reviewed and fixture-verified; R1 resolved; component approved for downstream integration**. Fresh reviewer `/root/a1_development_raw_store_review`, branch `codex/a1-development-raw-store-review-20261011`, worktree `/home/palimpsest/migration/aeon-1-20261011/development-raw-store-review`. Root reservation `8e1ea65`. Inspected exact clean author handoff `6c6da87`, implementation `fd7ab1141d5a391ddb8334fcddafb2d9fbc80b74`, pre-code contract `b694edb`. Exclusive reviewer writes: [new review tests](../../../../evaluations/qualification/store-bounds-review.test.ts) and this record. Production repairs were authored by root and integrated unchanged for verification; the reviewer did not edit production, prior tests or historical evidence. The reviewer created an actual finite goal before inspection; no further agent was spawned.
 
 ```text
 /goal Independently review the bounded raw QualificationStore extension in the reserved worktree; add narrowly scoped review tests and evidence, reproduce any actionable failures, coordinate their disposition, run focused Node 24 verification, and return a clean review commit.
@@ -40,4 +40,19 @@ The default omitted read limit remains the store cap for existing JSON consumers
 
 ## Final disposition
 
-Pending root-owned narrow R1 repair followed by unchanged review cases, author/affected existing focused suites, normal strict compilation and clean handoff. No other actionable source finding was reproduced during this inspection.
+**R1 resolved.** Frozen review reproduction `39d1193afc4c6df84b85769c3358d1baadfe6569` remained byte-for-byte unchanged. After the original author's finite goal completed, root assumed exclusive ownership of the narrow repair: pre-code record `4c34be1`, source `b8559957de6d9b88fb3450da44da6ac6db8723a9`, repair evidence `e2dd9b5`. Root changed exactly the two `putBytes` duplicate reads to pass `bytes.byteLength`; no inventory, capacity, JSON, lease or framework change was introduced. The reviewer cherry-picked those three commits as `6ec1360`, `826f51a`, `6f16000` for independent verification, at root's instruction.
+
+At exact joined reviewer checkpoint **`6f160000cda79daffa8bd73facf7ef63bd734db4`**, rerunning the two commands above independently produced **14/14 review tests passing, zero failures/skips/cancellations**, about 0.536 seconds, and successful normal strict compilation. Each R1 case now records zero allocation/data-read calls. `git diff 39d1193 HEAD -- evaluations/qualification/store-bounds-review.test.ts` was empty; `git diff --check` passed. The test payload/read bound, empty case and `EEXIST` injection were not weakened to obtain a pass.
+
+Root separately ran strict compilation and the combined 27 author + 14 reviewer cases on its joined `4e04332` checkpoint:
+
+```sh
+PATH=/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin:$PATH \
+  node --test --test-concurrency=1 \
+  evaluations/qualification/store-bounds.test.ts \
+  evaluations/qualification/store-bounds-review.test.ts
+```
+
+The reviewer inspected root's transcript at `/tmp/aeon-raw-store-b855995-focused.log`: **41 passed, zero failures/skips/cancellations**, about 1.233 seconds; SHA-256 `84769f80cfa9383c64e4f224dcbb57d9d5f096f92e1943bc125bf3c1f7f2e6ea`. This is root-run evidence, distinct from the reviewer's independent 14-case rerun. The original author handoff's 76-case affected-consumer run is preserved in its evidence; it was not rerun after this two-call repair. Root explicitly limited final repetition to the original review controls plus source-scope inspection unless an unresolved concern justified more. None remains, so no broader suite or materialization sweep was started.
+
+No further actionable source finding remains from this bounded review. Approve the component's exact-byte retention and bounded descriptor-read prerequisite for downstream acquisition integration. Root owns integration and lane status. The next owner must actually supply remaining read bounds, budget distinct bytes/envelope overhead and enforce the unchanged attempt-wide limits; component review provides no autonomous acquisition, competence, admission or H1 disposition. The finite review goal completes with the clean final evidence handoff.
