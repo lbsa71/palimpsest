@@ -1,4 +1,4 @@
-import { invariant, scopeAllows } from '../contracts/common.ts';
+import { canonicalJson, invariant, scopeAllows } from '../contracts/common.ts';
 import type { DataScope, JsonValue } from '../contracts/common.ts';
 import type { Effect, EffectReceiver } from '../contracts/execution/index.ts';
 import type { AuthorityFence } from '../effects/index.ts';
@@ -31,12 +31,12 @@ export class ToolEffectReceiver implements EffectReceiver {
   }
   async dispatch(effect:Effect,signal?:AbortSignal):Promise<Awaited<ReturnType<EffectReceiver['dispatch']>>> {
     effect={...effect,kind:modelToolToEffectKind[effect.kind]??effect.kind};
-    const grant=this.options.grantForRun(effect.runId);
-    const check=()=> {signal?.throwIfAborted();this.options.fence.assert(effect.authority);invariant(grant.actions.some(action=>(modelToolToEffectKind[action]??action)===effect.kind),'tool action is not granted');invariant(scopeAllows(effect.scope,grant.scope),'tool disclosure scope exceeds source');};
+    const grant=structuredClone(this.options.grantForRun(effect.runId));let delegatedStarted=false;
+    const check=()=> {signal?.throwIfAborted();this.options.fence.assert(effect.authority);invariant(canonicalJson(this.options.grantForRun(effect.runId))===canonicalJson(grant),'tool grant changed before dispatch');invariant(grant.actions.some(action=>(modelToolToEffectKind[action]??action)===effect.kind),'tool action is not granted');invariant(scopeAllows(effect.scope,grant.scope),'tool disclosure scope exceeds source');};
     try {
       check();
-      if(effect.kind==='speech.send') {invariant(this.options.speechReceiver,'speech receiver unavailable');return this.options.speechReceiver.dispatch(effect,signal);}
-      if(effect.kind.startsWith('delegation.')) {invariant(this.options.delegationReceiver,'delegation receiver unavailable');return this.options.delegationReceiver.dispatch(effect,signal);}
+      if(effect.kind==='speech.send') {invariant(this.options.speechReceiver,'speech receiver unavailable');delegatedStarted=true;return await this.options.speechReceiver.dispatch(effect,signal);}
+      if(effect.kind.startsWith('delegation.')) {invariant(this.options.delegationReceiver,'delegation receiver unavailable');delegatedStarted=true;return await this.options.delegationReceiver.dispatch(effect,signal);}
       const args=object(effect.payload);
       const work=async()=> {
         check();let value:JsonValue;
@@ -57,7 +57,7 @@ export class ToolEffectReceiver implements EffectReceiver {
       return grant.workspace&&(effect.kind.startsWith('workspace.')||effect.kind==='command.run')?await this.serialized(grant.workspace.workspace,work):await work();
     } catch(error) {
       // Interrupted mutations remain uncertain; no implicit replay is granted by an error receipt.
-      return {outcome:error instanceof WorkspaceFailure&&error.mayHaveApplied?'uncertain':'failed',receipt:this.options.store.putJsonArtifact({error:error instanceof Error?error.message:String(error),tool:effect.kind})};
+      return {outcome:delegatedStarted||error instanceof WorkspaceFailure&&error.mayHaveApplied?'uncertain':'failed',receipt:this.options.store.putJsonArtifact({error:error instanceof Error?error.message:String(error),tool:effect.kind})};
     }
   }
   async reconcile(effect:Effect):Promise<Awaited<ReturnType<EffectReceiver['reconcile']>>> {

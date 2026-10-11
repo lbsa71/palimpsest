@@ -87,9 +87,9 @@ test('queued effect rechecks authority at actual dispatch and explicit speech de
   const receiver=new ToolEffectReceiver({store,fence,speechReceiver:speech,grantForRun:()=>({scope:{kind:'public'},workspace:f.policy,actions:['command.run','workspace.write','speech.send']})});
   const effect=(id:string,kind:string,payload:JsonValue):Effect=>({id,runId:'r',stepId:'s',kind,payload,scope:{kind:'public'},authority,status:'dispatched',revision:2,reservationId:id});
   try {
-    assert.equal((await receiver.dispatch(effect('speech','speech.send',{channel:'c',text:'hello'}))).outcome,'succeeded');assert.equal(spoken,1);
+    assert.equal((await receiver.dispatch(effect('speech','speech_send',{channel:'c',text:'hello'}))).outcome,'succeeded');assert.equal(spoken,1);
     const running=receiver.dispatch(effect('first','command.run',{executable:'/bin/sh',args:['-c','sleep .15']}));
-    const queued=receiver.dispatch(effect('queued','workspace.write',{path:'late',content:'bad',expectedSha256:null}));setTimeout(()=>{current={...authority,epoch:2};},50);await running;
+    const queued=receiver.dispatch(effect('queued','workspace_write',{path:'late',content:'bad',expectedSha256:null}));setTimeout(()=>{current={...authority,epoch:2};},50);await running;
     assert.equal((await queued).outcome,'failed');
     assert.deepEqual(await new WorkspaceTools(f.policy).execute('discover',{}),{files:[]});
   }finally{store.close();rmSync(f.root,{recursive:true,force:true});}
