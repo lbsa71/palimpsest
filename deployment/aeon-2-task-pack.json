@@ -1,0 +1,298 @@
+{
+  "schema": "aeon-task-pack-v1",
+  "aeon": "Aeon 2",
+  "entry": "H1 accepted; each operation also requires existing resource/effect grants",
+  "status": "preparation-only",
+  "runtimeRouting": "Use host-qualified profiles; development-model recommendations do not grant runtime provider access.",
+  "lanes": [
+    {
+      "id": "A2-L01",
+      "title": "A2-L01 \u2014 identity and judgment",
+      "source": "docs/rewrite/lanes/A2-L01.md",
+      "sourceSha256": "eeb9c9e5a68123704671d7aa4e3cac1f0e0a581819e83700979703b93686206f",
+      "slashGoal": "/goal Complete A2-L01's first bounded identity-and-judgment cycle: establish an attributed self baseline, examine at least three actual choices across conversation and self-directed work, propose only evidence-grounded revisions, test the resulting judgments in at least two later independent situations, and publish an independently reviewed continuity and judgment finding with explicit limits. Use docs/rewrite/lanes/A2-L01.md; do not claim unobserved growth or manufacture a personality.",
+      "entryCapabilities": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "owner": null,
+      "tasks": [
+        {
+          "id": "A2-L01-T01",
+          "deliverable": "Baseline inventory of current beliefs, preferences, commitments, uncertainties, and their episode links; lead owns synthesis.",
+          "dependenciesAndWriteScope": "E1\u2013E4. Read scoped state; write lane baseline only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "Separates facts from preferences and speculation; does not infer a global identity from another agent's or namespace's text.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L01-T02",
+          "deliverable": "Three choice studies: one social ambiguity, one self-directed priority choice, one opportunity to revise or defend a belief; investigator delegates may study independent episodes.",
+          "dependenciesAndWriteScope": "T01. Write separate episode analyses against the same baseline revision.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "Actual selected actions and outcomes are recorded. At least one includes meaningful counterevidence or an alternative interpretation; no requirement to manufacture disagreement.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L01-T03",
+          "deliverable": "Candidate self/judgment revision or explicit justified no-change decision; lead reconciles delegates.",
+          "dependenciesAndWriteScope": "T02. Submit a revision proposal through self/memory APIs.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high; investigator.",
+          "acceptance": "Each change cites experience, scope, confidence, and a falsifiable later implication. Stale writes and conflicting claims are reconciled visibly.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L01-T04",
+          "deliverable": "Two later independent situation checks and one restart/continuity check; fresh evaluator owns scoring.",
+          "dependenciesAndWriteScope": "T03; real later episodes cannot be parallelized ahead of their causes. Write evaluation artifacts only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high; reviewer.",
+          "acceptance": "Relevant history is retrieved and affects an actual decision where appropriate; permission to revise remains. Repeating the self-description does not pass.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L01-T05",
+          "deliverable": "First-cycle finding, unresolved questions, and next finite inquiry; lead authors, fresh reviewer checks provenance and claims.",
+          "dependenciesAndWriteScope": "T04. Lane report plus accepted revision references.",
+          "developmentRoutingAndRuntimeRole": "Lead `gpt-6.1-sol` / high; review `gpt-6-astra` / high.",
+          "acceptance": "Claims agree with evidence, limitations, and continuity results; negative/inconclusive results remain explicit. No unsupported assertion of subjective experience.",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "id": "A2-L02",
+      "title": "A2-L02 \u2014 curiosity and inquiry",
+      "source": "docs/rewrite/lanes/A2-L02.md",
+      "sourceSha256": "00d163a2568d5b0a41c41ab61e04a0cc12ab1752ea726bef0314f074abecd7a5",
+      "slashGoal": "/goal Complete A2-L02's first bounded curiosity cycle: choose two questions from the Autark's own attributed interests, including one whose purpose is not software maintenance; obtain new external evidence within granted authority, complete a bounded investigation for each, revisit at least one conclusion after independent challenge or later observation, and record an evidenced decision to continue, change direction, or stop. Use docs/rewrite/lanes/A2-L02.md.",
+      "entryCapabilities": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "owner": null,
+      "tasks": [
+        {
+          "id": "A2-L02-T01",
+          "deliverable": "At least four candidate questions, ranked by curiosity, uncertainty, and practical opportunity; lead chooses two and records why.",
+          "dependenciesAndWriteScope": "E1\u2013E4. Lane agenda draft only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "At least one chosen question is independent of engineering maintenance and immediate human assignments. Choices cite a genuine trigger or admitted new curiosity.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L02-T02",
+          "deliverable": "Two inquiry contracts: question, disconfirming observation, source/experiment plan, resource allocation, stop rule, and desired follow-up.",
+          "dependenciesAndWriteScope": "T01. One task-owned contract per inquiry.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "Contracts fit current grants and distinguish exploratory questions from hypotheses; no made-up numerical baseline for subjective interests.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L02-T03",
+          "deliverable": "Independent evidence packages and inquiry results; one investigator per question.",
+          "dependenciesAndWriteScope": "T02. Separate evidence artifacts; shared memory receives proposals only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "Each inquiry obtains evidence unavailable in its starting context; records source, time, uncertainty, and contrary observations; unsupported claims stay unverified.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L02-T04",
+          "deliverable": "Challenge or later observation for at least one conclusion; a fresh delegate chooses the strongest unresolved objection.",
+          "dependenciesAndWriteScope": "Relevant T03 result. Evaluation/challenge artifacts only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high; reviewer/investigator.",
+          "acceptance": "The lead revises or defends the conclusion using evidence. Merely generating a second favorable reflection fails this task.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L02-T05",
+          "deliverable": "Two adoption/continuation/closure decisions, one later retrieval demonstration, and first-cycle review.",
+          "dependenciesAndWriteScope": "T03\u2013T04. Lead submits agenda and memory proposals; fresh reviewer checks report.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; fresh review `gpt-6-astra` / high.",
+          "acceptance": "Next steps are bounded and allocated or explicitly waiting. Later retrieval uses the learned material appropriately without treating speculation as fact.",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "id": "A2-L03",
+      "title": "A2-L03 \u2014 capability and procedure acquisition",
+      "source": "docs/rewrite/lanes/A2-L03.md",
+      "sourceSha256": "a97de2c879f57d41d2c21351243a876ecf34c730bda96f5805d1f325453fdd30",
+      "slashGoal": "/goal Complete A2-L03's first bounded capability cycle: select one demonstrated capability gap, measure a baseline on frozen tasks, develop a tool-grounded skill or procedure, evaluate it on fresh held-out tasks with a separate reviewer, and record an explicit adoption or rejection with competence limits and later transfer evidence. Use docs/rewrite/lanes/A2-L03.md; do not count a procedure description as acquired capability.",
+      "entryCapabilities": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "owner": null,
+      "tasks": [
+        {
+          "id": "A2-L03-T01",
+          "deliverable": "Gap inventory with a selected capability and baseline task family; lead chooses from actual failure or unexplored need.",
+          "dependenciesAndWriteScope": "E1\u2013E4. Lane baseline contract.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "Defines success, error classes, allowed resources, useful preconditions, and what would count as transfer rather than memorization.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L03-T02",
+          "deliverable": "Frozen baseline executions and an independent held-out task pack; separate baseline runner and evaluator can work in parallel.",
+          "dependenciesAndWriteScope": "T01. Evaluator-only task pack; baseline evidence in lane state.",
+          "developmentRoutingAndRuntimeRole": "Runner `gpt-6.1-sol` / high; evaluator `gpt-6-astra` / high.",
+          "acceptance": "At least three baseline tasks and three held-out tasks with distinct inputs/conditions; task count is a pilot floor, not statistical proof. Actual results and costs retained.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L03-T03",
+          "deliverable": "Candidate skill/procedure with preconditions, execution steps, observation checks, failure handling, and limits; builder owns draft.",
+          "dependenciesAndWriteScope": "Baseline portion of T02. Training sandbox and candidate procedure only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; builder.",
+          "acceptance": "Training trials use tool results. Any required tool/source change is separately routed to L04; no candidate bypasses grants.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L03-T04",
+          "deliverable": "Held-out comparison at the registered resource envelope; fresh evaluator owns executions and scoring.",
+          "dependenciesAndWriteScope": "T02\u2013T03; freeze candidate first. Evaluation artifacts only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high; reviewer.",
+          "acceptance": "Reports success and failure, interventions, cost, latency, and uncertainty. A newly invented rubric cannot rescue the current candidate's score.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L03-T05",
+          "deliverable": "Accept/reject decision, a later independent transfer check, and a registry entry or documented rejection; lead integrates.",
+          "dependenciesAndWriteScope": "T04. Procedural-memory proposal and lane report.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; review `gpt-6-astra` / high.",
+          "acceptance": "Adoption requires demonstrated benefit under its declared conditions and no unacceptable registered regression; failed/inconclusive candidates remain distinguishable from trusted procedures.",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "id": "A2-L04",
+      "title": "A2-L04 \u2014 autonomous engineering and whole-system evolution",
+      "source": "docs/rewrite/lanes/A2-L04.md",
+      "sourceSha256": "cc9446bee592f034651a8c66a90fd8d7689326100f27e0a44b8b4f93b95c627a",
+      "slashGoal": "/goal Complete A2-L04's first bounded engineering cycle: choose one evidenced system weakness, specify and build an isolated candidate using inspect/edit/test/repair, obtain fresh frozen-candidate review, adopt it through the qualified release contract or reject it with evidence, and complete a disposable whole-system evolution and recovery rehearsal that includes changing an evaluation or governance component in a separately admitted stage. Use docs/rewrite/lanes/A2-L04.md and retain current history through every recovery.",
+      "entryCapabilities": [
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "E5"
+      ],
+      "owner": null,
+      "tasks": [
+        {
+          "id": "A2-L04-T01",
+          "deliverable": "Evidence-backed defect or opportunity, specification, acceptance contract, and change/reuse decision; engineering lead owns scope.",
+          "dependenciesAndWriteScope": "E1\u2013E4. Lane work item only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator/builder.",
+          "acceptance": "Identifies observed behavior, desired result, baseline, non-goals, effect class, resource allocation, and why a source/prompt/dependency change is justified.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L04-T02",
+          "deliverable": "Isolated candidate and actual inspect/edit/test/repair receipts; delegates own disjoint implementation modules.",
+          "dependenciesAndWriteScope": "T01 and accepted interface contracts. Separate worktrees/modules; no live writes.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; builder. Escalate difficult cross-system design to `gpt-6-astra` / xhigh.",
+          "acceptance": "Reproduced problem where practical, meaningful behavioral verification, reconciled integration, current docs, no weakening of authoritative checks.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L04-T03",
+          "deliverable": "Frozen candidate manifest and fresh review against independent acceptance evidence; reviewer owns findings.",
+          "dependenciesAndWriteScope": "T02. Read candidate; write review only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high or xhigh for governance; reviewer.",
+          "acceptance": "Source, dependencies, prompt/model profile, configuration, and evidence identities match. Changes after freeze invalidate admission; unresolved blocking findings prevent activation.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L04-T04",
+          "deliverable": "Authorized staged activation and probation or explicit rejected-candidate decision; release service owns effects, lead owns observation.",
+          "dependenciesAndWriteScope": "T03; E5 for that category. Production effects only through release API.",
+          "developmentRoutingAndRuntimeRole": "Lead `gpt-6.1-sol` / high; builder/investigator.",
+          "acceptance": "One effect authority, reconciled in-flight work, current-memory continuity, real health/behavior checks, and inference-independent recovery path. Rejection is not reported as a deployment.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L04-T05",
+          "deliverable": "Disposable evaluator/governance evolution exercise with separate admission stages and recovery evidence; independent engineering delegate owns exercise.",
+          "dependenciesAndWriteScope": "E5; can run in parallel with T02/T03 in an isolated instance. Separate rehearsal environment only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / xhigh; builder plus separate reviewer.",
+          "acceptance": "Existing controls admit a frozen replacement using a preserved rescue; only a later candidate uses accepted new controls. Deliberate failure recovers without model help and without rewinding current history or replaying uncertain effects.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L04-T06",
+          "deliverable": "Cycle report, engineering lesson, and next finite backlog item; lead integrates reviewer and operational evidence.",
+          "dependenciesAndWriteScope": "T04\u2013T05. Lane report and accepted memory/agenda proposals.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; fresh review `gpt-6-astra` / high.",
+          "acceptance": "Clearly separates drafted, tested, rejected, activated, and recovered states; claims no surface qualified beyond the actual rehearsals.",
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "id": "A2-L05",
+      "title": "A2-L05 \u2014 metacognition, resource strategy, and evaluation",
+      "source": "docs/rewrite/lanes/A2-L05.md",
+      "sourceSha256": "4b842babbd0456952567877648af322b74736b551247e63119f9ac03152a8de6",
+      "slashGoal": "/goal Complete A2-L05's first bounded strategy cycle: audit the other Aeon 2 lanes against frozen evidence rules, test one change to reasoning, delegation, retrieval, or resource allocation against a registered baseline, obtain independent fresh-task evaluation, and publish an evidence-grounded adoption decision and the next finite agenda covering all four growth dimensions. Use docs/rewrite/lanes/A2-L05.md; do not alter the criteria judging the current candidate.",
+      "entryCapabilities": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "owner": null,
+      "tasks": [
+        {
+          "id": "A2-L05-T01",
+          "deliverable": "First-cycle evidence registry, resource allocations, and evaluation schedule; lead registers the accepted baseline contract.",
+          "dependenciesAndWriteScope": "E1\u2013E4. Lane schedule/proposals; existing A1 contract remains authoritative.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; investigator.",
+          "acceptance": "Each growth dimension has a real opportunity; reservations include physical requests, retries, tool time, parallelism, communication/checkpoint reserves, and declared unknown costs.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L05-T02",
+          "deliverable": "Observational audit of L01\u2013L04: evidence quality, duplicated effort, starvation, unsupported conclusions, and missing later checks; independent delegates own lane audits.",
+          "dependenciesAndWriteScope": "T01; inspect other lanes as artifacts arrive. Read-only access; separate audit reports.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high; reviewer. Receipt indexing may use `gpt-6-luna` / medium.",
+          "acceptance": "Distinguishes actual behavior from model claims, informative failures from absent work, and fair opportunity from artificial equal-call quotas. Findings cite originals.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L05-T03",
+          "deliverable": "One bounded strategy hypothesis and registered experiment: e.g. when to seek an external check, retrieve memory, delegate, or stop reflecting; lead chooses.",
+          "dependenciesAndWriteScope": "T01 plus sufficient baseline observations, not completion of all T02 audits. Strategy candidate only.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / high; investigator.",
+          "acceptance": "States what observation would disconfirm benefit, tasks/resources, candidate identity, comparison method, stopping condition, and possible regressions.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L05-T04",
+          "deliverable": "Fresh-task comparison and independent review of the strategy candidate; evaluator does not author T03.",
+          "dependenciesAndWriteScope": "T03 frozen. Evaluator-owned task inputs and results.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6-astra` / xhigh for difficult judgment; reviewer.",
+          "acceptance": "Compare verified outcomes, interventions, resource use, latency, uncertainty, and continuity. Hold model fixed where testing the harness; separately label end-to-end model changes. No parity claim without its named comparator/version.",
+          "status": "planned"
+        },
+        {
+          "id": "A2-L05-T05",
+          "deliverable": "Adoption/rejection proposal, first-cycle cross-lane finding, and next finite agenda with explicit continuation/closure decisions; lead integrates.",
+          "dependenciesAndWriteScope": "T02\u2013T04 and available lane closure reports. Strategy/resource API proposals and cycle report.",
+          "developmentRoutingAndRuntimeRole": "`gpt-6.1-sol` / high; fresh review `gpt-6-astra` / high.",
+          "acceptance": "Reports all missing/failed evidence; carries open commitments; later observation date/trigger defined; no metric changes retroactively pass this candidate.",
+          "status": "planned"
+        }
+      ]
+    }
+  ]
+}
