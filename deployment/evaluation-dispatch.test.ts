@@ -26,6 +26,46 @@ const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const markerPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
 const marker = '\nexport const externalDispatchEngineeringFixture = true;\n';
 
+test('failed probation activation releases processor ownership without releasing unknown physical usage', async () => {
+  for (const state of ['reserved', 'dispatched', 'uncertain'] as const) {
+    const root = mkdtempSync(join(tmpdir(), 'aeon-probation-cleanup-'));
+    const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
+    for (const path of [host.stateDirectory, host.workspaceDirectory, host.artifactStore]) mkdirSync(path, { mode: 0o700 });
+    const store = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });
+    const authority = { generation: 'original-author', epoch: 1, controlRevision: 'a'.repeat(64) };
+    const envelope = { maxRequests: 5, maxTokens: 100, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 1 };
+    const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 1000 }); ledger.allocate('author', envelope);
+    store.put('runs', 'author', { id: 'author', status: 'waiting', revision: 1, authority, scope: { kind: 'public' } }, null);
+    const reviewer: ReviewerFile = { evaluatorId: 'fixture-reviewer', files: [{ path: join(root, 'unused-fixture-closure'), mount: '/reviewer/main', sha256: 'f'.repeat(64) }],
+      executable: '/reviewer/main', args: [], keyFile: join(root, 'unused-key'), pollMs: 10, maxElapsedMs: 1000, maxOutputBytes: 1024, maxClosureBytes: 1024, memoryBytes: 1024 * 1024 };
+    const fields = { kind: 'engineering' as const, controlRevision: authority.controlRevision, requiredCases: ['fixture'], evaluatorKeys: new Map([[reviewer.evaluatorId, Uint8Array.of(1)]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, hashBytes(Buffer.from(reviewerDescriptor(reviewer)))]]) };
+    const policy = { ...fields, policyDigest: admissionPolicyIdentity(fields) };
+    const { cancelled: _, ...allocation } = store.get<any>('allocations', 'author')!.value;
+    // Reservation-only fixture. No candidate is admitted and no external executable is run.
+    const review = { id: `probation:${state}`, activationId: 'activation', proposal: { id: 'change', runId: 'author', authority, scope: { kind: 'public' } },
+      candidate: { manifest: { id: 'c'.repeat(64) } }, policyDigest: policy.policyDigest, judgeAuthority: authority, rescueCandidateId: 'b'.repeat(64),
+      admissionEvidenceIds: ['admission'], allocationLineage: [{ id: 'author', ...allocation }], reservedAt: Date.now() } as import('./control-continuation.ts').ProbationReviewRequest;
+    const mailbox = new EvolutionMailbox({ store, assertAuthority: () => {} });
+    const dispatcher = new EvaluationDispatcher({ mailbox, host, reviewer, getPolicy: () => policy, policyDigests: [policy.policyDigest],
+      assertAuthority: () => {}, dispatchAuthority: (_authority, operation) => operation(), acceptedCandidateId: () => review.rescueCandidateId,
+      release: async () => authority, stageControl: async () => 'stage' });
+    try {
+      dispatcher.reserveProbation(review); assert.equal(dispatcher.probationAvailable(), false);
+      assert.throws(() => dispatcher.finishProbation({ ...review, policyDigest: 'd'.repeat(64) }), /context changed/);
+      const physical = ledger.request(reviewPhysicalId(review.id))!;
+      if (state !== 'reserved') ledger.dispatched({ ...physical, status: 'dispatched' });
+      if (state === 'uncertain') ledger.settle({ ...physical, status: 'uncertain' });
+      dispatcher.finishProbation(review); dispatcher.finishProbation(review);
+      assert.equal(dispatcher.probationAvailable(), true);
+      assert.equal(ledger.request(physical.id)!.status, state === 'reserved' ? 'failed' : state);
+      assert.equal(ledger.snapshot('author').concurrent, state === 'reserved' ? 0 : 1);
+      assert.equal(ledger.snapshot('author').requests, 1);
+      assert.throws(() => dispatcher.reserveProbation(review), /already used/);
+      assert.equal(dispatcher.probationAvailable(), true);
+    } finally { await dispatcher.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 test('dispatcher failure diagnostics exclude private host exception text', async () => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-review-diagnostics-'));
   const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
@@ -139,7 +179,7 @@ function fixture(activate = false) {
   const transport = `const fixtureSequence = ${JSON.stringify(calls)};\nasync function fixtureTransport(payload) { const messages = JSON.parse(payload).messages; const seen = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.function.name) ?? [])); let step = fixtureSequence.find(step => !seen.has(step[0])); if (step?.[0] === 'change_status' && !messages.some(message => message.role === 'user' && String(message.content).includes('external-evaluation-completed'))) step = undefined; return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + fixtureSequence.indexOf(step), type: 'function', function: { name: step[0], arguments: JSON.stringify(step[1]) } }] } : { role: 'assistant', content: 'Engineering fixture waiting or complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }\n`;
   const childPath = join(source, 'deployment/service-child.ts');
   writeFileSync(childPath, transport + readFileSync(childPath, 'utf8').replace('new AutarkApplication({ config,', 'new AutarkApplication({ performRequest: fixtureTransport, config,'));
-  const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: 2 };
+  const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: activate ? 1 : 2 };
   const inputs: DeploymentInputs = { createdBy: 'engineering-fixture-author', policy: policyDescriptor(fields), runtime: { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch }, prompts: { mind: 'Finite captured transport fixture.', compaction: 'Retain state.' },
     configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
       scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture-operator', scope: { kind: 'public' }, modificationEligible: true } } };

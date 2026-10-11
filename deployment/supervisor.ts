@@ -141,6 +141,7 @@ export class ServiceSupervisor {
     const reviewer = this.#options.controlReview ?? {
       reserveProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.reserveProbation(review),
       reviewProbation: (review: RunningProbationReview, signal: AbortSignal) => this.#dispatcher!.reviewProbation(review, signal),
+      finishProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.finishProbation(review),
       readyToActivate: (request: ControlActivationRequest) => this.#dispatcher!.probationAvailable() && !controlActivationAcknowledgmentPending(this.#evolutionStore!, request),
     };
     this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!,

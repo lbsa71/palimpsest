@@ -14,7 +14,8 @@ import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
-import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations } from './evaluation-resources.ts';
+import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
 import { evaluationAcknowledgmentPending } from './evolution-continuation.ts';
 import { assertProbationLineage, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 
@@ -224,6 +225,24 @@ export class EvaluationDispatcher {
   }
   #probationRequest(review: ProbationReviewRequest): EvaluationRequest {
     return { requestId: review.id, proposal: review.proposal, candidate: review.candidate, policyDigest: review.policyDigest };
+  }
+  /** Release processor ownership after a failed activation as well as a completed review.
+   * Only a still-reserved physical request proves no launch occurred. Unknown dispatches
+   * retain their original charge and concurrency; clearing this logical slot never retries them.
+   */
+  finishProbation(review: ProbationReviewRequest): void {
+    const { store } = this.options.mailbox;
+    store.transaction(() => {
+      const saved = store.get('host.probation-review-contexts', review.id)?.value;
+      invariant(!saved || identity(saved) === identity(review), 'Probation cleanup context changed');
+      const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 });
+      const physical = ledger.request(reviewPhysicalId(review.id));
+      if (!physical) return;
+      invariant(physical.provider === 'external-offline-review' && physical.runId === review.proposal.runId && physical.requestDigest === identity(this.#probationRequest(review)), 'Exact probation cleanup reservation required');
+      if (physical.status === 'reserved') ledger.settle({ ...physical, status: 'failed', usage: { ...physical.usage, elapsedMs: 0 } });
+    });
+    if (this.#activeJob === review.id) this.#activeJob = undefined;
+    this.#publish();
   }
   /** Fresh physical review under the original judge, funded by the unchanged original lineage.
    * This bypasses neither old-policy signature validation nor the controller's probation gate.
