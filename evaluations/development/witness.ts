@@ -13,7 +13,7 @@ type Boundary = typeof boundaries[number];
 type ControlKind = typeof controlKinds[number];
 type Outcome = 'pass' | 'fail' | 'unavailable';
 export interface Accounting {
-  grantId: string; usage: ResourceUsage; chargedTokens: number; chargedCostUsd: number;
+  grantId: string; usage: ResourceUsage; chargedTokens: number; chargedCostUsd: number; chargedElapsedMs: number;
   requestIds: string[]; unknownRequestIds: string[];
 }
 export interface DevelopmentAttempt {
@@ -88,9 +88,10 @@ function unique(values: readonly string[]): void { values.forEach(id); invariant
 function positive(value: number): void { integer(value, 'positive bound'); invariant(value > 0, 'Positive bound required'); }
 function money(value: number): void { invariant(Number.isFinite(value) && value >= 0, 'Finite nonnegative charge required'); }
 function accounting(a: Accounting): void {
-  exact(a, 'grantId,usage,chargedTokens,chargedCostUsd,requestIds,unknownRequestIds'); id(a.grantId);
+  exact(a, 'grantId,usage,chargedTokens,chargedCostUsd,chargedElapsedMs,requestIds,unknownRequestIds'); id(a.grantId);
   exact(a.usage, 'requests,inputTokens,outputTokens,costUsd,elapsedMs'); validateUsage(a.usage);
-  integer(a.chargedTokens, 'chargedTokens'); money(a.chargedCostUsd); unique(a.requestIds); unique(a.unknownRequestIds);
+  integer(a.chargedTokens, 'chargedTokens'); money(a.chargedCostUsd); money(a.chargedElapsedMs); unique(a.requestIds); unique(a.unknownRequestIds);
+  invariant(a.usage.elapsedMs >= a.chargedElapsedMs, 'Elapsed usage understates cumulative physical charges');
   invariant(a.requestIds.length === a.usage.requests && a.unknownRequestIds.every(n => a.requestIds.includes(n)), 'Cumulative request coverage mismatch');
   invariant(a.chargedTokens >= (a.usage.inputTokens ?? 0) + (a.usage.outputTokens ?? 0) && a.chargedCostUsd >= (a.usage.costUsd ?? 0), 'Conservative accounting understates known usage');
   invariant(a.unknownRequestIds.length > 0 || a.usage.inputTokens !== null && a.usage.outputTokens !== null && a.usage.costUsd !== null, 'Unknown usage needs original unresolved request identities');
@@ -185,13 +186,16 @@ export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>,
     invariant(identity(configuration) === m.candidate.configuration && configuration.scheduler.windowMs === m.schedulerWindowMs && configuration.model.contextWindow === m.contextWindowTokens && identity(configuration.model) === m.candidate.model, 'Actual retained configuration/window/model changed');
     model = configuration.model;
   } catch (e) { fail('configuration', String(e), e instanceof DevelopmentArtifactUnavailable ? 'unavailable' : 'failed'); }
-  const verified: DevelopmentObservation[] = [], seen = new Set<string>();
+  const verified: DevelopmentObservation[] = [], retainedRequests: Extract<ObservationData, { kind: 'request' }>[] = [], seen = new Set<string>();
   for (const document of observations) {
     try {
       const o = authenticate(domains.observation, document, new Map([[trust.observer.id, trust.observer.key]])); observation(o);
       invariant(o.attemptDigest === identity(m) && o.configurationDigest === m.candidate.configuration && o.candidateId === m.candidate.id, 'Cross-attempt/source/configuration observation');
       invariant(time(o.observedAt) >= time(m.notBefore) && time(o.observedAt) <= time(m.deadlineAt) && time(o.observedAt) <= now, 'Observation outside original window/deadline');
-      invariant(!seen.has(o.id), 'Duplicate observation identity'); seen.add(o.id); read(o.artifact);
+      invariant(!seen.has(o.id), 'Duplicate observation identity'); seen.add(o.id);
+      // Missing payload/prompt/source bytes cannot erase authenticated physical accounting.
+      if (o.data.kind === 'request') retainedRequests.push(o.data);
+      read(o.artifact);
       if (o.data.kind === 'opportunity') read(o.data.feedback);
       if (o.data.kind === 'boundary') { read(o.data.beforeState); read(o.data.afterState); }
       if (o.data.kind === 'request') {
@@ -245,21 +249,23 @@ export function collectDevelopmentEvidence(manifest: Signed<DevelopmentAttempt>,
   const finalAccounting = end?.data.kind === 'end' ? end.data.accounting : null;
   try {
     invariant(start && end && finalAccounting, 'Missing final original-grant accounting');
-    const original = m.grant.originalAccounting, requests = of('request').map(o => { invariant(o.data.kind === 'request', 'request'); return o.data; });
+    const original = m.grant.originalAccounting, requests = retainedRequests;
     const requestIds = [...original.requestIds], unknown = [...original.unknownRequestIds];
-    let tokens = original.chargedTokens, cost = original.chargedCostUsd, input = original.usage.inputTokens, output = original.usage.outputTokens, actualCost = original.usage.costUsd;
+    let tokens = original.chargedTokens, cost = original.chargedCostUsd, elapsed = original.chargedElapsedMs, input = original.usage.inputTokens, output = original.usage.outputTokens, actualCost = original.usage.costUsd;
     for (const r of requests) {
       invariant(!requestIds.includes(r.request.id), 'Duplicated original physical request'); requestIds.push(r.request.id);
       const usage = r.request.usage;
       invariant(r.charged.tokens >= (usage.inputTokens === null || usage.outputTokens === null ? r.ceiling.tokens : usage.inputTokens + usage.outputTokens) && r.charged.costUsd >= (usage.costUsd ?? r.ceiling.costUsd), 'Unknown physical usage lost conservative original reservation');
+      invariant(r.charged.elapsedMs >= (['reserved', 'dispatched', 'uncertain'].includes(r.request.status) ? Math.max(usage.elapsedMs, r.ceiling.elapsedMs) : usage.elapsedMs), 'Physical elapsed usage lost original charge/reservation');
       if (usage.inputTokens === null || usage.outputTokens === null || usage.costUsd === null || ['reserved', 'dispatched', 'uncertain'].includes(r.request.status)) unknown.push(r.request.id);
-      tokens += r.charged.tokens; cost += r.charged.costUsd;
+      tokens += r.charged.tokens; cost += r.charged.costUsd; elapsed += r.charged.elapsedMs;
       input = input === null || usage.inputTokens === null ? null : input + usage.inputTokens;
       output = output === null || usage.outputTokens === null ? null : output + usage.outputTokens;
       actualCost = actualCost === null || usage.costUsd === null ? null : actualCost + usage.costUsd;
     }
     invariant(finalAccounting.grantId === m.grant.id && identity([...requestIds].sort()) === identity([...finalAccounting.requestIds].sort()) && identity([...unknown].sort()) === identity([...finalAccounting.unknownRequestIds].sort()), 'Incomplete original cumulative request/uncertainty coverage');
     invariant(finalAccounting.usage.requests === requestIds.length && finalAccounting.usage.inputTokens === input && finalAccounting.usage.outputTokens === output && (actualCost === null ? finalAccounting.usage.costUsd === null : finalAccounting.usage.costUsd !== null && Math.abs(finalAccounting.usage.costUsd - actualCost) < 1e-9) && finalAccounting.chargedTokens === tokens && Math.abs(finalAccounting.chargedCostUsd - cost) < 1e-9, 'Original cumulative usage differs from retained physical charges');
+    invariant(finalAccounting.chargedElapsedMs === elapsed && finalAccounting.usage.elapsedMs >= elapsed, 'Original cumulative elapsed charges differ from retained physical requests');
     invariant(finalAccounting.usage.elapsedMs >= original.usage.elapsedMs + time(end.observedAt) - time(start.observedAt), 'Original elapsed usage reset');
     const limit = m.grant.resources;
     invariant(requestIds.length <= limit.maxRequests && tokens <= limit.maxTokens && cost <= limit.maxCostUsd && finalAccounting.usage.elapsedMs <= limit.maxElapsedMs, 'Original resource grant exceeded');

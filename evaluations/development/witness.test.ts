@@ -75,7 +75,7 @@ test('unknown physical usage retains original ceiling and cumulative uncertainty
   const f = syntheticWitnessFixture(), request = f.observations.find(o => o.data.kind === 'request')!, end = f.observations.find(o => o.data.kind === 'end')!;
   assert(request.data.kind === 'request' && end.data.kind === 'end');
   request.data.request.status = 'uncertain'; request.data.request.usage.inputTokens = null; request.data.request.usage.costUsd = null; request.data.charged = { ...request.data.ceiling };
-  end.data.accounting.usage.inputTokens = null; end.data.accounting.usage.costUsd = null; end.data.accounting.chargedTokens = 103; end.data.accounting.chargedCostUsd = 1.1; end.data.accounting.unknownRequestIds = ['physical-1'];
+  end.data.accounting.usage.inputTokens = null; end.data.accounting.usage.costUsd = null; end.data.accounting.chargedTokens = 103; end.data.accounting.chargedCostUsd = 1.1; end.data.accounting.chargedElapsedMs = 6000; end.data.accounting.unknownRequestIds = ['physical-1'];
   const result = f.prepare(); assert.deepEqual(result.findings.map(f => f.code), ['unknown-usage', 'synthetic']); assert.equal(result.evidence.finalAccounting!.usage.inputTokens, null); assert.equal(result.evidence.finalAccounting!.chargedTokens, 103);
   end.data.accounting.unknownRequestIds = []; assert(f.prepare().findings.some(f => f.code === 'record' || f.code === 'accounting'));
   end.data.accounting.unknownRequestIds = ['physical-1']; request.data.charged.tokens = 0; assert(f.prepare().findings.some(f => f.code === 'accounting'));
