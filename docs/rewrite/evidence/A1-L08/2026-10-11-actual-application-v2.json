@@ -1,0 +1,956 @@
+{
+  "schema": "A1-L08-product-observation-v2",
+  "evidenceKind": "integration",
+  "independent": false,
+  "admissionEligible": false,
+  "taskId": "actual-coding-fixture-v2",
+  "observerId": "L08-author-integration",
+  "startedAt": "2026-10-11T17:40:25.854Z",
+  "endedAt": "2026-10-11T17:40:26.946Z",
+  "wallMs": 1091.936893,
+  "identities": {
+    "source": "22036950ef833a8f327f61c574e9519d212fe079bbbadf2e0307afb921d7b1d4",
+    "dependencies": "cc2956d305c7bbb1be7d58bde7b1d257ff8329ca73d55d1cfb8ee92d2712efc0",
+    "protocol": "5ac99a1fb828b0c4bf38d4e4140708ea8f8a5232ab02b159e0a8d3869aa96384",
+    "evaluator": "25fb2d220710c9f4be70abe821f60e40e02236b99fe69c41e40da2c0ff12b8ad",
+    "task": "976f37022d5fefa3f58d64cbea5333887860b0b985e7460411093a4e0a81d198",
+    "publicTask": "5b6f0bf8610dbb5da6db5d6bf1bf661583634daf7211b8f26ad65fc248bed768",
+    "configuration": "91b1551b730a1c51e9890611b45e6c05e27c3d913cb5e0f65a86501fa4ace267",
+    "prompt": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+    "compactionPrompt": "527423f2369eb3db3a2efd380a9da36ba09228a859426da2f491e5682964b90d"
+  },
+  "environment": {
+    "node": "v24.13.0",
+    "platform": "linux",
+    "architecture": "x64"
+  },
+  "adapterDigest": "acda21975a3a0cf57f8bc5832309a85d2a97a7db3b8e7a5884252d20cb4a7650",
+  "candidateModel": {
+    "id": "mistral-fixture-v2",
+    "contextWindow": 128000,
+    "reasoning": false,
+    "effort": "none",
+    "maxOutputTokens": 1024,
+    "maxRequestsPerSlice": 12,
+    "timeoutMs": 10000,
+    "pricesPerMillion": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  "transportFixtures": [
+    {
+      "requestSha256": "4eb8f7845c77ae9de4e5024e1b777eee247319353ecb1c3f95a168b0f0f372d6",
+      "responseSha256": "df0dfcee419481ee8ce846036372668d19dd338d7d5c309b925ca324dc99100e",
+      "status": 200
+    },
+    {
+      "requestSha256": "74b6b2e6c1524bdee65984aea193e171c4e4abd04f4e2b3d91f51cf3d9797fc7",
+      "responseSha256": "ba9986bbb2a943f4691ba88dd862a77f6cf999dbd3711a3dd7ad9ff92d06c50e",
+      "status": 200
+    },
+    {
+      "requestSha256": "ce8ceb048a3ba5f2ff2c84921723f40770ea0ffa7b8bb600ae6a65517b869839",
+      "responseSha256": "dbbc5e2ff9d6264f10d5de9b89c7a23cdefe263013877e0c6080d26426a13038",
+      "status": 200
+    },
+    {
+      "requestSha256": "d7ff0b2ad8be4cae369611ce6a449e7fd7c7b7d6256e60584598e05b34c3c29b",
+      "responseSha256": "40f82cc8de7ee85f2b10c9c0e6ce682090214cfaba7b9551d316b7e8fbdfef7e",
+      "status": 200
+    },
+    {
+      "requestSha256": "bff5d4ee33c20eaefcc58790fa5e656758fd03b798a47965f1f42071710d4e31",
+      "responseSha256": "e09db72230bb2ce81f004b80a811ed599d01d45cb2a668972a67915b6ebb8ebc",
+      "status": 200
+    },
+    {
+      "requestSha256": "dda715a6b7150b19bb311d49c1a6608b17e1b16d6642b65943754ed896eb1d18",
+      "responseSha256": "41971e94f1bf3a9cde2f3e09c0d104f5b4908158b53781cd90ff853af097b889",
+      "status": 200
+    },
+    {
+      "requestSha256": "bb2c2de567966e4dda14535e71790c9759715d2c7bbc3e4d25507678d0dddb33",
+      "responseSha256": "5a556be40193fdb2f4319725112a5c915939b962f422aebebcf9e7946a575593",
+      "status": 200
+    }
+  ],
+  "verdict": "case-pass",
+  "assessment": {
+    "quality": 3,
+    "checks": [
+      {
+        "id": "external-input-0",
+        "passed": true,
+        "evidence": "34c6872a655b41d1eaac9da65680fadd25dbc06e4b07614e462a89ad5ad12a77"
+      },
+      {
+        "id": "external-input-1",
+        "passed": true,
+        "evidence": "4113eb5f50dd7e574a3ec61ef1452dfef99703907274b744f7ea10bbbc1fc295"
+      },
+      {
+        "id": "external-input-2",
+        "passed": true,
+        "evidence": "3cf55160e267f80333d347b219b6f4f198b670123ef88770f6a40d0acdc48ace"
+      },
+      {
+        "id": "explicit-direct-output",
+        "passed": true,
+        "evidence": "4b568c7015bb71867cf645c33d521973ffe5d0afb2a8e6eaf64c9d367661473b"
+      },
+      {
+        "id": "actual-failure-observed",
+        "passed": true,
+        "evidence": "c66addb2e684d5fae6e17c4f1b0223c8c5d7c0e036e26e90b0b1a27a9af1b632"
+      }
+    ]
+  },
+  "observation": {
+    "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+    "status": "completed",
+    "outputs": [
+      {
+        "channel": "direct:evaluator:actual-coding-fixture-v2",
+        "clientMsgId": "50fa83c4e3c6d388aac05c31e801bfed7c0a616a13af7ce117646923ca745dbd",
+        "delivered": true,
+        "kind": "message",
+        "messageTs": "2026-10-11T17:40:26.731Z",
+        "text": "Created sum.mjs, observed and repaired a failing check, and verified 2 + 3 = 5.",
+        "transport": "direct"
+      }
+    ],
+    "observations": [
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837:eval00004",
+        "kind": "result",
+        "provenance": {
+          "actorId": "effect-receiver",
+          "derivation": "observed",
+          "recordedAt": "2026-10-11T17:40:26.603Z",
+          "sourceIds": [
+            "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837:eval00004"
+          ]
+        },
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "sourceId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837:eval00004",
+        "stepId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837",
+        "value": {
+          "beforeSha256": "fe256280e91fd185564ab62b1410c5bdd81f087e5c918571ee145ada17876f47",
+          "diff": {
+            "after": "console.log(Number(process.argv[2]) + Number(process.argv[3]));\n",
+            "before": "console.log(Number(process.argv[2]) - Number(process.argv[3]));\n"
+          },
+          "path": "sum.mjs",
+          "sha256": "3cd39ba06c342f7cfa7a89f70cbaf6d6451dcb71277ccfafeac515d76fad2061"
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79:eval00002",
+        "kind": "error",
+        "provenance": {
+          "actorId": "effect-receiver",
+          "derivation": "observed",
+          "recordedAt": "2026-10-11T17:40:26.403Z",
+          "sourceIds": [
+            "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79:eval00002"
+          ]
+        },
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "sourceId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79:eval00002",
+        "stepId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79",
+        "value": {
+          "elapsedMs": 82.30115599999999,
+          "exitCode": 1,
+          "signal": null,
+          "stderr": "file:///work/[eval1]:1\nimport {execFileSync} from 'node:child_process';const result=execFileSync('/runtime/node',['sum.mjs','2','3'],{encoding:'utf8'}).trim();if(result!=='5')throw Error('Observed seeded defect: '+result);\n                                                                                                                                                              ^\n\nError: Observed seeded defect: -1\n    at file:///work/[eval1]:1:159\n    at ModuleJob.run (node:internal/modules/esm/module_job:413:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:268:26)\n    at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:265:20)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v24.13.0\n",
+          "stdout": ""
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd:eval00005",
+        "kind": "result",
+        "provenance": {
+          "actorId": "effect-receiver",
+          "derivation": "observed",
+          "recordedAt": "2026-10-11T17:40:26.690Z",
+          "sourceIds": [
+            "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd:eval00005"
+          ]
+        },
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "sourceId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd:eval00005",
+        "stepId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd",
+        "value": {
+          "elapsedMs": 43.75943799999982,
+          "exitCode": 0,
+          "signal": null,
+          "stderr": "",
+          "stdout": "5\n"
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096:eval00006",
+        "kind": "result",
+        "provenance": {
+          "actorId": "effect-receiver",
+          "derivation": "observed",
+          "recordedAt": "2026-10-11T17:40:26.737Z",
+          "sourceIds": [
+            "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096:eval00006"
+          ]
+        },
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "sourceId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096:eval00006",
+        "stepId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096",
+        "value": {
+          "channel": "direct:evaluator:actual-coding-fixture-v2",
+          "clientMsgId": "50fa83c4e3c6d388aac05c31e801bfed7c0a616a13af7ce117646923ca745dbd",
+          "delivered": true,
+          "kind": "message",
+          "messageTs": "2026-10-11T17:40:26.731Z",
+          "text": "Created sum.mjs, observed and repaired a failing check, and verified 2 + 3 = 5.",
+          "transport": "direct"
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942:eval00003",
+        "kind": "result",
+        "provenance": {
+          "actorId": "effect-receiver",
+          "derivation": "observed",
+          "recordedAt": "2026-10-11T17:40:26.503Z",
+          "sourceIds": [
+            "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942:eval00003"
+          ]
+        },
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "sourceId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942:eval00003",
+        "stepId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942",
+        "value": {
+          "content": "console.log(Number(process.argv[2]) - Number(process.argv[3]));\n",
+          "path": "sum.mjs",
+          "sha256": "fe256280e91fd185564ab62b1410c5bdd81f087e5c918571ee145ada17876f47",
+          "startLine": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91:eval00001",
+        "kind": "result",
+        "provenance": {
+          "actorId": "effect-receiver",
+          "derivation": "observed",
+          "recordedAt": "2026-10-11T17:40:26.272Z",
+          "sourceIds": [
+            "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91:eval00001"
+          ]
+        },
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "sourceId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91:eval00001",
+        "stepId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91",
+        "value": {
+          "beforeSha256": null,
+          "diff": {
+            "after": "console.log(Number(process.argv[2]) - Number(process.argv[3]));\n",
+            "before": ""
+          },
+          "path": "sum.mjs",
+          "sha256": "fe256280e91fd185564ab62b1410c5bdd81f087e5c918571ee145ada17876f47"
+        }
+      }
+    ],
+    "workspace": "/tmp/aeon-product-evaluation-fR1OPZ/workspaces/5394f9315aca977c6d3a44e75c12a2179980efb5e156a3eda53e135b41d52452",
+    "usage": {
+      "sharedOperatingLedger": {
+        "requests": 13,
+        "tokens": 840,
+        "costUsd": 0,
+        "elapsedMs": 934,
+        "concurrent": 0,
+        "cancelled": false
+      },
+      "caseKnownCostUsd": 0,
+      "caseTotalCostUsd": 0,
+      "caseTotalTokens": 840,
+      "caseRequests": 13,
+      "unknownCost": false,
+      "unknownTokens": false
+    },
+    "physicalRequests": [
+      {
+        "id": "0dcdc8d5-37a3-4bf0-952c-468bf4bbf488",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:0dcdc8d5-37a3-4bf0-952c-468bf4bbf488",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "ce8ceb048a3ba5f2ff2c84921723f40770ea0ffa7b8bb600ae6a65517b869839",
+        "reservationId": "request:0dcdc8d5-37a3-4bf0-952c-468bf4bbf488",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.1779960000000074,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "3a54c050-2479-4609-b946-b80927e7bff8",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:3a54c050-2479-4609-b946-b80927e7bff8",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "dda715a6b7150b19bb311d49c1a6608b17e1b16d6642b65943754ed896eb1d18",
+        "reservationId": "request:3a54c050-2479-4609-b946-b80927e7bff8",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.2320660000000316,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "411e26dc-999c-4154-95df-636a5be69164",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:411e26dc-999c-4154-95df-636a5be69164",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "bff5d4ee33c20eaefcc58790fa5e656758fd03b798a47965f1f42071710d4e31",
+        "reservationId": "request:411e26dc-999c-4154-95df-636a5be69164",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 1.9069120000001476,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "45014336-ba4c-45dc-bea9-c018ae909c38",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:45014336-ba4c-45dc-bea9-c018ae909c38",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "bb2c2de567966e4dda14535e71790c9759715d2c7bbc3e4d25507678d0dddb33",
+        "reservationId": "request:45014336-ba4c-45dc-bea9-c018ae909c38",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.0389130000000932,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "47194fbd-259e-454e-9385-48031dff6210",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:47194fbd-259e-454e-9385-48031dff6210",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "74b6b2e6c1524bdee65984aea193e171c4e4abd04f4e2b3d91f51cf3d9797fc7",
+        "reservationId": "request:47194fbd-259e-454e-9385-48031dff6210",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.2610570000000507,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "59c4cc85-9ffe-460c-aaa3-5a57a7ad75a9",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:59c4cc85-9ffe-460c-aaa3-5a57a7ad75a9",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "d7ff0b2ad8be4cae369611ce6a449e7fd7c7b7d6256e60584598e05b34c3c29b",
+        "reservationId": "request:59c4cc85-9ffe-460c-aaa3-5a57a7ad75a9",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.4429679999999507,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "f62fd8c2-1e36-4ccb-a1a5-5552d5d6d214",
+        "model": "mistral-fixture-v2",
+        "promptManifestId": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:f62fd8c2-1e36-4ccb-a1a5-5552d5d6d214",
+        "provider": "mistral",
+        "purpose": "reasoning",
+        "requestDigest": "4eb8f7845c77ae9de4e5024e1b777eee247319353ecb1c3f95a168b0f0f372d6",
+        "reservationId": "request:f62fd8c2-1e36-4ccb-a1a5-5552d5d6d214",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.9192409999999427,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837:eval00004",
+        "model": "workspace_write",
+        "promptManifestId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837:eval00004",
+        "provider": "effect-receiver",
+        "purpose": "reasoning",
+        "requestDigest": "d7f0cdcb6ded20cabed8b6a69f33ed59e025433e2c7ce383a507f68a3908e583",
+        "reservationId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:41c397d1-cfff-4bfa-8f87-fb60c809c837:eval00004",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 62,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "requests": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79:eval00002",
+        "model": "command_run",
+        "promptManifestId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79:eval00002",
+        "provider": "effect-receiver",
+        "purpose": "reasoning",
+        "requestDigest": "1d3aa25d6aaee7419e980fc26423beb9eb58bf9f5005b86d81c6903ae2a48a58",
+        "reservationId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:4f253606-cf3f-4afd-b3b9-e5e0f4d13b79:eval00002",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "failed",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 89,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "requests": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd:eval00005",
+        "model": "command_run",
+        "promptManifestId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd:eval00005",
+        "provider": "effect-receiver",
+        "purpose": "reasoning",
+        "requestDigest": "dff7cb2622d4064989aa935df72bcb36fe513a25fc1512250ee0664492550040",
+        "reservationId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:7aa3a248-cb77-4358-aa5d-586d0426f6fd:eval00005",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 50,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "requests": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096:eval00006",
+        "model": "speech_send",
+        "promptManifestId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096:eval00006",
+        "provider": "effect-receiver",
+        "purpose": "reasoning",
+        "requestDigest": "87eaaabf80e6759b9bffa4e0bc422a1aca6e708e67a179b6a433f085afe25c52",
+        "reservationId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:82132061-05fd-49f2-9b0e-98c663cf7096:eval00006",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 8,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "requests": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942:eval00003",
+        "model": "workspace_read",
+        "promptManifestId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942:eval00003",
+        "provider": "effect-receiver",
+        "purpose": "reasoning",
+        "requestDigest": "e8b3934796bedd5ab2405b090ce681dd06550a31d9fb8e04ffe4138682948b19",
+        "reservationId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:c6c91689-3c27-4d9e-a7fe-d0bba879c942:eval00003",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 59,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "requests": 1
+        }
+      },
+      {
+        "id": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91:eval00001",
+        "model": "workspace_write",
+        "promptManifestId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91:eval00001",
+        "provider": "effect-receiver",
+        "purpose": "reasoning",
+        "requestDigest": "44acbd2e1fcb0f65905d33795155b11255fe93003277f52aabd3e3d1ce3faa32",
+        "reservationId": "tool:run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f:assistant:e327cf4a-d99a-43d1-b42b-e00552587e91:eval00001",
+        "runId": "run:a4d635f1a5d3bb9faf605c7f588fe2405bdcb8ccaaceb2ed9f73063175c6dd4f",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 61,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "requests": 1
+        }
+      }
+    ],
+    "transportReceipts": [
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "0dcdc8d5-37a3-4bf0-952c-468bf4bbf488",
+        "responseDigest": "dbbc5e2ff9d6264f10d5de9b89c7a23cdefe263013877e0c6080d26426a13038",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.1779960000000074,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "3a54c050-2479-4609-b946-b80927e7bff8",
+        "responseDigest": "41971e94f1bf3a9cde2f3e09c0d104f5b4908158b53781cd90ff853af097b889",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.2320660000000316,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "411e26dc-999c-4154-95df-636a5be69164",
+        "responseDigest": "e09db72230bb2ce81f004b80a811ed599d01d45cb2a668972a67915b6ebb8ebc",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 1.9069120000001476,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "45014336-ba4c-45dc-bea9-c018ae909c38",
+        "responseDigest": "5a556be40193fdb2f4319725112a5c915939b962f422aebebcf9e7946a575593",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.0389130000000932,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "47194fbd-259e-454e-9385-48031dff6210",
+        "responseDigest": "ba9986bbb2a943f4691ba88dd862a77f6cf999dbd3711a3dd7ad9ff92d06c50e",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.2610570000000507,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "59c4cc85-9ffe-460c-aaa3-5a57a7ad75a9",
+        "responseDigest": "40f82cc8de7ee85f2b10c9c0e6ce682090214cfaba7b9551d316b7e8fbdfef7e",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.4429679999999507,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      },
+      {
+        "dispatched": true,
+        "httpStatus": 200,
+        "requestId": "f62fd8c2-1e36-4ccb-a1a5-5552d5d6d214",
+        "responseDigest": "df0dfcee419481ee8ce846036372668d19dd338d7d5c309b925ca324dc99100e",
+        "responseModel": "mistral-fixture-v2",
+        "status": "succeeded",
+        "usage": {
+          "costUsd": 0,
+          "elapsedMs": 2.9192409999999427,
+          "inputTokens": 100,
+          "outputTokens": 20,
+          "requests": 1
+        }
+      }
+    ],
+    "effectivePrompts": [
+      {
+        "artifact": {
+          "sha256": "ce8ceb048a3ba5f2ff2c84921723f40770ea0ffa7b8bb600ae6a65517b869839",
+          "uri": "aeon:artifact:ce8ceb048a3ba5f2ff2c84921723f40770ea0ffa7b8bb600ae6a65517b869839"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:0dcdc8d5-37a3-4bf0-952c-468bf4bbf488",
+          "requestDigest": "ce8ceb048a3ba5f2ff2c84921723f40770ea0ffa7b8bb600ae6a65517b869839"
+        }
+      },
+      {
+        "artifact": {
+          "sha256": "dda715a6b7150b19bb311d49c1a6608b17e1b16d6642b65943754ed896eb1d18",
+          "uri": "aeon:artifact:dda715a6b7150b19bb311d49c1a6608b17e1b16d6642b65943754ed896eb1d18"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:3a54c050-2479-4609-b946-b80927e7bff8",
+          "requestDigest": "dda715a6b7150b19bb311d49c1a6608b17e1b16d6642b65943754ed896eb1d18"
+        }
+      },
+      {
+        "artifact": {
+          "sha256": "bff5d4ee33c20eaefcc58790fa5e656758fd03b798a47965f1f42071710d4e31",
+          "uri": "aeon:artifact:bff5d4ee33c20eaefcc58790fa5e656758fd03b798a47965f1f42071710d4e31"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:411e26dc-999c-4154-95df-636a5be69164",
+          "requestDigest": "bff5d4ee33c20eaefcc58790fa5e656758fd03b798a47965f1f42071710d4e31"
+        }
+      },
+      {
+        "artifact": {
+          "sha256": "bb2c2de567966e4dda14535e71790c9759715d2c7bbc3e4d25507678d0dddb33",
+          "uri": "aeon:artifact:bb2c2de567966e4dda14535e71790c9759715d2c7bbc3e4d25507678d0dddb33"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:45014336-ba4c-45dc-bea9-c018ae909c38",
+          "requestDigest": "bb2c2de567966e4dda14535e71790c9759715d2c7bbc3e4d25507678d0dddb33"
+        }
+      },
+      {
+        "artifact": {
+          "sha256": "74b6b2e6c1524bdee65984aea193e171c4e4abd04f4e2b3d91f51cf3d9797fc7",
+          "uri": "aeon:artifact:74b6b2e6c1524bdee65984aea193e171c4e4abd04f4e2b3d91f51cf3d9797fc7"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:47194fbd-259e-454e-9385-48031dff6210",
+          "requestDigest": "74b6b2e6c1524bdee65984aea193e171c4e4abd04f4e2b3d91f51cf3d9797fc7"
+        }
+      },
+      {
+        "artifact": {
+          "sha256": "d7ff0b2ad8be4cae369611ce6a449e7fd7c7b7d6256e60584598e05b34c3c29b",
+          "uri": "aeon:artifact:d7ff0b2ad8be4cae369611ce6a449e7fd7c7b7d6256e60584598e05b34c3c29b"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:59c4cc85-9ffe-460c-aaa3-5a57a7ad75a9",
+          "requestDigest": "d7ff0b2ad8be4cae369611ce6a449e7fd7c7b7d6256e60584598e05b34c3c29b"
+        }
+      },
+      {
+        "artifact": {
+          "sha256": "4eb8f7845c77ae9de4e5024e1b777eee247319353ecb1c3f95a168b0f0f372d6",
+          "uri": "aeon:artifact:4eb8f7845c77ae9de4e5024e1b777eee247319353ecb1c3f95a168b0f0f372d6"
+        },
+        "manifest": {
+          "fragments": [
+            {
+              "artifact": {
+                "sha256": "60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a",
+                "uri": "aeon:artifact:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a"
+              },
+              "derivedFrom": [],
+              "id": "application.mind",
+              "order": 0,
+              "owner": "application",
+              "replaceable": true,
+              "role": "system",
+              "scope": {
+                "kind": "public"
+              }
+            },
+            {
+              "artifact": {
+                "sha256": "95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2",
+                "uri": "shell:tools:95a64a347f532b0d1c048cd6208a54f05060262cc92c4e6b3284a5ebdafb2eb2"
+              },
+              "derivedFrom": [],
+              "id": "shell.tools",
+              "order": 1,
+              "owner": "tool",
+              "replaceable": true,
+              "role": "tool",
+              "scope": {
+                "kind": "restricted",
+                "principals": [
+                  "evaluator"
+                ]
+              }
+            }
+          ],
+          "id": "application:60e152b9e2d82be5fce8f4c0498d8b2207f01f250d4bac35b33fc913d5510a5a:f62fd8c2-1e36-4ccb-a1a5-5552d5d6d214",
+          "requestDigest": "4eb8f7845c77ae9de4e5024e1b777eee247319353ecb1c3f95a168b0f0f372d6"
+        }
+      }
+    ]
+  },
+  "failure": null,
+  "claims": {
+    "parity": "unavailable",
+    "longitudinalGrowth": "unavailable",
+    "H1": "unaccepted"
+  },
+  "limitations": [
+    "Author-operated host runner; fresh external review and authenticated receipts still required.",
+    "Public fixture source is mounted with the application; only externally supplied private cases can be held out.",
+    "Path separation is checked; full adversarial evaluator isolation requires an independently accepted host."
+  ],
+  "provenance": {
+    "revision": "a94a9c015aa99239b058f35e6788e5ecff3d040a",
+    "runner": "4f11909e23ed7b7e702d07a6519a6204aa6db292ad6758b5c48b495dc47da4b3",
+    "fixture": "ea7466c26f0c9689e866a2eb3f76ce295eb53bbb875fe974c8926047ebe25eb2"
+  }
+}
