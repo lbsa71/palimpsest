@@ -143,7 +143,7 @@ print('native-claude-kernel-proof')`;
           assert.equal(samplingError, undefined);
           const toolSample = observations.find(value => value.phase === 'tool-running'); assert.ok(toolSample, 'Actual running tool must be observed by host');
           for (const executable of ['/app/claude', '/usr/bin/python3']) {
-            const actual = toolSample.processes.find(value => value.command[0] === executable); assert.ok(actual, executable);
+            const actual: ProcessObservation | undefined = toolSample.processes.find(value => value.command[0] === executable); assert.ok(actual, executable);
             assert.equal(actual.membership, '0::' + group.slice('/sys/fs/cgroup'.length));
           }
           assert.match(observation.pids, /max [1-9]\d*/); assert.match(observation.cpu, /throttled_usec [1-9]\d*/);
