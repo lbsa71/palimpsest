@@ -1,4 +1,4 @@
-import { identity, invariant } from '../packages/contracts/index.ts';
+import { identity, invariant, validateCandidate } from '../packages/contracts/index.ts';
 import { admissionPolicyIdentity, type AdmissionPolicy } from '../packages/release/admission.ts';
 import type { FrozenCandidate } from '../packages/release/artifacts.ts';
 import { policyDescriptor } from '../packages/release/controller.ts';
@@ -34,14 +34,19 @@ export class DerivedPolicyRegistry {
   };
   prepare(priorDigest: string, candidate: FrozenCandidate): AdmissionPolicy {
     const prior = this.get(priorDigest);
-    invariant(/^[a-f0-9]{64}$/.test(candidate.manifest.id) && /^[a-f0-9]{64}$/.test(candidate.manifest.controls), 'Exact candidate control identity required');
+    validateCandidate(candidate.manifest);
+    invariant(identity(candidate.inputs.controls) === candidate.manifest.controls, 'Exact candidate control identity required');
     const descriptor = policyDescriptor(prior);
     invariant(identity((candidate.inputs.controls as { policy?: unknown }).policy) === identity(descriptor), 'Changed governance requires a separately qualified host policy');
     const fields = { ...prior, controlRevision: candidate.manifest.controls };
     const next = { ...fields, policyDigest: admissionPolicyIdentity(fields) };
     if (next.policyDigest === priorDigest) return prior;
     const parent = this.store.get<DerivedPolicy>(namespace, priorDigest)?.value;
-    const value: DerivedPolicy = { policyDigest: next.policyDigest, basePolicyDigest: parent?.basePolicyDigest ?? priorDigest,
+    const basePolicyDigest = parent?.basePolicyDigest ?? priorDigest;
+    // Returning to the original controls reuses their configured policy. Persisting a
+    // derivation here would shadow that authority with an invalid self-reference.
+    if (next.policyDigest === basePolicyDigest) return this.get(basePolicyDigest);
+    const value: DerivedPolicy = { policyDigest: next.policyDigest, basePolicyDigest,
       priorPolicyDigest: priorDigest, controlRevision: candidate.manifest.controls, candidateId: candidate.manifest.id, descriptor };
     this.store.transaction(() => {
       const existing = this.store.get<DerivedPolicy>(namespace, next.policyDigest);
