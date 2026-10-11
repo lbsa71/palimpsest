@@ -8,7 +8,7 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 import { ProcessLease } from '../../packages/supervisor/process-lease.ts';
 import { runWorker } from '../../packages/supervisor/worker-process.ts';
 import type { ResourceLimits } from '../../packages/supervisor/resource-limits.ts';
-import { NativeRecovery, NativeSessionEvents, nativeStateHome } from './native-recovery.ts';
+import { NativeRecovery, NativeSessionEvents, nativeStateHome, assertNativeProcessLifetime, nativeSessionId } from './native-recovery.ts';
 import type { NativeCheckpoint, NativeCheckpointRef } from './native-recovery.ts';
 import type { ClaudeNativeOptions } from './claude-configuration.ts';
 import { claudeInvocation } from './claude-configuration.ts';
@@ -182,6 +182,10 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
     // The protocol cap includes JSON escaping of bounded payloads and full CLI diagnostics.
     const maxMessageBytes = 6 * Math.max(input.grant.maxRequestBytes, input.grant.maxResponseBytes, input.maxCliOutputBytes) + 100_000;
     let attemptedThisLaunch = 0;
+    const nativeLaunch = nativeSession ? Object.freeze({ generation, manifestSha256: manifest.sha256, priorCleanupSha256: resumed?.cleanup.sha256 ?? null,
+      hostBootId: nativeSessionId(readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()), hostPid: process.pid, startedNs: process.hrtime.bigint().toString() }) : undefined;
+    const launchContext = nativeLaunch ? store.putArtifact(canonicalJson(nativeLaunch)) : undefined;
+    if (launchContext) { const launch = store.get('baseline-launches', String(generation))!; store.put('baseline-launches', String(generation), { ...(launch.value as object), context: launchContext }, launch.revision); }
     const outcome = await runWorker({
       command: { workspace, applicationRoot: image, nodeBinary: process.execPath, protectedPaths: [stateRoot, ...specification.protectedPaths],
         executable: '/runtime/node', args: [`/app/${workerName}`], timeoutMs: remainingMs,
@@ -189,7 +193,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
         ...(input.provider.resourceLimits ? { resourceLimits: input.provider.resourceLimits } : {}) },
       initial: { prompt: input.prompt, model: input.grant.profile.model, effort: input.grant.profile.effort,
         maxConcurrency: observer.grant.resources.maxConcurrency, maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes,
-        ...(nativeSession ? { nativeRecovery: nativeSession } : {}),
+        ...(nativeSession ? { nativeRecovery: nativeSession, nativeLaunch } : {}),
         ...(input.kind === 'claude' ? { profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) } : {}) },
       maxMessageBytes, maxRequests: input.grant.resources.maxRequests,
       async handle(method, args, signal) {
@@ -216,14 +220,17 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
     });
     const result = store.putArtifact(canonicalJson(outcome));
     const launch = store.get('baseline-launches', String(generation))!;
-    store.put('baseline-launches', String(generation), { manifest, result, status: 'completed' }, launch.revision);
+    store.put('baseline-launches', String(generation), { ...(launch.value as object), manifest, result, status: 'completed' }, launch.revision);
     let checkpoint: NativeCheckpointRef | undefined;
     const checkpointId = input.recovery?.mode === 'start' ? input.recovery.checkpointId : input.recovery?.checkpointAfter;
     if (recovery && checkpointId) {
-      const observed = outcome as unknown as { code: number | null; signal: string | null; exceeded: boolean; stdout: string; recoveryError?: string | null };
+      const observed = outcome as unknown as { code: number | null; signal: string | null; exceeded: boolean; stdout: string; recoveryError?: string | null; nativeProcess?: unknown };
       invariant(observed.recoveryError === null, 'Native recovery event observation unavailable');
+      assertNativeProcessLifetime(observed.nativeProcess, nativeLaunch!, true);
+      const processClose = (observed.nativeProcess as { close: { code: number | null; signal: string | null } }).close;
+      invariant(processClose.code === observed.code && processClose.signal === observed.signal, 'Native close/result mismatch');
       const gate = new NativeSessionEvents(input.kind, resumed?.sessionId ?? initialSessionId ?? undefined, input.maxCliOutputBytes); gate.feed(Buffer.from(observed.stdout)); gate.finish();
-      const cleanup = store.putArtifact(canonicalJson({ observation: 'runWorker returned after awaited confinement cleanup', generation, nativeExit: observed.code, nativeSignal: observed.signal, pendingOperations: pendingOperations.size, namespace: 'PID namespace drained on owner exit', kernel: specification.kernelLimits ? 'command cgroup drained and removed before return' : null }));
+      const cleanup = store.putArtifact(canonicalJson({ observation: 'runWorker returned after awaited confinement cleanup', generation, launchContext: launchContext!, manifest, result, completedNs: process.hrtime.bigint().toString(), nativeExit: observed.code, nativeSignal: observed.signal, pendingOperations: pendingOperations.size, namespace: 'PID namespace drained on owner exit', kernel: specification.kernelLimits ? 'command cgroup drained and removed before return' : null }));
       store.transaction(() => {
         checkpoint = recovery.publish({ id: checkpointId, generation, identity, outcome: observed, pendingOperations: pendingOperations.size, cleanup, manifest, result });
         const row = store!.get('baseline-run', 'run')!;

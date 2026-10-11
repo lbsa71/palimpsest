@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdirSync, readlinkSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 // This bridge runs inside the host's network/PID/mount namespace. It receives no
@@ -21,7 +21,10 @@ async function main(start) {
   Object.freeze(start);
   const recovery = start.nativeRecovery;
   if (recovery && (Object.keys(recovery).some(key => !['mode', 'sessionId'].includes(key)) || !['start', 'resume'].includes(recovery.mode) || (recovery.mode === 'resume' || recovery.sessionId !== undefined) && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(recovery.sessionId))) throw new Error('Exact native recovery invocation required');
-  const gate = recovery ? new (await import('./native-recovery.ts')).NativeSessionEvents('codex', recovery.sessionId, start.maxOutputBytes) : undefined;
+  const recoveryModule = recovery ? await import('./native-recovery.ts') : undefined;
+  const gate = recoveryModule ? new recoveryModule.NativeSessionEvents('codex', recovery.sessionId, start.maxOutputBytes) : undefined;
+  if (gate) recoveryModule.assertNativeLaunchContext(start.nativeLaunch);
+  let nativeProcess;
   let recoveryError;
   const home = recovery ? '/work/.aeon-native-state/codex/home' : '/tmp/aeon-baseline-home'; mkdirSync(`${home}/codex`, { recursive: true, mode: 0o700 });
   let child, inFlight = 0, stopped = false;
@@ -32,6 +35,7 @@ async function main(start) {
     try {
       for await (const chunk of request) { bytes += chunk.length; if (bytes > start.maxRequestBytes) throw new Error('Oversized baseline request'); chunks.push(chunk); }
       if (stopped) throw new Error('Baseline bridge stopped while reading request');
+      if (gate) recoveryModule.assertNativeProcessLifetime(nativeProcess, start.nativeLaunch, false);
       const payload = Buffer.concat(chunks).toString('utf8');
       const reply = await rpc('baseline.provider', { method: request.method, path: request.url, payload, ...(gate ? { nativeSession: gate.beforeProvider() } : {}) });
       if (!reply || !Number.isInteger(reply.status) || typeof reply.body !== 'string' || typeof reply.contentType !== 'string') throw new Error('Invalid host response');
@@ -76,15 +80,25 @@ async function main(start) {
     collect(stdout)(chunk);
     if (gate) try { gate.feed(chunk); } catch (error) { recoveryError = error.message; stopped = true; child.kill('SIGTERM'); }
   }); child.stderr.on('data', collect(stderr));
-  child.stdin.on('error', () => {}); child.stdin.end(start.prompt);
-  const result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })); });
+  child.stdin.on('error', () => {});
+  if (!gate) child.stdin.end(start.prompt);
+  const result = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (nativeProcess) nativeProcess.close = { event: 'close', pid: child.pid, atNs: process.hrtime.bigint().toString(), code, signal };
+      resolve({ code, signal });
+    });
+    child.once('spawn', () => {
+      if (!gate) return;
+      nativeProcess = recoveryModule.observeNativeProcessSpawn(child.pid, start.nativeLaunch);
+      if (nativeProcess.observationError) { recoveryError = nativeProcess.observationError; stopped = true; child.kill('SIGTERM'); return; }
+      child.stdin.end(start.prompt);
+    });
+  });
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (pending.size) throw new Error('Baseline exited with a physical observation pending');
   if (gate && !recoveryError) try { gate.finish(); } catch (error) { recoveryError = error.message; }
-  // Diagnostic process identity is not the host's cleanup/admission authority.
-  let pidNamespace = null, namespaceObservationError;
-  if (gate) try { pidNamespace = readlinkSync('/proc/self/ns/pid'); } catch (error) { namespaceObservationError = String(error); }
-  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, ...(gate ? { recoveryError: recoveryError ?? null, nativeProcess: { pid: child.pid ?? null, pidScope: 'isolated-native-namespace', pidNamespace, closeObserved: true, ...(namespaceObservationError ? { namespaceObservationError } : {}) } } : {}), invocation: { executable: '/app/codex', args, environment: { PATH: '/runtime:/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home, CODEX_HOME: `${home}/codex`, AEON_OBSERVER_TOKEN: 'no-provider-authority' }, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
+  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, ...(gate ? { recoveryError: recoveryError ?? null, nativeProcess: nativeProcess ?? null } : {}), invocation: { executable: '/app/codex', args, environment: { PATH: '/runtime:/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home, CODEX_HOME: `${home}/codex`, AEON_OBSERVER_TOKEN: 'no-provider-authority' }, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
 }
 const input = createInterface({ input: process.stdin });
 input.on('line', line => {

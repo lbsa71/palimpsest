@@ -10,20 +10,29 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 
 const enabled = process.execArgv.includes('--experimental-test-module-mocks');
 const session = '01a12d06-adad-7263-ace7-6f49aff47d3f';
-let launches = 0, failure: 'none' | 'identity' | 'exit' = 'none';
+let launches = 0, failure: 'none' | 'identity' | 'exit' | 'process-missing' | 'process-context' | 'process-close' | 'process-stat' = 'none';
 if (enabled) mock.module('../../packages/supervisor/worker-process.ts', { namedExports: {
   runWorker: async (options: WorkerOptions) => {
     launches++;
-    const start = options.initial as unknown as { nativeRecovery?: { mode: 'start' | 'resume'; sessionId?: string }; prompt: string };
+    const start = options.initial as unknown as { nativeRecovery?: { mode: 'start' | 'resume'; sessionId?: string }; prompt: string; nativeLaunch?: any };
     const identity = failure === 'identity' ? '11111111-1111-4111-8111-111111111111' : start.nativeRecovery?.sessionId ?? session;
     const startup = JSON.stringify({ type: 'thread.started', thread_id: identity });
     const nativeRoot = join(options.command.workspace, '.aeon-native-state', 'codex', 'home', 'codex');
     if (start.nativeRecovery?.mode === 'start') { mkdirSync(nativeRoot, { recursive: true }); writeFileSync(join(nativeRoot, 'opaque'), 'synthetic store bytes'); writeFileSync(join(options.command.workspace, 'effect'), 'one original effect'); }
     if (start.nativeRecovery?.mode === 'resume') assert.equal(readFileSync(join(options.command.workspace, 'effect'), 'utf8'), 'one original effect');
     await options.handle('baseline.provider', [{ method: 'POST', path: '/v1/responses', payload: JSON.stringify({ model: 'fixture', reasoning: { effort: 'high' }, input: [{ role: 'user', content: start.prompt }] }), ...(start.nativeRecovery ? { nativeSession: { sessionId: identity, startup } } : {}) }], new AbortController().signal);
-    return { code: failure === 'exit' ? 1 : 0, signal: null, exceeded: false, recoveryError: null, stdout: `${startup}\n{"type":"turn.started"}\n{"type":"turn.completed","usage":{}}\n`, stderr: '' };
+    let nativeProcess: any = start.nativeLaunch ? syntheticLifetime(start.nativeLaunch, failure === 'exit' ? 1 : 0) : undefined;
+    if (failure === 'process-missing') nativeProcess = undefined;
+    if (failure === 'process-context') { nativeProcess = structuredClone(nativeProcess); nativeProcess.context.manifestSha256 = 'f'.repeat(64); }
+    if (failure === 'process-close') nativeProcess.close.atNs = nativeProcess.observationEndNs;
+    if (failure === 'process-stat') nativeProcess.rawStatAfter = nativeProcess.rawStatAfter.replace(' S 8 ', ' S 7 ');
+    return { ...(nativeProcess ? { nativeProcess } : {}), code: failure === 'exit' ? 1 : 0, signal: null, exceeded: false, recoveryError: null, stdout: `${startup}\n{"type":"turn.started"}\n{"type":"turn.completed","usage":{}}\n`, stderr: '' };
   },
 } });
+function syntheticLifetime(context: any, code: number) {
+  const ticks = String(context.generation * 200), stat = (pid: number, parent: number, started: string) => `${pid} (pure native child) ${['S', String(parent), ...Array(17).fill('0'), started, ...Array(30).fill('0')].join(' ')}\n`;
+  return { version: 'proc-child-lifetime-v1', context, pid: 9, workerPid: 8, pidScope: 'isolated-native-namespace', spawnNs: '1000', spawn: { event: 'spawn', pid: 9, atNs: '1000' }, observationBeginNs: '1001', observationEndNs: '1002', close: { event: 'close', pid: 9, atNs: '1003', code, signal: null }, rawStatBefore: stat(9,8,ticks), rawStatAfter: stat(9,8,ticks), startTicks: ticks, workerRawStatBefore: stat(8,1,'100'), workerRawStatAfter: stat(8,1,'100'), workerStartTicks: '100', pidNamespaceBefore: 'pid:[1234]', pidNamespaceAfter: 'pid:[1234]', workerPidNamespaceBefore: 'pid:[1234]', workerPidNamespaceAfter: 'pid:[1234]', bootIdBefore: `${context.hostBootId}\n`, bootIdAfter: `${context.hostBootId}\n` };
+}
 async function runner(input: NativeBaselineRun) { const { runNativeBaseline } = await import('./run-native.ts'); return runNativeBaseline(input); }
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'aeon-recovery-runner-pure-')); const workspace = join(root, 'work'), checkoutRoot = join(root, 'checkout'), protectedRoot = join(root, 'protected'), privateStateRoot = join(root, 'state');
@@ -73,4 +82,23 @@ test('failed actual exit cannot publish readiness despite complete-looking stdou
     failure = 'exit'; await assert.rejects(runner({ ...f.input, recovery: { mode: 'start', checkpointId: 'first' } }));
     const store = f.store(); try { assert.equal(store.list('native-checkpoints').length, 0); assert.equal(store.list('baseline-attempts').length, 1); assert.equal(store.get<{ cancelled: boolean }>('allocations', f.input.grant.id)?.value.cancelled, true); } finally { store.close(); }
   } finally { f.dispose(); }
+});
+
+test('host preserves completed result and charge but refuses missing/foreign/racing process lifetime before ready checkpoint', { skip: !enabled }, async () => {
+  for (const cause of ['process-missing','process-context','process-close','process-stat'] as const) {
+    const value = fixture(); failure = cause;
+    try {
+      await assert.rejects(runner({ ...value.input, recovery: { mode: 'start', checkpointId: 'process-ready' } }), /unavailable or stopped/);
+      assert.equal(launches, 1); assert.equal(value.calls(), 1);
+      const store = value.store();
+      try {
+        assert.equal(store.list('native-checkpoints').length, 0, cause);
+        const launch = store.get<any>('baseline-launches','1')!; assert.equal(launch.value.status, 'completed'); assert.ok(launch.value.context); assert.ok(launch.value.result);
+        assert.ok(store.readArtifact(launch.value.result)); assert.ok(store.readArtifact(launch.value.context));
+        assert.equal(store.list<any>('requests')[0]!.value.request.status, 'succeeded');
+        assert.equal(store.list<any>('requests')[0]!.value.charged.tokens, 15);
+        assert.equal(store.list<any>('allocations')[0]!.value.cancelled, true);
+      } finally { store.close(); }
+    } finally { value.dispose(); }
+  }
 });

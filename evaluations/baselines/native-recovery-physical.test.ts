@@ -9,7 +9,7 @@ import { mock, test } from 'node:test';
 import { canonicalJson } from '../../packages/contracts/common.ts';
 import { PINNED_CODEX_VERSION, PINNED_CODEX_SHA256, PINNED_CODEX_HELPER_SHA256 } from './codex-native-protocol.ts';
 import { PINNED_CLAUDE_DELEGATION_BETA, PINNED_CLAUDE_SHA256, PINNED_CLAUDE_VERSION } from './anthropic-native-protocol.ts';
-import { NativeSessionEvents } from './native-recovery.ts';
+import { assertNativeProcessLifetime, NativeSessionEvents } from './native-recovery.ts';
 import { runNativeBaseline } from './run-native.ts';
 import type { NativeBaselineRun, NativeBaselineResult } from './run-native.ts';
 import type { ObserverGrant } from './observer.ts';
@@ -186,7 +186,7 @@ class Sequence {
   resume(): void { assert.equal(this.phase, 'write'); assert.equal(this.counts.write, 2); assert.equal(this.active, 0); this.phase = 'read'; }
 }
 function hostControl() {
-  return { pid: process.pid, observedAt: Date.now(), stat: readFileSync('/proc/self/stat', 'utf8'), cgroup: readFileSync('/proc/self/cgroup', 'utf8'), namespaces: Object.fromEntries(['pid', 'mnt', 'net', 'user'].map(name => [name, readlinkSync(`/proc/self/ns/${name}`)])), kernelIdentity: kernelIdentity() };
+  return { pid: process.pid, bootId: readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(), observedAt: Date.now(), stat: readFileSync('/proc/self/stat', 'utf8'), cgroup: readFileSync('/proc/self/cgroup', 'utf8'), namespaces: Object.fromEntries(['pid', 'mnt', 'net', 'user'].map(name => [name, readlinkSync(`/proc/self/ns/${name}`)])), kernelIdentity: kernelIdentity() };
 }
 function databaseRows(filename: string): { documents: any[]; events: any[]; artifacts: { digest: string; bytes: Uint8Array }[] } {
   const db = new DatabaseSync(filename, { readOnly: true });
@@ -249,18 +249,37 @@ function assertReady(snapshot: any, result: NativeBaselineResult, expectedCount:
   assert.equal(rows(snapshot, 'baseline-attempts').length, expectedCount); assert.equal(result.physicalRequests, expectedCount);
   assert.ok(snapshot.workspace.some((entry: any) => entry.path === file && entry.base64 === Buffer.from(marker).toString('base64')));
   const outcome: any = result.outcome; assert.equal(outcome.code, 0, outcome.stderr); assert.equal(outcome.signal, null); assert.equal(outcome.exceeded, false); assert.equal(outcome.recoveryError, null);
-  assert.equal(outcome.nativeProcess.closeObserved, true); assert.equal(outcome.nativeProcess.pidScope, 'isolated-native-namespace'); assert.ok(Number.isSafeInteger(outcome.nativeProcess.pid) && outcome.nativeProcess.pid > 0);
-  assert.match(outcome.nativeProcess.pidNamespace, /^pid:\[[0-9]+\]$/);
-  assert.notEqual(outcome.nativeProcess.pidNamespace, snapshot.host.namespaces.pid, 'native must be in the isolated PID namespace');
+  const context = artifact(snapshot, launch.value.context);
+  assertNativeProcessLifetime(outcome.nativeProcess, context, true);
+  assert.equal(context.generation, manifest.generation); assert.equal(context.manifestSha256, result.manifest.sha256); assert.equal(context.hostPid, snapshot.host.pid); assert.equal(context.hostBootId, snapshot.host.bootId);
+  assert.ok(equal(cleanup.launchContext, launch.value.context)); assert.ok(equal(cleanup.manifest, result.manifest)); assert.ok(equal(cleanup.result, result.result));
+  assert.ok(BigInt(context.startedNs) < BigInt(cleanup.completedNs));
+  assert.equal(outcome.nativeProcess.close.code, outcome.code); assert.equal(outcome.nativeProcess.close.signal, outcome.signal);
+  assert.notEqual(outcome.nativeProcess.pidNamespaceBefore, snapshot.host.namespaces.pid, 'native must be observed in the isolated PID namespace');
   const gate = new NativeSessionEvents(kind, undefined, 1_000_000); gate.feed(Buffer.from(outcome.stdout)); assert.equal(gate.finish().sessionId, checkpoint.value.sessionId);
   const final = expectedCount === 2 ? 'native-recovery-write-complete' : 'native-recovery-read-complete';
   const events = outcome.stdout.split('\n').filter(Boolean).map((line: string) => JSON.parse(line));
   assert.ok(events.some((event: any) => kind === 'codex' ? event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text === final : event.type === 'result' && event.subtype === 'success' && event.is_error === false && event.result === final), 'actual native terminal frame must contain the exact public final');
 }
 function assertDistinctLaunches(receipts: any[]): void {
-  assert.equal(receipts.length, 2); assert.equal(receipts[0].generation, 1); assert.equal(receipts[1].generation, 2);
-  assert.equal(receipts[0].sessionId, receipts[1].sessionId); assert.notEqual(receipts[0].nativeProcess.pidNamespace, receipts[1].nativeProcess.pidNamespace, 'same observed PID namespace cannot prove distinct native launches');
-  assert.notDeepEqual(receipts[0].manifest, receipts[1].manifest);
+  assert.equal(receipts.length, 2);
+  for (const [index, receipt] of receipts.entries()) {
+    assert.equal(receipt.generation, index + 1); assert.equal(receipt.phase, index === 0 ? 'write' : 'read');
+    assertNativeProcessLifetime(receipt.nativeProcess, receipt.context, true);
+    assert.equal(receipt.context.generation, receipt.generation); assert.equal(receipt.context.manifestSha256, receipt.manifest.sha256);
+    assert.equal(hash(canonicalJson(receipt.context)), receipt.launchContext.sha256); assert.equal(hash(canonicalJson(receipt.cleanup)), receipt.cleanupRef.sha256);
+    assert.equal(hash(canonicalJson(receipt.outcome)), receipt.result.sha256); assert.ok(equal(receipt.outcome.nativeProcess, receipt.nativeProcess));
+    assert.equal(receipt.nativeProcess.close.code, receipt.outcome.code); assert.equal(receipt.nativeProcess.close.signal, receipt.outcome.signal);
+    assert.equal(receipt.cleanup.observation, 'runWorker returned after awaited confinement cleanup'); assert.equal(receipt.cleanup.generation, receipt.generation);
+    assert.ok(equal(receipt.cleanup.launchContext, receipt.launchContext)); assert.ok(equal(receipt.cleanup.manifest, receipt.manifest)); assert.ok(equal(receipt.cleanup.result, receipt.result));
+    assert.equal(receipt.cleanup.nativeExit, 0); assert.equal(receipt.cleanup.nativeSignal, null); assert.equal(receipt.cleanup.pendingOperations, 0);
+    assert.match(receipt.cleanup.completedNs, /^[1-9][0-9]*$/); assert.ok(BigInt(receipt.context.startedNs) < BigInt(receipt.cleanup.completedNs));
+  }
+  const [first, second] = receipts;
+  assert.equal(first.sessionId, second.sessionId); assert.equal(first.context.hostBootId, second.context.hostBootId); assert.equal(first.context.hostPid, second.context.hostPid);
+  assert.equal(second.context.priorCleanupSha256, first.cleanupRef.sha256); assert.ok(BigInt(first.cleanup.completedNs) < BigInt(second.context.startedNs), 'predecessor awaited cleanup must precede next launch');
+  assert.ok(BigInt(first.nativeProcess.startTicks) < BigInt(second.nativeProcess.startTicks), 'reused or colliding native start ticks cannot prove distinct process lifetimes');
+  assert.notEqual(first.manifest.sha256, second.manifest.sha256); assert.notEqual(first.launchContext.sha256, second.launchContext.sha256);
 }
 
 // Unchanged acquired result frames: Codex original request artifact d1f18479…,
@@ -328,9 +347,40 @@ test('acquisition one-shot marker survives failure and cannot be reset by anothe
   const parent = mkdtempSync(join(tmpdir(), 'aeon-recovery-marker-')); const root = join(parent, 'attempt');
   try { consumeAttempt(root, 'codex'); const original = readFileSync(join(root, 'attempt.json')); json(join(root, 'failure.json'), { error: 'preflight failed' }); assert.throws(() => consumeAttempt(root, 'codex'), /EEXIST/); assert.deepEqual(readFileSync(join(root, 'attempt.json')), original); assert.ok(existsSync(join(root, 'failure.json'))); } finally { rmSync(parent, { recursive: true, force: true }); }
 });
-test('distinct launch receipt requires observed different namespaces, allowing repeated local PID', () => {
-  const receipts = [1, 2].map(generation => ({ generation, sessionId: 'same-native-session', manifest: { sha256: `manifest-${generation}` }, nativeProcess: { pid: 2, pidNamespace: `pid:[${generation}]`, closeObserved: true } }));
-  assertDistinctLaunches(receipts); const reused = structuredClone(receipts); reused[1]!.nativeProcess.pidNamespace = reused[0]!.nativeProcess.pidNamespace; assert.throws(() => assertDistinctLaunches(reused));
+// Explicit synthetic proc bytes test the source witness; they are not new acquired frames.
+function syntheticLifetime(context: any, ticks = '200') {
+  const stat = (pid: number, parent: number, started: string) => `${pid} (native (fixture) child) ${['S', String(parent), ...Array(17).fill('0'), started, ...Array(30).fill('0')].join(' ')}\n`;
+  return { version: 'proc-child-lifetime-v1', context, pid: 9, workerPid: 8, pidScope: 'isolated-native-namespace', spawnNs: '1000', spawn: { event: 'spawn', pid: 9, atNs: '1000' }, observationBeginNs: '1001', observationEndNs: '1002', close: { event: 'close', pid: 9, atNs: '1003', code: 0, signal: null }, rawStatBefore: stat(9,8,ticks), rawStatAfter: stat(9,8,ticks), startTicks: ticks, workerRawStatBefore: stat(8,1,'100'), workerRawStatAfter: stat(8,1,'100'), workerStartTicks: '100', pidNamespaceBefore: 'pid:[1234]', pidNamespaceAfter: 'pid:[1234]', workerPidNamespaceBefore: 'pid:[1234]', workerPidNamespaceAfter: 'pid:[1234]', bootIdBefore: `${context.hostBootId}\n`, bootIdAfter: `${context.hostBootId}\n` };
+}
+test('qualified launch receipts allow repeated namespaces/PIDs but refuse replay, collisions, foreign bindings and ordering', () => {
+  const receipts = [1,2].map(generation => {
+    const manifest = { sha256: String(generation).repeat(64), bytes: 100 }, context = { generation, manifestSha256: manifest.sha256, priorCleanupSha256: null as string | null, hostBootId: '11111111-2222-3333-4444-555555555555', hostPid: 100, startedNs: String(generation * 10000) };
+    return { phase: generation === 1 ? 'write' : 'read', generation, sessionId: 'same-native-session', manifest, context, nativeProcess: syntheticLifetime(context, String(generation * 200)), launchContext: {} as any, outcome: {} as any, result: {} as any, cleanup: {} as any, cleanupRef: {} as any };
+  });
+  const seal = (receipt: any) => {
+    receipt.launchContext = { sha256: hash(canonicalJson(receipt.context)), bytes: 100 };
+    receipt.outcome = { code: 0, signal: null, nativeProcess: receipt.nativeProcess }; receipt.result = { sha256: hash(canonicalJson(receipt.outcome)), bytes: 100 };
+    receipt.cleanup = { observation: 'runWorker returned after awaited confinement cleanup', generation: receipt.generation, launchContext: receipt.launchContext, manifest: receipt.manifest, result: receipt.result, completedNs: String(Number(receipt.context.startedNs) + 1000), nativeExit: 0, nativeSignal: null, pendingOperations: 0 };
+    receipt.cleanupRef = { sha256: hash(canonicalJson(receipt.cleanup)), bytes: 100 };
+  };
+  seal(receipts[0]); receipts[1]!.context.priorCleanupSha256 = receipts[0]!.cleanupRef.sha256; seal(receipts[1]); assertDistinctLaunches(receipts);
+  for (const cause of ['old-insufficient','replayed-lifetime','tick-collision','missing','foreign-generation','foreign-manifest','foreign-result','foreign-cleanup','foreign-boot','close-order','cleanup-order','raw-forgery']) {
+    const bad = structuredClone(receipts);
+    if (cause === 'old-insufficient') bad[1]!.nativeProcess = { pid: 9, pidNamespace: 'pid:[4026532474]', closeObserved: true } as any;
+    if (cause === 'replayed-lifetime') bad[1]!.nativeProcess = structuredClone(bad[0]!.nativeProcess);
+    if (cause === 'tick-collision') bad[1]!.nativeProcess = syntheticLifetime(bad[1]!.context, '200');
+    if (cause === 'missing') delete (bad[1]!.nativeProcess as any).rawStatBefore;
+    if (cause === 'foreign-generation') bad[1]!.generation = 3;
+    if (cause === 'foreign-manifest') bad[1]!.manifest.sha256 = 'f'.repeat(64);
+    if (cause === 'foreign-result') bad[1]!.result.sha256 = 'f'.repeat(64);
+    if (cause === 'foreign-cleanup') bad[1]!.context.priorCleanupSha256 = 'f'.repeat(64);
+    if (cause === 'foreign-boot') bad[1]!.context.hostBootId = '11111111-2222-3333-4444-555555555556';
+    if (cause === 'close-order') bad[1]!.nativeProcess.close.atNs = '1001';
+    if (cause === 'cleanup-order') bad[1]!.context.startedNs = '10000';
+    if (cause === 'raw-forgery') bad[1]!.nativeProcess.startTicks = '401';
+    if (['tick-collision','foreign-cleanup','cleanup-order'].includes(cause)) seal(bad[1]);
+    assert.throws(() => assertDistinctLaunches(bad), cause);
+  }
 });
 test('fixture cap retains third attempt before real observer reservation/dispatch and binds continuation', { skip: !process.execArgv.includes('--experimental-test-module-mocks') }, async () => {
   let wanted = 2, launches = 0, calls = 0, mutate = false; const sessionId = '01a12d06-adad-7263-ace7-6f49aff47d3f';
@@ -339,7 +389,7 @@ test('fixture cap retains third attempt before real observer reservation/dispatc
     launches++; const nativeRoot = join(options.command.workspace, '.aeon-native-state/codex/home/codex'); mkdirSync(nativeRoot, { recursive: true }); writeFileSync(join(nativeRoot, 'opaque'), 'explicit synthetic unlaunched native bytes');
     const startup = JSON.stringify({ type: 'thread.started', thread_id: sessionId });
     for (let ordinal = 1; ordinal <= wanted; ordinal++) await options.handle('baseline.provider', [{ method: 'POST', path: '/v1/responses', payload: payload(ordinal), nativeSession: { sessionId, startup } }], new AbortController().signal);
-    return { code: 0, signal: null, exceeded: false, recoveryError: null, stdout: `${startup}\n{"type":"turn.started"}\n{"type":"turn.completed","usage":{}}\n`, stderr: '' };
+    return { code: 0, signal: null, exceeded: false, recoveryError: null, nativeProcess: syntheticLifetime((options.initial as any).nativeLaunch, String(launches * 200)), stdout: `${startup}\n{"type":"turn.started"}\n{"type":"turn.completed","usage":{}}\n`, stderr: '' };
   } } });
   try {
     const moduleUrl = new URL('./run-native.ts?acquisition-cap-control', import.meta.url).href;
@@ -437,7 +487,10 @@ for (const kind of ['codex', 'claude'] as Kind[]) test(`physical one-shot ${kind
     for (const original of rows(ready, 'requests')) assert.ok(equal(original, value(after, 'requests', original.key)), 'original settled charge/revision changed');
     const consumed = value(after, 'native-checkpoints', first.checkpoint!.id); assert.equal(consumed.value.status, 'running'); assert.equal(consumed.revision, first.checkpoint!.revision + 1); assert.equal(consumed.value.generation, first.checkpoint!.generation + 1);
     assert.equal(value(after, 'native-checkpoints', second.checkpoint!.id).value.sessionId, consumed.value.sessionId); assert.equal(rows(after, 'baseline-launches').length, 2);
-    const receipts = results.map((result, index) => ({ phase: plan.phases[index]!.phase, generation: result.checkpoint!.generation, sessionId: consumed.value.sessionId, manifest: result.manifest, result: result.result, nativeProcess: (result.outcome as any).nativeProcess, hostPid: process.pid }));
+    const receipts = results.map((result, index) => {
+      const checkpoint = value(after, 'native-checkpoints', result.checkpoint!.id), launch = value(after, 'baseline-launches', String(result.checkpoint!.generation));
+      return { phase: plan.phases[index]!.phase, generation: result.checkpoint!.generation, sessionId: consumed.value.sessionId, manifest: result.manifest, result: result.result, outcome: result.outcome, nativeProcess: (result.outcome as any).nativeProcess, launchContext: launch.value.context, context: artifact(after, launch.value.context), cleanupRef: checkpoint.value.cleanup, cleanup: artifact(after, checkpoint.value.cleanup) };
+    });
     json(join(root, 'process-receipts.json'), receipts); assertDistinctLaunches(receipts);
     assert.equal(readFileSync(join(workspace, file), 'utf8'), marker); assert.equal(readFileSync(join(protectedRoot, 'sentinel'), 'utf8'), sentinel);
     json(join(root, 'result.json'), { status: 'acquired-awaiting-independent-audit', qualification: 'namespace-fixture', results, counts: sequence.counts, originalGrant: plan.grant, sameHostAcquisition: true, control: hostControl() });

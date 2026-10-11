@@ -145,3 +145,57 @@ Behavior/interface before code:
 - Acquisition receipts bind each observation to its actual host context artifact, generation/session, manifest/result and checkpoint cleanup. Require worker spawn <= observation begin <= observation end < actual close, host launch start < awaited cleanup completion, and first cleanup completion < second launch start; second context must reference the first exact cleanup digest. Require same observed boot, **strictly increasing native start ticks**, and distinct host launch contexts/manifests. Namespace-local PID and namespace inode may repeat. Equal or decreasing native start ticks fail even when namespaces differ: clock ticks are not assumed globally unique, and collisions are conservatively unsupported. Together the observed direct-child lifetime, native close, awaited predecessor cleanup, fresh spawn and increasing boot-relative start ticks establish two disjoint observed native lifetimes; host generation or namespace inequality alone cannot do so.
 
 Implementation owns existing workers, `native-recovery.ts` helper, `run-native.ts`, acquisition driver, focused author tests and this procedure only. Reviewer tests/evidence remain read-only. Pure causal checks will exercise actual worker spawn/close ordering with mocked proc reads and source code, correct stat parsing with embedded parentheses, same namespace/PID with later ticks positive, replay/collision/missing/raw-parse disagreement/foreign parent/context/generation/boot and ordering negatives. Old acquired insufficient metadata will remain explicitly rejected as insufficient without rewriting its fixtures. Run focused serial controls plus strict only, retain first failures and freeze a clean review checkpoint. No native/help/namespace/live/provider/account/network/process experiment or broad baseline sweep is authorized here; physical clearance remains a separate root gate.
+
+### Lifetime repair source checkpoint
+
+Pre-code `e6efa9d` is implemented only in the assigned recovery helper, workers, runner, driver and focused author tests. The source observes the actual child paths synchronously in its `spawn` callback, retains two raw stat/namespace/boot samples and records actual close afterward. Namespace PID1 parent zero is a valid worker context; the native child must still have that observed worker as its exact positive parent. Recovery alone delays prompt delivery until the observation succeeds; ordinary prompt/argv/environment behavior remains unchanged. Host launch context is frozen before it crosses the asynchronous runner boundary. No shared worker/confinement implementation changed.
+
+The receipt verifies content digests of context, result and cleanup against the stored artifacts, their exact generation/manifest/result/predecessor bindings and actual close values. First awaited cleanup must precede the second host launch. Repeated namespace/PID is a supported pure positive only with later boot-relative native start ticks and complete qualified observation; equal or earlier ticks conservatively refuse. Fully consistent caller-invented proc text is not independent process authority: only the sealed worker observation and host-created launch/cleanup provenance qualify. The old consumed acquisition's worker-self namespace metadata remains insufficient and is not retrofitted.
+
+Retained author evidence under `/home/palimpsest/migration/aeon-1-20261011/native-recovery-author-evidence`:
+
+- `process-witness-first.log`: initial TDD controls fail because the new process observation interface does not exist yet.
+- `process-witness-strict-first.log` / `process-witness-worker-first.log`: initial implementation exposed a local regex name collision with the existing digest helper and delete-operand fixture typing; preserved and repaired.
+- `process-witness-focused-first.log`: serial worker/process/runner/driver **30 passed, zero failed, 2 actual acquisition skips**, 14.201s during root aggregate. The runner uses tiny mocked native closures; no native process executes.
+- `process-witness-host.log`: new host-boundary fixture initially used nonexistent `store.scan`; preserved and corrected to existing `store.list`.
+- `process-witness-host-final.log`: **4 passed, zero failed**, 3.612s; the host-boundary case independently refuses missing observation, foreign manifest context, premature close and changed raw parent while retaining each completed native-result artifact and known charge, cancelling the original allocation and publishing no ready checkpoint.
+- `process-witness-worker-final.log`: **13 passed, zero failed**, 0.435s; actual source VM bridges for both products observe before prompt/RPC and refuse missing/racing/foreign-parent observations without host dispatch. Pure stat/observation tests cover final-parenthesis parsing, raw disagreement, boot/race/namespace/context/ordering, bounded reads and preserved partial bytes.
+- `process-witness-strict-final.log`: strict TypeScript passes; whitespace passes. No broad sweep or actual process experiment occurred.
+
+Exact commands (all physical/acquisition flags absent):
+
+```sh
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 evaluations/baselines/native-recovery-process.test.ts evaluations/baselines/native-recovery-worker.test.ts evaluations/baselines/native-recovery-runner.test.ts evaluations/baselines/native-recovery-physical.test.ts
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 --test-name-pattern='host preserves|child stat parser|qualified observed|spawn observation' evaluations/baselines/native-recovery-process.test.ts evaluations/baselines/native-recovery-runner.test.ts
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 evaluations/baselines/native-recovery-process.test.ts evaluations/baselines/native-recovery-worker.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+git diff --check
+```
+
+The original Codex attempt marker SHA256 is `69fd41d8d5e6c1e84e4dc842d7b37d67a2fa383c16e6898693078ace3b77feef`; its original failure JSON SHA256 is `2e2ee30a2098925941c5d4f6b2a6e8919e8ddfa2dd13b3179e3f283a5d1dc257`. Both were rehashed read-only; no other acquired history/credentials were consulted by this author. Actual Codex partial same-session history does not establish a successful continuation. Its failed comparison and held unknown charge remain unchanged. Neither successful new proc sampling nor process lifetime qualification has been physically acquired under this repaired source. Fresh review and root's separate Claude window remain required; goal ACTIVE.
+
+### Safe Claude preparation after the consumed Codex failure
+
+The earlier initial both-absent preparation is now intentionally inapplicable because Codex is consumed. The following future preparation retains the exact Codex marker/failure digests and asserts Claude's fixed directory absent before import, after freeze and at exit. It still runs only registered pure tests, passes no acquisition/module-mock flag, executes no native binary, and puts JSON in an exclusive dedicated file with TAP in a separate exclusive log. Run only after repaired source review on root's clean joined checkout, outside aggregate/binary-hashing contention. This author has not run it; it grants no physical window.
+
+```sh
+set -C
+env -i /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --input-type=module - /home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence/claude-lifetime-preparation-freeze.json > /home/palimpsest/migration/aeon-1-20261011/native-recovery-author-evidence/claude-lifetime-preparation.log 2>&1 <<'NODE'
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+const evidence = '/home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence';
+const retained = { 'attempt.json': '69fd41d8d5e6c1e84e4dc842d7b37d67a2fa383c16e6898693078ace3b77feef', 'failure.json': '2e2ee30a2098925941c5d4f6b2a6e8919e8ddfa2dd13b3179e3f283a5d1dc257' };
+const untouched = () => {
+  assert.equal(existsSync(`${evidence}/claude-acquisition-1`), false);
+  for (const [name, expected] of Object.entries(retained)) assert.equal(createHash('sha256').update(readFileSync(`${evidence}/codex-acquisition-1/${name}`)).digest('hex'), expected);
+};
+untouched();
+const { acquisitionFreeze } = await import('./evaluations/baselines/native-recovery-physical.test.ts');
+const freeze = acquisitionFreeze('claude'), destination = process.argv[2];
+mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+writeFileSync(destination, JSON.stringify({ freeze }, null, 2), { flag: 'wx', mode: 0o600 });
+untouched(); process.on('exit', untouched);
+NODE
+```

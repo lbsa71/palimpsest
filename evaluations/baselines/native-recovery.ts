@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { closeSync, constants, fstatSync, openSync, readFileSync, readdirSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, readlinkSync, readdirSync } from 'node:fs';
 import type { ArtifactRef } from '../../packages/contracts/common.ts';
 import type { BaselineObserver } from './observer.ts';
 import type { ProcessLease } from '../../packages/supervisor/process-lease.ts';
@@ -10,6 +10,67 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 export function nativeSessionId(value: unknown): string { require(typeof value === 'string' && uuid.test(value), 'Exact canonical native session UUID required'); return value; }
 export function nativeStateHome(kind: 'codex' | 'claude'): string { return `/work/.aeon-native-state/${kind}/home`; }
 export interface NativeSessionIdentity { sessionId: string; startup: string }
+
+/** Trusted source-bound host/worker observations, not caller-provided authority. */
+export interface NativeLaunchContext {
+  generation: number; manifestSha256: string; priorCleanupSha256: string | null;
+  hostBootId: string; hostPid: number; startedNs: string;
+}
+const decimal = /^[1-9][0-9]*$/;
+const processDigestPattern = /^[a-f0-9]{64}$/;
+function ns(value: unknown): bigint { require(typeof value === 'string' && decimal.test(value), 'Positive monotonic observation required'); return BigInt(value); }
+export function parseNativeProcessStat(raw: unknown, expectedPid: number) {
+  require(typeof raw === 'string' && Buffer.byteLength(raw) <= 4096, 'Bounded raw process stat required');
+  const close = raw.lastIndexOf(')'), open = raw.indexOf(' (');
+  require(open > 0 && close > open && raw.slice(close + 1).startsWith(' '), 'Malformed process stat');
+  const pid = Number(raw.slice(0, open)), fields = raw.slice(close + 2).trim().split(/\s+/);
+  require(Number.isSafeInteger(expectedPid) && expectedPid > 0 && pid === expectedPid && String(pid) === raw.slice(0, open), 'Spawned process PID mismatch');
+  require(fields.length >= 20 && /^[RSDTtWI]$/.test(fields[0]!), 'Live process stat required');
+  require(/^(0|[1-9][0-9]*)$/.test(fields[1]!) && Number.isSafeInteger(Number(fields[1])) && decimal.test(fields[19]!), 'Process parent/start ticks unavailable');
+  return { pid, parentPid: Number(fields[1]), startTicks: fields[19]!, state: fields[0]! };
+}
+export function assertNativeLaunchContext(value: any): asserts value is NativeLaunchContext {
+  require(value && Object.keys(value).sort().join(',') === 'generation,hostBootId,hostPid,manifestSha256,priorCleanupSha256,startedNs', 'Exact host launch context required');
+  require(Number.isSafeInteger(value.generation) && value.generation > 0 && processDigestPattern.test(value.manifestSha256) && (value.priorCleanupSha256 === null || processDigestPattern.test(value.priorCleanupSha256)), 'Host generation/manifest/cleanup binding unavailable');
+  nativeSessionId(value.hostBootId); require(Number.isSafeInteger(value.hostPid) && value.hostPid > 0, 'Host launch PID required'); ns(value.startedNs);
+  require((value.generation === 1) === (value.priorCleanupSha256 === null), 'Predecessor cleanup binding required');
+}
+export function assertNativeProcessLifetime(value: any, context: NativeLaunchContext, closed: boolean): void {
+  assertNativeLaunchContext(context);
+  require(value?.version === 'proc-child-lifetime-v1' && !value.observationError, 'Observed native process lifetime unavailable');
+  assertNativeLaunchContext(value.context);
+  require(Object.keys(context).every(key => value.context[key] === context[key as keyof NativeLaunchContext]), 'Foreign native launch context');
+  require(value.pidScope === 'isolated-native-namespace' && Number.isSafeInteger(value.workerPid) && value.workerPid > 0 && value.pid !== value.workerPid, 'Actual native direct child required');
+  const before = parseNativeProcessStat(value.rawStatBefore, value.pid), after = parseNativeProcessStat(value.rawStatAfter, value.pid);
+  const workerBefore = parseNativeProcessStat(value.workerRawStatBefore, value.workerPid), workerAfter = parseNativeProcessStat(value.workerRawStatAfter, value.workerPid);
+  require(before.parentPid === value.workerPid && after.parentPid === value.workerPid && before.startTicks === after.startTicks && before.startTicks === value.startTicks, 'Native parent/start observation changed');
+  require(workerBefore.startTicks === workerAfter.startTicks && workerBefore.parentPid === workerAfter.parentPid && workerBefore.startTicks === value.workerStartTicks && BigInt(value.workerStartTicks) <= BigInt(value.startTicks), 'Worker process context changed');
+  require(typeof value.pidNamespaceBefore === 'string' && value.pidNamespaceBefore.length <= 4096 && /^pid:\[[0-9]+\]$/.test(value.pidNamespaceBefore) && value.pidNamespaceBefore === value.pidNamespaceAfter && value.pidNamespaceBefore === value.workerPidNamespaceBefore && value.workerPidNamespaceBefore === value.workerPidNamespaceAfter, 'Native child namespace observation changed');
+  require(typeof value.bootIdBefore === 'string' && Buffer.byteLength(value.bootIdBefore) <= 4096 && value.bootIdBefore === value.bootIdAfter && value.bootIdBefore.trim() === context.hostBootId, 'Observed boot identity changed');
+  require(value.spawn?.event === 'spawn' && value.spawn.pid === value.pid && value.spawn.atNs === value.spawnNs, 'Actual spawned child observation required');
+  require(ns(value.spawnNs) <= ns(value.observationBeginNs) && ns(value.observationBeginNs) <= ns(value.observationEndNs), 'Native spawn/observation ordering invalid');
+  if (closed) require(value.close?.event === 'close' && value.close.pid === value.pid && ns(value.observationEndNs) < ns(value.close.atNs) && (value.close.code === null || Number.isInteger(value.close.code)) && (value.close.signal === null || typeof value.close.signal === 'string'), 'Actual native close after observation required');
+  else require(value.close === undefined, 'Native already closed before admission');
+}
+export function observeNativeProcessSpawn(pid: number, context: NativeLaunchContext, io: {
+  workerPid: number; read: (path: string) => string; readlink: (path: string) => string; now: () => string;
+} = { workerPid: process.pid, read: path => readFileSync(path, 'utf8'), readlink: readlinkSync, now: () => process.hrtime.bigint().toString() }): any {
+  const observed: any = { version: 'proc-child-lifetime-v1', context: structuredClone(context), pid, workerPid: io.workerPid, pidScope: 'isolated-native-namespace', spawnNs: io.now() };
+  observed.spawn = { event: 'spawn', pid, atNs: observed.spawnNs };
+  try {
+    assertNativeLaunchContext(context); observed.observationBeginNs = io.now();
+    const read = (path: string) => { const raw = io.read(path); require(Buffer.byteLength(raw) <= 4096, 'Bounded raw observation required'); return raw; };
+    observed.bootIdBefore = read('/proc/sys/kernel/random/boot_id');
+    observed.workerRawStatBefore = read('/proc/self/stat'); observed.workerPidNamespaceBefore = io.readlink('/proc/self/ns/pid');
+    observed.rawStatBefore = read(`/proc/${pid}/stat`); observed.pidNamespaceBefore = io.readlink(`/proc/${pid}/ns/pid`);
+    observed.rawStatAfter = read(`/proc/${pid}/stat`); observed.pidNamespaceAfter = io.readlink(`/proc/${pid}/ns/pid`);
+    observed.workerRawStatAfter = read('/proc/self/stat'); observed.workerPidNamespaceAfter = io.readlink('/proc/self/ns/pid');
+    observed.bootIdAfter = read('/proc/sys/kernel/random/boot_id'); observed.observationEndNs = io.now();
+    observed.startTicks = parseNativeProcessStat(observed.rawStatBefore, pid).startTicks; observed.workerStartTicks = parseNativeProcessStat(observed.workerRawStatBefore, io.workerPid).startTicks;
+    assertNativeProcessLifetime(observed, context, false);
+  } catch (error) { observed.observationError = error instanceof Error ? error.message.slice(0, 256) : 'Native process observation failed'; }
+  return observed;
+}
 
 /** Pinned acquired initial stdout schemas. No transcript or resumed event order is inferred.
  * A provider request racing ahead of the observed identity is refused, never delayed/retried. */
