@@ -10,7 +10,9 @@ export function fixtureConfiguration(root: string, applicationRoot: string): App
   writeFileSync(compactionPromptFile, 'Preserve task constraints, evidence, uncertainties and provenance.');
   const resources = { maxRequests: 64, maxTokens: 30000, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 2 };
   return { stateDirectory, workspaceDirectory, applicationRoot, nodeBinary: process.execPath, workerEntrypoint: 'deployment/shell-worker.ts', artifactId: 'evaluation-integration-fixture', controlRevision: 'evaluation-v2-fixture', promptFile, compactionPromptFile,
-    model: { id: 'mistral-fixture-v2', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 1024, maxRequestsPerSlice: 12, timeoutMs: 10000, pricesPerMillion: { input: 0, output: 0 } }, resources, conversationResources: resources,
+    // Synthetic replies declare 20 output tokens; keep the reserved output bounded
+    // so the complete ordinary tool surface fits the unchanged 30,000-token grant.
+    model: { id: 'mistral-fixture-v2', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 256, maxRequestsPerSlice: 12, timeoutMs: 10000, pricesPerMillion: { input: 0, output: 0 } }, resources, conversationResources: resources,
     scheduler: { windowMs: 60000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], bootstrapInitiative: false,
     direct: { host: '127.0.0.1', port: 0, actorId: 'evaluator', scope: { kind: 'restricted', principals: ['evaluator'] }, modificationEligible: false } };
 }
@@ -23,7 +25,7 @@ export function boundedCodingFixture() {
     const tool = (name: string, args: unknown) => answer({ role: 'assistant', content: null, tool_calls: [{ id: `eval${String(count).padStart(5, '0')}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] }, 'tool_calls');
     const messages = JSON.stringify(request.messages.filter(message => message.role === 'tool'));
     if (count === 1) return tool('workspace_write', { path: 'sum.mjs', content: 'console.log(Number(process.argv[2]) - Number(process.argv[3]));\n', expectedSha256: null });
-    if (count === 2) return tool('command_run', { executable: '/runtime/node', args: ['--input-type=module', '-e', "import {execFileSync} from 'node:child_process';const result=execFileSync('/runtime/node',['sum.mjs','2','3'],{encoding:'utf8'}).trim();if(result!=='5')throw Error('Observed seeded defect: '+result);"] });
+    if (count === 2) return tool('command_run', { executable: '/runtime/node', args: ['--input-type=module', '-e', "import {execFileSync} from 'node:child_process';const result=execFileSync('/runtime/node',['sum.mjs','2','3'],{encoding:'utf8'}).trim();if(result!=='5'){console.error('Observed seeded defect: '+result);process.exit(1);}"] });
     if (count === 3) {
       if (!messages.includes('Observed seeded defect')) throw new Error('Fixture did not observe real failing command');
       return tool('workspace_read', { path: 'sum.mjs' });
