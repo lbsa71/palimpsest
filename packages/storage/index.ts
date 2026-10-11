@@ -105,10 +105,19 @@ export class OperationalStore {
     return { uri: `aeon:artifact:${sha256}`, sha256 };
   }
   putJsonArtifact(content: JsonValue): ArtifactRef { return this.putArtifact(Buffer.from(canonicalJson(content))); }
-  readArtifact(ref: ArtifactRef): Uint8Array {
+  readArtifact(ref: ArtifactRef, maxBytes?: number): Uint8Array {
     validateArtifact(ref); invariant(ref.uri === `aeon:artifact:${ref.sha256}`, 'foreign artifact URI');
-    const row = this.db.prepare('SELECT bytes FROM artifacts WHERE digest=?').get(ref.sha256) as { bytes: Uint8Array } | undefined;
-    invariant(row, 'missing artifact'); invariant(createHash('sha256').update(row.bytes).digest('hex') === ref.sha256, 'artifact corruption'); return row.bytes;
+    const read = (): Uint8Array => {
+      const row = this.db.prepare('SELECT bytes FROM artifacts WHERE digest=?').get(ref.sha256) as { bytes: Uint8Array } | undefined;
+      invariant(row, 'missing artifact'); invariant(createHash('sha256').update(row.bytes).digest('hex') === ref.sha256, 'artifact corruption'); return row.bytes;
+    };
+    if (maxBytes === undefined) return read();
+    invariant(Number.isSafeInteger(maxBytes) && maxBytes >= 0, 'invalid artifact read bound');
+    return this.transaction(() => {
+      const row = this.db.prepare('SELECT length(bytes) AS size, typeof(bytes) AS storage FROM artifacts WHERE digest=?').get(ref.sha256) as { size: number; storage: string } | undefined;
+      invariant(row, 'missing artifact'); invariant(row.storage === 'blob', 'artifact has invalid storage representation'); invariant(row.size <= maxBytes, 'artifact exceeds read bound');
+      return read();
+    });
   }
   readJsonArtifact<T = JsonValue>(ref: ArtifactRef): T { return JSON.parse(Buffer.from(this.readArtifact(ref)).toString('utf8')) as T; }
 }

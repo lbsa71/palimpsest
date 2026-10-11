@@ -23,6 +23,7 @@ import { bindGoalOrigins } from './proposal-origin.ts';
 import { EvolutionContinuations } from './evolution-continuation.ts';
 import { ControlAuthorContinuations } from './control-tools.ts';
 import { communicationState, communicationTools } from './communication-state.ts';
+import type { DevelopmentAccounting } from './development-accounting.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 interface Target { channel: string; threadTs?: string; transport: 'direct' | 'slack'; scope: DataScope }
@@ -36,6 +37,8 @@ export interface ApplicationOptions {
   performRequest?: Parameters<typeof createBrokerShell>[0]['performRequest'];
   slackBotApi?: SlackApi; slackAppApi?: SlackApi;
   lease?: ProcessLease;
+  /** Trusted finite acquisition composition; never application configuration or a model tool. */
+  developmentAccounting?: (context: { store: OperationalStore; config: ApplicationConfig }) => DevelopmentAccounting;
   additionalTools?: (context: { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority; effectId?: string }) => ApplicationTool[];
 }
 
@@ -70,7 +73,9 @@ export class AutarkApplication {
     try {
     this.store = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot });
     this.memory = new DevelopmentalMemory(this.store);
-    this.resources = new ResourceLedger(this.store, { tokens: 100_000, costUsd: 5, elapsedMs: config.model.timeoutMs });
+    const developmentAccounting = options.developmentAccounting?.({ store: this.store, config });
+    developmentAccounting?.assertApplication(config);
+    this.resources = developmentAccounting?.resources ?? new ResourceLedger(this.store, { tokens: 100_000, costUsd: 5, elapsedMs: config.model.timeoutMs });
     const allocation = this.store.get<{ envelope: unknown }>('allocations', this.rootAllocation);
     if (!allocation) this.resources.allocate(this.rootAllocation, config.resources);
     // The ledger itself keeps consumed resources and rejects contradictory repeat allocations.
@@ -163,7 +168,7 @@ export class AutarkApplication {
       },
       reconcile: effect => physical.reconcile(effect),
     };
-    this.effects = new EffectJournal(this.store, options.authorityStore, receiver);
+    this.effects = new EffectJournal(this.store, options.authorityStore, developmentAccounting?.wrapReceiver(receiver) ?? receiver);
     const shell: ShellPort = { run: async (input, bridge, signal) => {
       const record = this.grant(input.run.id), context = this.memory.context({ audience: input.run.scope, query: JSON.stringify(input.messages).slice(0, 8192), maxRecords: 24, maxBytes: 32768 });
       const descriptors = this.mindTools(input.run.id);
@@ -174,16 +179,19 @@ export class AutarkApplication {
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
           compaction: { thresholdMessages: 60, retainMessages: 20, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
-        timeoutMs: Math.min(config.conversationResources.maxElapsedMs, config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, pricesPerMillion: config.model.pricesPerMillion,
+        timeoutMs: Math.min(config.conversationResources.maxElapsedMs, config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
         retainToolInstructions: source => this.store.putArtifact(source),
         assertAuthority: () => options.authorityStore.assert(input.run.authority),
-        performRequest: options.performRequest ?? providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, options.secrets), maxResponseBytes: 2_000_000 }), recordTransport: transportRecorder(this.store) });
+        performRequest: options.performRequest ?? providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, options.secrets), maxResponseBytes: developmentAccounting?.maxResponseBytes ?? 2_000_000 }),
+        recordResponse: developmentAccounting ? (id, response) => developmentAccounting.recordResponse(id, response) : undefined,
+        beforeRequest: developmentAccounting ? id => developmentAccounting.assertEntry(id) : undefined,
+        recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.goals.all(input.run.scope), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
       const result = await broker.run({ ...input, messages: [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
       return this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result));
     } };
-    this.runtime = new DurableRuntime({ store: this.store, shell, effects: this.effects, resources: this.resources,
+    this.runtime = new DurableRuntime({ store: this.store, shell: developmentAccounting?.wrapShell(shell) ?? shell, effects: this.effects, resources: this.resources,
       canResume: run => this.controls.eligibleRun(run.id, this.hasPendingSteering(run.id)) });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
