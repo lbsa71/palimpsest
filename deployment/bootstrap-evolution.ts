@@ -6,6 +6,7 @@ import { identity, invariant } from '../packages/contracts/index.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import type { ReleaseState, ReleaseTarget } from '../packages/release/controller.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
+import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import type { SupervisorFile } from './cli.ts';
 import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
@@ -104,7 +105,17 @@ export function rotateBootstrapRescue(config: SupervisorFile, selected: ReleaseT
     const ready = JSON.parse(readHostFile(join(path, 'boot-ready.json')).toString());
     const descriptor = JSON.parse(readHostFile(join(path, 'target.json')).toString());
     invariant(Object.keys(ready).sort().join(',') === 'authority,runtimeHash,target' && identity(ready.target) === identity(selected) && identity(ready.authority) === identity(state.authority) && ready.runtimeHash === descriptor.runtimeHash, 'Rescue rotation requires this snapshot boot-ready under current authority');
-    point(boot, 'rescue', path);
+    // The release record can lag a withdrawn authority after a crash. Fence rotation
+    // with the actual ledger, including the pointer replacement in its transaction.
+    const ledgerPath = join(config.host.stateDirectory, 'authority.sqlite'); readHostFile(ledgerPath, 64 * 1024 * 1024);
+    const ledger = new AuthorityStore(ledgerPath);
+    try {
+      invariant(state.authority.generation, 'Serving authority required for rescue rotation');
+      ledger.dispatch({ generation: state.authority.generation, epoch: state.authority.epoch, controlRevision: state.authority.controlRevision }, () => {
+        invariant(identity(ledger.current()) === identity(state.authority) && state.authority.artifactId === selected.candidateId && identity(accepted(config, selected).authority) === identity(state.authority), 'Rescue rotation authority changed');
+        point(boot, 'rescue', path);
+      });
+    } finally { ledger.close(); }
   } finally { lease.close(); }
 }
 /** Fixed process-manager configuration only: OS tools select one cwd, then execute selected code.
