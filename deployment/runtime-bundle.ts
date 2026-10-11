@@ -33,11 +33,14 @@ function readExecutable(root: string, path: string, limit: number): Buffer {
   } finally { closeSync(fd); }
 }
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-export function verifyRuntimeFile(root: string, path: string, runtime: RuntimeIdentity): void {
+/** Return the exact bounded bytes verified against the accepted runtime identity. */
+export function readVerifiedRuntimeFile(root: string, path: string, runtime: RuntimeIdentity): Buffer {
   validateRuntime(runtime);
   const bytes = readExecutable(root, path, maxRuntimeBytes);
   invariant(digest(bytes) === runtime.nodeSha256 && (!runtime.bundle || bytes.length === runtime.bundle.bytes), 'Pinned runtime changed or bundle size differs');
+  return bytes;
 }
+export function verifyRuntimeFile(root: string, path: string, runtime: RuntimeIdentity): void { readVerifiedRuntimeFile(root, path, runtime); }
 /** This verifier never executes the proposed binary; only already admitted launchers may execute it. */
 export function stageRuntimeBundle(sourceRoot: string, sourcePath: string, stagingRoot: string, runtime: RuntimeIdentity, grantBytes: number): RuntimeIdentity {
   invariant(Number.isSafeInteger(grantBytes) && grantBytes > 0 && grantBytes <= maxRuntimeBytes, 'Explicit bounded runtime staging grant required');

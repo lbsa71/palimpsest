@@ -1,5 +1,5 @@
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { identity, invariant } from '../packages/contracts/index.ts';
@@ -10,6 +10,7 @@ import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import type { SupervisorFile } from './cli.ts';
 import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import { checkInstallation, type Installation } from './installation.ts';
+import { readVerifiedRuntimeFile, type RuntimeIdentity } from './runtime-bundle.ts';
 
 const sync = (path: string) => { const fd = openSync(path, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); } };
 export const bootstrapDirectory = (state: string) => join(state, 'boot');
@@ -36,7 +37,8 @@ function prepare(config: SupervisorFile, selected: ReleaseTarget): string {
   const boot = bootstrapDirectory(config.host.stateDirectory); directory(boot); directory(join(boot, 'targets'));
   const path = join(boot, 'targets', selected.candidateId);
   const executable = candidateNodeBinary(candidate, config.host.artifactStore, config.host.nodeBinary);
-  const bytes = readFileSync(executable), runtimeHash = hashBytes(bytes);
+  const runtime = (candidate.inputs.controls as unknown as { runtime: RuntimeIdentity }).runtime;
+  const bytes = readVerifiedRuntimeFile(dirname(executable), basename(executable), runtime), runtimeHash = runtime.nodeSha256;
   const descriptor = JSON.stringify({ ...selected, runtimeHash });
   if (!existsSync(path)) {
     const staging = join(boot, 'targets', `.pending-${selected.candidateId}`);
