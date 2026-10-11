@@ -100,7 +100,7 @@ function manifests() {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: applicationRoot, encoding: 'utf8' }).split('\0').filter(file => /^(packages|deployment)\//.test(file) || ['package.json', 'package-lock.json'].includes(file));
   return { source: hash(JSON.stringify(files.map(file => [file, hash(readFileSync(join(applicationRoot, file), 'utf8'))]))), dependencies: hash(readFileSync(join(applicationRoot, 'package-lock.json'), 'utf8')), protocol: hash(readFileSync(join(applicationRoot, 'docs/rewrite/evidence/A1-L09/completion-readiness.md'), 'utf8')) };
 }
-export async function runSyntheticCase(caseId: ScreenCaseId, control: FixtureControl = 'normal') {
+export async function runSyntheticCase(caseId: ScreenCaseId, control: FixtureControl = 'normal', attempt: 1 | 2 | 3 = 1) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-screen-public-')), privateRoot = mkdtempSync(join(tmpdir(), 'aeon-screen-private-'));
   const config = fixtureConfiguration(root, applicationRoot);
   // Explicit synthetic host allowance fixed before dispatch, never copied into live mode.
@@ -110,7 +110,7 @@ export async function runSyntheticCase(caseId: ScreenCaseId, control: FixtureCon
   const authority = authorityStore.bootstrap('public-screen-fixture', config.controlRevision, config.artifactId);
   const packet = JSON.stringify(publicRehearsalPacket(caseId)), privatePacketPath = join(privateRoot, 'packet.json'); writeFileSync(privatePacketPath, packet, { mode: 0o600 });
   try {
-    const report = await runScreenCase({ caseId, attempt: 1, attemptId: `${caseId}-${control}-initial-1`, mode: 'synthetic-application', application: { config, authorityStore, authority, secrets: { mistralApiKey: 'unused-fixture', directToken: 'unused-direct-fixture' }, performRequest: screenFixture(caseId, config.model.id, authority.generation, control) }, observer: { id: 'L08-author-public-screen', privateRoot, evaluatorDigest: hash(readFileSync(new URL('./screen.ts', import.meta.url), 'utf8')), taskDigest: hash(packet) }, manifest: manifests(), privatePacketPath, timeoutMs: 60000 });
+    const report = await runScreenCase({ caseId, attempt, attemptId: `${caseId}-${control}-initial-${attempt}`,  mode: 'synthetic-application', application: { config, authorityStore, authority, secrets: { mistralApiKey: 'unused-fixture', directToken: 'unused-direct-fixture' }, performRequest: screenFixture(caseId, config.model.id, authority.generation, control) }, observer: { id: 'L08-author-public-screen', privateRoot, evaluatorDigest: hash(readFileSync(new URL('./screen.ts', import.meta.url), 'utf8')), taskDigest: hash(packet) }, manifest: manifests(), privatePacketPath, timeoutMs: 60000 });
     return { ...report, fixtureProvenance: { revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: applicationRoot, encoding: 'utf8' }).trim(), driver: hash(readFileSync(new URL(import.meta.url), 'utf8')), control, publicRehearsalPacketDigest: hash(packet) } };
   } finally { authorityStore.close(); rmSync(root, { recursive: true, force: true }); rmSync(privateRoot, { recursive: true, force: true }); }
 }

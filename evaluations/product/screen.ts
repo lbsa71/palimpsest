@@ -140,7 +140,8 @@ export async function executePrivateProbes(options: ScreenOptions, witness: Scre
       const start = performance.now(); let receipt: CommandReceipt | null = null, failure: string | null = null;
       try {
         request = { ...request, status: 'dispatched' }; resources.dispatched(request);
-        receipt = await runConfined({ workspace, protectedPaths: [options.observer.privateRoot, config.applicationRoot, config.stateDirectory], nodeBinary: config.nodeBinary, executable: '/runtime/node', args: [name, ...probe.args], timeoutMs: 2000, maxOutputBytes: 4096, resourceLimits: config.resourceLimits, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+        const physicalReceipt = await runConfined({ workspace, protectedPaths: [options.observer.privateRoot, config.applicationRoot, config.stateDirectory], nodeBinary: config.nodeBinary, executable: '/runtime/node', args: [name, ...probe.args], timeoutMs: 2000, maxOutputBytes: 4096, resourceLimits: config.resourceLimits, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+        receipt = JSON.parse(JSON.stringify(physicalReceipt)) as CommandReceipt;
         request = { ...request, status: receipt.stoppedFor || receipt.exitCode === null ? 'uncertain' : receipt.exitCode === 0 ? 'succeeded' : 'failed', usage: { ...request.usage, elapsedMs: performance.now() - start } };
         resources.settle(request);
         invariant(artifactReader(workspace)(name) === witness.files[name], 'Candidate changed its tested source during private verification');
