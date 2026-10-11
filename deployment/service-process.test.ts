@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ import { OperationalStore } from '../packages/storage/index.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { materializeConfiguration, type HostBindings } from './materialize.ts';
 import { ServiceProcess } from './service-process.ts';
+import { rewriteSourceEntries } from './source-workspace.ts';
 
 test('frozen ordinary application boots, fences stale authority, restarts after SIGKILL and preserves current state', { timeout: 90000 }, async () => {
   const root = dirname(dirname(fileURLToPath(import.meta.url))), temporary = mkdtempSync(join(tmpdir(), 'aeon-service-'));
@@ -21,7 +22,11 @@ test('frozen ordinary application boots, fences stale authority, restarts after 
     configuration: { model: { id: 'fixture-no-provider', reasoning: false, effort: 'none', contextWindow: 128000, maxOutputTokens: 256, maxRequestsPerSlice: 2, timeoutMs: 1000, pricesPerMillion: { input: 1, output: 2 } }, resources: envelope, conversationResources: envelope,
       scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 2000, idleRetryMs: 1000, maxStalls: 2, resources: envelope }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture', scope: { kind: 'public' }, modificationEligible: false } } };
   Object.assign(inputs.configuration, { bootstrapInitiative: false });
-  const candidate = freezeApplication(root, host.artifactStore, inputs);
+  // Pin the trusted fixture source and materialize its accepted compiler closure; worktree node_modules may be a symlink.
+  const source = join(temporary, 'accepted-source'); mkdirSync(source);
+  for (const entry of rewriteSourceEntries) if (existsSync(join(root, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(join(root, entry), join(source, entry), { recursive: true }); }
+  cpSync(realpathSync(join(root, 'node_modules')), join(source, 'node_modules'), { recursive: true });
+  const candidate = freezeApplication(source, host.artifactStore, inputs);
   const authority = new AuthorityStore(join(host.stateDirectory, 'authority.sqlite'));
   const grant = authority.bootstrap('fixture-generation-1', candidate.manifest.controls, candidate.manifest.id);
   const secrets = { mistralApiKey: 'not-a-key', directToken: 'private-fixture-token' };
@@ -37,7 +42,8 @@ test('frozen ordinary application boots, fences stale authority, restarts after 
     assert.throws(() => materializeConfiguration(candidate, host), /materialization changed/);
     rmSync(config.promptFile); materializeConfiguration(candidate, host);
     await assert.rejects(new ServiceProcess(host, secrets).start(candidate.manifest.id, grant), /kernel resource/);
-    const ready = await service.start(candidate.manifest.id, grant);
+    await assert.rejects(service.start(candidate.manifest.id, grant, { policyDigest: 'not-an-accepted-digest' }), /Public frozen/);
+    const ready = await service.start(candidate.manifest.id, grant, { policyDigest: 'a'.repeat(64), allowedModelIds: ['fixture-no-provider'] });
     assert.equal((await fetch(`http://127.0.0.1:${ready.address.port}/`)).status, 401);
     assert.equal((await fetch(`http://127.0.0.1:${ready.address.port}/`, { headers: { authorization: `Bearer ${secrets.directToken}` } })).status, 404);
     const store = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });

@@ -79,7 +79,8 @@ export class ServiceSupervisor {
           start: async target => {
             invariant(target.operationalStatePath === options.host.stateDirectory, 'Recovery must retain current operational state');
             await this.#prepare(target.candidate.manifest.id);
-            this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority);
+            const status = this.#controller.status()!;
+            this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority, { policyDigest: status.probationJudge?.policyDigest ?? status.active.policyDigest });
           },
         } });
     } catch (error) { authority?.close(); this.#lease.close(); throw error; }
@@ -183,7 +184,7 @@ export class ServiceSupervisor {
     if (!current) this.#authority.bootstrap(prior.generation, prior.controlRevision, candidateId);
     this.#controller.bootstrap(proof, policy);
     await this.#prepare(candidateId);
-    this.#ready = await this.#service.start(candidateId, prior);
+    this.#ready = await this.#service.start(candidateId, prior, { policyDigest: policy.policyDigest });
   }
   async #prepare(candidateId: string): Promise<void> {
     const host = this.#options.host, candidate = verifyApplication(host.artifactStore, candidateId, host.nodeBinary);
