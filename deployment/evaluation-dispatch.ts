@@ -14,6 +14,7 @@ import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
+import { accountedReview, recoverReviewReservations } from './evaluation-resources.ts';
 
 /** All runnable bytes must be declared, including interpreters and dynamic libraries.
  * Nothing else on the host filesystem is mounted into the reviewer namespace.
@@ -55,7 +56,7 @@ export function loadReviewerFile(path: string, host: HostBindings): ReviewerFile
 
 /** One physical operation; failure may have occurred after review and is never retryable automatically. */
 export async function runExternalReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
-  policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal): Promise<ReviewResponse> {
+  policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal, beforeDispatch?: () => void): Promise<ReviewResponse> {
   validateReviewer(config, host); signal?.throwIfAborted();
   const descriptor = Buffer.from(reviewerDescriptor(config)), descriptorDigest = hashBytes(descriptor);
   invariant(policy.policyDigest === request.policyDigest && admissionPolicyIdentity(policy) === request.policyDigest && policy.controlRevision === request.proposal.authority.controlRevision &&
@@ -87,6 +88,7 @@ export async function runExternalReview(config: ReviewerFile, host: HostBindings
     invariant(input.byteLength <= config.maxOutputBytes, 'External reviewer request exceeds bounds');
     // Authority is checked again after all verification/snapshot work, immediately before physical dispatch.
     assertAuthority(request.proposal.authority); signal?.throwIfAborted();
+    beforeDispatch?.();
     const confined = acceptedLimits ? await spawnBounded(args, { workspace: host.workspaceDirectory, timeoutMs: config.maxElapsedMs,
       resourceLimits: { ...acceptedLimits, memoryBytes: Math.min(acceptedLimits.memoryBytes, config.memoryBytes), pids: Math.min(acceptedLimits.pids, 32) }, input: 'pipe' }) : undefined;
     const child = confined?.child ?? spawn('/usr/bin/setpriv', ['--pdeathsig', 'SIGKILL', '--no-new-privs', '/bin/sh', '-c',
@@ -178,7 +180,7 @@ export class EvaluationDispatcher {
   constructor(options: DispatchOptions) {
     this.options = options; this.#diagnosis = options.unavailableDiagnosis;
     // The owning supervisor lease and parent-death/PID-namespace boundary exclude a live old reviewer.
-    removeInterruptedSnapshots(options.host); options.mailbox.recover(); this.#publish();
+    removeInterruptedSnapshots(options.host); options.mailbox.recover(); recoverReviewReservations(options.mailbox.store); this.#publish();
   }
   status(): DispatchStatus {
     const jobs = this.options.mailbox.jobs();
@@ -211,8 +213,10 @@ export class EvaluationDispatcher {
     this.#publish();
     try {
       if (job.kind === 'evaluation') await mailbox.processEvaluation(job.id, async request => {
-        const response = await runExternalReview(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest),
-          this.options.acceptedCandidateId(), this.options.assertAuthority, this.#abort.signal);
+        const response = await accountedReview({ store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer!))),
+          evaluatorId: reviewer!.evaluatorId, maxElapsedMs: reviewer!.maxElapsedMs, assertAuthority: this.options.assertAuthority, signal: this.#abort.signal },
+        gate => runExternalReview(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest),
+          this.options.acceptedCandidateId(), this.options.assertAuthority, gate.signal, gate.beforeDispatch));
         for (const blob of response.artifacts) mailbox.store.putArtifact(Buffer.from(blob.base64, 'base64'));
         return response.result;
       }, this.#abort.signal);

@@ -10,6 +10,7 @@ import { admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '.
 import { hashBytes } from '../packages/release/artifacts.ts';
 import { policyDescriptor, type ReleaseProof } from '../packages/release/controller.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
+import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { reviewerDescriptor, runExternalReview, type ReviewerFile } from './evaluation-dispatch.ts';
@@ -19,6 +20,7 @@ import type { SubmissionRequest } from './evolution-tools.ts';
 import { contentAddressedEvidence } from './host-policy.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceSupervisor } from './supervisor.ts';
+import { reviewPhysicalId } from './evaluation-resources.ts';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const markerPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
@@ -34,7 +36,7 @@ let input = ''; for await (const chunk of process.stdin) input += chunk;
 const x = JSON.parse(input), r = x.request;
 // These modes simulate a physical effect whose reply was lost or never completed.
 if (r.requestId === 'lost-review') process.exit(2);
-if (r.requestId === 'interrupted-review') { await new Promise(resolve => setTimeout(resolve, 10000)); process.exit(2); }
+if (r.requestId === 'interrupted-review') { await new Promise(resolve => setTimeout(resolve, 60000)); process.exit(2); }
 if (Object.keys(process.env).some(key => /KEY|TOKEN/.test(key)) || existsSync('/app') || existsSync('/usr/bin') || existsSync('/candidate/key')) throw Error('Unexpected authority visible to reviewer');
 const bytes = readFileSync(x.candidateRoot + '/payload/packages/narrow-schema/vendor/cfworker/ucs2-length.ts');
 if (!bytes.toString().includes(heldOutMarker)) throw Error('Exact held-out source observation failed');
@@ -69,7 +71,7 @@ function fixture() {
   const script = join(reviewerRoot, 'reviewer.mjs'); writeFileSync(script, reviewerSource, { mode: 0o600 }); retain(script, '/reviewer/reviewer.mjs');
   const rules = join(reviewerRoot, 'rules.mjs'); writeFileSync(rules, "export const heldOutMarker = 'externalDispatchEngineeringFixture = true';\n", { mode: 0o600 }); retain(rules, '/reviewer/rules.mjs');
   const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: ['--jitless', '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
-    pollMs: 10, maxElapsedMs: 5000, maxOutputBytes: 8 * 1024 * 1024, maxClosureBytes: 256 * 1024 * 1024, memoryBytes: 8 * 1024 * 1024 * 1024 };
+    pollMs: 10, maxElapsedMs: 15000, maxOutputBytes: 8 * 1024 * 1024, maxClosureBytes: 256 * 1024 * 1024, memoryBytes: 8 * 1024 * 1024 * 1024 };
   const reviewerFile = join(reviewerRoot, 'config.json'); writeFileSync(reviewerFile, JSON.stringify(reviewer), { mode: 0o600 });
   const evaluator = blob(reviewerDescriptor(reviewer));
   const fields = { kind: 'engineering' as const, requiredCases: ['held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
@@ -99,7 +101,7 @@ function fixture() {
   const options = { host, mode: 'engineering' as const, secrets: { mistralApiKey: 'no-paid-provider-access', directToken: 'fixture-token' }, readArtifact: contentAddressedEvidence(evidenceDirectory),
     getPolicy: (digest: string) => { const result = policies.get(digest); assert.ok(result, 'Unknown registered policy'); return result; }, bootstrap: { proof: bootstrapProof, policyDigest: policy.policyDigest },
     evaluationDispatcher: { reviewerFile, policyDigests: [...policies.keys()] } };
-  return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory };
+  return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources };
 }
 
 test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 120000 }, async t => {
@@ -122,6 +124,18 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     await eventually(() => store.list<any>('release.changes')[0]!.value.state, value => value === 'submitted');
     assert.equal(mailbox.jobs().filter(job => job.kind === 'evaluation' && job.status === 'completed').length, 1);
     const evaluation = mailbox.jobs().find(job => job.kind === 'evaluation')!, original = mailbox.request(evaluation.id) as EvaluationRequest;
+    const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: f.reviewer.maxElapsedMs });
+    const physical = ledger.request(reviewPhysicalId(evaluation.id))!;
+    assert.equal(physical.runId, original.proposal.runId); assert.equal(physical.purpose, 'review'); assert.equal(physical.status, 'succeeded');
+    assert.ok(physical.usage.elapsedMs > 0, 'Actual reviewer wall time is charged separately from the author effect receiver');
+    // Additional fault jobs have explicit engineering author allocations; no completed generation
+    // silently gains a successor's authority or borrows an unrelated requester's budget.
+    const faultRequest = (requestId: string): EvaluationRequest => {
+      const authority = supervisor!.status().ready!.authority, runId = `engineering-fault:${requestId}`;
+      ledger.allocate(runId, f.resources, 'operating-envelope:v1');
+      store.put('runs', runId, { id: runId, status: 'completed', revision: 0, scope: { kind: 'public' }, authority }, null);
+      return { ...original, requestId, proposal: { ...original.proposal, runId, authority } };
+    };
     const proof = store.readJsonArtifact<ReleaseProof>(evaluation.proof!);
     const observation = JSON.parse(Buffer.from(mailbox.readArtifact(proof.proposal.evidence[0]!.artifact.uri)).toString());
     assert.equal(observation.inheritedKeys, false); assert.match(observation.kind, /H1 unaccepted/);
@@ -143,7 +157,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       assert.equal(supervisor.status().release?.phase, 'accepted');
     });
     await t.test('physical lost reply remains uncertain across host restart and is never automatically repeated', async () => {
-      const request = { ...original, proposal: { ...original.proposal, authority: supervisor!.status().ready!.authority }, requestId: 'lost-review' };
+      const request = faultRequest('lost-review');
       await assert.rejects(mailbox.requestEvaluation(request), /remains/);
       await eventually(() => mailbox.status(request.requestId), value => value?.status === 'uncertain');
       assert.match(supervisor!.status().evaluation!.diagnosis!, /without a complete response/);
@@ -151,14 +165,16 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       supervisor = await ServiceSupervisor.open(f.options);
       assert.equal(mailbox.status(request.requestId)!.status, 'uncertain');
       await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(supervisor.status().evaluation?.activeJob, undefined);
+      assert.equal(ledger.request(reviewPhysicalId(request.requestId))!.status, 'uncertain');
+      assert.equal(ledger.request(reviewPhysicalId(request.requestId))!.usage.elapsedMs, f.reviewer.maxElapsedMs);
     });
     await t.test('host interruption aborts a physical reviewer and restart retains uncertainty', async () => {
-      const authority = supervisor!.status().ready!.authority;
-      const request = { ...original, proposal: { ...original.proposal, authority }, requestId: 'interrupted-review' };
+      const request = faultRequest('interrupted-review');
       const waiting = assert.rejects(mailbox.requestEvaluation(request), /remains|withdrawn|authority|stale/i);
       await eventually(() => mailbox.status(request.requestId), value => value?.status === 'dispatched');
       await supervisor!.close(); supervisor = undefined; await waiting;
       assert.equal(mailbox.status(request.requestId)!.status, 'uncertain');
+      assert.equal(ledger.request(reviewPhysicalId(request.requestId))!.status, 'uncertain');
       assert.deepEqual(readdirSync(join(f.host.stateDirectory, 'host-review-dispatch')), []);
       const interruptedSnapshot = mkdtempSync(join(f.host.stateDirectory, 'host-review-dispatch/physical-'));
       writeFileSync(join(interruptedSnapshot, 'key'), Buffer.alloc(32, 1), { mode: 0o400 });
@@ -171,7 +187,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       await supervisor!.close(); supervisor = undefined;
       supervisor = await ServiceSupervisor.open({ ...f.options, evaluationDispatcher: { ...f.options.evaluationDispatcher, reviewerFile: join(f.root, 'missing-private-reviewer.json') } });
       assert.equal(supervisor.status().running, true); assert.equal(supervisor.status().evaluation?.available, false); assert.match(supervisor.status().evaluation!.diagnosis!, /unavailable/);
-      const pending = { ...original, requestId: 'missing-reviewer', proposal: { ...original.proposal, authority: supervisor.status().ready!.authority } };
+      const pending = faultRequest('missing-reviewer');
       await assert.rejects(mailbox.requestEvaluation(pending), /External evaluation unavailable/);
       assert.equal(mailbox.status(pending.requestId)!.status, 'pending');
       await supervisor.close(); supervisor = undefined;
