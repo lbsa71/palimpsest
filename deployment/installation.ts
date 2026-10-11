@@ -86,11 +86,17 @@ function selectedProviderCandidate(value: Installation): string {
     const path = join(value.stateDirectory, name); if (!existsSync(path)) return;
     canonical(path); const stat = lstatSync(path);
     invariant(stat.isFile() && stat.uid === value.uid && stat.nlink === 1 && (stat.mode & 0o077) === 0, 'Private boot-selection journal required');
+    for (const suffix of ['-wal', '-shm']) if (existsSync(path + suffix)) {
+      canonical(path + suffix); const sidecar = lstatSync(path + suffix);
+      invariant(sidecar.isFile() && sidecar.nlink === 1 && sidecar.uid === value.uid && (sidecar.mode & 0o077) === 0, 'Private boot-selection sidecar required');
+    }
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       // A crash before first schema creation is recoverable by the actual launcher/controller.
       if (!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) return;
-      const row = db.prepare(`SELECT value FROM ${table} WHERE singleton=1`).get(); return row ? JSON.parse(String(row.value)) : undefined;
+      const row = db.prepare(`SELECT CASE WHEN length(CAST(value AS BLOB)) <= 8192 THEN value ELSE NULL END AS value FROM ${table} WHERE singleton=1`).get();
+      invariant(!row || typeof row.value === 'string', 'Bounded boot-selection record required');
+      return row ? JSON.parse(String(row.value)) : undefined;
     }
     finally { db.close(); }
   };
@@ -118,7 +124,8 @@ export function validateEnvironmentFile(bytes: Buffer): NodeJS.ProcessEnv {
   invariant(secrets.AUTARK_DIRECT_TOKEN && (secrets.MISTRAL_API_KEY || secrets.OPENAI_API_KEY), 'AUTARK_DIRECT_TOKEN and one explicit provider key required');
   return secrets;
 }
-/** Read-only preflight. The supervisor separately probes actual delegated leaf limits after its lease. */
+/** No authority or main-journal mutation; SQLite may create same-owner WAL/SHM reader bookkeeping.
+ * The supervisor separately probes actual delegated leaf limits after its lease. */
 export function checkInstallation(input: Installation, context: 'admin' | 'service', mounted = true): SupervisorFile {
   const value = validateInstallation(input);
   invariant(process.platform === 'linux', 'Linux installation required');
@@ -131,8 +138,9 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   const runtime = (candidate.inputs.controls as unknown as { runtime: DeploymentInputs['runtime'] }).runtime;
   invariant(run(value.nodeBinary, ['--version']).trim() === runtime.nodeVersion, 'Pinned Node version differs from frozen coordinator');
   invariant(candidate.files.some(file => file.path === 'deployment/installation.ts') && candidate.files.some(file => file.path === 'deployment/cli.ts') && candidate.files.some(file => file.path === 'deployment/host-successor.ts'), 'Frozen coordinator must include installation, CLI and host-launcher entrypoints');
-  const config = JSON.parse(privateFile(value.hostConfigFile, value.uid).toString('utf8')) as SupervisorFile;
-  invariant(Object.keys(config).sort().join(',') === (config.bootstrap ? 'bootstrap,evidenceDirectory,host,mode,policyFiles' : 'evidenceDirectory,host,mode,policyFiles') && ['product', 'engineering'].includes(config.mode), 'Exact supervisor configuration required');
+  const config = JSON.parse(privateFile(value.hostConfigFile, value.uid).toString('utf8')) as SupervisorFile & { evaluationDispatcher?: string };
+  const configFields = ['evidenceDirectory', 'host', 'mode', 'policyFiles', ...(config.bootstrap ? ['bootstrap'] : []), ...(config.evaluationDispatcher !== undefined ? ['evaluationDispatcher'] : [])].sort().join(',');
+  invariant(Object.keys(config).sort().join(',') === configFields && ['product', 'engineering'].includes(config.mode), 'Exact supervisor configuration required');
   invariant(config.host.stateDirectory === value.stateDirectory && config.host.artifactStore === value.artifactStore && config.host.nodeBinary === value.nodeBinary && config.host.workspaceDirectory === workspacePath(value) && config.host.cgroupRoot === `/sys/fs/cgroup/system.slice/${value.unitName}`, 'Host bindings must match installed resources and delegated unit');
   invariant(Object.keys(config.host).sort().join(',') === 'artifactStore,cgroupRoot,nodeBinary,stateDirectory,workspaceDirectory', 'Exact installed host bindings required');
   privateDirectory(config.host.stateDirectory, value.uid); privateDirectory(value.artifactStore, value.uid); safePath(config.evidenceDirectory);
@@ -144,6 +152,10 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   const profile = (candidate.inputs.configuration as unknown as DeploymentInputs['configuration']).resourceLimits;
   invariant(profile && profile.workspaceBytes === value.workspaceBytes && profile.workspaceInodes === value.workspaceInodes, 'Frozen resource profile must match provisioned capacity');
   invariant(Array.isArray(config.policyFiles) && config.policyFiles.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(part => typeof part === 'string')), 'Exact policy registry required');
+  if (config.evaluationDispatcher !== undefined) {
+    safePath(config.evaluationDispatcher);
+    for (const root of [value.hostDataProvisionDirectory, value.workspaceProvisionDirectory]) invariant(!beneath(root, config.evaluationDispatcher), 'Evaluation dispatcher must remain outside writable data roots');
+  }
   // Missing bootstrap/evaluator inputs are allowed on accepted recovery; admission itself verifies them when needed.
   for (const [, path] of config.policyFiles) { safePath(path); for (const root of [value.hostDataProvisionDirectory, value.workspaceProvisionDirectory]) invariant(!beneath(root, path), 'Policies must remain outside model roots'); }
   const controllers = readFileSync('/sys/fs/cgroup/cgroup.controllers', 'utf8').split(/\s+/);
@@ -190,8 +202,16 @@ export function checkHostData(value: Installation): void {
   for (const name of ['state', 'artifacts', 'evidence', 'logs']) {
     const path = join(hostDataPath(value), name);
     if (name === 'evidence' && !existsSync(path)) continue; // Accepted recovery does not need the external evidence store.
+    if (name === 'logs') { checkHostLog(path, device); continue; }
     privateDirectory(path, value.uid); invariant(lstatSync(path).gid === value.gid && lstatSync(path).dev === device, 'Host-data directories must share the bounded filesystem and service GID');
   }
+}
+/** An inherited append descriptor is writable; its pathname must never be replaceable by the service. */
+export function checkHostLog(directory: string, device: number): void {
+  canonical(directory); const stat = lstatSync(directory);
+  invariant(stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o022) === 0 && stat.dev === device, 'Root-owned bounded append-log directory required');
+  const path = join(directory, 'coordinator.log'); canonical(path); const file = lstatSync(path);
+  invariant(file.isFile() && file.uid === 0 && file.nlink === 1 && (file.mode & 0o077) === 0 && file.dev === device, 'Root-owned bounded append-log file required');
 }
 export function writeInstallationBundle(input: Installation, directory: string): void {
   safePath(directory); canonical(dirname(directory)); mkdirSync(directory, { mode: 0o700 });

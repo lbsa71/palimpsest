@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { freezeCandidate, hashBytes } from '../packages/release/artifacts.ts';
-import { checkHostData, checkInstallation, checkWorkspace, hostDataMountUnitName, hostDataPath, mountUnitName, renderInstallation, stopInstallation, validateEnvironmentFile, validateInstallation, workspacePath, writeInstallationBundle, type Installation } from './installation.ts';
+import { checkHostData, checkHostLog, checkInstallation, checkWorkspace, hostDataMountUnitName, hostDataPath, mountUnitName, renderInstallation, stopInstallation, validateEnvironmentFile, validateInstallation, workspacePath, writeInstallationBundle, type Installation } from './installation.ts';
 
 const specification = (): Installation => ({ unitName: 'aeon-installation-test.service', uid: process.getuid!(), gid: process.getgid!(), nodeBinary: process.execPath,
   hostDataProvisionDirectory: '/var/lib/aeon/host-data', hostDataBytes: 268435456, hostDataInodes: 8192, artifactStore: '/var/lib/aeon/host-data/work/artifacts', stateDirectory: '/var/lib/aeon/host-data/work/state', coordinatorCandidateId: 'a'.repeat(64), hostConfigFile: '/etc/aeon/host.json', environmentFile: '/etc/aeon/secrets.env',
@@ -83,6 +83,10 @@ test('preflight rehashes coordinator/runtime and rejects a mismatched frozen cap
     try {
       delete process.env.MISTRAL_API_KEY; process.env.OPENAI_API_KEY = 'fixture-no-provider'; process.env.AUTARK_DIRECT_TOKEN = 'fixture-direct';
       const selectedValue = { ...value, coordinatorCandidateId: mistral.manifest.id };
+      const baseConfig = JSON.parse(readFileSync(value.hostConfigFile, 'utf8'));
+      writeFileSync(value.hostConfigFile, JSON.stringify({ ...baseConfig, evaluationDispatcher: join(value.stateDirectory, 'reviewer.json') }));
+      assert.throws(() => checkInstallation(selectedValue, 'service', false), /dispatcher must remain outside/);
+      writeFileSync(value.hostConfigFile, JSON.stringify({ ...baseConfig, evaluationDispatcher: join(root, 'private-dispatcher.json') }));
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /Selected provider credential unavailable/);
       const journal = join(value.stateDirectory, 'host-successor.sqlite'), db = new DatabaseSync(journal); chmodSync(journal, 0o600);
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /Selected provider credential unavailable/); // Interrupted first schema creation remains a bootstrap decision.
@@ -90,6 +94,8 @@ test('preflight rehashes coordinator/runtime and rejects a mismatched frozen cap
       const save = (phase: string) => db.prepare('INSERT OR REPLACE INTO selection VALUES(1,?)').run(JSON.stringify({ phase, selected: { candidateId: openai.manifest.id }, rescue: { candidateId: mistral.manifest.id } }));
       save('ready');
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Selected OpenAI credential passes; undelegated test process fails closed.
+      db.prepare('UPDATE selection SET value=?').run(' '.repeat(8193));
+      assert.throws(() => checkInstallation(selectedValue, 'service', false), /Bounded boot-selection record/);
       save('booting');
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /Selected provider credential unavailable/); // Interrupted boot will select the old Mistral rescue.
       db.close();
@@ -127,7 +133,7 @@ test('real host-data capacity bounds combined state/artifact/evidence/log growth
   const directory = process.env.AEON_INSTALLATION_HOST_DATA!;
   const input = { ...specification(), hostDataProvisionDirectory: directory, hostDataBytes: 16777216, hostDataInodes: 128, stateDirectory: join(directory, 'work/state'), artifactStore: join(directory, 'work/artifacts') };
   checkHostData(input);
-  for (const name of ['state', 'artifacts', 'evidence', 'logs']) {
+  for (const name of ['state', 'artifacts', 'evidence']) {
     const marker = join(hostDataPath(input), name, 'retained');
     if (existsSync(marker)) assert.equal(readFileSync(marker, 'utf8'), name);
     else writeFileSync(marker, name, { flag: 'wx', mode: 0o600 });
@@ -139,6 +145,16 @@ test('real host-data capacity bounds combined state/artifact/evidence/log growth
     assert.throws(() => execFileSync('/usr/bin/fallocate', ['-l', '8388608', allocation], { stdio: 'pipe' }), (error: unknown) => {
       assert.match(String((error as { stderr?: Buffer }).stderr), /No space left on device/); return true;
     });
-    for (const name of ['state', 'artifacts', 'evidence', 'logs']) assert.equal(readFileSync(join(hostDataPath(input), name, 'retained'), 'utf8'), name);
+    for (const name of ['state', 'artifacts', 'evidence']) assert.equal(readFileSync(join(hostDataPath(input), name, 'retained'), 'utf8'), name);
   } finally { rmSync(allocation, { force: true }); rmSync(first, { force: true }); }
+});
+
+
+test('service-owned log paths cannot be accepted as privileged systemd append sinks', () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-log-preflight-'));
+  try {
+    writeFileSync(join(root, 'coordinator.log'), 'retained', { mode: 0o600 });
+    assert.throws(() => checkHostLog(root, lstatSync(root).dev), /Root-owned bounded append-log/);
+    assert.equal(readFileSync(join(root, 'coordinator.log'), 'utf8'), 'retained');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

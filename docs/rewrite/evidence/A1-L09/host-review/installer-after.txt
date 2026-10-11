@@ -1,0 +1,26 @@
+{"workspace":"/var/lib/aeon-host-review-763415-workspace/work","image":"/var/lib/aeon-host-review-763415-workspace/workspace.ext4","workspaceBytes":16777216,"workspaceInodes":128}
+{"root":"/var/lib/aeon-host-review-763415-data/work","image":"/var/lib/aeon-host-review-763415-data/workspace.ext4","bytes":16777216,"inodes":128,"stateDirectory":"/var/lib/aeon-host-review-763415-data/work/state","artifactStore":"/var/lib/aeon-host-review-763415-data/work/artifacts","evidenceDirectory":"/var/lib/aeon-host-review-763415-data/work/evidence","logDirectory":"/var/lib/aeon-host-review-763415-data/work/logs"}
+(node:763461) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ renders a complete systemd-verifiable new installation with a persistent ordered mount (124.444032ms)
+✔ mount names match systemd path escaping, including hyphens and leading dots (12.693264ms)
+✔ refuses legacy names, extra fields, unbounded profiles, overlap and all unit/command injection inputs (12.837554ms)
+✔ private environment accepts only explicit secret assignments and prevents runtime option injection (1.035969ms)
+✔ preflight rehashes coordinator/runtime and rejects a mismatched frozen capacity before delegation (3708.195577ms)
+✔ read-only workspace preflight refuses an ordinary host filesystem without deleting lived data (2.3468ms)
+✔ administrator-provisioned real workspace retains its marker and matches its exact bounded backing image (10.083761ms)
+✔ real host-data capacity bounds combined state/artifact/evidence/log growth and preserves markers (29.828306ms)
+✔ service-owned log paths cannot be accepted as privileged systemd append sinks (0.706736ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4133.442149
+PASS service cannot replace root-owned log pathname
+first-appendsecond-appendPASS actual systemd append retained both writes inside bounded volume
+{"root":"/var/lib/aeon-host-review-763415-data/work","image":"/var/lib/aeon-host-review-763415-data/workspace.ext4","bytes":16777216,"inodes":128,"stateDirectory":"/var/lib/aeon-host-review-763415-data/work/state","artifactStore":"/var/lib/aeon-host-review-763415-data/work/artifacts","evidenceDirectory":"/var/lib/aeon-host-review-763415-data/work/evidence","logDirectory":"/var/lib/aeon-host-review-763415-data/work/logs"}
+first-appendsecond-appendPASS remount retained log bytes without truncation
+CLEANED both disposable mounts/images; transient units collected

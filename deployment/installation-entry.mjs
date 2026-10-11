@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Explicit one-time administrator capability; never reachable from model workers or the service.
 import { execFileSync } from 'node:child_process';
-import { chownSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statfsSync } from 'node:fs';
+import { chownSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statfsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,9 +22,12 @@ if (operation === 'create-host-data') {
   run(process.execPath, [fileURLToPath(new URL('../packages/supervisor/provision-workspace.mjs', import.meta.url)), 'create', directory, String(uid), String(gid), String(bytes), String(inodes)]);
   // Change only the new mounted root; failure retains the created image for explicit inspection.
   chownSync(root, 0, 0); chmodSync(root, 0o755);
-  for (const name of ['state', 'artifacts', 'evidence', 'logs']) {
+  for (const name of ['state', 'artifacts', 'evidence']) {
     const path = join(root, name); mkdirSync(path, { mode: 0o700 }); chownSync(path, uid, gid);
   }
+  // systemd opens append output with host privilege. The service must not replace its pathname.
+  mkdirSync(join(root, 'logs'), { mode: 0o755 });
+  writeFileSync(join(root, 'logs/coordinator.log'), '', { flag: 'wx', mode: 0o600 });
 } else {
   require(realpathSync(directory) === directory && realpathSync(image) === image && realpathSync(root) === root, 'Existing ordinary host-data layout required');
   const layoutStat = lstatSync(directory), imageStat = lstatSync(image);
@@ -43,6 +46,11 @@ for (const name of ['state', 'artifacts', 'evidence', 'logs']) {
   const path = join(root, name);
   if (operation === 'mount-host-data' && name === 'evidence' && !existsSync(path)) continue;
   require(realpathSync(path) === path, 'Ordinary host-data subdirectory required');
-  const stat = lstatSync(path); require(stat.isDirectory() && stat.uid === uid && stat.gid === gid && (stat.mode & 0o077) === 0 && stat.dev === rootStat.dev, 'Private same-filesystem host-data directory required');
+  const stat = lstatSync(path);
+  if (name === 'logs') {
+    require(stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o022) === 0 && stat.dev === rootStat.dev, 'Root-owned bounded append-log directory required');
+    const log = join(path, 'coordinator.log'); require(realpathSync(log) === log, 'Ordinary append-log file required');
+    const file = lstatSync(log); require(file.isFile() && file.uid === 0 && file.nlink === 1 && (file.mode & 0o077) === 0 && file.dev === rootStat.dev, 'Root-owned bounded append-log file required');
+  } else require(stat.isDirectory() && stat.uid === uid && stat.gid === gid && (stat.mode & 0o077) === 0 && stat.dev === rootStat.dev, 'Private same-filesystem host-data directory required');
 }
 process.stdout.write(JSON.stringify({ root, image, bytes, inodes, stateDirectory: join(root, 'state'), artifactStore: join(root, 'artifacts'), evidenceDirectory: join(root, 'evidence'), logDirectory: join(root, 'logs') }) + '\n');

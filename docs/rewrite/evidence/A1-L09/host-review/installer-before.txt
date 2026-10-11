@@ -1,0 +1,11 @@
+Frozen installer review: 35c842d.
+Disposable systemd unit with User=1006 and StandardOutput=append:PATH/logs/coordinator.log.
+The service-owned logs directory held a symlink to a root-owned mode0600 file outside the data root.
+The unit ran /usr/bin/printf escaped-boundary.
+Observed service exit: 0
+Observed root-owned outside target contents: escaped-boundary
+The transient unit was collected and all temporary files removed.
+
+Separate SQLite read-only hypothesis rejected by observation:
+The unchanged selectedProviderCandidate helper from35c842d was temporarily exported in a disposable source copy and invoked through sudo against a disposable service-owned WAL database.
+Observed main database owner1006, WAL owner1006, SHM owner1006; service reopening for BEGIN IMMEDIATE succeeded. SQLite supplies correct sidecar ownership itself. No privilege-switch code was retained. SQLite can still create reader sidecars, so no strict filesystem-no-write claim is made for this preflight.

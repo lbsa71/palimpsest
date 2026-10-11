@@ -1,0 +1,19 @@
+(node:764640) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ renders a complete systemd-verifiable new installation with a persistent ordered mount (121.537413ms)
+✔ mount names match systemd path escaping, including hyphens and leading dots (12.896914ms)
+✔ refuses legacy names, extra fields, unbounded profiles, overlap and all unit/command injection inputs (9.25273ms)
+✔ private environment accepts only explicit secret assignments and prevents runtime option injection (1.239079ms)
+✔ preflight rehashes coordinator/runtime and rejects a mismatched frozen capacity before delegation (5326.729919ms)
+✔ read-only workspace preflight refuses an ordinary host filesystem without deleting lived data (2.426281ms)
+﹣ administrator-provisioned real workspace retains its marker and matches its exact bounded backing image (0.299689ms) # SKIP
+﹣ real host-data capacity bounds combined state/artifact/evidence/log growth and preserves markers (0.170121ms) # SKIP
+✔ service-owned log paths cannot be accepted as privileged systemd append sinks (0.868947ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 2
+ℹ todo 0
+ℹ duration_ms 5721.328239
