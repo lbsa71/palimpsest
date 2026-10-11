@@ -25,7 +25,7 @@ test('renders a complete systemd-verifiable new installation with a persistent o
     assert.ok(units[input.unitName]!.includes(`--chdir=${input.stateDirectory}/boot/active ./node payload/deployment/bootstrap-evolution.ts run`));
     assert.ok(units[input.unitName]!.includes('ExecStopPost=/bin/sh'));
     assert.ok(!units[input.unitName]!.includes('ExecStartPre='));
-    assert.ok(units[input.unitName]!.includes(`ReadWritePaths=${input.stateDirectory} ${input.artifactStore} ${join(hostDataPath(input), 'logs')} ${workspacePath(input)}`));
+    assert.ok(units[input.unitName]!.includes(`ReadWritePaths=${hostDataPath(input)} ${workspacePath(input)}`));
     assert.ok(units[input.unitName]!.includes(`StandardOutput=append:${join(hostDataPath(input), 'logs/coordinator.log')}`));
     assert.ok(units[dataMount]!.includes(`Where=${hostDataPath(input)}`));
     assert.match(units[mount]!, /Type=ext4\nOptions=loop,nodev,nosuid/);
