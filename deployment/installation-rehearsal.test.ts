@@ -209,7 +209,8 @@ test('complete disposable installation retains current state, with optional inst
       assert.ok(readFileSync(`/proc/${rescuePid}/cmdline`, 'utf8').endsWith('rescue\0'));
       for (const pid of [rescuePid, recovered.coordinator.processId, recovered.processId]) assert.equal(readlinkSync(`/proc/${pid}/exe`), join(incumbentBoot, 'node'));
       assert.equal(readFileSync(join(cgroupRoot, 'cgroup.procs'), 'utf8').trim(), '');
-      assert.ok(readFileSync(join(cgroupRoot, 'host/cgroup.procs'), 'utf8').trim().split('\n').includes(String(rescuePid)));
+      const rescueHostPids = readFileSync(join(cgroupRoot, 'host/cgroup.procs'), 'utf8').trim().split('\n');
+      for (const pid of [rescuePid, recovered.coordinator.processId, recovered.processId]) assert.ok(rescueHostPids.includes(String(pid)));
       assert.ok(!readFileSync(`/proc/${rescuePid}/environ`, 'utf8').split('\0').some(entry => /^(MISTRAL_API_KEY|OPENAI_API_KEY)=/.test(entry)));
       const recoveryResponse = await fetch(`http://127.0.0.1:${recovered.ready.address.port}/health`, { headers: { authorization: 'Bearer fixture-direct-token' } });
       assert.equal(recoveryResponse.status, 200);
