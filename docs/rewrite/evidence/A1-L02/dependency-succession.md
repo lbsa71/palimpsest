@@ -23,6 +23,8 @@ Node `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node` v24.13.0. Develo
 
 Strict root typecheck and `git diff --check` passed during preparation. Root serializes the joined heavy execution after the aggregate and Claude native fixture windows. No joined pass is claimed until its actual log and manifest are recorded here.
 
+First physical run at `ff29d85` failed **0/1, one failure, zero skips**, in **19,652.144594 ms** at the successor host-context obligation assertion. The fixture incorrectly assigned a literal `dependency` destination to the promise while direct ingress generates its actual authenticated destination. The host correctly filtered this mismatched target. The fixture now copies the actual incumbent host-context target for the same direct conversation; no visibility rule or assertion changed. Original output is retained outside Git at `/home/palimpsest/migration/aeon-1-20261011/dependency-succession-evidence/ff29d85-trial.log`. Its temporary service/source/state root was removed by normal fixture cleanup. Corrected run remains pending.
+
 ```sh
 /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
 AEON_DEPENDENCY_SOURCE_REVISION=<exact-author-commit> AEON_DEPENDENCY_EVIDENCE_DIRECTORY=<private-output-directory> /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test deployment/dependency-succession.test.ts

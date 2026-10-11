@@ -17,6 +17,7 @@ import { WorkspaceTools } from '../packages/tools/index.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { contentAddressedEvidence } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
+import type { ObligationTarget } from './obligation-tools.ts';
 import { rewriteSourceEntries, sourceWorkspaceTools } from './source-workspace.ts';
 import { ServiceSupervisor } from './supervisor.ts';
 
@@ -85,7 +86,7 @@ test('edited retained validator is built, admitted under old controls and invoke
       assert.equal(completed!.status, 'completed', JSON.stringify(store!.get('execution', run.id)));
       const workspace = store!.get<{ workspace: string }>('host.run-grants', run.id)!.value.workspace;
       const bytes = readFileSync(join(workspace, 'schema-witness.json'));
-      return { runId: run.id, bytes, value: JSON.parse(bytes.toString()) as { diagnostic: string; hostContext: { memory: { memories: { id: string }[] }; agenda: { id: string; nextAction: string }[]; obligations: { id: string }[] } } };
+      return { runId: run.id, bytes, value: JSON.parse(bytes.toString()) as { diagnostic: string; hostContext: { target: ObligationTarget; memory: { memories: { id: string }[] }; agenda: { id: string; nextAction: string }[]; obligations: { id: string }[] } } };
     }
     const before = await witness('incumbent-schema');
     assert.match(before.value.diagnostic, /Validation failed for tool "workspace_read"/); assert.equal(before.value.diagnostic.includes(marker), false);
@@ -129,7 +130,7 @@ test('edited retained validator is built, admitted under old controls and invoke
     goal = goals.accept(goal.id, goal.revision, 'Engineering fixture chosen inquiry');
     goal = goals.revise(goal.id, goal.revision, { status: 'paused', nextAction: 'Latest action after candidate freeze' }, 'Retain without automatic execution');
     obligations.owe({ id: 'dependency-latest-obligation', inputId: 'after-freeze-input', goalId: goal.id, audience: scope, promisedOutcome: 'Latest owed dependency succession report', dueAt: null });
-    store.put('host.obligation-targets', 'dependency-latest-obligation', { channel: 'dependency', transport: 'direct', scope }, null);
+    store.put('host.obligation-targets', 'dependency-latest-obligation', before.value.hostContext.target, null);
     const state = () => ({ memory: store!.get('development.memories', 'dependency-latest-memory'), goal: store!.get('initiative.goals', goal.id), obligation: store!.get('initiative.obligations', 'dependency-latest-obligation') });
     const latest = state(), admission = proof(successor, initial);
     await assert.rejects(supervisor.release(admission), /control/i);
