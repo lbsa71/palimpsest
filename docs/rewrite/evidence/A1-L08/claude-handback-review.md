@@ -6,7 +6,7 @@ A1-L08-T02/T06, 2026-10-11. Reviewer `/root/a1_claude_handback_review`, isolated
 /goal Independently review the separately bounded Claude hand-back correction with acquired-positive causal controls, then audit the single root-authorized actual outcome read-only, preserving historical failures and charges and handing off exact evidence without competence, parity or H1 claims.
 ```
 
-Status: **repaired source review accepted for the single root-assigned synthetic follow-up; actual outcome pending**. Author source/plan/driver `c72f4ce4dded9dc90bec51edd5505f548ef29aab` and evidence-only `823cdc9bd35d321a63535ec91f3939ae50140c4d` were cherry-picked as `75acf78` and `028cbce`. No physical launch is authorized to this reviewer. Root owns the physical window and exact joined clean source freeze.
+Status: **bounded review complete; repaired source and the one actual synthetic native parent-completion follow-up accepted**. Physical source is `104dac2c544ec6c1265c5b1ad0eb5f9a8b2db7c9`, with independent prelaunch review `e0dd80c561e05d697b9c9781409015f8235b7833`. The author alone executed the root-assigned physical window; this reviewer performed read-only outcome checks. Author source/plan/driver `c72f4ce4dded9dc90bec51edd5505f548ef29aab` and evidence-only `823cdc9bd35d321a63535ec91f3939ae50140c4d` were cherry-picked as `75acf78` and `028cbce`. No physical launch is authorized to this reviewer. Root owns the physical window and exact joined clean source freeze.
 
 The old unit remains closed with all three Claude attempts failed. Claude 3 retains CLI 143, five known receipts/550 tokens/synthetic USD0.003 and the unknown full reservation of 1,004,096 tokens/USD8.08192; no parent completion. Parsing its acquired reports successfully cannot retroactively repair its physical outcome.
 
@@ -48,7 +48,7 @@ Review logs are external at `/home/palimpsest/migration/aeon-1-20261011/claude-h
 | `check.txt` | `33792e951084ef06e5350c5ba85c3ad69188d94cefd288b7dbd0747999c93997` |
 | `baseline-suite.txt` | `2549e51ad168061db7f9f6802e9d1c8ca8e2ed35e2f0faf48ccdc21171661968` |
 
-The actual audit is explicitly enabled only by `AEON_CLAUDE_HANDBACK_REVIEW_EVIDENCE`; it opens original stores read-only and does not launch native code. The finite review goal stays active until that one outcome is independently audited and handed off. Source acceptance establishes no parent completion, live compatibility, competence, parity, developmental transfer or H1.
+The actual audit is explicitly enabled only by `AEON_CLAUDE_HANDBACK_REVIEW_EVIDENCE`; it opens original stores read-only and does not launch native code. The source-only checkpoint kept the finite review goal active until the actual outcome audit below. Source acceptance establishes no parent completion, live compatibility, competence, parity, developmental transfer or H1.
 
 
 ## Frozen-source additional finding
@@ -75,3 +75,40 @@ Source acceptance is restored at the repaired checkpoint. Root must integrate al
 | `repaired-focused.txt` | `fbfecee94141fed2f3f7fb01cb3fc031344daa1712d79911d42a05845876d61a` |
 | `repaired-check.txt` | `33792e951084ef06e5350c5ba85c3ad69188d94cefd288b7dbd0747999c93997` |
 | `repaired-baseline-suite.txt` | `939feca6c6610b62689507e57bb4d9be1910371e7b5a1f2506e9eae2ec1c92a1` |
+
+
+## Independent actual-outcome audit and final disposition
+
+The author used the sole root-assigned window once, at exact joined clean source `104dac2c544ec6c1265c5b1ad0eb5f9a8b2db7c9`. The unchanged driver SHA256 is `8f18123ee74c485bf4eef2d62d5d171d117708d82acd21592b0b90f57a5cb313`. Evidence root is `/home/palimpsest/migration/aeon-1-20261011/claude-handback-physical-evidence/claude-handback-followup-1-8PosR0`. The distinct grant `engineering-claude-handback-followup-1` completed with **six known requests, 660 tokens and synthetic USD0.0036, zero unknown requests**. Every original request ceiling was 1,004,096 tokens/USD8.08192; each settled to 110 tokens/USD0.0006. The allocation is cancelled after drain and the lease owner table is empty. The one-use marker remains consumed. No second follow-up occurred.
+
+Read-only audit independently establishes two simultaneous dispatched native child allocations, two real command files and successful command continuations, both exact native Agent hand-back reports reaching the parent, the final native result `native-concurrency-parent-complete`, exit zero and no output-cap exceedance. Child IDs `a02e4e8ee39c3e99c` and `ad5949ffe6a1cf09f` share native session `056378eb-893e-4dd2-bde2-79af5d1bbcb0`. Raw HTTP identities were reconstructed from database artifacts, matched to their native starts/calls/results and the overlap snapshot, and checked against summary identities. Each child and the parent has exactly two requests. Actual response SSE usage, retained before/after system/message/tool equality, native provenance frames, original request grants and full reservation ceilings were checked directly. Summaries alone were not used as proof.
+
+The complete frozen source manifest contains **834 tracked files**, all independently compared byte-for-byte via the exact Git archive, including tests and documentation. The runtime manifest's 90 source files also match. All **27 raw database artifact blobs** rehash correctly; all **40 new index entries** match; all 27 extracted blobs equal their database originals; the extracted native stdout equals the raw stored outcome. The prior curated 127 paths and complete 203-file original index both remain unchanged, and the historical raw-store/source/charge audit passes. The original three failed Claude attempts remain failed. Claude 3's five known receipts and unknown full reservation still total 1,004,646 tokens/synthetic USD8.08492.
+
+After drain, a read-only process-command-vector check found no native Claude or baseline worker processes, and `/tmp/aeon-claude-image-*` had no remaining image. The protected sentinel is intact. Source, prelaunch plan, marker, actual declared grant/prompt/options and retained outcome agree. No reviewer native launch, retry, paid/authenticated provider call, installation or publication occurred.
+
+Executed actual audit:
+
+```sh
+AEON_CLAUDE_HANDBACK_REVIEW_EVIDENCE=/home/palimpsest/migration/aeon-1-20261011/claude-handback-physical-evidence AEON_NATIVE_DELEGATION_REVIEW_EVIDENCE=/home/palimpsest/migration/aeon-1-20261011/native-delegation-evidence /opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/baselines/claude-handback-review.test.ts evaluations/baselines/native-delegation-review.test.ts
+python3 /home/palimpsest/migration/aeon-1-20261011/claude-handback-review-evidence/actual-raw-audit.py
+```
+
+Actual audit: **57 passed, zero failed/skipped**. The separate complete-source/raw-header/SSE/process audit and extracted-artifact audit also passed. These are read-only artifact checks, not additional physical executions. Prior repaired-source verification remains 145 focused passes, strict compilation passed, and 349 baseline passes with 12 intentionally gated skips.
+
+| Actual evidence identity | SHA256 |
+|---|---|
+| Complete 834-file frozen source manifest | `19258e9da18742c7b36b9fe09c76ff3e32388b24a2d47d64a08a9ed4b48d6329` |
+| New 40-file physical index | `d7e9e456baecb5d758c30e80f7a099fbb02d128cc62549fb8254f8b5616f9ddd` |
+| Native parent receipt before transport | `1bd27dad0c29fac6150a795b6f52b00a18174d5cf32f2c4cd7584413b82c3f66` |
+| Raw native outcome | `c91f7a7e9609234509fc4fce40d6fc9bed295f8e1a297fdacf0ee598e4206688` |
+| Exact native stdout | `140f12fe36ed905123cccf7135591da6ee6ea816d604bf88629fd0c7ef878239` |
+| Actual declared plan | `7becf9f01680d78c25d96c250c16a611ee197faff21030e7395a348f1893258d` |
+| Consumed one-use marker | `c471e90aa7e2e6db083f4eef5cc3b4153ed16e7c7e03326d07d8a647671ba774` |
+| Reviewer `actual-audit-first.txt` | `8e940ea6ca92f5ef8f125c4d80679e7e1c709c3c4eb40656a149afadce757e87` |
+| Reviewer `actual-raw-audit.py` | `83678cdbe1e12519b8b90c5e71be7f31da3d93e3e56eb9a3d9203ee141172c38` |
+| Reviewer `actual-raw-audit.json` | `8e93d7369e4d07078e13e778a9fb8c862173549a61d2bacab369a0f08fef82ef` |
+| Reviewer `actual-extracted-audit.json` | `5cd64afcd6dc3beb03b57fbd3f248ef5dd09f371119ab6dde95fde7cfa6ff515` |
+
+
+Final disposition: the bounded acquired-frame correction and its single synthetic native parent-completion proof are independently supported, with the discovered omission repaired and historical failures preserved. The finite review is complete after this committed handoff. Root owns integration and central status. The result demonstrates native fixture mechanics under synthetic replies only; live provider compatibility, reasoning quality, research/recovery affordances, comparator parity, developmental transfer and H1 remain unproven or separately gated.
