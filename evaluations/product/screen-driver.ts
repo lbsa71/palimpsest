@@ -110,7 +110,8 @@ export async function runSyntheticCase(caseId: ScreenCaseId, control: FixtureCon
   const authority = authorityStore.bootstrap('public-screen-fixture', config.controlRevision, config.artifactId);
   const packet = JSON.stringify(publicRehearsalPacket(caseId)), privatePacketPath = join(privateRoot, 'packet.json'); writeFileSync(privatePacketPath, packet, { mode: 0o600 });
   try {
-    return await runScreenCase({ caseId, attempt: 1, attemptId: `${caseId}-${control}-initial-1`, mode: 'synthetic-application', application: { config, authorityStore, authority, secrets: { mistralApiKey: 'unused-fixture', directToken: 'unused-direct-fixture' }, performRequest: screenFixture(caseId, config.model.id, authority.generation, control) }, observer: { id: 'L08-author-public-screen', privateRoot, evaluatorDigest: hash(readFileSync(new URL('./screen.ts', import.meta.url), 'utf8')), taskDigest: hash(packet) }, manifest: manifests(), privatePacketPath, timeoutMs: 60000 });
+    const report = await runScreenCase({ caseId, attempt: 1, attemptId: `${caseId}-${control}-initial-1`, mode: 'synthetic-application', application: { config, authorityStore, authority, secrets: { mistralApiKey: 'unused-fixture', directToken: 'unused-direct-fixture' }, performRequest: screenFixture(caseId, config.model.id, authority.generation, control) }, observer: { id: 'L08-author-public-screen', privateRoot, evaluatorDigest: hash(readFileSync(new URL('./screen.ts', import.meta.url), 'utf8')), taskDigest: hash(packet) }, manifest: manifests(), privatePacketPath, timeoutMs: 60000 });
+    return { ...report, fixtureProvenance: { revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: applicationRoot, encoding: 'utf8' }).trim(), driver: hash(readFileSync(new URL(import.meta.url), 'utf8')), control, publicRehearsalPacketDigest: hash(packet) } };
   } finally { authorityStore.close(); rmSync(root, { recursive: true, force: true }); rmSync(privateRoot, { recursive: true, force: true }); }
 }
 interface AttemptPlan { caseId: ScreenCaseId; initialAttempts: 1 | 2 | 3 }
@@ -121,7 +122,7 @@ export function validateAttemptPlan(plan: AttemptPlan[]) {
 /** Finite synthetic engineering driver: one initial execution/case, all original failures retained. */
 export async function runSyntheticScreen() {
   const plan = validateAttemptPlan(supportedCases.map(caseId => ({ caseId, initialAttempts: 1 })));
-  const reports: Awaited<ReturnType<typeof runScreenCase>>[] = [];
+  const reports: Awaited<ReturnType<typeof runSyntheticCase>>[] = [];
   for (const task of plan) reports.push(await runSyntheticCase(task.caseId));
   return { schema: screenVersion, coverage: 'eight-case-partial', plan, planDigest: hash(JSON.stringify(plan)), reports, unavailable: unavailableCases, verdict: reports.every(report => report.verdict === 'case-pass') ? 'synthetic-mechanics-pass' : 'criterion-unmet', claims: { liveCompetence: 'unavailable', twelveCaseCompletion: false, Q3: 'unavailable', parity: 'unavailable', H1: 'unaccepted' } };
 }
