@@ -1,6 +1,6 @@
 # A1-L04 — developmental memory and a revisable self
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing**. Session owner: **`/root/a1_memory`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW06, RW08, RW09, RW19](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | `/root/a1_memory` |
+| Branch / worktree | `codex/a1-memory-20261011`; `/home/palimpsest/migration/aeon-1-20261011/memory` |
+| Base source / contract revision | `3398077`; `aeon1.c1.v1` acknowledged; storage commit `8dd8ee7` consumed |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Last handoff / evidence | Component implementation active; finite goal created |
+| Blockers / next eligible task | T01–T04 component work; joined L02/L05/L08 and live longitudinal gates remain |
