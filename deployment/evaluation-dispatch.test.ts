@@ -376,6 +376,14 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
     assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
     assert.equal(physical().length, 9, 'Completed pairs and interrupted probe do not repeat on restart');
     assert.equal(physical().filter(p => p.status === 'uncertain').length, 1);
+    t.diagnostic(JSON.stringify({ kind: 'independent-offline-behavioral-review', candidateId: record.review.candidate.manifest.id,
+      originalJudge: record.review.judgeAuthority, physicalAuthority: record.physicalAuthority, originalPolicy: record.review.policyDigest,
+      evaluatorDigest: observation.evaluatorDigest, planDigest: observation.planDigest, runnerDigest: observation.runnerDigest,
+      originalAllocationLineage: record.review.allocationLineage, admissionEvidenceIds: record.review.admissionEvidenceIds,
+      probationEvidenceIds: proof.proposal.evidence.map(e => e.id), signedProbationDigest: identity(proof.signed),
+      probationArtifacts: proof.proposal.evidence.map(e => ({ evidence: e.artifact, observations: e.caseResults.map(c => c.observations) })),
+      physical: physical().map(p => ({ id: p.id, runId: p.runId, requestDigest: p.requestDigest, reviewer: p.promptManifestId, status: p.status, usage: p.usage })),
+      liveProviderCalls: 0, externalMessages: 0 }));
   } finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
