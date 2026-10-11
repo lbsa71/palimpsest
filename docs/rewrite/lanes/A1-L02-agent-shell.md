@@ -39,12 +39,12 @@ Owned by the lead who claims implementation; update before concurrent edits.
 
 | Field | Current value |
 |---|---|
-| Owner session | Codex /root/a1_shell_disposition; finite static E3 qualification disposition (original implementation: /root/a1_shell) |
-| Branch / worktree | `codex/a1-shell-disposition-20261011`; `/home/palimpsest/migration/aeon-1-20261011/shell-disposition` |
+| Owner session | `/root` integration owner; active finite screen-lifecycle and tool-instruction-retention owners below |
+| Branch / worktree | Root `codex/aeon-1-implementation-20261011`; separate `screen-lifecycle` and `tool-instruction-retention` worktrees |
 | Base source / contract revision | Disposition source `fbaa610`; C1 `aeon1.c1.v1`, separately accepted by L01/root; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9` |
-| Additional path reservations | None; use the exclusive scope above and L09 for shared build files |
+| Additional path reservations | `/root/a1_real_screen` owns remaining product-screen lifecycle files; `/root/a1_tool_instruction_retention` owns shell/broker/application instruction wiring and specifically listed consumer fixtures below. Root owns shared integration/configuration; no overlapping production writers. |
 | Last handoff / evidence | [Current Q1–Q5/T01–T06 disposition](../evidence/A1-L02/qualification-disposition.md), source `fbaa610`; final independent dependency review `79b6df2`, execution `c7ca96e` (1/1, 27.689 s). Original reports and failures remain historical evidence. |
-| Blockers / next eligible task | T01/T02/T03/T05 integrated; bounded Q1/Q2/Q4 engineering evidence mapped, Q5 recommends continuing Pi. Root E1 owns final integrated checks. T04/Q3 live twelve-case Mistral screen remains unexecuted. Fresh completion audit found the existing screen is reference-actor-only; its real-application adapter must be implemented before a live attempt. Root assigned the first eight-case unit below. A configured grant and independent outcomes remain necessary; final Q5/full lane acceptance stays open. No Rig trigger established. |
+| Blockers / next eligible task | Continue Pi; no evidenced Rig fallback trigger. Eight actual-tool screen cases and fresh review are integrated through `6077cef`, with preserved failures and corrected attempts. S08/S09/S11/S12 lifecycle integration and exact tool-fragment retention are active. Live twelve-case Mistral competence, qualified authority/profile and independent outcomes remain required for Q3 and final Q5/full-lane acceptance. |
 
 ### Exact dependency succession evidence task — 2026-10-11
 
