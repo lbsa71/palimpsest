@@ -1,6 +1,6 @@
 # A1-L05 — goals, drives and initiative
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing**. Session owner: **Codex /root/a1_initiative**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW06, RW07, RW10, RW19](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | Codex /root/a1_initiative |
+| Branch / worktree | `codex/a1-initiative-20261011` / `/home/palimpsest/migration/aeon-1-20261011/initiative` |
+| Base source / contract revision | `4e55167` / `aeon1.c1.v1` |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Blockers / next eligible task | Implement T01–T05 against actual L03/L04; live growth and independent review remain separate gates |
