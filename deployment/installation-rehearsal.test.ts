@@ -210,6 +210,9 @@ test('complete disposable installation retains current state, with optional inst
     stopInstallation(installation, true); installed = false;
     assert.ok(existsSync(join(data, 'workspace.ext4')), 'Uninstall preserves the complete bounded data image');
     assert.ok(existsSync(join(installation.workspaceProvisionDirectory, 'workspace.ext4')), 'Uninstall preserves the complete workspace image');
+  } catch (error) {
+    t.diagnostic(`Installed rehearsal primary failure: ${error instanceof Error ? error.stack : String(error)}`);
+    throw error;
   } finally {
     // Explicit out-of-source traces survive even when a failed rehearsal is cleaned up.
     const logDirectory = process.env.AEON_FIXTURE_LOG_DIRECTORY;
@@ -231,7 +234,12 @@ test('complete disposable installation retains current state, with optional inst
       soft('/usr/bin/systemctl', ['daemon-reload']); soft('/usr/bin/systemctl', ['reset-failed', unitName]);
       soft('/usr/bin/umount', [workspacePath(installation)]);
     }
-    soft('/usr/bin/umount', [join(data, 'work')]);
+    // A just-stopped process may still release its final executable/cwd reference.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      soft('/usr/bin/umount', [join(data, 'work')]);
+      if (!readFileSync('/proc/self/mountinfo', 'utf8').split('\n').some(line => line.split(' ')[4]?.startsWith(root + '/'))) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     const mounted = readFileSync('/proc/self/mountinfo', 'utf8').split('\n').some(line => line.split(' ')[4]?.startsWith(root + '/'));
     assert.equal(mounted, false, 'Never remove a still-mounted fixture');
     rmSync(root, { recursive: true, force: true });
