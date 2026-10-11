@@ -18,6 +18,7 @@ import { ServiceProcess, type ServiceReady } from './service-process.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
+import { assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type RunningProbationReview } from './control-continuation.ts';
 
 export interface SupervisorOptions {
   host: HostBindings;
@@ -30,6 +31,8 @@ export interface SupervisorOptions {
   bootstrap?: { proof: ReleaseProof; policyDigest: string } | (() => { proof: ReleaseProof; policyDigest: string });
   allowedModelProfiles?: ModelProfile[];
   evaluationDispatcher?: { reviewerFile: string; policyDigests: readonly string[] };
+  /** Host-owned reviewer seam. Ordinary callers may only enqueue exact staged bindings. */
+  controlReview?: Pick<ControlContinuationOptions, 'reserveProbation' | 'reviewProbation' | 'readyToActivate'>;
 }
 export interface SupervisorStatus {
   coordinator: { processId: number; module: string };
@@ -41,6 +44,7 @@ export interface SupervisorStatus {
   release?: ReleaseState;
   failure?: string;
   evaluation?: DispatchStatus;
+  controls?: ControlContinuationRecord[];
 }
 export type SupervisorCommand =
   | { kind: 'status' }
@@ -68,6 +72,7 @@ export class ServiceSupervisor {
   readonly #policies: DerivedPolicyRegistry;
   #evolutionStore?: OperationalStore;
   #dispatcher?: EvaluationDispatcher;
+  #controls?: ControlContinuation;
   #mailbox?: EvolutionMailbox;
   #ready?: ServiceReady;
   #failure?: string;
@@ -119,13 +124,29 @@ export class ServiceSupervisor {
       }
       else await supervisor.#exclusive(() => supervisor.#initialize());
       supervisor.#startDispatcher();
+      supervisor.#startControlContinuation();
       return supervisor;
     } catch (error) { await supervisor.close(); throw error; }
   }
   status(): SupervisorStatus {
     return { coordinator: { processId: process.pid, module: import.meta.url }, mode: this.#options.mode, qualification: this.#options.mode === 'engineering' ? 'engineering-only' : 'product-policy',
       running: this.#service.running, processId: this.#service.processId, ready: this.#ready,
-      release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status() };
+      release: this.#controller.status(), failure: this.#failure, evaluation: this.#dispatcher?.status(), controls: this.#controls?.records() };
+  }
+  #startControlContinuation(): void {
+    const reviewer = this.#options.controlReview;
+    if (!reviewer) return;
+    this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!,
+      status: () => this.#controller.status()!, stagedControl: id => this.#controller.stagedControl(id),
+      assertAuthority: authority => this.#authority.assert(authority), ...reviewer,
+      readyToActivate: request => !this.#operation && !this.#closing && !this.#hostHandoffPending && (reviewer.readyToActivate?.(request) ?? true),
+      activate: id => this.activateControl(id), acceptProbation: (proof, review) => this.acceptProbation(proof, review) });
+    this.#controls.start();
+  }
+  requestControlActivation(request: ControlActivationRequest): ControlContinuationRecord {
+    invariant(!this.#closing && !this.#closed && this.#controls, 'Host control continuation unavailable');
+    this.#authority.assert(request.authority);
+    return enqueueControlActivation(this.#evolutionStore!, request);
   }
   #startDispatcher(): void {
     const configured = this.#options.evaluationDispatcher;
@@ -161,9 +182,13 @@ export class ServiceSupervisor {
       return authority;
     });
   }
-  acceptProbation(proof: ReleaseProof): Promise<void> { return this.#exclusive(async () => {
+  acceptProbation(proof: ReleaseProof, review?: RunningProbationReview): Promise<void> { return this.#exclusive(async () => {
     const prior = this.#controller.status()!;
-    this.#controller.acceptProbation(proof);
+    if (review) this.#authority.dispatch(review.physicalAuthority, () => this.#evolutionStore!.transaction(() => {
+      assertProbationLineage(this.#evolutionStore!, review);
+      this.#controller.acceptProbation(proof);
+    }));
+    else this.#controller.acceptProbation(proof);
     if (prior.probationJudge?.change === 'control-upgrade' && this.#options.onHostAccepted) {
       this.#hostHandoffPending = true;
       this.#options.onHostAccepted(this.#controller.status()!.accepted, prior.accepted);
@@ -259,6 +284,7 @@ export class ServiceSupervisor {
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closing = true;
+    await this.#controls?.close();
     await this.#dispatcher?.close();
     await this.#operation?.catch(() => {});
     try {

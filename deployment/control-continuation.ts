@@ -3,8 +3,9 @@ import type { FrozenCandidate } from '../packages/release/artifacts.ts';
 import type { ReleaseProof, ReleaseState, StagedControl } from '../packages/release/controller.ts';
 import type { ChangeRecord } from '../packages/release/proposals.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
+import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import type { EvolutionMailbox } from './evolution-mailbox.ts';
-import type { EvaluationRequest, SubmissionRequest, SubmissionReceipt } from './evolution-tools.ts';
+import type { SubmissionRequest, SubmissionReceipt } from './evolution-tools.ts';
 
 const namespace = 'host.control-continuations';
 export interface ControlActivationRequest {
@@ -19,6 +20,20 @@ export interface ProbationReviewRequest {
   id: string; activationId: string; proposal: ChangeRecord; candidate: FrozenCandidate;
   policyDigest: string; judgeAuthority: Authority; rescueCandidateId: string;
   admissionEvidenceIds: string[]; allocationLineage: ProbationAllocation[]; reservedAt: number;
+}
+export type RunningProbationReview = ProbationReviewRequest & { physicalAuthority: Authority };
+/** Recheck under the host's authority/operational write locks at the acceptance boundary. */
+export function assertProbationLineage(store: OperationalStore, review: ProbationReviewRequest): void {
+  const run = store.get<Run>('runs', review.proposal.runId)?.value;
+  invariant(run && run.status !== 'cancelled' && identity(run.scope) === identity(review.proposal.scope), 'Probation author cancelled or unavailable');
+  invariant(!new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).snapshot(run.id).cancelled, 'Probation allowance cancelled');
+  for (const expected of review.allocationLineage) {
+    const allocation = store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean }>('allocations', expected.id)?.value;
+    invariant(allocation && !allocation.cancelled, 'Probation allocation cancelled or unavailable');
+    const { cancelled: _, ...fields } = allocation;
+    invariant(identity({ id: expected.id, ...fields }) === identity(expected) && Date.now() - allocation.startedAt < allocation.envelope.maxElapsedMs,
+      'Probation lineage changed or expired');
+  }
 }
 export interface ControlContinuationRecord {
   request: ControlActivationRequest;
@@ -58,8 +73,8 @@ export interface ControlContinuationOptions {
   readyToActivate?(request: ControlActivationRequest): boolean;
   /** Reserve once BEFORE withdrawal, under the existing author lineage. Never allocate a new budget. */
   reserveProbation(request: ProbationReviewRequest): void;
-  reviewProbation(request: ProbationReviewRequest & { physicalAuthority: Authority }, signal: AbortSignal): Promise<ReleaseProof>;
-  activate(stageId: string): Promise<Authority>; acceptProbation(proof: ReleaseProof): Promise<void>;
+  reviewProbation(request: RunningProbationReview, signal: AbortSignal): Promise<ReleaseProof>;
+  activate(stageId: string): Promise<Authority>; acceptProbation(proof: ReleaseProof, review: RunningProbationReview): Promise<void>;
 }
 /** Finite host continuation. Caller withdrawal cannot cancel an accepted activation request.
  * Interrupted activation/review is retained uncertain and never repeated on restart. */
@@ -114,7 +129,7 @@ export class ControlContinuation {
         let id: string | undefined = request.runId;
         while (id) {
           invariant(allocationLineage.length < 128 && !allocationLineage.some(value => value.id === id), 'Bounded acyclic probation allocation lineage required');
-          const allocation = this.options.store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean }>('allocations', id)?.value;
+          const allocation: (Omit<ProbationAllocation, 'id'> & { cancelled: boolean }) | undefined = this.options.store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean }>('allocations', id)?.value;
           invariant(allocation && !allocation.cancelled && Date.now() - allocation.startedAt < allocation.envelope.maxElapsedMs, 'Probation allocation expired or cancelled');
           const { cancelled: _, ...fields } = allocation; allocationLineage.push({ id, ...fields }); id = allocation.parentRunId;
         }
@@ -139,7 +154,7 @@ export class ControlContinuation {
         proof.proposal.evidence.every(value => !review.admissionEvidenceIds.includes(value.id)), 'Probation review requires fresh original-policy signed evidence');
       this.options.assertAuthority(physicalAuthority);
       this.#update(request.id, { proofId: proof.proposal.id });
-      await this.options.acceptProbation(proof);
+      await this.options.acceptProbation(proof, { ...review, physicalAuthority });
       this.#update(request.id, { status: 'accepted' });
     } catch {
       this.#update(pending.request.id, { status: started ? 'uncertain' : 'rejected', diagnosis: started ?
