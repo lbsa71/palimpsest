@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { validateClaudeFixturePayload, claudeFixtureUsage } from './claude-fixture-codec.ts';
 import { canonicalJson, invariant, nonempty } from '../../packages/contracts/common.ts';
 import type { ArtifactRef, ResourceEnvelope, ResourceUsage } from '../../packages/contracts/common.ts';
 import type { PhysicalRequest } from '../../packages/contracts/control/index.ts';
@@ -7,7 +8,7 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 
 export const OPENAI_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses';
 export interface BaselineProfile {
-  provider: 'openai'; model: string; effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  provider: 'openai' | 'anthropic-fixture'; model: string; effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   /** Host attestation of the provider's maximum billable text input, not a byte/token estimate. */
   contextContract: string; contextWindowTokens: number; maxOutputTokens: number;
   prices: { source: string; inputUsdPerMillion: number; cachedInputUsdPerMillion: number; outputUsdPerMillion: number };
@@ -16,13 +17,14 @@ export interface ObserverGrant {
   id: string; resources: ResourceEnvelope; profile: BaselineProfile;
   requestTimeoutMs: number; maxRequestBytes: number; maxResponseBytes: number;
 }
-export interface ProviderAttempt { method: string; path: string; payload: string }
+export interface ProviderAttempt { method: string; path: string; payload: string; nativeHttp?: { path: string; headers: Record<string, string | string[] | undefined> } }
 export interface ProviderReply { status: number; contentType: string; body: string }
 export type BaselineTransport = (payload: string, signal: AbortSignal) => Promise<Response>;
 export interface AttemptEvidence {
   requestId: string; before: ArtifactRef; after: ArtifactRef;
   /** Exact native instructions, input and tool definitions are contained in before/after. */
   response?: ArtifactRef; responseStatus?: number; contentType?: string;
+  nativeHttp?: ArtifactRef;
   outcome?: 'completed' | 'unknown'; reason?: string; usage?: ResourceUsage;
 }
 function freeze<T>(value: T): T {
@@ -32,12 +34,13 @@ function freeze<T>(value: T): T {
 
 function positive(value: number, name: string): void { invariant(Number.isSafeInteger(value) && value > 0, `finite positive ${name} required`); }
 export function validateObserverGrant(grant: ObserverGrant): void {
-  nonempty(grant.id, 'grant.id'); invariant(grant.profile.provider === 'openai', 'OpenAI profile required');
+  nonempty(grant.id, 'grant.id'); invariant(['openai', 'anthropic-fixture'].includes(grant.profile.provider), 'supported baseline profile required');
   nonempty(grant.profile.model, 'model'); nonempty(grant.profile.contextContract, 'context contract');
   invariant(['none', 'low', 'medium', 'high', 'xhigh'].includes(grant.profile.effort), 'invalid effort');
   positive(grant.profile.contextWindowTokens, 'context window'); positive(grant.profile.maxOutputTokens, 'output tokens');
   nonempty(grant.profile.prices.source, 'price source');
   for (const price of [grant.profile.prices.inputUsdPerMillion, grant.profile.prices.cachedInputUsdPerMillion, grant.profile.prices.outputUsdPerMillion]) invariant(Number.isFinite(price) && price >= 0, 'explicit finite prices required');
+  if (grant.profile.provider === 'anthropic-fixture') invariant(grant.profile.effort === 'low' && Object.entries(grant.profile.prices).every(([key, value]) => key === 'source' || value === 0), 'Claude supports low-effort zero-price synthetic fixture only; live accounting unavailable');
   invariant(grant.profile.prices.cachedInputUsdPerMillion <= grant.profile.prices.inputUsdPerMillion, 'cached price exceeds reserved price');
   for (const key of ['maxRequests', 'maxTokens', 'maxCostUsd', 'maxElapsedMs', 'maxConcurrency'] as const) invariant(Number.isFinite(grant.resources[key]) && grant.resources[key] > 0, `finite positive ${key} grant required`);
   positive(grant.resources.maxRequests, 'requests'); positive(grant.resources.maxTokens, 'tokens'); positive(grant.resources.maxElapsedMs, 'elapsed time');
@@ -171,19 +174,32 @@ export class BaselineObserver {
   evidence(): AttemptEvidence[] { return this.store.list<AttemptEvidence>('baseline-attempts').filter(row => this.ledger.request(row.key)?.runId === this.grant.id).map(row => row.value); }
   async handle(attempt: ProviderAttempt, signal?: AbortSignal): Promise<ProviderReply> {
     signal?.throwIfAborted();
-    invariant(attempt.method === 'POST' && attempt.path === '/v1/responses' && typeof attempt.payload === 'string', 'invalid native provider route');
-    invariant(Buffer.byteLength(attempt.payload) <= this.grant.maxRequestBytes, 'request byte limit exceeded');
-    const body = object(JSON.parse(attempt.payload)); validatePayload(body, this.grant.profile);
+    const claudeFixture = this.grant.profile.provider === 'anthropic-fixture';
+    let body: Record<string, unknown>;
+    try {
+      invariant(attempt.method === 'POST' && attempt.path === (claudeFixture ? '/v1/messages' : '/v1/responses') && typeof attempt.payload === 'string', 'invalid native provider route');
+      invariant(Buffer.byteLength(attempt.payload) <= this.grant.maxRequestBytes, 'request byte limit exceeded');
+      if (attempt.nativeHttp) invariant(claudeFixture && ['/v1/messages', '/v1/messages?beta=true'].includes(attempt.nativeHttp.path) && Buffer.byteLength(canonicalJson(attempt.nativeHttp)) <= 16_384, 'invalid native HTTP metadata');
+      body = object(JSON.parse(attempt.payload));
+      if (claudeFixture) validateClaudeFixturePayload(body, this.grant.profile); else validatePayload(body, this.grant.profile);
+    } catch (error) {
+      // Preserve bounded protocol-discovery failures without calling them provider dispatches.
+      this.store.put('baseline-refusals', randomUUID(), { grantId: this.grant.id,
+        request: this.store.putArtifact(Buffer.from(typeof attempt.payload === 'string' ? attempt.payload : '').subarray(0, this.grant.maxRequestBytes)),
+        reason: error instanceof Error ? error.message.slice(0, 256) : 'invalid native request' }, null);
+      throw error;
+    }
     // Instructions and input remain exactly as emitted. Only explicit host accounting controls change.
-    const outgoing = JSON.stringify({ ...body, max_output_tokens: this.grant.profile.maxOutputTokens, store: false, stream: true, service_tier: 'default' });
+    const outgoing = JSON.stringify(claudeFixture ? { ...body, max_tokens: this.grant.profile.maxOutputTokens, stream: true } : { ...body, max_output_tokens: this.grant.profile.maxOutputTokens, store: false, stream: true, service_tier: 'default' });
     invariant(Buffer.byteLength(outgoing) <= this.grant.maxRequestBytes, 'modified request byte limit exceeded');
     const id = randomUUID(), startedAt = this.now();
-    const request: PhysicalRequest = { id, runId: this.grant.id, purpose: 'reasoning', provider: 'openai', model: this.grant.profile.model,
+    const request: PhysicalRequest = { id, runId: this.grant.id, purpose: 'reasoning', provider: this.grant.profile.provider, model: this.grant.profile.model,
       promptManifestId: `native:${id}`, requestDigest: '', reservationId: id, status: 'reserved',
       usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
     this.store.transaction(() => {
       const before = this.store.putArtifact(attempt.payload), after = this.store.putArtifact(outgoing); request.requestDigest = after.sha256;
-      this.ledger.reserve(request); this.store.put('baseline-attempts', id, { requestId: id, before, after }, null);
+      this.ledger.reserve(request); this.store.put('baseline-attempts', id, { requestId: id, before, after,
+        ...(attempt.nativeHttp ? { nativeHttp: this.store.putArtifact(canonicalJson(attempt.nativeHttp)) } : {}) }, null);
       this.ledger.dispatched({ ...request, status: 'dispatched' });
     });
     const controller = new AbortController();
@@ -205,7 +221,7 @@ export class BaselineObserver {
       } finally { void reader.cancel().catch(() => {}); }
       const body = Buffer.concat(chunks).toString('utf8');
       invariant(status === 200 && /^text\/event-stream(?:;|$)/i.test(contentType), 'untrusted response status or content type');
-      return { body, usage: finalUsage(body, this.grant.profile, Math.max(0, this.now() - startedAt)) };
+      return { body, usage: (claudeFixture ? claudeFixtureUsage : finalUsage)(body, this.grant.profile, Math.max(0, this.now() - startedAt)) };
     };
     let cancelListener: (() => void) | undefined;
     const cancelled = new Promise<never>((_resolve, reject) => { cancelListener = () => reject(new Error('Baseline attempt stopped')); controller.signal.addEventListener('abort', cancelListener, { once: true }); if (controller.signal.aborted) cancelListener(); });
