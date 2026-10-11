@@ -247,5 +247,12 @@ test('host defers claiming a queued review until its successful local enqueue re
     assert.deepEqual(f.continuations.reconcileAcknowledgments(), [effectId]); assert.deepEqual(f.continuations.reconcileAcknowledgments(), []);
     assert.equal(f.resources.request(effectId)!.usage.elapsedMs, 100);
     assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), false); assert.equal(f.resources.snapshot(f.run.id).concurrent, 0);
+    const run = f.store.get<Run>('runs', f.run.id)!;
+    f.store.put('runs', f.run.id, { ...run.value, status: 'running' }, run.revision);
+    assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), true);
+    await dispatcher.processPending(); assert.equal(f.mailbox.status(f.request.requestId)!.status, 'pending');
+    const running = f.store.get<Run>('runs', f.run.id)!;
+    f.store.put('runs', f.run.id, { ...running.value, status: 'waiting' }, running.revision);
+    assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), false);
   } finally { await dispatcher?.close(); f.close(); }
 });

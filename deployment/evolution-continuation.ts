@@ -11,15 +11,16 @@ import type { EvaluationReceipt, EvaluationRequest } from './evolution-tools.ts'
 const namespace = 'host.evolution-continuations';
 interface Continuation { requestId: string; requestDigest: string; runId: string; changeId: string; scope: DataScope; authority: Authority; status: 'waiting' | 'notified' | 'declined' | 'reconciled' }
 interface Acknowledgment { effectId: string; runId: string; scope: DataScope; authority: Authority; payload: JsonValue; requestId: string; requestDigest: string; receipt: ArtifactRef }
-/** The local enqueue receiver must release its own slot before a host reviewer can
- * claim the job. A lost receiver reply remains pending for exact local reconciliation. */
+/** The enqueue receiver must release its slot and the bounded author turn must
+ * finish before review can claim their shared lineage. A lost reply stays pending. */
 export function evaluationAcknowledgmentPending(store: OperationalStore, requestId: string): boolean {
   return store.list<Acknowledgment>('host.evolution-acknowledgments').some(row => {
     const acknowledgment = row.value;
     if (acknowledgment.requestId !== requestId) return false;
     const effect = store.get<Effect>('effects', acknowledgment.effectId)?.value;
     const reservation = effect?.reservationId ? store.get<{ request: PhysicalRequest }>('requests', effect.reservationId)?.value : undefined;
-    return !effect || effect.status !== 'succeeded' || !reservation || reservation.request.status !== 'succeeded';
+    return !effect || effect.status !== 'succeeded' || !reservation || reservation.request.status !== 'succeeded' ||
+      store.get<Run>('runs', acknowledgment.runId)?.value.status === 'running';
   });
 }
 /** Persist the exact local tool return with its host-supplied effect identity before returning it. */
