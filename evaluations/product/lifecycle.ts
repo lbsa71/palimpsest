@@ -30,7 +30,7 @@ export function processIdentity(pid: number): ProcessIdentity | null {
   try { const stat = readFileSync(`/proc/${pid}/stat`, 'utf8'), fields = stat.slice(stat.lastIndexOf(')') + 2).split(' '); return { pid, start: fields[19]!, state: fields[0]! }; } catch { return null; }
 }
 function processTree(parent: number): ProcessIdentity[] {
-  const rows = readdirSync('/proc').filter(name => /^\d+$/.test(name)).flatMap(name => { const value = processIdentity(Number(name)); if (!value) return []; const stat = readFileSync(`/proc/${name}/stat`, 'utf8'), fields = stat.slice(stat.lastIndexOf(')') + 2).split(' '); return [{ ...value, parent: Number(fields[1]) }]; });
+  const rows = readdirSync('/proc').filter(name => /^\d+$/.test(name)).flatMap(name => { try { const stat = readFileSync(`/proc/${name}/stat`, 'utf8'), fields = stat.slice(stat.lastIndexOf(')') + 2).split(' '); return [{ pid: Number(name), state: fields[0]!, start: fields[19]!, parent: Number(fields[1]) }]; } catch { return []; } });
   const children = (pid: number): typeof rows => rows.filter(row => row.parent === pid).flatMap(row => [row, ...children(row.pid)]);
   return children(parent).map(({ parent: _, ...row }) => row);
 }
@@ -145,7 +145,7 @@ function sourceManifest() {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: repository, encoding: 'utf8' }).split('\0').filter(path => /^(packages|deployment)\//.test(path) || ['package.json', 'package-lock.json', 'tsconfig.json'].includes(path)).map(path => ({ path, sha256: hash(readFileSync(join(repository, path), 'utf8')) }));
   return { files, sha256: identity(files) };
 }
-function freezePromptPair(root: string, config: ApplicationConfig, authorityStore: AuthorityStore) {
+export function freezeLifecyclePromptPair(root: string, config: ApplicationConfig, authorityStore: AuthorityStore) {
   const source = join(root, 'frozen-source'), artifactStore = join(root, 'artifacts'), evidenceDirectory = join(root, 'admission'); mkdirSync(source); mkdirSync(artifactStore); mkdirSync(evidenceDirectory);
   // Explicit bounded rewrite and check/build closure only; no history or entire installation copy.
   for (const entry of deploymentEntries(repository)) if (existsSync(join(repository, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(realpathSync(join(repository, entry)), join(source, entry), { recursive: true }); }
@@ -178,7 +178,7 @@ export async function runLifecycleCase(caseId: LifecycleCase, control: Lifecycle
   if (caseId === 'S11') configuration.slack = { teamId: 'LOCAL-T1', botUserId: 'BOT', channels: [{ channel: 'LOCAL-C1', scope: configuration.direct.scope }], eligibleHumanIds: ['LOCAL-HUMAN'], coverageStart: '1', lookbackSeconds: 60, allowSpeech: true };
   const receipt = { schema: lifecycleVersion, caseId, control, attempt, attemptId, engineeringOnly: true, frozenAt: new Date().toISOString(), envelope: lifecycleEnvelope, configuration, sourceManifest: sourceManifest(), sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim(), driver: hash(readFileSync(new URL(import.meta.url), 'utf8')), child: hash(readFileSync(new URL('./lifecycle-child.ts', import.meta.url), 'utf8')), fixtures: hash(readFileSync(new URL('./lifecycle-fixtures.ts', import.meta.url), 'utf8')), workload: identity(lifecycleWorkload(caseId)), nodeSha256: hashBytes(readFileSync(process.execPath)) };
   const attemptPath = join(root, 'original-attempt.json'); writeFileSync(attemptPath, JSON.stringify(receipt), { mode: 0o600, flag: 'wx' });
-  const authorityStore = new AuthorityStore(join(configuration.stateDirectory, 'authority.sqlite')); let authority: Authority; let transition: ReturnType<typeof freezePromptPair> | null = null;
+  const authorityStore = new AuthorityStore(join(configuration.stateDirectory, 'authority.sqlite')); let authority: Authority; let transition: ReturnType<typeof freezeLifecyclePromptPair> | null = null;
   let witness: LifecycleWitness | null = null, failure: string | null = null, initial: Snapshot | null = null, boundary: Snapshot | null = null, final: Snapshot | null = null, runId = '', plainOldRun: string | null = null, plainCurrentRun: string | null = null;
   const processes: ApplicationProcess[] = []; let active: ApplicationProcess | null = null; const start = performance.now(); let deadline = Date.now() + lifecycleEnvelope.maxElapsedMs;
   const receiverPath = join(root, 'local-receiver.sqlite'); let reconciliation: any = null;
@@ -188,7 +188,7 @@ export async function runLifecycleCase(caseId: LifecycleCase, control: Lifecycle
   };
   const terminal = async (id: string, status?: string) => until(() => { const store = new OperationalStore({ filename: join(configuration.stateDirectory, 'operational.sqlite') }); try { return store.get<any>('runs', id)?.value; } finally { store.close(); } }, run => !!run && (status ? run.status === status : ['completed', 'waiting', 'blocked', 'cancelled'].includes(run.status)), deadline, `terminal ${id}`);
   try {
-    if (caseId === 'S12') { transition = freezePromptPair(root, configuration, authorityStore); authority = transition.initialAuthority; } else authority = authorityStore.bootstrap('PUBLIC-lifecycle-fixture', configuration.controlRevision, configuration.artifactId);
+    if (caseId === 'S12') { transition = freezeLifecyclePromptPair(root, configuration, authorityStore); authority = transition.initialAuthority; } else authority = authorityStore.bootstrap('PUBLIC-lifecycle-fixture', configuration.controlRevision, configuration.artifactId);
     const firstConfig = transition?.configOld ?? configuration, first = await open(firstConfig, 0); initial = captureLifecycle(configuration.stateDirectory);
     // Original application clock starts after frozen host preparation and is never changed afterward.
     deadline = value(initial, 'budgets', 'operating-envelope:v1').startedAt + lifecycleEnvelope.maxElapsedMs;

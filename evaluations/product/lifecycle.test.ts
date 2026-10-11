@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,8 +7,12 @@ import { identity, type PhysicalRequest } from '../../packages/contracts/index.t
 import { ResourceLedger } from '../../packages/runtime/index.ts';
 import { OperationalStore } from '../../packages/storage/index.ts';
 import { hash } from './adapter.ts';
-import { assessLifecycle, captureLifecycle, processIdentity, validateLifecyclePlan, type LifecycleWitness, type Snapshot, type ProcessReceipt } from './lifecycle.ts';
-import { LocalLostReplyReceiver, compactionPrompt, lifecycleEnvelope, lifecycleTransport } from './lifecycle-fixtures.ts';
+import { assessLifecycle, captureLifecycle, freezeLifecyclePromptPair, processIdentity, validateLifecyclePlan, type LifecycleWitness, type Snapshot, type ProcessReceipt } from './lifecycle.ts';
+import { LocalLostReplyReceiver, configureLifecycle, currentPrompt, oldPrompt, compactionPrompt, lifecycleEnvelope, lifecycleTransport } from './lifecycle-fixtures.ts';
+import { AuthorityStore } from '../../packages/supervisor/authority.ts';
+import { admitCandidate, type AdmissionPolicy } from '../../packages/release/admission.ts';
+import { materializeConfiguration } from '../../deployment/materialize.ts';
+import { fixtureConfiguration } from './fixture.ts';
 
 /** Pure mechanics witnesses, never passed to the physical acquisition driver or represented as real runs. */
 function fixtureWitness(): LifecycleWitness {
@@ -122,3 +126,20 @@ test('ordinary compaction response does not consume a public note-read step', as
   const second = JSON.parse((await transport(payload, signal)).body); assert.equal(JSON.parse(second.choices[0].message.tool_calls[0].function.arguments).path, 'notes/1.json');
 });
 test('actual process identity reads PID and proc start identity without inventing an exit receipt', () => { const observed = processIdentity(process.pid); assert.equal(observed?.pid, process.pid); assert.match(observed!.start, /^\d+$/); assert.equal(processIdentity(2147483647), null); });
+test('pure prompt preparation freezes two complete closures, authenticates engineering admission and loads exact accepted bytes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lifecycle-prompt-preflight-')), config = configureLifecycle(fixtureConfiguration(root, join(import.meta.dirname, '../..'))), authorityStore = new AuthorityStore(join(config.stateDirectory, 'authority.sqlite'));
+  try {
+    const pair = freezeLifecyclePromptPair(root, config, authorityStore);
+    assert.equal(pair.admission.kind, 'engineering'); assert.equal(pair.admission.candidateId, pair.current.manifest.id);
+    for (const field of ['source', 'dependencies', 'configuration', 'controls', 'model'] as const) assert.equal(pair.old.manifest[field], pair.current.manifest[field]);
+    assert.notEqual(pair.old.manifest.prompts, pair.current.manifest.prompts);
+    assert.equal(pair.configCurrent.applicationRoot, join(pair.artifactStore, pair.admission.candidateId, 'payload')); assert.equal(pair.configCurrent.artifactId, pair.admission.candidateId);
+    assert.equal(readFileSync(pair.configCurrent.promptFile, 'utf8'), currentPrompt); assert.equal(readFileSync(pair.configOld.promptFile, 'utf8'), oldPrompt);
+    const policy: AdmissionPolicy = { ...pair.policy, evaluatorKeys: new Map([['PUBLIC-engineering-host-judgment', readFileSync(join(pair.evidenceDirectory, 'fixture-signing-key'))]]), evaluatorArtifacts: new Map([['PUBLIC-engineering-host-judgment', pair.policy.evaluatorArtifact.sha256]]) };
+    const corrupted = pair.signed.map(record => ({ ...record, authentication: '0'.repeat(64) }));
+    assert.throws(() => admitCandidate(pair.artifactStore, pair.proposal, pair.initialAuthority, policy, corrupted, uri => readFileSync(join(pair.evidenceDirectory, uri.slice(7)))), /authentication/);
+    chmodSync(pair.configCurrent.promptFile, 0o600); writeFileSync(pair.configCurrent.promptFile, oldPrompt);
+    assert.throws(() => materializeConfiguration(pair.current, { stateDirectory: config.stateDirectory, workspaceDirectory: config.workspaceDirectory, artifactStore: pair.artifactStore, nodeBinary: process.execPath }), /materialization changed/);
+    assert.equal(readFileSync(pair.configOld.promptFile, 'utf8'), oldPrompt, 'old accepted profile remains untouched');
+  } finally { authorityStore.close(); rmSync(root, { recursive: true, force: true }); }
+});
