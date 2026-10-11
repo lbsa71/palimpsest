@@ -43,13 +43,16 @@ export function validateAnthropicProfile(profile: BaselineProfile): void {
   const options = profile.anthropic; fields(options as unknown as Record<string, unknown>, ['thinking', 'thinkingBudgetTokens', 'serviceTier', 'inferenceGeo', 'speed']);
   invariant(options.serviceTier === 'standard' && options.inferenceGeo === 'global' && options.speed === 'standard', 'unpriced Anthropic tier/geography/speed refused');
   invariant(['adaptive', 'enabled', 'disabled'].includes(options.thinking), 'explicit thinking profile required');
-  if (options.thinking === 'enabled') invariant(count(options.thinkingBudgetTokens) > 0 && options.thinkingBudgetTokens! < profile.maxOutputTokens, 'thinking budget exceeds output cap');
+  if (options.thinking === 'enabled') invariant(count(options.thinkingBudgetTokens) >= 1024 && options.thinkingBudgetTokens! < profile.maxOutputTokens, 'manual thinking requires at least 1,024 tokens below the output cap');
   else invariant(options.thinkingBudgetTokens === undefined, 'unexpected thinking budget');
   for (const value of [profile.prices.cacheWrite5mUsdPerMillion, profile.prices.cacheWrite1hUsdPerMillion]) invariant(typeof value === 'number' && Number.isFinite(value) && value >= 0, 'explicit cache write prices required');
 }
 export function validateAnthropicPayload(body: Record<string, unknown>, profile: BaselineProfile): void {
   fields(body, ['model', 'messages', 'system', 'tools', 'tool_choice', 'max_tokens', 'stream', 'metadata', 'temperature', 'output_config', 'thinking', 'cache_control', 'service_tier', 'inference_geo']);
   invariant(body.model === profile.model, 'model differs from immutable host profile');
+  // Zero requests cache pre-warming, a separate nonstreaming operation. Do not
+  // turn it (or a malformed limit) into generation when applying the host cap.
+  invariant(Number.isSafeInteger(body.max_tokens) && (body.max_tokens as number) > 0, 'explicit positive generation max_tokens required; cache pre-warming is unsupported');
   invariant(body.service_tier === undefined || body.service_tier === 'standard_only', 'unpriced request tier refused');
   invariant(body.inference_geo === undefined || body.inference_geo === 'global', 'unpriced request geography refused'); cache(body.cache_control);
   if (body.system !== undefined) content(body.system, 'system');
@@ -66,9 +69,11 @@ export function validateAnthropicPayload(body: Record<string, unknown>, profile:
     const choice = object(body.tool_choice); fields(choice, ['type', 'name', 'disable_parallel_tool_use']);
     invariant(['auto', 'none', 'any', 'tool'].includes(String(choice.type)), 'unknown tool choice'); if (choice.type === 'tool') nonempty(choice.name, 'tool choice name');
   }
-  if (body.output_config !== undefined) { const config = object(body.output_config); fields(config, ['effort']); invariant(config.effort === profile.effort, 'effort differs from immutable host profile'); }
-  // Missing controls preserve the model defaults attested in the host profile. Present controls must match.
-  if (body.thinking !== undefined) {
+  // The selected profile does not independently attest model-dependent API defaults.
+  // Refuse missing native controls instead of rewriting cognition or mislabelling it.
+  invariant(body.output_config !== undefined && body.thinking !== undefined, 'explicit native effort and thinking controls required');
+  { const config = object(body.output_config); fields(config, ['effort']); invariant(config.effort === profile.effort, 'effort differs from immutable host profile'); }
+  {
     const thinking = object(body.thinking); fields(thinking, ['type', 'budget_tokens', 'display']); invariant(thinking.type === profile.anthropic!.thinking, 'thinking differs from immutable host profile');
     invariant(thinking.budget_tokens === profile.anthropic!.thinkingBudgetTokens, 'thinking budget differs from profile');
     invariant(thinking.display === undefined || ['summarized', 'omitted'].includes(String(thinking.display)), 'unknown thinking display');

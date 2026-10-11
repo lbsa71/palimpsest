@@ -14,7 +14,7 @@ export interface BaselineProfile {
   /** Host attestation of the provider's maximum billable text input, not a byte/token estimate. */
   contextContract: string; contextWindowTokens: number; maxOutputTokens: number;
   prices: { source: string; inputUsdPerMillion: number; cachedInputUsdPerMillion: number; outputUsdPerMillion: number; cacheWrite5mUsdPerMillion?: number; cacheWrite1hUsdPerMillion?: number };
-  /** Host-attested model defaults; only global standard synchronous inference is priced. */
+  /** Selected explicit native thinking configuration; only global standard synchronous inference is priced. */
   anthropic?: { thinking: 'adaptive' | 'enabled' | 'disabled'; thinkingBudgetTokens?: number; serviceTier: 'standard'; inferenceGeo: 'global'; speed: 'standard' };
 }
 export interface ObserverGrant {

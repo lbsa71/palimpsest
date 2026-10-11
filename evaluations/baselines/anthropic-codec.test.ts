@@ -176,3 +176,53 @@ test('paid real transport requires kernel limits before private state or dispatc
     assert.equal(existsSync(state), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+for (const control of ['output_config', 'thinking'] as const) test(`missing native ${control} cannot silently satisfy the frozen cognition profile`, async () => {
+  const f = fixture();
+  try {
+    const body = JSON.parse(payload()); delete body[control];
+    await assert.rejects(f.observer.handle(attempt(JSON.stringify(body))), /explicit native/);
+    assert.equal(f.calls(), 0); assert.equal(f.observer.evidence().length, 0);
+    assert.equal(f.observer.ledger.snapshot(f.g.id).requests, 0);
+  } finally { f.dispose(); }
+});
+
+test('manual thinking below the public API minimum is refused at grant admission', () => {
+  const g = grant(); g.profile.anthropic!.thinking = 'enabled'; g.profile.anthropic!.thinkingBudgetTokens = 10;
+  assert.throws(() => validateObserverGrant(g), /1,024/);
+});
+
+for (const maxTokens of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, null, '20', undefined]) test(`native max_tokens ${String(maxTokens)} cannot become a positive generation by host rewriting`, async () => {
+  const f = fixture();
+  try {
+    const body = JSON.parse(payload()); body.max_tokens = maxTokens; body.stream = false;
+    await assert.rejects(f.observer.handle(attempt(JSON.stringify(body))), /positive generation max_tokens/);
+    assert.equal(f.calls(), 0); assert.equal(f.observer.ledger.snapshot(f.g.id).requests, 0);
+  } finally { f.dispose(); }
+});
+
+test('valid explicit manual thinking preserves the native budget and settles output once', async () => {
+  const g = grant(); g.profile.maxOutputTokens = 2048; g.resources.maxTokens = 3000;
+  g.profile.anthropic!.thinking = 'enabled'; g.profile.anthropic!.thinkingBudgetTokens = 1024;
+  const body = JSON.parse(payload()); body.thinking = { type: 'enabled', budget_tokens: 1024 };
+  const f = fixture({ grant: g });
+  try {
+    await f.observer.handle(attempt(JSON.stringify(body)));
+    assert.deepEqual(JSON.parse(f.forwarded()).thinking, body.thinking);
+    assert.equal(f.observer.evidence()[0]!.usage?.outputTokens, 5);
+    assert.equal(f.observer.ledger.snapshot(g.id).tokens, 24);
+  } finally { f.dispose(); }
+});
+
+test('a caller cannot mutate the original profile to weaken cognition or reservation after admission', async () => {
+  const original = grant(); const f = fixture({ grant: original });
+  try {
+    original.profile.effort = 'low'; original.profile.anthropic!.thinking = 'disabled';
+    original.profile.prices.cacheWrite1hUsdPerMillion = 0; original.resources.maxTokens = 1;
+    const body = JSON.parse(payload()); body.output_config.effort = 'low'; body.thinking = { type: 'disabled' };
+    await assert.rejects(f.observer.handle(attempt(JSON.stringify(body))), /effort differs/);
+    assert.equal(f.calls(), 0); assert.equal(f.observer.ledger.defaultCeiling.costUsd, 0.0012);
+    await f.observer.handle(attempt()); assert.equal(f.calls(), 1);
+    assert.equal(f.observer.evidence()[0]!.usage?.costUsd, 174.8 / 1_000_000);
+  } finally { f.dispose(); }
+});
