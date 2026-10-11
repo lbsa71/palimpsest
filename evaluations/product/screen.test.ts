@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { AutarkApplication } from '../../deployment/application.ts';
 import { AuthorityStore } from '../../packages/supervisor/authority.ts';
 import type { Effect, Observation } from '../../packages/contracts/index.ts';
-import { assessScreenWitness, publicWorkload, seedBeforeDispatch, supportedCases, unavailableCases, runScreenCase, type ScreenWitness, type ToolWitness } from './screen.ts';
+import { assessScreenWitness, additionCheckArgs, publicWorkload, seedBeforeDispatch, supportedCases, unavailableCases, runScreenCase, type ScreenWitness, type ToolWitness } from './screen.ts';
 import { publicRehearsalPacket, validateAttemptPlan, runHostAuthorizedLiveCase } from './screen-driver.ts';
 import { fixtureConfiguration } from './fixture.ts';
 import { hash } from './adapter.ts';
@@ -40,13 +40,13 @@ test('S01 requires actual manifest then implementation reads', () => {
   assert.equal(passed('S01', value), true); value.tools.reverse(); assert.equal(passed('S01', value), false);
 });
 test('S02 rejects skipped failure, skipped successful same-check verification and changed checker', () => {
-  const value = witness(); value.files['check.mjs'] = publicWorkload('S02').files['check.mjs'];
-  const cmd = (sequence: number, success: boolean) => tool(sequence, 'command_run', { executable: '/runtime/node', args: ['check.mjs'] }, { exitCode: success ? 0 : 1 }, success);
+  const value = witness(); value.files['test-command.json'] = publicWorkload('S02').files['test-command.json'];
+  const cmd = (sequence: number, success: boolean) => tool(sequence, 'command_run', { executable: '/runtime/node', args: [...additionCheckArgs] }, { exitCode: success ? 0 : 1 }, success);
   value.tools = [cmd(1, false), tool(2, 'workspace_read', { path: 'sum.mjs' }, { sha256: hash('observed') }), tool(3, 'workspace_write', { path: 'sum.mjs', expectedSha256: hash('observed') }, {}), cmd(4, true)];
   assert.equal(passed('S02', value), true);
   const original = [...value.tools]; value.tools = original.slice(1); assert.equal(passed('S02', value), false);
   value.tools = original.slice(0, 3); assert.equal(passed('S02', value), false);
-  value.tools = original; value.files['check.mjs'] = 'process.exit(0)'; assert.equal(passed('S02', value), false);
+  value.tools = [...original]; value.tools[3] = tool(4, 'command_run', { executable: '/runtime/node', args: ['--input-type=module', '-e', 'process.exit(0)'] }, { exitCode: 0 }); assert.equal(passed('S02', value), false);
 });
 test('S03 requires negative, equal and empty range receipts, not repeated easy checks', () => {
   const value = witness(); value.tools = [['-3', '-1', '-6\n'], ['4', '4', '4\n'], ['4', '2', '0\n']].map(([a, b, stdout], i) => tool(i + 1, 'command_run', { executable: '/runtime/node', args: ['range.mjs', a, b] }, { exitCode: 0, stdout }));

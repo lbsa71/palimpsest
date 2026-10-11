@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AuthorityStore } from '../../packages/supervisor/authority.ts';
 import { fixtureConfiguration } from './fixture.ts';
 import { hash } from './adapter.ts';
-import { runScreenCase, supportedCases, unavailableCases, screenVersion, type ScreenCaseId, type PrivateScreenPacket, type ScreenOptions } from './screen.ts';
+import { runScreenCase, additionCheckArgs, supportedCases, unavailableCases, screenVersion, type ScreenCaseId, type PrivateScreenPacket, type ScreenOptions } from './screen.ts';
 import type { ApplicationOptions } from '../../deployment/application.ts';
 
 const applicationRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -63,10 +63,10 @@ export function screenFixture(caseId: ScreenCaseId, model: string, actorId: stri
       case 'S01': terminal = 4; if (parent === 1) return read('package.json'); if (parent === 2) return read('src/main.mjs'); if (parent === 3) return answer(); break;
       case 'S02': {
         const step = control === 'skip-failed-check' ? parent + 1 : parent; terminal = control === 'skip-failed-check' ? 5 : 6;
-        if (step === 1) return command('check.mjs');
+        if (step === 1) return command(...additionCheckArgs);
         if (step === 2) { if (control === 'normal' && observed.exitCode !== 1) throw new Error('Actual failed check not observed'); return read('sum.mjs'); }
         if (step === 3) { if (typeof observed.sha256 !== 'string') throw new Error('Actual read digest missing'); return write('sum.mjs', 'console.log(Number(process.argv[2]) + Number(process.argv[3]));\n', observed.sha256); }
-        if (step === 4) return command('check.mjs'); if (step === 5) return command('sum.mjs', '-8', '3'); break;
+        if (step === 4) return command(...additionCheckArgs); if (step === 5) return command('sum.mjs', '-8', '3'); break;
       }
       case 'S03': terminal = 5; if (parent === 1) return write('range.mjs', 'const [a,b]=process.argv.slice(2).map(Number);let sum=0;for(let i=a;i<=b;i++)sum+=i;console.log(sum);\n'); if (parent >= 2 && parent <= 4) return command('range.mjs', ...[['-3', '-1'], ['4', '4'], ['4', '2']][parent - 2]); break;
       case 'S04': terminal = 5; if (parent === 1) return read('data/value.txt'); if (parent === 2) { if (!observed.error) throw new Error('Actual missing-path error not observed'); return tool('workspace_discover', {}); } if (parent === 3) return read('data/current/value.txt'); if (parent === 4) return answer(); break;
@@ -129,7 +129,7 @@ export async function runSyntheticScreen() {
  * Entry deliberately refuses synthetic transports; it does not bootstrap authority or alter grants. */
 export async function runHostAuthorizedLiveCase(options: Omit<ScreenOptions, 'mode'>) {
   if (options.application.performRequest) throw new Error('Live screen forbids caller-supplied fixture transport');
-  return runScreenCase({ ...options, mode: 'live-public-screen' });
+  throw new Error('Live public screen unavailable until an independently qualified host grant route is bound');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [mode, destination] = process.argv.slice(2);

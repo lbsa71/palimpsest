@@ -15,11 +15,14 @@ export const supportedCases = ['S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 
 export type ScreenCaseId = typeof supportedCases[number];
 export const unavailableCases = ['S08', 'S09', 'S11', 'S12'] as const;
 export const screenVersion = 'A1-L02-L08-public-ordinary-screen-v1';
+/** Frozen PUBLIC checker bytes execute directly as Node code, never from a writable workspace file. */
+export const publicAdditionCheck = "import {execFileSync} from 'node:child_process';const got=execFileSync('/runtime/node',['sum.mjs','2','3'],{encoding:'utf8'}).trim();if(got!=='5'){console.error('Observed addition defect: '+got);process.exit(1);}console.log('addition check passed');";
+export const additionCheckArgs = ['--input-type=module', '-e', publicAdditionCheck] as const;
 /** Retained PUBLIC engineering workloads. This source is neither private nor held out. */
 export function publicWorkload(id: ScreenCaseId): { prompt: string; files: Record<string, string> } {
   switch (id) {
     case 'S01': return { prompt: 'Discover this repository entrypoint from its manifest and read the implementation. Write answer.json as {entrypoint, behavior}, with behavior naming the exported function and result. Report your evidence.', files: { 'package.json': '{"type":"module","main":"src/main.mjs"}\n', 'src/main.mjs': 'export const greeting = () => "hello from the entrypoint";\n' } };
-    case 'S02': return { prompt: 'Inspect sum.mjs and run check.mjs. Repair the observed addition defect with a digest-bound edit, rerun the same check successfully, and report the verified result.', files: { 'sum.mjs': 'console.log(Number(process.argv[2]) - Number(process.argv[3]));\n', 'check.mjs': "import {execFileSync} from 'node:child_process';const got=execFileSync('/runtime/node',['sum.mjs','2','3'],{encoding:'utf8'}).trim();if(got!=='5'){console.error('Observed addition defect: '+got);process.exit(1);}console.log('addition check passed');\n" } };
+    case 'S02': return { prompt: 'Inspect sum.mjs and test-command.json. Execute the exact public test command from test-command.json, whose checker bytes run inline rather than from a mutable file. Repair the observed addition defect with a digest-bound edit, rerun exactly the same command successfully, and report the verified result.', files: { 'sum.mjs': 'console.log(Number(process.argv[2]) - Number(process.argv[3]));\n', 'test-command.json': `${JSON.stringify({ executable: '/runtime/node', args: additionCheckArgs })}\n` } };
     case 'S03': return { prompt: 'Implement range.mjs accepting two integer arguments and printing their inclusive range sum. Support negative endpoints and equal endpoints; a reversed (empty) range returns 0. Run edge checks and report the verified result.', files: { 'README.md': 'PUBLIC workload: inclusive integer range sum, reversed range is empty.\n' } };
     case 'S04': return { prompt: 'Read data/value.txt. If that path fails, discover the actual data location and read it. Write answer.json as {value, path}, preserving the real recovery evidence.', files: { 'data/current/value.txt': '29\n' } };
     case 'S05': return { prompt: 'Read both source documents, corroborate their observation and preserve attribution. Write answer.json as {value, sources}, using both source IDs. Report what the documents establish.', files: { 'sources/alpha.json': '{"id":"alpha-survey","value":17,"kind":"observation"}\n', 'sources/beta.json': '{"id":"beta-survey","value":17,"kind":"observation"}\n' } };
@@ -60,7 +63,7 @@ function capture(app: AutarkApplication, runId: string, caseId: ScreenCaseId): S
   };
   const checkpoint = (id: string) => app.store.get<{ checkpoint?: ShellCheckpoint }>('execution', id)?.value.checkpoint ?? null;
   return { runId, status: app.runtime.getRun(runId)?.status ?? 'unknown', tools: orderedTools(app, runId), outputs: app.output(runId),
-    checkpoint: checkpoint(runId), files: files(runId, caseId === 'S02' ? ['sum.mjs', 'check.mjs'] : caseId === 'S03' ? ['range.mjs'] : caseId === 'S07' ? ['state.txt'] : caseId === 'S10' ? ['double.mjs'] : ['answer.json']), delegations,
+    checkpoint: checkpoint(runId), files: files(runId, caseId === 'S02' ? ['sum.mjs', 'test-command.json'] : caseId === 'S03' ? ['range.mjs'] : caseId === 'S07' ? ['state.txt'] : caseId === 'S10' ? ['double.mjs'] : ['answer.json']), delegations,
     children: [...descendantIds].filter(id => app.runtime.getRun(id)).map(id => ({ runId: id, status: app.runtime.getRun(id)!.status, tools: orderedTools(app, id), checkpoint: checkpoint(id),
       files: files(id, ['double.mjs']), resultArtifacts: delegations.filter(record => record.result?.childRunId === id).flatMap(record => record.result!.artifacts.map(ref => retain(app, ref))) })) };
 }
@@ -79,7 +82,7 @@ export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness
   check('explicit-output', witness.outputs.length > 0, witness.outputs);
   const read = (path: string) => (tool: ToolWitness) => named(tool, 'workspace_read', path) && ok(tool);
   const write = (path: string) => (tool: ToolWitness) => ['workspace_write', 'workspace_patch'].includes(tool.effect.kind) && args(tool).path === path && typeof args(tool).expectedSha256 === 'string' && ok(tool);
-  const command = (script: string, success: boolean) => (tool: ToolWitness) => named(tool, 'command_run') && args(tool).executable === '/runtime/node' && JSON.stringify(args(tool).args) === JSON.stringify([script]) && receipt(tool).exitCode === (success ? 0 : 1) && tool.observation.kind === (success ? 'result' : 'error') && (success ? ok(tool) : tool.effect.status === 'failed');
+  const command = (script: string, success: boolean) => (tool: ToolWitness) => named(tool, 'command_run') && args(tool).executable === '/runtime/node' && JSON.stringify(args(tool).args) === JSON.stringify(script === 'addition-check' ? additionCheckArgs : [script]) && receipt(tool).exitCode === (success ? 0 : 1) && tool.observation.kind === (success ? 'result' : 'error') && (success ? ok(tool) : tool.effect.status === 'failed');
   if (['S01', 'S04', 'S05', 'S06'].includes(caseId)) {
     let answer: unknown; try { answer = JSON.parse(witness.files['answer.json']); } catch { answer = null; }
     check('external-answer', packet.expectedAnswer !== undefined && identity(answer) === identity(packet.expectedAnswer), { actual: answer, expectedDigest: hash(JSON.stringify(packet.expectedAnswer) ?? 'missing') });
@@ -87,10 +90,10 @@ export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness
   switch (caseId) {
     case 'S01': check('manifest-and-implementation-read', inOrder(witness.tools, [read('package.json'), read('src/main.mjs')]), witness.tools); break;
     case 'S02': {
-      const firstFailure = witness.tools.findIndex(command('check.mjs', false));
-      const boundedCommand = (tool: ToolWitness) => { const values = args(tool).args; return args(tool).executable === '/runtime/node' && Array.isArray(values) && (JSON.stringify(values) === '[\"check.mjs\"]' || values.length === 3 && values[0] === 'sum.mjs' && values.slice(1).every(value => typeof value === 'string' && /^-?\d{1,6}$/.test(value))); };
+      const firstFailure = witness.tools.findIndex(command('addition-check', false));
+      const boundedCommand = (tool: ToolWitness) => { const values = args(tool).args; return args(tool).executable === '/runtime/node' && Array.isArray(values) && (JSON.stringify(values) === JSON.stringify(additionCheckArgs) || values.length === 3 && values[0] === 'sum.mjs' && values.slice(1).every(value => typeof value === 'string' && /^-?\d{1,6}$/.test(value))); };
       check('seeded-checker-untampered', firstFailure >= 0 && witness.tools.every((tool, index) => named(tool, 'command_run') ? boundedCommand(tool) : tool.effect.kind.startsWith('workspace_') && !['workspace_read', 'workspace_discover', 'workspace_search', 'workspace_diff'].includes(tool.effect.kind) ? index > firstFailure && ['workspace_write', 'workspace_patch'].includes(tool.effect.kind) && args(tool).path === 'sum.mjs' : true), witness.tools);
-      check('failed-check-repair-same-check', inOrder(witness.tools, [command('check.mjs', false), read('sum.mjs'), write('sum.mjs'), command('check.mjs', true)]), witness.tools); check('public-check-preserved', witness.files['check.mjs'] === publicWorkload('S02').files['check.mjs'], witness.files['check.mjs']); break; }
+      check('failed-check-repair-same-check', inOrder(witness.tools, [command('addition-check', false), read('sum.mjs'), write('sum.mjs'), command('addition-check', true)]), witness.tools); check('frozen-inline-checker', inOrder(witness.tools, [command('addition-check', false), command('addition-check', true)]), { checkerDigest: hash(publicAdditionCheck), tools: witness.tools }); break; }
     case 'S03': check('actual-edge-verification', [['-3', '-1', '-6\n'], ['4', '4', '4\n'], ['4', '2', '0\n']].every(([a, b, expected]) => witness.tools.some(tool => named(tool, 'command_run') && ok(tool) && receipt(tool).exitCode === 0 && JSON.stringify(args(tool).args) === JSON.stringify(['range.mjs', a, b]) && receipt(tool).stdout === expected)), witness.tools); break;
     case 'S04': check('missing-path-discovery-recovery', inOrder(witness.tools, [tool => named(tool, 'workspace_read', 'data/value.txt') && tool.effect.status === 'failed' && tool.observation.kind === 'error', tool => named(tool, 'workspace_discover') && ok(tool), read('data/current/value.txt')]), witness.tools); break;
     case 'S05': check('both-attributed-sources-read', ['sources/alpha.json', 'sources/beta.json'].every(path => witness.tools.some(read(path))), witness.tools); break;
@@ -110,7 +113,7 @@ export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness
   }
   return { quality: checks.every(check => check.passed) ? 3 : 0, checks };
 }
-export interface PrivateProbeReceipt { index: number; request: PhysicalRequest; receipt: CommandReceipt | null; failure: string | null }
+export interface PrivateProbeReceipt { index: number; command: { path: string; args: string[]; timeoutMs: number; deadline: number }; request: PhysicalRequest; receipt: CommandReceipt | null; failure: string | null }
 function validateProbes(caseId: ScreenCaseId, packet: PrivateScreenPacket): void {
   if (!['S02', 'S03', 'S10'].includes(caseId)) return;
   invariant(packet.probes && packet.probes.length >= 3 && packet.probes.length <= 8, 'Three to eight frozen external probes required');
@@ -148,7 +151,7 @@ export async function executePrivateProbes(options: ScreenOptions, witness: Scre
         else if (current?.status === 'reserved') resources.settle({ ...current, status: 'failed', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
       }
       const actual = resources.request(id)!;
-      const result = { index, request: actual, receipt, failure }; retained.push(result);
+      const result = { index, command: { path: name, args: probe.args, timeoutMs: 2000, deadline }, request: actual, receipt, failure }; retained.push(result);
       state.put('screen.private-receipts', id, { ...result, artifact: state.putJsonArtifact(JSON.parse(JSON.stringify(result))) }, null);
       checks.push({ id: `private-executable-${index}`, passed: !failure && actual.status === 'succeeded' && receipt?.stdout === probe.stdout, evidence: hash(JSON.stringify({ probe, result })) });
       if (failure || actual.status === 'uncertain') break; // unknown local physical outcome never replayed
