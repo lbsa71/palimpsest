@@ -8,6 +8,7 @@ import { fixtureConfiguration } from './fixture.ts';
 import { hash } from './adapter.ts';
 import { runScreenCase, additionCheckArgs, supportedCases, unavailableCases, screenVersion, type ScreenCaseId, type PrivateScreenPacket, type ScreenOptions } from './screen.ts';
 import type { ApplicationOptions } from '../../deployment/application.ts';
+import { runHostAuthorizedPublicScreen, type PublicScreenHostOptions } from './public-screen-host.ts';
 
 const applicationRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 /** Public rehearsal answers, explicitly not held out. Live packets must be private external inputs. */
@@ -128,9 +129,9 @@ export async function runSyntheticScreen() {
 }
 /** No credentials/config discovery: qualified host supplies the admitted application/resources/secrets.
  * Entry deliberately refuses synthetic transports; it does not bootstrap authority or alter grants. */
-export async function runHostAuthorizedLiveCase(options: Omit<ScreenOptions, 'mode'>) {
-  if (options.application.performRequest) throw new Error('Live screen forbids caller-supplied fixture transport');
-  throw new Error('Live public screen unavailable until an independently qualified host grant route is bound');
+export async function runHostAuthorizedLiveCase(options: PublicScreenHostOptions | Omit<ScreenOptions, 'mode'>) {
+  if (!Object.hasOwn(options, 'plan')) throw new Error('Live public screen closed: forbids caller-supplied fixture transport; legacy overrides are not authenticated');
+  return runHostAuthorizedPublicScreen(options as PublicScreenHostOptions);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [mode, destination] = process.argv.slice(2);

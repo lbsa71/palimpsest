@@ -26,6 +26,19 @@ export class QualificationStore {
     } catch (error) { closeSync(fd); throw error; }
   }
   close(): void { this.lease.close(); closeSync(this.fd); }
+  /** Immutable host claim-store binding; uses the existing pinned descriptor and writer lease. */
+  identity(): { directory: string; device: string; inode: string; uid: string; capacityBytes: number } {
+    this.lease.assertHeld(); const stat = fstatSync(this.fd, { bigint: true });
+    return { directory: this.directory, device: String(stat.dev), inode: String(stat.ino), uid: String(stat.uid), capacityBytes: this.capacityBytes };
+  }
+  get usedBytes(): number {
+    return this.usage().usedBytes;
+  }
+  usage(): { usedBytes: number; entryCount: number } {
+    this.lease.assertHeld(); const names = readdirSync(this.path('.'));
+    invariant(names.length < 4096, 'Private evidence entry limit');
+    return { usedBytes: names.filter(file => !['writer.sqlite', 'writer.sqlite-journal'].includes(file)).reduce((total, file) => total + this.read(file).byteLength, 0), entryCount: names.length };
+  }
   private path(name: string): string { return `/proc/self/fd/${this.fd}/${name}`; }
   private read(name: string): Buffer {
     invariant(/^[a-f0-9]{64}$/.test(name) || /^(claim|grant)-[a-f0-9]{64}$/.test(name), 'Unknown evidence name');
@@ -35,8 +48,7 @@ export class QualificationStore {
   }
   private write(name: string, bytes: Buffer): void {
     this.lease.assertHeld();
-    const names = readdirSync(this.path('.')); invariant(names.length < 4096, 'Private evidence entry limit');
-    const used = names.filter(file => !['writer.sqlite', 'writer.sqlite-journal'].includes(file)).reduce((total, file) => total + this.read(file).byteLength, 0);
+    const { usedBytes: used } = this.usage();
     invariant(used + bytes.byteLength <= this.capacityBytes, 'Private evidence capacity exhausted');
     const fd = openSync(this.path(name), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o400);
     try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }

@@ -52,7 +52,7 @@ export function verifyInvokedHost(candidateFiles: { path: string; sha256: string
   const hostFile = (path: string) => path.startsWith('packages/') || path.startsWith('deployment/') || ['package.json', 'package-lock.json'].includes(path);
   invariant(identity(actual.files.filter(file => hostFile(file.path))) === identity(candidateFiles.filter(file => hostFile(file.path))), 'Imported host/application closure differs from frozen candidate; changed-host qualification needs a separate frozen-service observer');
 }
-function checkTrust(e: Experiment, trust: QualificationTrust): void {
+export function checkTrust(e: Experiment, trust: QualificationTrust): void {
   invariant(trust.policy.policyDigest === admissionPolicyIdentity(trust.policy) && e.priorPolicyDigest === trust.policy.policyDigest && e.candidate.controls === trust.policy.controlRevision, 'Experiment differs from accepted prior judging controls');
   invariant(trust.policy.evaluatorArtifacts.get(e.evaluatorId) === trust.observerArtifact.sha256 && e.observerArtifactDigest === trust.observerArtifact.sha256 && trust.policy.evaluatorKeys.has(e.evaluatorId), 'Observer is not the externally qualified evaluator');
   invariant(e.evaluatorId !== e.candidate.createdBy && trust.protocolDigest === e.protocolDigest && trust.calibrationPlans.has(e.calibrationPlanDigest), 'Independent observer/protocol/calibration trust missing');

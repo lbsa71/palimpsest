@@ -10,6 +10,7 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 import { ResourceLedger } from '../../packages/runtime/index.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { assertHostScreenInvocation } from './public-screen-host.ts';
 
 export const supportedCases = ['S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S10'] as const;
 export type ScreenCaseId = typeof supportedCases[number];
@@ -114,7 +115,7 @@ export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness
   return { quality: checks.every(check => check.passed) ? 3 : 0, checks };
 }
 export interface PrivateProbeReceipt { index: number; command: { path: string; args: string[]; timeoutMs: number; deadline: number }; request: PhysicalRequest; receipt: CommandReceipt | null; failure: string | null }
-function validateProbes(caseId: ScreenCaseId, packet: PrivateScreenPacket): void {
+export function validateProbes(caseId: ScreenCaseId, packet: PrivateScreenPacket): void {
   if (!['S02', 'S03', 'S10'].includes(caseId)) return;
   invariant(packet.probes && packet.probes.length >= 3 && packet.probes.length <= 8, 'Three to eight frozen external probes required');
   for (const probe of packet.probes) invariant(probe.args.length >= 1 && probe.args.length <= 2 && probe.args.every(arg => /^-?\d{1,6}$/.test(arg)) && /^-?\d{1,12}\n$/.test(probe.stdout), 'Bounded integer probe required');
@@ -184,6 +185,7 @@ export function seedBeforeDispatch(app: AutarkApplication, caseId: ScreenCaseId,
   return { runId: run.id, workspace, publicPreparation: { actor: 'host-evaluator', phase: 'before-first-dispatch', version: screenVersion, files, digest: hash(JSON.stringify(workload)), preparedAt: new Date().toISOString() } };
 }
 export async function runScreenCase(options: ScreenOptions) {
+  if (options.mode === 'live-public-screen') assertHostScreenInvocation(options);
   const config = options.application.config;
   invariant(supportedCases.includes(options.caseId) && [1, 2, 3].includes(options.attempt) && options.attemptId, 'Fixed supported case/initial attempt required');
   assertPrivateRoot(options.observer.privateRoot, [config.applicationRoot, config.workspaceDirectory, config.stateDirectory]);
@@ -193,7 +195,7 @@ export async function runScreenCase(options: ScreenOptions) {
   invariant(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 900000, 'Finite screen deadline required');
   for (const digest of [options.observer.evaluatorDigest, options.observer.taskDigest, ...Object.values(options.manifest)]) invariant(/^[a-f0-9]{64}$/.test(digest), 'Frozen artifact digests required');
   if (options.mode === 'synthetic-application') invariant(options.application.performRequest, 'Synthetic mode requires declared bounded transport fixture');
-  else invariant(false, 'Live public screen unavailable until an independently qualified host grant route is bound');
+  else invariant(options.mode === 'live-public-screen', 'Unknown public screen execution mode');
   const packetBytes = readFileSync(options.privatePacketPath, 'utf8'); invariant(Buffer.byteLength(packetBytes) <= 65536 && hash(packetBytes) === options.observer.taskDigest, 'Frozen private packet digest mismatch');
   const packet = JSON.parse(packetBytes) as PrivateScreenPacket; validateProbes(options.caseId, packet);
   // Durable evaluator receipt is written before admission. Same attempt cannot be reset after failure.
@@ -203,6 +205,7 @@ export async function runScreenCase(options: ScreenOptions) {
   const retainedAttemptReceipt = { path: attemptReceipt, sha256: hash(attemptReceiptContent), content: attemptReceiptContent };
   const startedAt = new Date().toISOString(), start = performance.now();
   let app: AutarkApplication | undefined; let preparation: ReturnType<typeof seedBeforeDispatch> | null = null;
+  let liveTurn: ReturnType<AutarkApplication['resume']> | undefined;
   let observation: ReturnType<typeof observe> | null = null; let witness: ScreenWitness | null = null;
   let assessment: EvaluationResult | null = null; let failure: string | null = null;
   const privateCommands: PrivateProbeReceipt[] = []; let originalResources: unknown = null; const deadline = Date.now() + options.timeoutMs;
@@ -211,6 +214,7 @@ export async function runScreenCase(options: ScreenOptions) {
     app = new AutarkApplication(options.application);
     // Deliberately no await/start before this fixed synchronous barrier.
     preparation = seedBeforeDispatch(app, options.caseId, options.attemptId);
+    if (options.mode === 'live-public-screen') liveTurn = app.resume(preparation.runId);
     const signal = AbortSignal.timeout(options.timeoutMs);
     while (true) {
       signal.throwIfAborted(); const run = app.runtime.getRun(preparation.runId); invariant(run, 'Screen run disappeared');
@@ -225,13 +229,14 @@ export async function runScreenCase(options: ScreenOptions) {
         try {
           if (!['completed', 'waiting', 'blocked', 'cancelled'].includes(app.runtime.getRun(preparation.runId)?.status ?? '')) app.runtime.cancel(preparation.runId, options.observer.id, 'Finite screen deadline reached');
           if (app.runtime.getRun(preparation.runId)?.status === 'cancelled') await app.resume(preparation.runId);
+          if (liveTurn) await liveTurn;
           // Terminal ordinary turns have finished their effects. Private checks follow app.close().
           witness = capture(app, preparation.runId, options.caseId);
           observation = observe(app, preparation.runId, app.output(preparation.runId)); operatingLedger = app.resources.snapshot('operating-envelope:v1');
           invariant(observation.physicalRequests.length <= 256 && observation.effectivePrompts.length <= 128, 'Screen physical evidence bound exceeded');
           payloads = (observation.effectivePrompts as { artifact: ArtifactRef }[]).map(value => retain(app!, value.artifact));
           checkpoints = [witness.checkpoint, ...witness.children.map(child => child.checkpoint)].filter((value): value is ShellCheckpoint => !!value).map(value => retain(app!, value.artifact));
-        } catch (error) { failure = error instanceof Error ? error.message : 'Evidence capture failed'; }
+        } catch (error) { failure ??= error instanceof Error ? error.message : 'Evidence capture failed'; }
       }
       await app.close(); app = undefined;
     }
@@ -256,7 +261,7 @@ export async function runScreenCase(options: ScreenOptions) {
   const evidenceBytes = Buffer.byteLength(JSON.stringify({ observation, witness, payloads, checkpoints, operatingLedger, originalResources, privateCommands }));
   const evidenceDigest = hash(JSON.stringify({ observation, witness, payloads, checkpoints, operatingLedger, originalResources, privateCommands }));
   let boundedPrivateCommands: PrivateProbeReceipt[] | null = privateCommands;
-  if (evidenceBytes > 32_000_000) { failure = 'Combined screen evidence bound exceeded; full witness unavailable'; observation = null; witness = null; payloads = []; checkpoints = []; originalResources = null; boundedPrivateCommands = null; }
+  if (evidenceBytes > 32_000_000) { failure ??= 'Combined screen evidence bound exceeded; full witness unavailable'; observation = null; witness = null; payloads = []; checkpoints = []; originalResources = null; boundedPrivateCommands = null; }
   return deepFreeze({ schema: screenVersion, coverage: 'eight-case-partial', evidenceKind: options.mode, independent: false, admissionEligible: false,
     attemptReceipt, retainedAttemptReceipt, evidenceBytes, evidenceDigest, caseId: options.caseId, initialAttempt: options.attempt, attemptId: options.attemptId, startedAt, endedAt: new Date().toISOString(), wallMs: performance.now() - start,
     identities: { ...options.manifest, evaluator: options.observer.evaluatorDigest, privatePacket: options.observer.taskDigest, screen: hash(readFileSync(new URL(import.meta.url), 'utf8')), configuration: hash(JSON.stringify(config)), prompt: hash(readFileSync(config.promptFile, 'utf8')), compactionPrompt: hash(readFileSync(config.compactionPromptFile, 'utf8')) },
