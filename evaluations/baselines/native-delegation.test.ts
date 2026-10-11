@@ -93,7 +93,7 @@ test('isolated Claude delegation retains native built-ins while removing ambient
 test('fixture observations require native child identity, attributed tool output and directed final receipt', () => {
   const request = JSON.parse(bytes()); assert.equal(codexChildIndex(request), 0); assert.equal(codexObservedToolOutput(request, 0), false); assert.equal(codexParentReceipt(request, 0), false);
   assert.equal(codexChildIndex({ input: [{ role: 'user', content: 'NATIVE_CHILD_ONE child-1-observed' }] }), -1);
-  const result = { type: 'custom_tool_call_output', call_id: 'call_child_0', output: [{ type: 'text', text: 'child-1-observed' }] };
+  const result = { type: 'custom_tool_call_output', call_id: 'call_child_0', output: [{ type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' }, { type: 'input_text', text: JSON.stringify({ chunk_id: 'public', wall_time_seconds: 0.001, exit_code: 0, original_token_count: 5, output: 'child-1-observed\n' }) }] };
   assert.equal(codexObservedToolOutput({ input: [result] }, 0), true); assert.equal(codexObservedToolOutput({ input: [{ ...result, call_id: 'other' }] }, 0), false);
   const final = { type: 'agent_message', author: '/root/native_child_0', recipient: '/root', content: [{ type: 'input_text', text: 'Message Type: FINAL_ANSWER\n' }, { type: 'encrypted_content', encrypted_content: 'child-1-observed' }] };
   assert.equal(codexParentReceipt({ input: [final] }, 0), false); assert.equal(codexParentReceipt({ input: [final] }, 1), false);

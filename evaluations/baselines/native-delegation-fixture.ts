@@ -3,7 +3,21 @@ export function codexChildIndex(request: { input?: any[] }): number {
   return [0, 1].findIndex(index => request.input?.some(item => item.type === 'agent_message' && item.author === '/root' && item.recipient === `/root/native_child_${index}`));
 }
 export function codexObservedToolOutput(request: { input?: any[] }, index: number): boolean {
-  return request.input?.some(item => item.type === 'custom_tool_call_output' && item.call_id === `call_child_${index}` && JSON.stringify(item.output).includes(`child-${index + 1}-observed`)) ?? false;
+  return request.input?.some(item => {
+    if (item.type !== 'custom_tool_call_output' || item.call_id !== `call_child_${index}` || !Array.isArray(item.output) || item.output.length !== 2) return false;
+    const [envelope, observation] = item.output;
+    if (envelope?.type !== 'input_text' || typeof envelope.text !== 'string' || !/^Script completed\nWall time [0-9]+(?:\.[0-9]+)? seconds\nOutput:\n$/.test(envelope.text)
+      || observation?.type !== 'input_text' || typeof observation.text !== 'string') return false;
+    try {
+      const result = JSON.parse(observation.text);
+      return result !== null && typeof result === 'object' && !Array.isArray(result)
+        && Object.keys(result).every(key => ['chunk_id', 'wall_time_seconds', 'exit_code', 'original_token_count', 'output'].includes(key))
+        && typeof result.chunk_id === 'string' && result.chunk_id.length > 0
+        && Number.isFinite(result.wall_time_seconds) && result.wall_time_seconds >= 0
+        && Number.isSafeInteger(result.original_token_count) && result.original_token_count >= 0
+        && result.exit_code === 0 && result.output === `child-${index + 1}-observed\n`;
+    } catch { return false; }
+  }) ?? false;
 }
 /** Bind only the exact acquired directed text final envelope to the public emitted final. */
 export function codexParentReceipt(request: { input?: any[] }, index: number): boolean {
