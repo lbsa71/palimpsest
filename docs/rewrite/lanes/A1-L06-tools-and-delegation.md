@@ -1,6 +1,6 @@
 # A1-L06 — tools, iterative coding and delegation
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing** (bounded components implemented and fixture-verified; final application/live acceptance remains open). Session owner: **a1_tools**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW05, RW09, RW13, RW16, RW19, RW21](../../../REQUIREMENTS.md).
 
@@ -38,9 +38,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | a1_tools |
+| Branch / worktree | codex/a1-tools-20261011 / /home/palimpsest/migration/aeon-1-20261011/tools |
+| Base source / contract revision | 4e55167 / aeon1.c1.v1 |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Last handoff / evidence | [Bounded component evidence](../evidence/A1-L06/component-handoff.md); exact handoff is the commit containing this record |
+| Blockers / next eligible task | T01–T04 implemented; real repair and two-child runtime tests pass. Fresh review, ordinary application/live gates and remaining T05 recovery/repair demonstrations are root/L08/L09 integration work |
