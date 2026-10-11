@@ -150,7 +150,7 @@ async function observeApplication(options: LiveOptions, performRequest?: NonNull
     report = await runApplicationCase({ application: { config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore, ...(performRequest ? { performRequest } : {}) },
       task: packet.task, mode: e.kind, observer: { id: e.evaluatorId, privateRoot: options.privateRoot, evaluatorDigest: e.observerArtifactDigest, taskDigest: e.privatePacketDigest },
       manifest: { source: e.candidate.source, dependencies: e.candidate.dependencies, protocol: e.protocolDigest }, timeoutMs: remaining,
-      liveSeal: { grantId: e.grantId, calibrationDigest: e.calibrationPlanDigest, isolationReceipt: identity(config.resourceLimits) },
+      ...(e.kind === 'live-product' ? { liveSeal: { grantId: e.grantId, calibrationDigest: e.calibrationPlanDigest, isolationReceipt: identity(config.resourceLimits) } } : {}),
       evaluate: async value => {
         const { readArtifact: _reader, ...actual } = value; observation = actual;
         const safeObservation = { readArtifact: (path: string) => readObjectiveArtifact(value.workspace, path, e.maxArtifactBytes) };

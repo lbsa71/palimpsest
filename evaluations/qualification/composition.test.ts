@@ -49,6 +49,8 @@ test('authenticated synthetic observer invokes actual confined application and p
       calls++; assert.equal(payload.includes('hidden-positive'), false); assert.equal(payload.includes('9999'), false); assert.equal(payload.includes(privateRoot), false); signal.throwIfAborted(); return transport(payload);
     });
     const bundle = JSON.parse(store.readArtifact(receipt.bundle).toString('utf8')) as ObservationBundle;
+    // Retain bounded synthetic diagnostics in the test transcript before assertions/cleanup.
+    console.log(JSON.stringify({ kind: bundle.kind, failure: bundle.failure, assessment: bundle.assessment, calls, commands: bundle.commands.length, physicalRequests: bundle.ledger?.requests.map(request => ({ id: request.id, provider: request.provider, status: request.status, usage: request.usage })), originalAdapterReport: JSON.parse(store.readArtifact(bundle.originalAdapterReport).toString('utf8')) }));
     assert.equal(bundle.kind, 'integration'); assert.equal(bundle.failure, null); assert.equal(bundle.assessment?.quality, 3);
     assert.equal(calls, 7); assert.equal(bundle.commands.length, 2); assert.equal(bundle.ledger?.startedAt, issued); assert.deepEqual(bundle.ledger?.envelope, resources); assert.equal(bundle.ledger?.cancelled, true);
     assert.equal(bundle.ledger?.requests.filter(request => request.provider === 'qualification-command').length, 2);
