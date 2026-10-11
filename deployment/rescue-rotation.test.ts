@@ -210,6 +210,55 @@ test('pointer-before-decision failure and interrupted processing remain uncertai
   }
 });
 
+test('actual pointer guard rejects changed original audience, expired ancestor and replacement accepted target', async () => {
+  for (const boundary of ['audience', 'expired-ancestor', 'accepted-target']) {
+    const f = fixture();
+    try {
+      await f.runtime.resume(f.run.id, f.prompt); let applied = 0;
+      const host = new RescueRotationHost(f.options(f.store, (_request, commit) => f.authorities.dispatch(f.authority, () => {
+        if (boundary === 'audience') {
+          const row = f.store.get<Run>('runs', f.run.id)!;
+          f.store.put('runs', f.run.id, { ...row.value, scope: { kind: 'restricted', principals: ['another-operator'] } }, row.revision);
+        } else if (boundary === 'expired-ancestor') {
+          const row = f.store.get<{ startedAt: number }>('allocations', 'operating')!;
+          f.store.put('allocations', 'operating', { ...row.value, startedAt: Date.now() - 60001 }, row.revision);
+        } else f.setState({ accepted: { ...f.selected, candidateId: identity('replacement-accepted-candidate') } });
+        commit(() => { applied++; });
+      })));
+      await host.processPending(); await host.processPending();
+      assert.equal(f.record().status, 'rejected', boundary); assert.equal(applied, 0, boundary);
+      assert.equal(f.store.readJsonArtifact<{ pointerEntered: boolean }>(f.record().failure!).pointerEntered, false);
+      assert.equal(f.resources.snapshot(f.run.id).requests, 1); assert.equal(f.calls(), 1);
+      await host.close();
+    } finally { await f.close(); }
+  }
+});
+
+test('withdrawn author local acknowledgment reconciles under successor authority without reviving its rotation or allocation', async () => {
+  const f = fixture('lost-reply');
+  try {
+    await f.runtime.resume(f.run.id, f.prompt); f.runtime.recover();
+    f.resources.cancel('operating');
+    const originalRun = f.runtime.getRun(f.run.id), allocations = f.store.list('allocations'), budgets = f.store.list('budgets');
+    const withdrawn = f.authorities.withdraw(f.authority);
+    f.authorities.activate(withdrawn, 'successor-host', identity('successor-controls'), identity('successor-artifact'));
+    const reopened = new OperationalStore({ filename: f.filename });
+    try {
+      const host = new RescueRotationHost(f.options(reopened)); await host.processPending(); await host.processPending();
+      assert.equal(f.record().status, 'rejected'); assert.equal(f.rotations(), 0); assert.equal(f.calls(), 1);
+      assert.equal(f.effects.get('tool:rescue-call')?.status, 'succeeded');
+      assert.deepEqual(f.effects.get('tool:rescue-call')?.authority, f.authority);
+      assert.equal(f.resources.request('tool:rescue-call')?.status, 'succeeded');
+      assert.equal(f.resources.request('tool:rescue-call')?.usage.elapsedMs, 100);
+      assert.equal(f.resources.snapshot(f.run.id).concurrent, 0); assert.equal(f.resources.snapshot(f.run.id).cancelled, true);
+      assert.deepEqual(f.runtime.getRun(f.run.id), originalRun);
+      assert.deepEqual(f.store.list('allocations'), allocations); assert.deepEqual(f.store.list('budgets'), budgets);
+      assert.equal(f.store.events(f.run.id).filter(event => event.type === 'local-rescue-reconciled').length, 1);
+      await host.close();
+    } finally { reopened.close(); }
+  } finally { await f.close(); }
+});
+
 // One private fixture reuses two retained runtimes. The explicit readiness record is an
 // engineering guard witness; installed full successor boot evidence is maintained separately.
 test('actual bootstrap guarded rotation requires accepted boot-ready current target and retains both prior snapshots', async () => {
