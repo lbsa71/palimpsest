@@ -45,3 +45,9 @@ Owned by the lead who claims implementation; update before concurrent edits.
 | Additional path reservations | None; use the exclusive scope above and L09 for shared build files |
 | Last handoff / evidence | Session 1 implementation `6d806a7`, review/reasoning corrections `44ca88c`, 22 passing mechanical cases; [evidence](../evidence/A1-L02/2026-10-11-implementation.md) and [dependency reassessment](../evidence/A1-L02/2026-10-11-typebox-reassessment.md) |
 | Blockers / next eligible task | T01/T02/T03/T05 executable foundation implemented against C1 f11a25b; Q1 whole-dependency edit ownership, Q3 live screen, integrated Q4 and independent Q5 remain. L03/L06/L09 integration next. |
+
+### Exact dependency succession evidence task — 2026-10-11
+
+Root assigned `/root/a1_dependency_succession` a finite T06 engineering subtask at base `e542f49`, branch `codex/a1-dependency-succession-20261011`, worktree `/home/palimpsest/migration/aeon-1-20261011/dependency-succession`. Exclusive writes: new `deployment/dependency-succession.test.ts`, `docs/rewrite/evidence/A1-L02/dependency-succession.md`, and this coordination subsection. Shared application, source tools, supervisor and build contracts remain root-owned.
+
+`/goal Close the exact retained-dependency/admitted-successor evidence gap: edit an invoked locally owned validator in disposable source, pass pinned check/build, admit and execute those bytes under prior controls, preserve latest memory/goals/obligations, and hand off a reviewable fixture with actual results and exact manifest limitations.` Actual finite goal created without a token budget. Read/write/check preparation can proceed independently; root serializes the heavy fixture window and aggregate/installed reruns. Existing fresh-process schema probes and unrelated runtime/bootstrap succession do not jointly establish this exact witness. Live screen, independent qualification and comparator gates remain open.
