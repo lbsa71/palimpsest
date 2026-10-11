@@ -198,6 +198,8 @@ export async function runScreenCase(options: ScreenOptions) {
   // Durable evaluator receipt is written before admission. Same attempt cannot be reset after failure.
   const attemptReceipt = join(options.observer.privateRoot, `screen-${options.caseId}-initial-${options.attempt}.json`);
   writeFileSync(attemptReceipt, JSON.stringify({ attemptId: options.attemptId, caseId: options.caseId, attempt: options.attempt, taskDigest: options.observer.taskDigest, manifest: options.manifest, configuration: hash(JSON.stringify(config)), recordedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
+  const attemptReceiptContent = readFileSync(attemptReceipt, 'utf8');
+  const retainedAttemptReceipt = { path: attemptReceipt, sha256: hash(attemptReceiptContent), content: attemptReceiptContent };
   const startedAt = new Date().toISOString(), start = performance.now();
   let app: AutarkApplication | undefined; let preparation: ReturnType<typeof seedBeforeDispatch> | null = null;
   let observation: ReturnType<typeof observe> | null = null; let witness: ScreenWitness | null = null;
@@ -245,7 +247,7 @@ export async function runScreenCase(options: ScreenOptions) {
     const state = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot });
     try {
       const resources = new ResourceLedger(state, { tokens: 0, costUsd: 0, elapsedMs: 0 });
-      originalResources = { allocations: state.list('allocations'), budgets: state.list('budgets'), physicalLedger: state.list('requests'), snapshot: resources.snapshot(preparation.runId) };
+      originalResources = { allocations: state.list('allocations'), budgets: state.list('budgets'), physicalLedger: state.list('requests'), attempts: state.list('screen.attempts'), snapshot: resources.snapshot(preparation.runId) };
       operatingLedger = resources.snapshot('operating-envelope:v1');
     } finally { state.close(); }
   }
@@ -255,7 +257,7 @@ export async function runScreenCase(options: ScreenOptions) {
   let boundedPrivateCommands: PrivateProbeReceipt[] | null = privateCommands;
   if (evidenceBytes > 32_000_000) { failure = 'Combined screen evidence bound exceeded; full witness unavailable'; observation = null; witness = null; payloads = []; checkpoints = []; originalResources = null; boundedPrivateCommands = null; }
   return deepFreeze({ schema: screenVersion, coverage: 'eight-case-partial', evidenceKind: options.mode, independent: false, admissionEligible: false,
-    attemptReceipt, evidenceBytes, evidenceDigest, caseId: options.caseId, initialAttempt: options.attempt, attemptId: options.attemptId, startedAt, endedAt: new Date().toISOString(), wallMs: performance.now() - start,
+    attemptReceipt, retainedAttemptReceipt, evidenceBytes, evidenceDigest, caseId: options.caseId, initialAttempt: options.attempt, attemptId: options.attemptId, startedAt, endedAt: new Date().toISOString(), wallMs: performance.now() - start,
     identities: { ...options.manifest, evaluator: options.observer.evaluatorDigest, privatePacket: options.observer.taskDigest, screen: hash(readFileSync(new URL(import.meta.url), 'utf8')), configuration: hash(JSON.stringify(config)), prompt: hash(readFileSync(config.promptFile, 'utf8')), compactionPrompt: hash(readFileSync(config.compactionPromptFile, 'utf8')) },
     candidateModel: config.model, configuration: { resources: config.resources, conversationResources: config.conversationResources, resourceLimits: config.resourceLimits ?? null, scheduler: config.scheduler, maxConcurrentRuns: config.maxConcurrentRuns, commands: config.commands }, originalResources, privateCommands: boundedPrivateCommands, environment: { node: process.version, platform: process.platform, architecture: process.arch }, preparation, observation, witness, payloads, checkpoints, operatingLedger, assessment, failure,
     verdict: !failure && assessment?.quality === 3 ? 'case-pass' : 'criterion-unmet', unavailable: unavailableCases,
