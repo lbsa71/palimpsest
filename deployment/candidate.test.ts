@@ -24,6 +24,6 @@ test('deployment admission binds actual host controls, fork/build closure and ru
     assert.ok(controls.files.some(file => file.path === 'deployment/application.ts'));
     const forged = freezeCandidate(root, store, deploymentEntries(root), { ...candidate.inputs, controls: { ...(candidate.inputs.controls as object), files: [] } });
     assert.throws(() => verifyApplication(store, forged.manifest.id, process.execPath), /Control declaration/);
-    assert.throws(() => verifyApplication(store, candidate.manifest.id, join(root, 'package.json')), /Pinned runtime changed/);
+    assert.throws(() => verifyApplication(store, candidate.manifest.id, join(root, 'package.json')), /Runtime requires a regular|Pinned runtime changed/);
   } finally { rmSync(store, { recursive: true, force: true }); }
 });

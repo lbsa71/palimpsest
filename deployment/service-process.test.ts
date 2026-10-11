@@ -54,7 +54,7 @@ test('frozen ordinary application boots, fences stale authority, restarts after 
     assert.equal(service.running, false); assert.equal(unexpectedExit, 1); await service.stop();
     const withdrawn = authority.withdraw(grant);
     const successor = authority.activate(withdrawn, 'fixture-generation-2', candidate.manifest.controls, candidate.manifest.id);
-    await assert.rejects(service.start(candidate.manifest.id, grant), /unavailable/);
+    await assert.rejects(service.start(candidate.manifest.id, grant), /Stale or withdrawn/);
     await service.start(candidate.manifest.id, successor);
     const resumed = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });
     assert.deepEqual(resumed.get('fixture.lived-state', 'current'), preserved);

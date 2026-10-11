@@ -8,7 +8,7 @@ import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { policyDescriptor, type ReleaseState, type ReleaseTarget } from '../packages/release/controller.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import { admitCandidate } from '../packages/release/admission.ts';
-import { verifyApplication } from './candidate.ts';
+import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import type { SupervisorFile } from './cli.ts';
 import { assertPrivateHostDirectory, contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-policy.ts';
 import { validateHostBindings } from './supervisor.ts';
@@ -112,7 +112,8 @@ export async function launchHost(configPath: string, selectedBoot?: string): Pro
       invariant(candidate.files.some(file => file.path === 'deployment/host-successor.ts') && candidate.files.some(file => file.path === 'deployment/cli.ts'), 'Frozen host launcher closure missing');
       lease.close();
       invariant(process.execve, 'Host succession requires execve');
-      process.execve(config.host.nodeBinary, [config.host.nodeBinary, join(config.host.artifactStore, target.selected.candidateId, 'payload/deployment/cli.ts'), 'launch-selected', configPath, target.selected.candidateId], process.env as Record<string, string>);
+      const executable = candidateNodeBinary(candidate, config.host.artifactStore, config.host.nodeBinary);
+      process.execve(executable, [executable, join(config.host.artifactStore, target.selected.candidateId, 'payload/deployment/cli.ts'), 'launch-selected', configPath, target.selected.candidateId], process.env as Record<string, string>);
       throw new Error('Host execve returned');
     }
     const selectedModule = join(config.host.artifactStore, current.selected.candidateId, 'payload/deployment/host-successor.ts');
@@ -126,7 +127,8 @@ export async function launchHost(configPath: string, selectedBoot?: string): Pro
       catch (error) { if (Date.now() >= drainDeadline) throw error; }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    const child = spawn(config.host.nodeBinary, [join(config.host.artifactStore, current.selected.candidateId, 'payload/deployment/cli.ts'), 'supervise', configPath], {
+    const selectedCandidate = verifyApplication(config.host.artifactStore, current.selected.candidateId, config.host.nodeBinary);
+    const child = spawn(candidateNodeBinary(selectedCandidate, config.host.artifactStore, config.host.nodeBinary), [join(config.host.artifactStore, current.selected.candidateId, 'payload/deployment/cli.ts'), 'supervise', configPath], {
       env: { ...process.env, AEON_HOST_LAUNCHER: String(process.pid) }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });
     let stopping = false, ready = false;

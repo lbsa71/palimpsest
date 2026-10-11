@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { invariant } from '../packages/contracts/index.ts';
 import type { Authority } from '../packages/contracts/index.ts';
-import { verifyApplication } from './candidate.ts';
+import { candidateNodeBinary, verifyApplication } from './candidate.ts';
+import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { HostBindings } from './materialize.ts';
 import type { ApplicationSecrets } from './config.ts';
 
@@ -45,8 +46,13 @@ export class ServiceProcess {
     invariant(this.options.mode === 'engineering' || (candidate.inputs.configuration as { resourceLimits?: unknown }).resourceLimits && this.host.cgroupRoot, 'Product startup requires enforced kernel resource ceilings');
     invariant(this.options.mode === 'engineering' || evolution, 'Product startup requires previously accepted evolution policy metadata');
     if (evolution) validateEvolutionMetadata(evolution);
+    const authorityStore = new AuthorityStore(join(this.host.stateDirectory, 'authority.sqlite'));
+    try {
+      authorityStore.assert(authority);
+      invariant(authorityStore.current()?.artifactId === candidateId && authority.controlRevision === candidate.manifest.controls, 'Serving authority does not qualify this candidate');
+    } finally { authorityStore.close(); }
     const entrypoint = join(this.host.artifactStore, candidateId, 'payload/deployment/service-child.ts');
-    const child = spawn(this.host.nodeBinary, [entrypoint], { detached: true, env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    const child = spawn(candidateNodeBinary(candidate, this.host.artifactStore, this.host.nodeBinary), [entrypoint], { detached: true, env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
     this.child = child; this.stopping = false;
     let diagnostic = Buffer.alloc(0); child.stderr?.on('data', (chunk: Buffer) => { if (diagnostic.length < 32768) diagnostic = Buffer.concat([diagnostic, chunk.subarray(0, 32768 - diagnostic.length)]); });
     let ready = false;

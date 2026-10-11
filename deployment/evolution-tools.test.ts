@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import fs, { appendFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { appendFileSync, chmodSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -16,9 +16,10 @@ import { OperationalStore } from '../packages/storage/index.ts';
 import { setup as runtimeFixture, authority as priorAuthority, envelope as runtimeEnvelope } from '../packages/runtime/test/fixtures.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
-import { freezeApplication, type DeploymentInputs } from './candidate.ts';
+import { candidateNodeBinary, freezeApplication, verifyApplication, type DeploymentInputs } from './candidate.ts';
 import { evolutionTools, goalDefinitionIdentity, type EvolutionContext, type EvolutionOptions, type EvaluationReceipt, type SubmissionReceipt } from './evolution-tools.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
+import { ServiceProcess } from './service-process.ts';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const scope = { kind: 'restricted' as const, principals: ['operator'] };
@@ -147,6 +148,36 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
     assert.equal((await call(ctx, options, 'change_propose', proposal())).state, 'submitted');
     await assert.rejects(call(ctx, options, 'change_propose', { ...proposal(), objective: 'Replace original immutable proposal' }), /Changed proposal identity/);
     assert.equal(controller.status()!.phase, 'accepted'); assert.equal(authorityStore.current()!.artifactId, accepted.manifest.id, 'Staging never activates source edits');
+
+    await t.test('source runtime proposal freezes under old controls and inherited blob survives a small source checkout', async () => {
+      const runtimeContext = context(root, store, authority, 'runtime-change'); copySource(source, runtimeContext.workspace);
+      const bytes = Buffer.from([127, 69, 76, 70, 11, 22, 33, 44]);
+      const descriptor = { ...inputs.runtime, nodeSha256: hashBytes(bytes), workspacePath: 'runtime-input/node' };
+      mkdirSync(join(runtimeContext.workspace, 'runtime-input')); writeFileSync(join(runtimeContext.workspace, descriptor.workspacePath), bytes, { mode: 0o700 });
+      writeFileSync(join(runtimeContext.workspace, 'deployment/candidate-settings.json'), JSON.stringify({ runtime: descriptor }));
+      await call(runtimeContext, options, 'change_propose', proposal());
+      await assert.rejects(call(runtimeContext, options, 'candidate_freeze', { changeId: 'change' }), /staging grant/);
+      await assert.rejects(call(runtimeContext, { ...options, runtimeMaxBytes: 7 }, 'candidate_freeze', { changeId: 'change' }), /byte bounds/);
+      const record = await call(runtimeContext, { ...options, runtimeMaxBytes: 128 * 1024 * 1024 }, 'candidate_freeze', { changeId: 'change' }) as ChangeRecord;
+      const frozenRuntime = verifyApplication(artifactStore, record.candidate!.id, process.execPath);
+      assert.notEqual(frozenRuntime.manifest.controls, accepted.manifest.controls);
+      assert.notEqual(frozenRuntime.manifest.dependencies, accepted.manifest.dependencies);
+      assert.equal(hashBytes(readFileSync(candidateNodeBinary(frozenRuntime, artifactStore, process.execPath))), descriptor.nodeSha256);
+      assert.equal(authorityStore.current()!.artifactId, accepted.manifest.id, 'staging confers no execution authority');
+      const unqualifiedService = new ServiceProcess({ stateDirectory: join(root, 'state'), workspaceDirectory: runtimeContext.workspace, artifactStore, nodeBinary: process.execPath }, { directToken: 'fixture-token', mistralApiKey: 'unavailable' }, { mode: 'engineering' });
+      await assert.rejects(unqualifiedService.start(frozenRuntime.manifest.id, authority), /does not qualify/);
+      assert.equal(unqualifiedService.processId, undefined, 'unqualified ELF is never executed');
+      const nextContext = context(root, store, authority, 'inherited-runtime'); copySource(join(artifactStore, frozenRuntime.manifest.id, 'payload'), nextContext.workspace);
+      assert.equal(existsSync(join(nextContext.workspace, '.runtime')), false);
+      assert.equal(existsSync(join(nextContext.workspace, descriptor.workspacePath)), false);
+      await call(nextContext, options, 'change_propose', proposal());
+      const next = await call(nextContext, { ...options, acceptedCandidateId: frozenRuntime.manifest.id }, 'candidate_freeze', { changeId: 'change' }) as ChangeRecord;
+      assert.deepEqual((verifyApplication(artifactStore, next.candidate!.id, process.execPath).inputs.controls as unknown as { runtime: DeploymentInputs['runtime'] }).runtime, (frozenRuntime.inputs.controls as unknown as { runtime: DeploymentInputs['runtime'] }).runtime);
+      const executable = candidateNodeBinary(frozenRuntime, artifactStore, process.execPath);
+      chmodSync(executable, 0o700);
+      writeFileSync(executable, Buffer.from([127, 69, 76, 70, 44, 33, 22, 11]));
+      assert.throws(() => verifyApplication(artifactStore, frozenRuntime.manifest.id, process.execPath), /payload changed/);
+    });
 
     await t.test('authenticated conversation cannot fabricate eligibility or self origin', async () => {
       const denied = context(root, store, authority, 'ineligible');

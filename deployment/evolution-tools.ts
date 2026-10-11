@@ -9,6 +9,7 @@ import type { ApplicationTool } from './application.ts';
 import { freezeApplication, verifyApplication, type DeploymentInputs } from './candidate.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { isHumanInput } from './input-origin.ts';
+import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority }
 /** Issued by accepted host bootstrap or a host wrapper observing genuinely autonomous goal creation, never from Goal.origin alone. */
@@ -22,6 +23,8 @@ export interface EvolutionOptions {
   /** All options are host-installed, never supplied by a model tool argument. */
   artifactStore: string; acceptedCandidateId: string; nodeBinary: string; policyDigest: string;
   maxFiles: number; maxBytes: number; eligibleHumanAuthors: ReadonlySet<string>; allowedModelIds: ReadonlySet<string>;
+  /** Separate bounded runtime staging grant; source/compiler quota is unchanged. */
+  runtimeMaxBytes?: number;
   assertAuthority(authority: Authority): void;
   /** A trusted origin claim must match the admitted/steering input and, for self, the host initiative execution. */
   provenanceForRun(context: EvolutionContext): ChangeProvenance;
@@ -105,25 +108,47 @@ function provenance(context: EvolutionContext, options: EvolutionOptions): Chang
   return structuredClone(bound);
 }
 
-function frozenInputs(staging: string, accepted: FrozenCandidate, options: EvolutionOptions, createdBy: string): DeploymentInputs {
+function frozenInputs(staging: string, workspace: string, accepted: FrozenCandidate, options: EvolutionOptions, createdBy: string): DeploymentInputs {
   const configuration = structuredClone(accepted.inputs.configuration) as unknown as DeploymentInputs['configuration'];
+  let runtimeProposal: RuntimeProposal | undefined;
   // Optional source-owned settings contain actual proposed model/configuration, never host paths or policy.
   const deployment = directory(join(staging, 'deployment')); let deploymentNames: string[]; try { deploymentNames = names(deployment, options.maxFiles); } finally { closeSync(deployment); }
   if (deploymentNames.includes('candidate-settings.json')) {
     const settings = JSON.parse(readFileSync(join(staging, 'deployment/candidate-settings.json'), 'utf8')) as JsonValue;
-    const parsed = object(settings, ['configuration']); invariant(parsed.configuration && typeof parsed.configuration === 'object' && !Array.isArray(parsed.configuration), 'Candidate configuration required');
-    const proposed = parsed.configuration as unknown as DeploymentInputs['configuration'];
-    const { model: priorModel, pollMs: priorPoll, ...priorGrants } = configuration;
-    const { model: nextModel, pollMs: nextPoll, ...nextGrants } = proposed;
-    invariant(identity(priorGrants) === identity(nextGrants), 'Candidate settings cannot alter host grants, policy or resource allowances');
-    invariant(options.allowedModelIds.has(nextModel?.id) && Number.isSafeInteger(nextPoll) && nextPoll >= 100, 'Unqualified model or polling configuration');
-    invariant(typeof nextModel.reasoning === 'boolean' && ['none', 'high'].includes(nextModel.effort) && (nextModel.effort !== 'high' || nextModel.reasoning), 'Invalid proposed model profile');
-    for (const field of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(nextModel[field]) && nextModel[field] > 0 && nextModel[field] <= priorModel[field], 'Candidate model exceeds accepted request bounds');
-    invariant(identity(Object.keys(nextModel).sort()) === identity(Object.keys(priorModel).sort()) && identity(nextModel.pricesPerMillion) === identity(priorModel.pricesPerMillion), 'Model descriptor/host prices changed');
-    Object.assign(configuration, proposed);
+    const parsed = object(settings, ['configuration', 'runtime']);
+    if (parsed.runtime !== undefined) {
+      runtimeProposal = object(parsed.runtime, ['nodeVersion', 'nodeSha256', 'platform', 'arch', 'workspacePath']) as unknown as RuntimeProposal;
+      invariant(typeof runtimeProposal.workspacePath === 'string', 'Runtime proposal workspace path required');
+    }
+    if (parsed.configuration !== undefined) {
+      invariant(parsed.configuration && typeof parsed.configuration === 'object' && !Array.isArray(parsed.configuration), 'Candidate configuration required');
+      const proposed = parsed.configuration as unknown as DeploymentInputs['configuration'];
+      const { model: priorModel, pollMs: priorPoll, ...priorGrants } = configuration;
+      const { model: nextModel, pollMs: nextPoll, ...nextGrants } = proposed;
+      invariant(identity(priorGrants) === identity(nextGrants), 'Candidate settings cannot alter host grants, policy or resource allowances');
+      invariant(options.allowedModelIds.has(nextModel?.id) && Number.isSafeInteger(nextPoll) && nextPoll >= 100, 'Unqualified model or polling configuration');
+      invariant(typeof nextModel.reasoning === 'boolean' && ['none', 'high'].includes(nextModel.effort) && (nextModel.effort !== 'high' || nextModel.reasoning), 'Invalid proposed model profile');
+      for (const field of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(nextModel[field]) && nextModel[field] > 0 && nextModel[field] <= priorModel[field], 'Candidate model exceeds accepted request bounds');
+      invariant(identity(Object.keys(nextModel).sort()) === identity(Object.keys(priorModel).sort()) && identity(nextModel.pricesPerMillion) === identity(priorModel.pricesPerMillion), 'Model descriptor/host prices changed');
+      Object.assign(configuration, proposed);
+    }
   }
   const controls = accepted.inputs.controls as unknown as { runtime: DeploymentInputs['runtime']; policy: JsonValue };
-  return { configuration, prompts: { mind: readFileSync(join(staging, 'deployment/prompts/mind.md'), 'utf8'), compaction: readFileSync(join(staging, 'deployment/prompts/compaction.md'), 'utf8') }, runtime: controls.runtime, policy: controls.policy, createdBy };
+  let runtime = controls.runtime;
+  if (runtimeProposal && runtime.bundle) {
+    const { workspacePath, ...proposed } = runtimeProposal;
+    const { bundle, ...retained } = runtime;
+    if (identity(proposed) === identity(retained)) runtimeProposal = undefined;
+  }
+  if (runtimeProposal) {
+    invariant(options.runtimeMaxBytes !== undefined, 'Runtime proposal lacks an accepted staging grant');
+    const { workspacePath, ...descriptor } = runtimeProposal;
+    const grant = Math.min(options.runtimeMaxBytes, configuration.resourceLimits?.maxFileBytes ?? options.runtimeMaxBytes, configuration.resourceLimits?.workspaceBytes ?? options.runtimeMaxBytes);
+    runtime = stageRuntimeBundle(workspace, workspacePath, staging, descriptor, grant);
+  } else if (runtime.bundle) {
+    runtime = stageRuntimeBundle(join(options.artifactStore, accepted.manifest.id, 'payload'), runtimeBundlePath, staging, runtime, maxRuntimeBytes);
+  }
+  return { configuration, prompts: { mind: readFileSync(join(staging, 'deployment/prompts/mind.md'), 'utf8'), compaction: readFileSync(join(staging, 'deployment/prompts/compaction.md'), 'utf8') }, runtime, policy: controls.policy, createdBy };
 }
 
 /** Install through ApplicationOptions.additionalTools. Author workspaces never receive store paths, policy keys or activation authority. */
@@ -180,7 +205,7 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
         const source = snapshot(bound.workspace, staging, entries, options);
         const toolchain = accepted.files.filter(file => file.path.startsWith('node_modules/'));
         snapshot(acceptedRoot, staging, ['node_modules'], { maxFiles: options.maxFiles - source.entries, maxBytes: options.maxBytes - source.bytes }, toolchain);
-        const inputs = frozenInputs(staging, accepted, options, bound.authority.generation);
+        const inputs = frozenInputs(staging, bound.workspace, accepted, options, bound.authority.generation);
         const candidate = freezeApplication(staging, store, inputs); allowed(signal);
         return proposals.transition(id, 'proposed', 'frozen', { candidate: candidate.manifest, judgingPolicyDigest: options.policyDigest });
       } finally { rmSync(staging, { recursive: true, force: true }); }

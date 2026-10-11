@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { identity, invariant } from '../packages/contracts/index.ts';
 import type { FrozenCandidate } from '../packages/release/artifacts.ts';
 import { beneath, validateConfiguration, type ApplicationConfig } from './config.ts';
-import type { DeploymentInputs } from './candidate.ts';
+import { candidateNodeBinary, type DeploymentInputs } from './candidate.ts';
 
 export interface HostBindings { stateDirectory: string; workspaceDirectory: string; artifactStore: string; nodeBinary: string; cgroupRoot?: string }
 /** Physical paths and credentials never come from model output or mutable candidate source. */
@@ -50,7 +50,7 @@ export function materializeConfiguration(candidate: FrozenCandidate, host: HostB
   invariant(!logical.resourceLimits || host.cgroupRoot, 'Frozen kernel resource ceilings require a physical host delegation');
   const payload = join(host.artifactStore, candidate.manifest.id, 'payload');
   invariant(candidate.files.some(file => file.path === 'deployment/shell-worker.ts'), 'Frozen worker entrypoint absent');
-  return validateConfiguration({ ...logical, resourceLimits: logical.resourceLimits ? { ...logical.resourceLimits, cgroupRoot: host.cgroupRoot! } : undefined, stateDirectory: host.stateDirectory, workspaceDirectory: host.workspaceDirectory, applicationRoot: payload, nodeBinary: host.nodeBinary,
+  return validateConfiguration({ ...logical, resourceLimits: logical.resourceLimits ? { ...logical.resourceLimits, cgroupRoot: host.cgroupRoot! } : undefined, stateDirectory: host.stateDirectory, workspaceDirectory: host.workspaceDirectory, applicationRoot: payload, nodeBinary: candidateNodeBinary(candidate, host.artifactStore, host.nodeBinary),
     workerEntrypoint: 'deployment/shell-worker.ts', artifactId: candidate.manifest.id, controlRevision: candidate.manifest.controls,
     promptFile: join(promptRoot, 'mind.txt'), compactionPromptFile: join(promptRoot, 'compaction.txt') });
 }

@@ -8,6 +8,7 @@ import type { ApplicationTool } from './application.ts';
 import { proposalProvenance } from './proposal-origin.ts';
 import { sourceWorkspaceTools } from './source-workspace.ts';
 import type { EvolutionMetadata } from './service-process.ts';
+import { maxRuntimeBytes } from './runtime-bundle.ts';
 
 const namespace = 'host.evolution-jobs';
 type Request = EvaluationRequest | SubmissionRequest;
@@ -164,7 +165,7 @@ export function ordinaryServiceTools(context: EvolutionContext, host: { config: 
   if (!host.evolution) return [...source, ...['change_propose', 'candidate_freeze', 'candidate_evaluate', 'release_submit', 'change_status'].map(name => ({ name, description: 'Evolution is unavailable because this engineering startup has no accepted judging policy metadata.', inputSchema: { type: 'object' }, execute() { throw new Error('Evolution unavailable: host startup omitted accepted judging policy metadata'); } }))];
   const mailbox = new EvolutionMailbox({ store: context.store, assertAuthority: host.assertAuthority });
   return [...source, ...evolutionTools(context, { artifactStore: host.artifactStore, acceptedCandidateId: config.artifactId, nodeBinary: config.nodeBinary, policyDigest: host.evolution.policyDigest,
-    maxFiles: 20000, maxBytes: 128 * 1024 * 1024, eligibleHumanAuthors: new Set([...(config.direct.modificationEligible ? [config.direct.actorId] : []), ...(config.slack?.eligibleHumanIds.map(id => `slack:${config.slack!.teamId}:${id}`) ?? [])]),
+    maxFiles: 20000, maxBytes: 128 * 1024 * 1024, runtimeMaxBytes: maxRuntimeBytes, eligibleHumanAuthors: new Set([...(config.direct.modificationEligible ? [config.direct.actorId] : []), ...(config.slack?.eligibleHumanIds.map(id => `slack:${config.slack!.teamId}:${id}`) ?? [])]),
     allowedModelIds: new Set(host.evolution.allowedModelIds ?? [config.model.id]), assertAuthority: host.assertAuthority, provenanceForRun: proposalProvenance,
     requestEvaluation: mailbox.requestEvaluation, submitRelease: mailbox.submitRelease })];
 }

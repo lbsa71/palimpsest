@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,13 +13,14 @@ import { policyDescriptor, type ReleaseProof } from '../packages/release/control
 import { OperationalStore } from '../packages/storage/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
-import { freezeApplication, type DeploymentInputs } from './candidate.ts';
+import { candidateNodeBinary, freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { hostSelection, requestHostSuccessor } from './host-successor.ts';
 import { controlSocket, requestControl, serveControls } from './cli.ts';
 import { contentAddressedEvidence, loadHostPolicy, type HostPolicyFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceSupervisor, type SupervisorOptions } from './supervisor.ts';
+import { maxRuntimeBytes, stageRuntimeBundle } from './runtime-bundle.ts';
 
 function fixture() {
   const repository = process.env.AEON_TEST_SOURCE_ROOT ?? dirname(dirname(fileURLToPath(import.meta.url)));
@@ -78,7 +79,12 @@ test('accepted host and evaluator code actually replace the coordinator; failed 
   writeFileSync(proofPath, JSON.stringify(f.initialProof), { mode: 0o600 });
   const admission = join(f.writableSource, 'packages/release/admission.ts');
   writeFileSync(admission, readFileSync(admission, 'utf8').replace("  if (policy.controlRevision !== current.controlRevision)", "  if (proposal.id === 'new-evaluator-witness') throw new Error('accepted-evaluator-v2-executed');\n  if (policy.controlRevision !== current.controlRevision)"));
-  const successor = freezeApplication(f.writableSource, f.host.artifactStore, f.inputs);
+  // Explicit offline executable grant: 128 MiB per file; 512 MiB artifact, no kernel-profile claim.
+  const runtimeBytes = Buffer.concat([readFileSync(process.execPath), Buffer.from('aeon-runtime-fixture-v2')]);
+  writeFileSync(join(f.root, 'proposed-node'), runtimeBytes, { mode: 0o700 });
+  const runtime = stageRuntimeBundle(f.root, 'proposed-node', f.writableSource, { ...f.inputs.runtime, nodeSha256: hashBytes(runtimeBytes) }, maxRuntimeBytes);
+  const successor = freezeApplication(f.writableSource, f.host.artifactStore, { ...f.inputs, runtime });
+  const successorBinary = candidateNodeBinary(successor, f.host.artifactStore, f.host.nodeBinary);
   const fields = { ...f.policy, controlRevision: successor.manifest.controls };
   const policy2 = { ...fields, policyDigest: admissionPolicyIdentity(fields) };
   register(policy2, join(f.root, 'policy2.json'));
@@ -105,6 +111,10 @@ test('accepted host and evaluator code actually replace the coordinator; failed 
     await requestControl(f.host.stateDirectory, { kind: 'probation', proof: f.proof(successor, f.initial) });
     const second = await waitStatus(s => s.running && s.coordinator.module.includes(successor.manifest.id));
     assert.notEqual(second.coordinator.processId, first.coordinator.processId);
+    for (const pid of [child.pid, second.coordinator.processId, second.processId]) {
+      assert.equal(readlinkSync(`/proc/${pid}/exe`), successorBinary, 'launcher, coordinator and service execute the selected bound ELF');
+    }
+    assert.notEqual(hashBytes(readFileSync(successorBinary)), f.inputs.runtime.nodeSha256);
     assert.ok(readFileSync(`/proc/${child.pid}/cmdline`, 'utf8').includes(successor.manifest.id), 'launcher itself executes the accepted source');
     assert.throws(() => process.kill(first.coordinator.processId, 0), /ESRCH/);
     const witness = f.proof(successor, second.ready.authority, successor); witness.proposal.id = 'new-evaluator-witness';
@@ -116,6 +126,7 @@ test('accepted host and evaluator code actually replace the coordinator; failed 
     process.kill(second.coordinator.processId, 'SIGKILL');
     const recovered = await waitStatus(s => s.running && s.coordinator.module.includes(f.incumbent.manifest.id));
     assert.equal(recovered.release.active.candidateId, f.incumbent.manifest.id);
+    for (const pid of [child.pid, recovered.coordinator.processId, recovered.processId]) assert.equal(readlinkSync(`/proc/${pid}/exe`), f.host.nodeBinary, 'offline rescue executes the retained incumbent runtime');
     assert.ok(recovered.ready.authority.epoch > second.ready.authority.epoch);
     assert.throws(() => new ProcessLease(join(f.host.stateDirectory, 'supervisor-lease.sqlite')), /holds the instance lease/);
     const resumed = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') }); assert.deepEqual(resumed.get('fixture.lived-state', 'current'), latest); assert.equal(resumed.list('physical-requests').length, 0); resumed.close();
