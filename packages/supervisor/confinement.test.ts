@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { linkSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -36,6 +36,14 @@ test('overlapping state mount is refused before spawning', () => {
   const { root, command } = fixture();
   try { assert.throws(() => confinementArguments({ ...command, workspace: root }), /overlaps/); }
   finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a preexisting hardlink into protected state is refused before spawning', () => {
+  const { root, command, secret } = fixture();
+  try {
+    linkSync(secret, join(command.workspace, 'hidden-alias'));
+    assert.throws(() => confinementArguments(command), /hardlink/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('timeout terminates the namespace including a child that creates a new process group', async () => {

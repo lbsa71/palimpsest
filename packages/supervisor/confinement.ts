@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, sep } from 'node:path';
+import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
 export interface ConfinedCommand {
   workspace: string;
@@ -37,6 +37,18 @@ export function confinementArguments(command: ConfinedCommand): string[] {
       throw new Error(`Workspace overlaps protected storage: ${protectedPath}`);
     }
   }
+  // A preexisting hardlink could expose or mutate a host file despite namespace isolation.
+  const inspect = (directory: string) => {
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      const stat = lstatSync(path);
+      if (stat.isDirectory()) inspect(path);
+      else if (!stat.isSymbolicLink() && (!stat.isFile() || stat.nlink !== 1)) {
+        throw new Error('Workspace contains a special file or hardlink');
+      }
+    }
+  };
+  inspect(workspace);
   if (!Number.isSafeInteger(command.timeoutMs) || command.timeoutMs < 1 ||
     !Number.isSafeInteger(command.maxOutputBytes) || command.maxOutputBytes < 1) throw new Error('Finite command limits required');
   if (!isAbsolute(command.executable)) throw new Error('Sandbox executable must have an absolute path');

@@ -1,12 +1,9 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { Authority } from '../contracts/index.ts';
 
-export interface ServingAuthority {
-  generation: string;
-  epoch: number;
-  controlRevision: string;
-}
+export type ServingAuthority = Authority;
 export interface AuthorityState {
   epoch: number;
   generation: string | null;

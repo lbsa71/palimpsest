@@ -1,0 +1,11 @@
+# Live model qualification inputs — 2026-10-11
+
+The preserved private configuration names `mistral-large-2512`. A read-only authenticated request to Mistral's `/v1/models` returned HTTP 200 and listed that model with `completion_chat` and `function_calling` enabled, `reasoning` disabled. The same catalog exposes `mistral-large-4-0` with reasoning and function calling enabled. No generation request was made in this availability check. Credential values and account responses are not committed.
+
+This is an availability/capability declaration, not a competence score or authorization to claim parity. It is a material input to the shallow-reasoning diagnosis and RW17 qualification. Keep Mistral as the provider; qualify an explicit reasoning profile and compare observed task outcomes before adopting a new model configuration.
+
+The official [reasoning documentation](https://docs.mistral.ai/studio/conversations/reasoning), checked 2026-10-11, documents `reasoning_effort` values `none` and `high` for `mistral-large-4-0`. High mode returns thinking and answer chunks; replaying complete assistant content is required across turns. The adapter must retain these as private model history, account for their usage, and keep public speech an explicit effect. Unsupported parameters must fail visibly rather than silently appear enabled.
+
+The [model page](https://docs.mistral.ai/models/mistral-large-4-0) lists a 1M context and public-preview status. The [pricing page](https://docs.mistral.ai/inference/pricing) currently lists standard USD per million token rates: original input 1.36/output 4.18, temporary sale input 0.68/output 2.09. These are dated published rates, not an account billing receipt. Live ceilings should conservatively use undiscounted rates with explicit bounded tokens/requests and retain actual provider usage plus unknowns. Cache discounts must not be presumed. Prices/capabilities require revalidation when freezing a later run.
+
+The configured old model remains available. No default model or private configuration was changed by this inspection. Application defaults, qualified model profile, actual response model identity and paid run evidence must be recorded separately.
