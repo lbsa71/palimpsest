@@ -75,9 +75,33 @@ export class DelegationCoordinator implements EffectReceiver {
     const verdict=this.options.store.putJsonArtifact(JSON.parse(JSON.stringify({taskId:id,inspection,checks})) as JsonValue);const next:DelegationRecord={...record,status:checks.every(c=>c.passed)?'accepted':'rejected',verdict};this.save(id,next);return next;
   }
   recover():string[]{const ids:string[]=[];for(const row of this.options.store.list<DelegationRecord>('delegations'))if(row.value.status==='running'){this.save(row.key,{...row.value,status:'uncertain'});ids.push(row.key);}return ids;}
+  /** Register the whole finite packet set atomically before any child starts. */
+  createBatch(tasks:DelegationTask[],parentRunId:string):DelegationRecord[] {
+    invariant(Array.isArray(tasks)&&tasks.length>0,'nonempty child batch required');
+    const grant=this.options.grantForParent(parentRunId);
+    invariant(tasks.length<=grant.maxConcurrency,'child batch exceeds concurrency grant');
+    invariant(new Set(tasks.map(task=>task.id)).size===tasks.length,'duplicate child batch identity');
+    return this.options.store.transaction(()=> {
+      const running=this.options.store.list<DelegationRecord>('delegations').filter(row=>row.value.task.parentRunId===parentRunId&&row.value.status==='running').length;
+      invariant(running+tasks.length<=grant.maxConcurrency,'delegation concurrency exhausted');
+      return tasks.map(task=> {invariant(task.parentRunId===parentRunId,'foreign delegation parent');const record=this.create(task);invariant(record.status==='created','child is not ready; uncertain child cannot replay');return record;});
+    });
+  }
   async dispatch(effect:Effect,signal?:AbortSignal):Promise<Awaited<ReturnType<EffectReceiver['dispatch']>>> {
     this.options.fence.assert(effect.authority);
-    try {invariant(effect.kind==='delegation.start','only delegation.start is model callable');const task=effect.payload as unknown as DelegationTask;invariant(task.parentRunId===effect.runId,'foreign delegation parent');this.create(task);this.options.fence.assert(effect.authority);const record=await this.start(task.id,signal);return {outcome:record.status==='completed'?'succeeded':'failed',receipt:this.options.store.putJsonArtifact(JSON.parse(JSON.stringify(record)) as JsonValue)};}
+    try {
+      if(effect.kind==='delegation.start_batch') {
+        const payload=effect.payload as unknown as {tasks:DelegationTask[]};
+        const registered=this.createBatch(payload?.tasks,effect.runId);
+        this.options.fence.assert(effect.authority);signal?.throwIfAborted();
+        // Wait for every child, including failed/cancelled siblings. Never detach work.
+        const settled=await Promise.allSettled(registered.map(record=>this.start(record.task.id,signal)));
+        const children=settled.map((result,index)=>({record:this.get(registered[index]!.task.id)!,...(result.status==='rejected'?{error:String(result.reason)}:{})}));
+        // Cancellation cannot prove that already dispatched child work never applied.
+        const outcome=children.every(child=>child.record.status==='completed')?'succeeded':children.some(child=>['uncertain','cancelled'].includes(child.record.status))?'uncertain':'failed';
+        return {outcome,receipt:this.options.store.putJsonArtifact(JSON.parse(JSON.stringify({children})) as JsonValue)};
+      }
+      invariant(effect.kind==='delegation.start','only bounded delegation starts are model callable');const task=effect.payload as unknown as DelegationTask;invariant(task.parentRunId===effect.runId,'foreign delegation parent');this.create(task);this.options.fence.assert(effect.authority);const record=await this.start(task.id,signal);return {outcome:record.status==='completed'?'succeeded':'failed',receipt:this.options.store.putJsonArtifact(JSON.parse(JSON.stringify(record)) as JsonValue)};}
     catch(error){const id=effect.payload&&typeof effect.payload==='object'&&!Array.isArray(effect.payload)&&typeof effect.payload.id==='string'?effect.payload.id:undefined;return {outcome:id&&this.get(id)?.status==='uncertain'?'uncertain':'failed',receipt:this.options.store.putJsonArtifact({error:error instanceof Error?error.message:String(error)})};}
   }
   async reconcile(effect:Effect):Promise<Awaited<ReturnType<EffectReceiver['reconcile']>>> {return {outcome:'unresolved',receipt:this.options.store.putJsonArtifact({effectId:effect.id,reason:'inspect durable child run; no automatic replay'})};}

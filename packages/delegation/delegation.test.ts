@@ -65,3 +65,23 @@ test('delegation validates depth/model/resources/provenance and retains uncertai
     coordinator.create(task);await assert.rejects(coordinator.start(task.id),/lost worker/);assert.equal(coordinator.get(task.id)!.status,'uncertain');await assert.rejects(coordinator.start(task.id),/uncertain/);assert.equal(calls,1);
   }finally{store.close();rmSync(f.root,{recursive:true,force:true});}
 });
+
+
+test('bounded batch registration is atomic and returns every completed or uncertain child without replay',async()=>{
+  const f=fixture(),store=new OperationalStore({filename:join(f.state,'state.sqlite')});
+  const a=join(f.work,'a'),b=join(f.work,'b');mkdirSync(a);mkdirSync(b);
+  const grant:DelegationGrant={scope:{kind:'public'},writableRoots:[f.work],allowedEffects:[],resources:envelope,modelProfiles:[modelPolicy],maxDepth:1,currentDepth:0,maxChildren:2,maxConcurrency:2};
+  let calls=0;
+  const coordinator=new DelegationCoordinator({store,fence:{assert(){}},grantForParent:()=>grant,artifactScope:()=>({kind:'public'}),executeChild:async task=>{calls++;if(task.id==='b')throw Error('lost child response');return {childRunId:'runtime-a',artifacts:[store.putJsonArtifact({actual:'a'})]};}});
+  const task=(id:string,path:string):DelegationTask=>({id,parentRunId:'p',parentGoalId:'g',objective:'finite',inputs:[],provenance:{sourceIds:['p'],actorId:'p',recordedAt:new Date().toISOString(),derivation:'observed'},scope:grant.scope,acceptanceCriteria:['artifact works'],writablePaths:[path],allowedEffects:[],resources:envelope,modelPolicy,outputLocation:'artifact',cancellationConditions:['parent cancellation'],maxDepth:1});
+  const effect={id:'batch',runId:'p',stepId:'s',kind:'delegation.start_batch',payload:{tasks:[task('a',a),task('b',b)]} as unknown as JsonValue,scope:grant.scope,authority,status:'authorized' as const,revision:0};
+  try {
+    assert.throws(()=>coordinator.createBatch([task('a',a),task('b',a)],'p'),/already owned/);
+    assert.equal(store.list('delegations').length,0);assert.equal(calls,0);
+    grant.maxConcurrency=1;assert.throws(()=>coordinator.createBatch([task('a',a),task('b',b)],'p'),/concurrency grant/);assert.equal(store.list('delegations').length,0);grant.maxConcurrency=2;
+    const result=await coordinator.dispatch(effect);assert.equal(result.outcome,'uncertain');
+    const receipt=store.readJsonArtifact(result.receipt!) as any;assert.equal(receipt.children.length,2);assert.equal(receipt.children[0].record.status,'completed');assert.equal(receipt.children[1].record.status,'uncertain');assert.match(receipt.children[1].error,/lost child response/);
+    assert.equal((await coordinator.dispatch(effect)).outcome,'failed');assert.equal(calls,2);
+    coordinator.recover();assert.equal(coordinator.get('b')?.status,'uncertain');
+  }finally{store.close();rmSync(f.root,{recursive:true,force:true});}
+});

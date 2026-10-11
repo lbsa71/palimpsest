@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -531,4 +532,175 @@ test('a deferred initial admission cannot retry a failed default Mistral provide
     const run = receive(app, f, 'admission-race'); await app.tick(); await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'blocked');
     await app.tick(); assert.equal(calls, 1); assert.equal(app.store.list('host.pending-runs').length, 0);
   } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+function childPacket(f: ReturnType<typeof fixture>, prepared: any, id: string) {
+  return { id, parentRunId: prepared.parentRunId, parentGoalId: 'parallel-fixture', objective: `Execute bounded arithmetic evidence for ${id}.`, acceptanceCriteria: ['Command prints 36'], inputs: [], writablePaths: [prepared.workspace], allowedEffects: ['workspace_write', 'workspace_read', 'command_run'], resources: prepared.grant.resources, modelPolicy: prepared.grant.modelProfiles[0], scope: prepared.grant.scope, provenance: { sourceIds: ['authenticated-fixture'], actorId: f.authority.generation, recordedAt: new Date().toISOString(), derivation: 'interpreted' as const }, outputLocation: 'result.mjs', cancellationConditions: ['parent cancellation'], maxDepth: 1 };
+}
+
+test('ordinary parallel delegation overlaps two confined child shells, inspects real command artifacts and integrates accepted evidence', { timeout: 30000 }, async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3;
+  let app: AutarkApplication | undefined, parentCalls = 0, entered = 0, maxPhysical = 0;
+  const childCalls = new Map<string, number>(); let preparedA: any, packets: any[], children: any[], inspection: any;
+  let release!: () => void; const bothEntered = new Promise<void>(resolve => { release = resolve; });
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async (payload, signal) => {
+      const request = parsed(payload), frame = context(request);
+      if (!frame.target) {
+        const stage = (childCalls.get(frame.runId) ?? 0) + 1; childCalls.set(frame.runId, stage);
+        const child = app!.store.get<any>('host.child-runs', frame.runId)!.value;
+        assert.equal(app!.runtime.getRun(frame.runId)?.status, 'running');
+        if (stage === 1) {
+          entered++; maxPhysical = Math.max(maxPhysical, app!.resources.snapshot(frame.runId).concurrent);
+          if (entered === 2) {
+            assert.equal(app!.store.list<any>('runs').filter(row => row.value.status === 'running').length, 3);
+            assert.equal(app!.resources.snapshot(frame.runId).concurrent, 3); release();
+          }
+          await Promise.race([bothEntered, new Promise<never>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))]);
+          return tool('workspace_write', { path: 'result.mjs', content: `console.log(${child.taskId === 'parallel-a' ? '6 * 6' : '5 * 7'})`, expectedSha256: null });
+        }
+        if (stage === 2) return tool('command_run', { executable: '/runtime/node', args: ['result.mjs'] });
+        if (stage === 3) { assert.equal(receipt(request).exitCode, 0); return tool('workspace_read', { path: 'result.mjs' }); }
+        return stop('Finite child complete.');
+      }
+      parentCalls++;
+      if (parentCalls === 1 || parentCalls === 2) { if (parentCalls === 2) preparedA = receipt(request); return tool('delegation_prepare', {}); }
+      if (parentCalls === 3) {
+        packets = [childPacket(f, preparedA, 'parallel-a'), childPacket(f, receipt(request), 'parallel-b')];
+        assert.equal(preparedA.grant.maxConcurrency, 2); return tool('delegation_start_batch', { tasks: packets });
+      }
+      if (parentCalls === 4) {
+        children = receipt(request).children; assert.equal(children.length, 2); assert.ok(children.every(child => child.record.status === 'completed'));
+        return tool('delegation_inspect', { id: packets[0].id });
+      }
+      if (parentCalls === 5 || parentCalls === 7) {
+        const index = parentCalls === 5 ? 0 : 1; inspection = receipt(request);
+        const observed = JSON.parse(inspection.artifacts[0].content).observations;
+        assert.ok(observed.some((observation: any) => observation.value.stdout?.trim() === (index === 0 ? '36' : '35')));
+        return tool('delegation_judge', { id: packets[index].id, inspection: inspection.receipt, checks: [{ criterion: packets[index].acceptanceCriteria[0], passed: index === 0, evidence: children[index].record.result.artifacts[0] }] });
+      }
+      if (parentCalls === 6) { assert.equal(receipt(request).status, 'accepted'); return tool('delegation_inspect', { id: packets[1].id }); }
+      if (parentCalls === 8) { assert.equal(receipt(request).status, 'rejected'); return tool('workspace_write', { path: 'integrated.txt', content: 'Inspected arithmetic output 36 accepted; observed output 35 rejected.', expectedSha256: null }); }
+      assert.match(receipt(request).diff.after, /36 accepted.*35 rejected/); return stop('Integration is retained in the parent workspace.');
+    } });
+    await app.start(); const run = receive(app, f, 'parallel-delegation');
+    await eventually(() => app!.runtime.getRun(run.id), value => ['completed', 'blocked', 'waiting'].includes(value?.status ?? ''));
+    assert.equal(app.runtime.getRun(run.id)?.status, 'completed', JSON.stringify(app.store.get('execution', run.id)));
+    assert.equal(entered, 2); assert.equal(maxPhysical, 3); assert.equal(parentCalls, 9); assert.deepEqual([...childCalls.values()], [4, 4]);
+    assert.equal(app.delegation.get('parallel-a')?.status, 'accepted'); assert.equal(app.delegation.get('parallel-b')?.status, 'rejected');
+    const grant = app.store.get<any>('host.run-grants', run.id)!.value;
+    assert.match(readFileSync(join(grant.workspace, 'integrated.txt'), 'utf8'), /36 accepted.*35 rejected/);
+    assert.equal(app.resources.descendants(run.id).length, 2); assert.equal(app.resources.snapshot(run.id).requests, 31);
+    assert.equal(app.resources.snapshot(run.id).concurrent, 0); assert.equal(app.output(run.id).length, 0);
+  } finally { release(); await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary parallel delegation grant rejects excess sibling concurrency before child admission', { timeout: 15000 }, async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3; f.config.conversationResources = { ...f.config.resources, maxConcurrency: 2 };
+  let app: AutarkApplication | undefined, calls = 0, preparedA: any;
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest: async payload => {
+      const request = parsed(payload); assert.ok(context(request).target); calls++;
+      if (calls === 1 || calls === 2) { if (calls === 2) preparedA = receipt(request); return tool('delegation_prepare', {}); }
+      if (calls === 3) { assert.equal(preparedA.grant.maxConcurrency, 1); return tool('delegation_start_batch', { tasks: [childPacket(f, preparedA, 'excess-a'), childPacket(f, receipt(request), 'excess-b')] }); }
+      assert.match(receipt(request).error, /concurrency grant/); return stop('Declined excess concurrency.');
+    } });
+    await app.start(); const run = receive(app, f, 'excess-parallel');
+    await eventually(() => app!.runtime.getRun(run.id)?.status, value => ['completed', 'blocked', 'waiting'].includes(value ?? ''));
+    assert.equal(app.runtime.getRun(run.id)?.status, 'completed'); assert.equal(calls, 4);
+    assert.equal(app.store.list('delegations').length, 0); assert.equal(app.store.list('host.child-runs').length, 0); assert.equal(app.resources.descendants(run.id).length, 0);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+for (const interruption of ['cancel', 'close'] as const) test(`ordinary parallel delegation ${interruption} drains both children and restart retains uncertain charges without replay`, { timeout: 20000 }, async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3;
+  let app: AutarkApplication | undefined, calls = 0, preparedA: any, entered = 0, aborted = 0;
+  const performRequest = async (payload: string, signal: AbortSignal) => {
+    calls++; const request = parsed(payload), frame = context(request);
+    if (!frame.target) {
+      entered++;
+      await new Promise<never>((_resolve, reject) => signal.addEventListener('abort', () => { aborted++; reject(signal.reason); }, { once: true }));
+    }
+    if (calls === 1 || calls === 2) { if (calls === 2) preparedA = receipt(request); return tool('delegation_prepare', {}); }
+    assert.equal(calls, 3); return tool('delegation_start_batch', { tasks: [childPacket(f, preparedA, 'interrupted-a'), childPacket(f, receipt(request), 'interrupted-b')] });
+  };
+  try {
+    app = new AutarkApplication({ ...f, secrets, performRequest }); await app.start(); const run = receive(app, f, `parallel-${interruption}`);
+    await eventually(() => entered, value => value === 2); assert.equal(app.resources.snapshot(run.id).concurrent, 3);
+    if (interruption === 'cancel') {
+      app.runtime.cancel(run.id, f.authority.generation, 'fixture parent cancellation');
+      await eventually(() => aborted, value => value === 2);
+      await eventually(() => app!.store.list<any>('delegations').map(row => row.value.status), statuses => statuses.length === 2 && statuses.every(status => status === 'cancelled'));
+    }
+    await app.close();
+    app = new AutarkApplication({ ...f, secrets, performRequest: async () => { throw Error('Unknown interrupted children must not replay'); } });
+    const usage = app.resources.snapshot(run.id); assert.equal(usage.requests, 8); assert.ok(usage.tokens > 360); assert.ok(usage.costUsd > 0); assert.equal(usage.concurrent, 3);
+    assert.equal(app.resources.descendants(run.id).length, 2); assert.ok(app.store.list<any>('delegations').every(row => ['cancelled', 'uncertain'].includes(row.value.status)));
+    for (const child of app.store.list<any>('delegations')) await assert.rejects(app.delegation.start(child.key), /uncertain child cannot replay/);
+    await app.start(); await app.tick(); assert.equal(calls, 5); assert.equal(aborted, 2);
+    assert.equal(app.resources.snapshot(run.id).requests, usage.requests); assert.equal(app.store.list('host.child-runs').length, 2);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+function processTree(parent: number): { pid: number; state: string; start: string }[] {
+  const rows = readdirSync('/proc').filter(name => /^\d+$/.test(name)).flatMap(name => {
+    try { const stat = readFileSync(`/proc/${name}/stat`, 'utf8'); const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' '); return [{ pid: Number(name), parent: Number(fields[1]), state: fields[0]!, start: fields[19]! }]; } catch { return []; }
+  });
+  const children = (pid: number): typeof rows => rows.filter(row => row.parent === pid).flatMap(row => [row, ...children(row.pid)]);
+  return children(parent);
+}
+
+test('ordinary parallel delegation survives real host SIGKILL without live descendants or replay of unknown batch', { timeout: 20000 }, async () => {
+  const f = fixture(); f.config.maxConcurrentRuns = 3;
+  const script = `
+    import { readFileSync, readdirSync } from 'node:fs';
+    import { AutarkApplication } from ${JSON.stringify(new URL('./application.ts', import.meta.url).href)};
+    import { AuthorityStore } from ${JSON.stringify(new URL('../packages/supervisor/authority.ts', import.meta.url).href)};
+    ${tool.toString()}
+${parsed.toString()}
+${context.toString()}
+${receipt.toString()}
+${childPacket.toString()}
+${processTree.toString()}
+    const f = ${JSON.stringify({ config: f.config, authority: f.authority })};
+    const authorityStore = new AuthorityStore(${JSON.stringify(join(f.config.stateDirectory, 'authority.sqlite'))});
+    let parentCalls = 0, entered = 0, preparedA;
+    const app = new AutarkApplication({ ...f, authorityStore, secrets: ${JSON.stringify(secrets)}, performRequest: async payload => {
+      const request = parsed(payload), frame = context(request);
+      if (!frame.target) {
+        entered++;
+        if (entered === 2) process.send({ parent: frame.runId, parentRun: app.store.list('delegations')[0].value.task.parentRunId, descendants: processTree(process.pid), concurrent: app.resources.snapshot(frame.runId).concurrent });
+        return await new Promise(() => {});
+      }
+      parentCalls++;
+      if (parentCalls === 1 || parentCalls === 2) { if (parentCalls === 2) preparedA = receipt(request); return tool('delegation_prepare', {}); }
+      return tool('delegation_start_batch', { tasks: [childPacket(f, preparedA, 'killed-a'), childPacket(f, receipt(request), 'killed-b')] });
+    } });
+    await app.start();
+    app.communications.receive({ source: 'direct', externalId: 'killed-parallel', revision: '1', conversation: 'killed-parallel', text: 'Bounded children with unknown host outcome.', actor: { id: f.config.direct.actorId, scope: f.config.direct.scope, modificationEligible: true } });
+  `;
+  const host = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let stderr = ''; host.stderr!.on('data', chunk => { stderr += chunk; });
+  const exited = new Promise<void>(resolve => host.once('close', () => resolve()));
+  let app: AutarkApplication | undefined, calls = 0;
+  try {
+    const ready = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Fixture host did not reach both children: ${stderr}`)), 15000);
+      host.once('message', message => { clearTimeout(timer); resolve(message); }); host.once('error', error => { clearTimeout(timer); reject(error); }); host.once('exit', (code, signal) => { clearTimeout(timer); reject(new Error(`Fixture host exited ${code}/${signal}: ${stderr}`)); });
+    });
+    assert.equal(ready.concurrent, 3); assert.ok(ready.descendants.length >= 3);
+    host.kill('SIGKILL'); await exited;
+    await eventually(() => ready.descendants.filter((row: any) => {
+      try { const stat = readFileSync(`/proc/${row.pid}/stat`, 'utf8'); const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' '); return fields[19] === row.start && !['Z', 'X'].includes(fields[0]!); } catch { return false; }
+    }), remaining => remaining.length === 0);
+    app = new AutarkApplication({ ...f, secrets, performRequest: async () => { calls++; throw Error('Unknown batch must not replay'); } });
+    assert.ok(app.store.list<any>('delegations').every(row => row.value.status === 'uncertain'));
+    assert.equal(app.runtime.getRun(ready.parentRun)?.status, 'blocked');
+    const usage = app.resources.snapshot(ready.parentRun); assert.equal(usage.requests, 8); assert.equal(usage.concurrent, 3); assert.ok(usage.tokens > 360);
+    assert.equal(app.effects.unresolved(ready.parentRun).length, 1);
+    for (const row of app.store.list<any>('delegations')) await assert.rejects(app.delegation.start(row.key), /uncertain child cannot replay/);
+    await app.start(); await app.tick(); assert.equal(calls, 0); assert.equal(app.resources.snapshot(ready.parentRun).requests, 8);
+  } finally { host.kill('SIGKILL'); await exited; await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });

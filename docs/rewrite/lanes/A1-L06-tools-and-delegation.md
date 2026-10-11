@@ -44,3 +44,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | [Bounded component evidence](../evidence/A1-L06/component-handoff.md); exact handoff is the commit containing this record |
 | Blockers / next eligible task | T01–T04 implemented; real repair and two-child runtime tests pass. Fresh review, ordinary application/live gates and remaining T05 recovery/repair demonstrations are root/L08/L09 integration work |
+
+## Ordinary parallel-child gap claim — 2026-10-11
+
+Owner: `/root/a1_parallel_children`; branch `codex/a1-parallel-children-20261011`; worktree `/home/palimpsest/migration/aeon-1-20261011/parallel-children`; frozen base `8fa6be5`. Finite goal: implement and verify bounded overlapping ordinary-parent child runtimes with inspected acceptance/rejection. Exclusive writes: `packages/delegation/**`, narrow `packages/tools/index.ts` tool registry, delegation handlers in `deployment/application.ts`, delegation cases in `deployment/application.test.ts`, and [parallel-child evidence](../evidence/A1-L06/parallel-children.md). L03 runtime/start claims, general shell execution and L09 evolution controls remain with their owners. This claim addresses the ordinary-path T04/T05 gap only; independent and live qualification remain open.
+
+Ordinary parallel-child delta status: **implemented and integrated through deterministic application fixtures**, with actual overlapping confined sibling shells, accepted/rejected inspected command artifacts, explicit integration, grant rejection before child admission, cancel/close recovery, and real host SIGKILL recovery. [Evidence and exact command results](../evidence/A1-L06/parallel-children.md). The finite implementation/fixture goal is ready for root handoff; fresh review and live qualification remain open.

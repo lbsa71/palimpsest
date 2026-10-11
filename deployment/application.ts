@@ -109,13 +109,15 @@ export class AutarkApplication {
         const grant = this.grant(runId); const childrenRoot = join(config.workspaceDirectory, `children-${identity(runId)}`); mkdirSync(childrenRoot, { recursive: true, mode: 0o700 });
         const parentTask = this.store.list<{ result?: { childRunId: string }; depth: number }>('delegations').find(row => row.value.result?.childRunId === runId);
         const assignedDepth = this.store.get<{ depth: number }>('host.child-runs', runId)?.value.depth ?? parentTask?.value.depth ?? 0;
+        // The waiting parent occupies a run slot and its delegation receiver a physical slot.
         return { scope: grant.scope, writableRoots: [childrenRoot], allowedEffects: this.toolGrant(runId).actions.filter(name => name !== 'speech_send'), resources: config.conversationResources,
-          modelProfiles: [{ provider: config.model.provider ?? 'mistral', model: config.model.id, effort: config.model.reasoning ? config.model.effort : null }], currentDepth: assignedDepth, maxDepth: 2, maxChildren: 8, maxConcurrency: 2 };
+          modelProfiles: [{ provider: config.model.provider ?? 'mistral', model: config.model.id, effort: config.model.reasoning ? config.model.effort : null }], currentDepth: assignedDepth, maxDepth: 2, maxChildren: 8, maxConcurrency: Math.min(2, config.maxConcurrentRuns - 1, config.conversationResources.maxConcurrency - 1, config.resources.maxConcurrency - 1) };
       },
       artifactScope: artifact => { const record = this.store.get<{ scope: DataScope }>('host.artifact-scopes', artifact.sha256); invariant(record, 'Artifact has no authenticated disclosure scope'); return record.value.scope; },
       executeChild: async (task, signal) => {
         invariant(this.occupied() < config.maxConcurrentRuns, 'Application concurrency exhausted');
         invariant(task.writablePaths.length === 1, 'Current child runtime requires one exclusive workspace');
+        invariant(this.store.get<{ runId: string }>('host.prepared-workspaces', task.writablePaths[0]!)?.value.runId === task.parentRunId, 'Child workspace was not prepared by this parent');
         const child = this.store.transaction(() => {
         const admitted = this.runtime.admit({ id: `delegate:${task.id}`, source: 'delegation', externalId: task.id, externalRevision: '1', actorId: options.authority.generation, authenticated: true, scope: task.scope,
           value: json({ objective: task.objective, acceptanceCriteria: task.acceptanceCriteria, inputs: task.inputs.map(ref => ({ ref, content: Buffer.from(this.store.readArtifact(ref)).toString('utf8') })), outputLocation: task.outputLocation, cancellationConditions: task.cancellationConditions }) }, options.authority, task.resources, task.parentRunId);
