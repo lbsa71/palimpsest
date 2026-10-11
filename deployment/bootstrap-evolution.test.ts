@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs, { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { freezeCandidate, hashBytes } from '../packages/release/artifacts.ts';
@@ -82,6 +83,34 @@ test('runtime copy must still match the accepted identity after application veri
     assert.throws(() => initializeBootstrap(f.config, f.first), /runtime|Runtime/);
     assert.equal(existsSync(join(f.config.host.stateDirectory, 'boot/active')), false);
   } finally { fs.readSync = original; syncBuiltinESMExports(); f.dispose(); }
+});
+
+test('already selected launcher preserves normal-boot readiness callback across pending selection', () => {
+  const f = fixture();
+  try {
+    // Narrow launcher seam fixture: retained source imports the reviewed library closure.
+    // This deliberately does not claim a complete installed application boot.
+    const deployment = fileURLToPath(new URL('.', import.meta.url));
+    const packages = fileURLToPath(new URL('../packages/', import.meta.url));
+    const launcher = readFileSync(join(deployment, 'host-successor.ts'), 'utf8')
+      .replaceAll("from './", `from '${deployment}`).replaceAll("from '../packages/", `from '${packages}`);
+    const cli = "if (process.send) process.send({kind:'host-ready'}); setTimeout(()=>process.exit(0),100);";
+    const source = join(f.root, 'launcher-source'); mkdirSync(join(source, 'deployment'), { recursive: true });
+    const contents = [['deployment/host-successor.ts', launcher], ['deployment/cli.ts', cli], ['package-lock.json', '{}']];
+    for (const [path, content] of contents) writeFileSync(join(source, path!), content!);
+    const files = contents.map(([path, content]) => ({ path: path!, sha256: hashBytes(content!) })).sort((a, b) => a.path.localeCompare(b.path));
+    const runtime = { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch };
+    const candidate = freezeCandidate(source, f.config.host.artifactStore, ['deployment', 'package-lock.json'], { createdBy: 'launcher-seam', model: {}, prompts: {}, configuration: {}, controls: { classifier: 'host-execution-closure-v1', files, runtime, policy: {} }, dependencies: { installedRuntime: [], lockfile: hashBytes('{}'), retainedForks: [], checkBuildToolchain: [], runtime } });
+    const selected = { candidateId: candidate.manifest.id, policyDigest: f.first.policyDigest };
+    const path = join(f.config.host.stateDirectory, 'host-successor.sqlite'), db = new DatabaseSync(path); chmodSync(path, 0o600);
+    db.exec('CREATE TABLE selection(singleton INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    db.prepare('INSERT INTO selection VALUES(1,?)').run(JSON.stringify({ selected, rescue: selected, phase: 'requested' })); db.close();
+    const configPath = join(f.root, 'config'), marker = join(f.root, 'ready'); writeFileSync(configPath, JSON.stringify(f.config), { mode: 0o600 });
+    const module = join(f.config.host.artifactStore, selected.candidateId, 'payload/deployment/host-successor.ts');
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', `import {launchHost} from ${JSON.stringify(module)}; import {writeFileSync} from 'node:fs'; await launchHost(${JSON.stringify(configPath)},undefined,()=>writeFileSync(${JSON.stringify(marker)},'ready'));`], { encoding: 'utf8', timeout: 15000 });
+    assert.equal(child.status, 0, child.stderr);
+    assert.ok(existsSync(marker), 'selected normal bootstrap must retain the readiness callback');
+  } finally { f.dispose(); }
 });
 
 test('interruption after active rename preserves latched independent rescue and latest state', () => {
