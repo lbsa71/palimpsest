@@ -188,7 +188,10 @@ test('C1 async adapter prevents metadata bypass and retrieval limit is available
 test('the consolidation tool binds audience and keeps queueing distinct from completed interpretation', t => {
   const { memory } = fixture(t); memory.ingest(episode('private', 'private source', alice)); memory.ingest(episode('public', 'public source'));
   const tool = developmentTools(memory, bob)[1];
-  assert.throws(() => tool.execute({ id: 'leak', sourceIds: ['private'], dueAt: at }));
+  let privateFailure: unknown; let missingFailure: unknown;
+  try { tool.execute({ id: 'leak', sourceIds: ['private'], dueAt: at }); } catch (error) { privateFailure = error; }
+  try { tool.execute({ id: 'leak', sourceIds: ['missing'], dueAt: at }); } catch (error) { missingFailure = error; }
+  assert.ok(privateFailure instanceof Error && missingFailure instanceof Error); assert.equal(privateFailure.message, missingFailure.message);
   const result = tool.execute({ id: 'queued', sourceIds: ['public'], dueAt: at }); assert.ok('state' in result);
   assert.equal(result.state, 'pending'); assert.deepEqual(result.scope, bob);
   assert.deepEqual(result.outputIds, []); assert.equal(memory.get('queued', bob), undefined);

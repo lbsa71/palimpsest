@@ -26,9 +26,9 @@ export class DevelopmentalMemory implements MemoryPort {
   private activeSources(ids: string[], scope: DataScope): MemoryRecord[] {
     unique(ids); validateScope(scope);
     return ids.map(id => {
-      const entry = this.raw(id); invariant(entry && entry.record.status === 'active', 'missing or forgotten source');
-      invariant(entry.expiresAt === null || Date.parse(entry.expiresAt) > Date.parse(this.clock()), 'source retention expired');
-      invariant(scopeAllows(entry.record.scope, scope), 'source scope does not allow destination'); return entry.record;
+      const entry = this.raw(id);
+      invariant(entry && entry.record.status === 'active' && (entry.expiresAt === null || Date.parse(entry.expiresAt) > Date.parse(this.clock())) && scopeAllows(entry.record.scope, scope), 'source unavailable for destination');
+      return entry.record;
     });
   }
   get(id: string, audience: DataScope): MemoryRecord | undefined {
