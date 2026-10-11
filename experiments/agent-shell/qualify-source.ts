@@ -15,8 +15,7 @@ function run(phase: string, args: string[]): void {
 }
 try {
   mkdirSync(join(scratch, 'packages'), { recursive: true });
-  cpSync(join(root, 'packages/agent-shell'), join(scratch, 'packages/agent-shell'), { recursive: true });
-  cpSync(join(root, 'packages/contracts'), join(scratch, 'packages/contracts'), { recursive: true, dereference: true });
+  cpSync(join(root, 'packages'), join(scratch, 'packages'), { recursive: true });
   symlinkSync(join(root, 'node_modules'), join(scratch, 'node_modules'), 'dir');
   writeFileSync(join(scratch, 'package.json'), '{"type":"module"}\n');
   const entries = readdirSync(join(scratch, 'packages/agent-shell')).filter(name => name.endsWith('.ts')).map(name => `packages/agent-shell/${name}`);
@@ -35,8 +34,9 @@ try {
   writeFileSync(join(scratch, 'verify-loaded.mjs'), 'import assert from "node:assert/strict";\nimport {contentText} from "./dist/packages/agent-shell/vendor/pi/ai/utils/text.js";\nassert.equal(contentText([{type:"text",text:"one"},{type:"text",text:"two"}]),"one|qualified-local-edit|two");\n');
   run('fresh-successor-process-loads-edited-dependency', ['verify-loaded.mjs']);
   const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-  const report = { evidenceKind: 'mechanical', node: process.version, upstreamCommit: '89e5c2c075535e2f427c30fc74720d65b2944ff9', runtimeDependencies: { typebox: '1.3.27' }, commands, dependencyEdit: { file: 'packages/agent-shell/vendor/pi/ai/utils/text.ts', originalSha256: hash(original), editedSha256: hash(edited), function: 'contentText', freshProcessVerified: true }, networkUsedDuringCheckBuild: false, limits: ['Provisioned TypeScript, Node definitions and TypeBox required.', 'Fresh subprocess verifies loaded dependency; production successor activation belongs L09.', 'No live model competence or benchmark measured.'] };
+  const report = { evidenceKind: 'mechanical', node: process.version, upstreamCommit: '89e5c2c075535e2f427c30fc74720d65b2944ff9', runtimeDependencies: {}, sourceDependencies: { cfworkerJsonSchema: '4.1.1' }, commands, dependencyEdit: { file: 'packages/agent-shell/vendor/pi/ai/utils/text.ts', originalSha256: hash(original), editedSha256: hash(edited), function: 'contentText', freshProcessVerified: true }, networkUsedDuringCheckBuild: false, limits: ['Provisioned TypeScript and Node definitions required; runtime dependencies are retained source.', 'Fresh subprocess verifies loaded dependency; production successor activation belongs L09.', 'No live model competence or benchmark measured.'] };
   mkdirSync(join(root, 'experiments/agent-shell/results'), { recursive: true });
-  writeFileSync(join(root, 'experiments/agent-shell/results/q1-source.json'), JSON.stringify(report, null, 2) + '\n');
+  const output = process.argv[2] ?? join(root, 'experiments/agent-shell/results/q1-source-owned-schema.json');
+  writeFileSync(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
   console.log(JSON.stringify(report, null, 2));
 } finally { rmSync(scratch, { recursive: true, force: true }); }
