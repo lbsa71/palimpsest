@@ -1,0 +1,13 @@
+# Retain exact tool instructions
+
+2026-10-11. Root behavioral specification for A1-L02 prompt ownership and A1-L08 evidence acquisition. The developmental witness preparation found a concrete gap: shell manifests contain `shell:tools:<sha256>`, but `OperationalStore.readArtifact` accepts only `aeon:artifact:<sha256>` and those exact source tool bytes are not stored with that reference. Provider payloads are retained; reconstructing an earlier tool definition from a later configuration is not an adequate artifact receipt.
+
+```text
+/goal Persist and bind the exact effective tool-definition source bytes before every ordinary model request, including resumed, compacted and delegated work, so retained prompt manifests resolve after restart without reconstructing historical instructions or weakening broker validation.
+```
+
+Use the existing content-addressed operational store and trusted application/broker path. Serialize exactly the bytes whose hash the shell records, persist them before capture/reservation/dispatch, and require the worker's tool fragment to match the host-owned descriptor and retained artifact. No mutable alias registry, new database or dependency is needed. An internal shell option carrying the host-retained artifact is reasonable if required; coordinate any C1 or runtime bridge change before making it. Do not add a compatibility fallback that permits an unresolvable new request. Scope and effective application/system/compaction instruction validation remain intact.
+
+Changed tool definitions must produce different retained bytes and identities. Plain, resumed, child and compaction requests must identify their actual tool surface (including when the provider receives no tools during compaction), rather than claiming that all surfaces were exercised by a plain request. Previously retained historical references remain historical evidence; no legacy migration is required. Existing development acquisition must continue to declare missing old bytes unavailable; new evidence should use the actual store artifact without a fabricated alias.
+
+Reproduce the unresolved original reference, then verify byte/digest identity and reopen resolution, mismatched artifact refusal before physical dispatch, and actual relevant instruction paths. Use meaningful deterministic fixtures and strict compilation. Fresh review follows. Own the shell/broker/application instruction wiring and focused tests/evidence in an isolated worktree; shared contracts, resource and lifecycle behavior remain read-only without coordination. No paid inference, account discovery, external messages or service installation.
