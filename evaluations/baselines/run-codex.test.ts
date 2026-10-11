@@ -130,7 +130,7 @@ for kind, count, content in [('storage',24,b'x'*(1024*1024)),('inodes',256,b'')]
    if os.path.exists(name): os.unlink(name)
 print('native-kernel-proof')`;
           const command = (kernel ? `/usr/bin/python3 -c '${probe.replaceAll("'", "'\\''")}' && ` : '') + `/runtime/node -e '${program.replaceAll("'", "'\\''")}'`;
-          item = { type: 'custom_tool_call', id: 'fc_fixture', call_id: 'call_fixture', namespace: 'functions', name: 'exec', input: `text(await tools.exec_command(${JSON.stringify({ cmd: command, yield_time_ms: 1000, max_output_tokens: 1000 })}));` };
+          item = { type: 'custom_tool_call', id: 'fc_fixture', call_id: 'call_fixture', namespace: 'functions', name: 'exec', input: `text(await tools.exec_command(${JSON.stringify({ cmd: command, yield_time_ms: kernel ? 10000 : 1000, max_output_tokens: 1000 })}));` };
         } else {
           assert.ok(body.input.some((item: any) => item.type === 'custom_tool_call_output' && JSON.stringify(item.output).includes('native-observer-proof')));
           if (kernel) for (const marker of ['native-pids-refused', 'native-storage-refused', 'native-inodes-refused', 'native-kernel-proof']) assert.ok(payload.includes(marker), marker);
