@@ -15,7 +15,7 @@ export interface ServiceProcessOptions { mode: 'engineering' | 'product'; onUnex
 /** Previously accepted judging policy information; evaluator keys and grants stay in the parent. */
 export interface EvolutionMetadata { policyDigest: string; allowedModelProfiles?: ModelProfile[] }
 export function validateEvolutionMetadata(metadata: EvolutionMetadata): void {
-  invariant(metadata && Object.keys(metadata).every(key => ['policyDigest', 'allowedModelProfiles'].includes(key)) && /^[a-f0-9]{64}$/.test(metadata.policyDigest), 'Public frozen evolution policy digest required');
+  invariant(metadata && typeof metadata === 'object' && !Array.isArray(metadata) && Object.keys(metadata).every(key => ['policyDigest', 'allowedModelProfiles'].includes(key)) && typeof metadata.policyDigest === 'string' && /^[a-f0-9]{64}$/.test(metadata.policyDigest), 'Public frozen evolution policy digest required');
   if (metadata.allowedModelProfiles !== undefined) validateModelGrants(metadata.allowedModelProfiles);
 }
 /** Pin both directories and refuse a pre-existing public or redirected diagnostic sink. */
