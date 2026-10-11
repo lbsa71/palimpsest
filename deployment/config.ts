@@ -17,6 +17,8 @@ export interface ApplicationConfig {
   resources: ResourceEnvelope;
   conversationResources: ResourceEnvelope;
   scheduler: SchedulerPolicy;
+  /** Default true: one accounted first-development opportunity per lived-state store. */
+  bootstrapInitiative?: boolean;
   maxConcurrentRuns: number;
   pollMs: number;
   commands: string[];
@@ -44,6 +46,7 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   for (const key of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(config.model[key]) && config.model[key] > 0, `Invalid model ${key}`);
   invariant(config.model.effort === 'none' || config.model.effort === 'high' && config.model.reasoning, 'Unsupported reasoning profile');
   for (const value of Object.values(config.model.pricesPerMillion)) invariant(Number.isFinite(value) && value >= 0, 'Finite model price required');
+  invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');
   validateEnvelope(config.resources); validateEnvelope(config.conversationResources); validateEnvelope(config.scheduler.resources);
   for (const envelope of [config.conversationResources, config.scheduler.resources]) for (const key of Object.keys(config.resources) as (keyof ResourceEnvelope)[]) invariant(envelope[key] <= config.resources[key], 'Child allowance exceeds operating envelope');
   invariant(Number.isSafeInteger(config.maxConcurrentRuns) && config.maxConcurrentRuns > 0 && config.maxConcurrentRuns <= config.resources.maxConcurrency, 'Invalid run concurrency');
