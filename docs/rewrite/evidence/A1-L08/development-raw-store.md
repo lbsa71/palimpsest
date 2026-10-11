@@ -1,5 +1,11 @@
 # A1-L08 developmental raw-store prerequisite
 
+## Root-owned deduplication read-bound repair claim
+
+After the author's finite handoff `6c6da87`, fresh reviewer `/root/a1_development_raw_store_review` reproduced three known-size duplicate verification failures: an existing one-byte artifact, an existing empty artifact, and an `EEXIST` create-race fixture each read a corrupt 100-byte file before rejection. The reviewer observed two buffer allocations and two data/EOF reads in each case. Corruption is rejected, but the duplicate path uses the larger store capacity instead of the already known expected byte length. This finding is separate from the unchanged `usage()` inventory scans. The initial fourteen-case review has eleven passes and three failures; strict compilation passes.
+
+Root takes exclusive ownership of the narrow follow-up in this now-idle author worktree; the completed author remains read-only and the fresh reviewer retains its independent tests/evidence. Before code: change only the two duplicate verification reads to pass `bytes.byteLength`, including zero bytes, so a larger existing file is rejected at `fstat` before allocation/data read. Preserve all content/hash checks, exclusive-create behavior and other limits. Run the frozen reviewer reproductions, existing author focused checks and strict compilation, then hand the clean repair to the same fresh reviewer. No native/acquisition/provider operation, larger capacity, inventory rewrite or new dependency is part of this repair.
+
 Status: **implemented and fixture-verified; fresh independent review pending before actual use**. Finite component owner `/root/a1_development_raw_store`, branch `codex/a1-development-raw-store-20261011`, worktree `/home/palimpsest/migration/aeon-1-20261011/development-raw-store`, base `7ed8943`; root reservation `aa594fb`. Exclusive writes: `evaluations/qualification/store.ts`, new `evaluations/qualification/store-bounds.test.ts`, and this record. Governing inputs: [workflow](../../workflow.md), [lane](../../lanes/A1-L08-evaluation.md), and adopted [acquisition design](development-acquisition-design.md).
 
 ```text
