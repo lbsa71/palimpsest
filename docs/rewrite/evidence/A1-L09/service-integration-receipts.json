@@ -1,0 +1,21 @@
+{
+  "kind": "author-operated-engineering-evidence",
+  "liveProviderCalls": 0,
+  "logs": [
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/aeon-1-integrated-verify.log",
+      "sha256": "bb27ba1041ec2cc90015fb8d1ef4f3a5722b952b29cb94dc604d35a755e718ce",
+      "bytes": 81383
+    },
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/aeon-1-integrated-verify-corrected.log",
+      "sha256": "0218f8a4f89b5a018c17e7b82c5513643e9aa37d7fb71ec3a2dcfdda417a1a1a",
+      "bytes": 34996
+    },
+    {
+      "path": "/home/palimpsest/migration/aeon-1-20261011/integration-evidence/aeon-app-resource-test.log",
+      "sha256": "1e924cac941544dd1bfa3f9c61ecf9b387d58397a0fba65ed73b5be629db97af",
+      "bytes": 1207
+    }
+  ]
+}

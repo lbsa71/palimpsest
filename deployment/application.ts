@@ -19,6 +19,7 @@ import { validateConfiguration, type ApplicationConfig, type ApplicationSecrets 
 import { mindDevelopmentTools } from './development-tools.ts';
 import { AccountedConsolidation } from './consolidation.ts';
 import { ConversationObligations } from './obligation-tools.ts';
+import { bindGoalOrigins } from './proposal-origin.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 interface Target { channel: string; threadTs?: string; transport: 'direct' | 'slack'; scope: DataScope }
@@ -229,7 +230,7 @@ export class AutarkApplication {
       name: 'delegation_judge', description: 'Record the parent judgment against every declared child acceptance criterion after artifact inspection; this is not independent product qualification.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, inspection: { type: 'object' }, checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, passed: { type: 'boolean' }, evidence: { type: 'object' } }, required: ['criterion', 'passed', 'evidence'], additionalProperties: false } } }, required: ['id', 'inspection', 'checks'], additionalProperties: false }, execute: (args: JsonValue) => {
         const task = childTask(args); const a = args as Record<string, JsonValue>; return this.delegation.judge(task.task.id, a.inspection as unknown as Parameters<DelegationCoordinator['judge']>[1], a.checks as unknown as Parameters<DelegationCoordinator['judge']>[2]);
       },
-    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...mindDevelopmentTools(this.memory, scope, this.options.authority.generation), ...initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
+    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...mindDevelopmentTools(this.memory, scope, this.options.authority.generation), ...bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId)), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
   }
   private enqueue(runId: string): void { const row = this.store.get('host.pending-runs', runId); this.store.put('host.pending-runs', runId, { requestedAt: Date.now() }, row?.revision ?? null); }
   private hasPendingSteering(runId: string): boolean {
