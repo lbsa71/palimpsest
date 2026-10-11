@@ -50,7 +50,20 @@
       "binarySha256": "24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
       "binaryBytes": 257068216,
       "manifestSignature": "Verified against documented release key 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
-      "engineeringTransport": "in progress; first synthetic trial failed; no paid requests"
+      "engineeringTransport": {
+        "revision": "8877b84114d9bbe102d6435f11211b369102c80f",
+        "evidence": "docs/rewrite/evidence/A1-L08/claude-transport-fixture.md",
+        "kind": "isolated-native-cli-with-synthetic-Messages",
+        "physicalFixtureRequests": 2,
+        "actualBashTool": "passed",
+        "providerRequests": 0,
+        "credentialsMounted": false,
+        "accounting": "zero-price synthetic fixture only; live Anthropic accounting unavailable",
+        "reviewEvidence": "docs/rewrite/evidence/A1-L08/claude-transport-review.md",
+        "reviewedRepair": "a83fccc",
+        "kernelQualification": "unavailable"
+      },
+      "globalInstallation": false
     }
   ],
   "parity": "unavailable"
