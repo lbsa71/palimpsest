@@ -113,3 +113,56 @@ for (const kind of ['codex', 'claude']) test(`fixed ${kind} acquisition accepts 
   sequence.push(...(kind === 'codex' ? read.input : read.messages));
   helpers.history(kind, request); helpers.observation(kind, request, 'read');
 });
+
+import { DatabaseSync } from 'node:sqlite';
+// Explicit opt-in to a fixed, already drained public acquisition; never launches,
+// retries, repairs, resumes, or opens native transcript databases for execution.
+test('read-only actual Codex acquisition preserves failed outcome, lineage, charges and namespace collision', { skip: process.env.AEON_NATIVE_RECOVERY_AUDIT !== 'codex-acquisition-1' }, () => {
+  const root = '/home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence/codex-acquisition-1';
+  const read = (name: string) => JSON.parse(readFileSync(join(root, name), 'utf8'));
+  const ready = read('ready.json'), failed = read('failure-state.json'), failure = read('failure.json'), freeze = read('observed-freeze.json');
+  assert.equal(freeze.sourceRevision, '154df3df32938d10ab31cbe2e5642cddfd177612');
+  assert.match(failure.refusal, /unknown effective instruction\/control difference/);
+  assert.deepEqual(failure.counts, { write: 2, read: 1 }); assert.equal(failure.retry, false);
+  const db = new DatabaseSync(join(root, 'state/observer.sqlite'), { readOnly: true });
+  try {
+    const raw = db.prepare('SELECT digest,bytes FROM artifacts').all(); assert.equal(raw.length, 83);
+    const artifact = (ref: any): any => {
+      assert.equal(ref.uri, `aeon:artifact:${ref.sha256}`);
+      const row = raw.find(item => item.digest === ref.sha256); assert.ok(row);
+      return JSON.parse(Buffer.from(row.bytes as Uint8Array).toString());
+    };
+    for (const row of raw) {
+      assert.equal(createHash('sha256').update(row.bytes as Uint8Array).digest('hex'), row.digest);
+      assert.equal(createHash('sha256').update(readFileSync(join(root, 'artifacts', String(row.digest)))).digest('hex'), row.digest);
+    }
+    const documents = db.prepare('SELECT namespace,key,revision,value FROM documents ORDER BY namespace,key').all().map(row => ({ ...row, value: JSON.parse(String(row.value)) }));
+    assert.deepEqual(documents, failed.documents);
+    const rows = (snapshot: any, namespace: string): any[] => snapshot.documents.filter((row: any) => row.namespace === namespace);
+    const get = (snapshot: any, namespace: string, key: string) => rows(snapshot, namespace).find(row => row.key === key);
+    for (const namespace of ['baseline-grants', 'budgets']) assert.deepEqual(rows(ready, namespace), rows(failed, namespace));
+    for (const original of rows(ready, 'requests')) assert.deepEqual(original, get(failed, 'requests', original.key));
+    assert.equal(rows(failed, 'allocations').length, 1); assert.equal(rows(failed, 'allocations')[0].value.cancelled, true);
+    const requests = rows(failed, 'requests'); assert.equal(requests.length, 3);
+    assert.equal(requests.filter(row => row.value.request.status === 'succeeded').length, 2);
+    const uncertain = requests.find(row => row.value.request.status === 'uncertain'); assert.ok(uncertain);
+    assert.deepEqual(uncertain.value.charged, { costUsd: 0.88192, elapsedMs: 10_000, tokens: 204_096 });
+    assert.equal(rows(failed, 'native-checkpoints').length, 1);
+    const checkpoint = rows(failed, 'native-checkpoints')[0]; assert.equal(checkpoint.revision, 2); assert.equal(checkpoint.value.status, 'running'); assert.equal(checkpoint.value.generation, 2);
+    const launches = rows(failed, 'baseline-launches').map(row => ({ manifest: artifact(row.value.manifest), result: artifact(row.value.result) })); assert.equal(launches.length, 2);
+    assert.deepEqual(launches.map(x => x.manifest.generation), [1, 2]);
+    assert.equal(launches[0].result.code, 0); assert.equal(launches[1].result.signal, 'SIGTERM');
+    assert.equal(launches[1].manifest.nativeSession.sessionId, checkpoint.value.sessionId);
+    const identity = read('dispatch-3.json').identity; assert.equal(identity.sessionId, checkpoint.value.sessionId);
+    assert.equal(JSON.parse(identity.startup).thread_id, checkpoint.value.sessionId);
+    const earlier = read('request-2.json'), resumed = read('request-3.json');
+    for (const type of ['custom_tool_call', 'custom_tool_call_output']) assert.deepEqual(earlier.input.find((item: any) => item.type === type), resumed.input.find((item: any) => item.type === type));
+    assert.ok(resumed.input.some((item: any) => item.role === 'assistant' && item.content?.some((part: any) => part.text === 'native-recovery-write-complete')));
+    assert.deepEqual(ready.lease, []); assert.deepEqual(failed.lease, []);
+    // This equality is the acquired finding, not permission to accept reused process evidence.
+    assert.deepEqual(launches.map(x => x.result.nativeProcess.pid), [9, 9]);
+    assert.deepEqual(launches.map(x => x.result.nativeProcess.pidNamespace), ['pid:[4026532474]', 'pid:[4026532474]']);
+    assert.ok(launches.every(x => x.result.nativeProcess.closeObserved === true));
+    assert.match(failed.workspaceExportError, /unsupported workspace entry/);
+  } finally { db.close(); }
+});
