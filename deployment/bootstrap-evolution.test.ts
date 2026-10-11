@@ -66,6 +66,24 @@ test('changed retained runtime is refused before selection publication', () => {
   } finally { f.dispose(); }
 });
 
+test('runtime copy must still match the accepted identity after application verification', () => {
+  const f = fixture(), original = fs.readSync;
+  try {
+    const executable = join(f.root, 'node'); copyFileSync(process.execPath, executable); chmodSync(executable, 0o700); f.config.host.nodeBinary = executable;
+    let changed = false;
+    fs.readSync = ((fd: number, buffer: Buffer, offset: number, length: number, position: number) => {
+      const count = original(fd, buffer, offset, length, position);
+      if (!changed && count === 0 && fs.readlinkSync(`/proc/self/fd/${fd}`) === executable) {
+        changed = true; writeFileSync(executable, 'changed-after-verification');
+      }
+      return count;
+    }) as typeof fs.readSync;
+    syncBuiltinESMExports();
+    assert.throws(() => initializeBootstrap(f.config, f.first), /runtime|Runtime/);
+    assert.equal(existsSync(join(f.config.host.stateDirectory, 'boot/active')), false);
+  } finally { fs.readSync = original; syncBuiltinESMExports(); f.dispose(); }
+});
+
 test('interruption after active rename preserves latched independent rescue and latest state', () => {
   const f = fixture(), original = fs.renameSync;
   try {
