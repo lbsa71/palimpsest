@@ -54,6 +54,7 @@ Durable local trial transcripts are outside candidate source at `/home/palimpses
 |---|---|---|
 | 1 / `cac4229` | Failed before dispatch (5.870s): comparing insertion-order configuration JSON against canonical frozen reread. `91b4c9a` signs canonical configuration and preserves the actual adapter serialization separately. | `236b8e8389e1f6591bbca8d0219e0bdc98fbb80886dfa56fac8dd02ba327daa7` |
 | 2 / `91b4c9a` | Failed before application invocation (15.530s): hashing absent synthetic kernel limits while constructing `liveSeal` threw `not a JSON value`. `fda4b02` omits that live-only prerequisite for integration. No physical application progress is inferred from this failure. | `fa5c81e36993f5a6a0b285d3998212540841e1915e524e5752aac5fe36dc8ed1` |
+| 3 / `932cce4` (source `fda4b02`) | Failed (7.782s): actual app invoked the synthetic callback once, which failed before a response was retained; the run became blocked with unknown usage. Private checking then failed because `sum.mjs` was absent. The original report and actual request inventory are retained in the transcript. `fa30a3d` adds callback stack diagnostics; the original failure does not identify its swallowed callback cause. | `556caaf5e9ca9604d0b908c8d6a7c5fe549921eaf22065fc88114ca7b4d2e9ff` |
 
 Reproduction (physical composition is serialized with other host tests):
 
@@ -64,4 +65,6 @@ AEON_QUALIFICATION_FIXTURE=1 node --test evaluations/qualification/composition.t
 git diff --check
 ```
 
-The source and final actual-composition result are pending fresh review/handoff; no lane acceptance is recorded here.
+Fresh review independently reproduced a release-converter accounting defect: wall elapsed alone could undercount the ledger's sum of physical-request elapsed time. Reviewer `/root/a1_qualification_review` owns repair `08daf5a`, using `max(original wall, summed request elapsed)` and authenticated reconstruction regressions (including unknown/over-budget rejection). Four additional focused tests and strict TypeScript passed there. That repair does not make its reconstructed test-key records live evidence.
+
+Author source handoff is `fa30a3d`, with this subsequent evidence-only update. The reviewer owns the combined repaired-source actual composition and its result; the author has not claimed a passing physical trial. No lane acceptance is recorded here.
