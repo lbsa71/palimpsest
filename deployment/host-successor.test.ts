@@ -5,7 +5,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { identity, type ArtifactRef, type Authority, type EvaluationEvidence } from '../packages/contracts/index.ts';
 import { admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes, type FrozenCandidate } from '../packages/release/artifacts.ts';
@@ -204,8 +204,8 @@ test('a broken accepted launcher falls back through the retained bootstrap on re
 });
 
 
-test('coordinator observes launcher loss during asynchronous startup and releases authority', { timeout: 60000 }, async t => {
-  const f = fixture(); let child: ChildProcess | undefined; let coordinator: number | undefined; let stderr = '';
+async function launcherLossFixture(t: TestContext, earlyFailure = false): Promise<void> {
+  const f = fixture(); let child: ChildProcess | undefined; let coordinator: number | undefined; let stderr = ''; let failure: unknown;
   const cli = join(f.writableSource, 'deployment/cli.ts'), supervisor = join(f.writableSource, 'deployment/supervisor.ts');
   const marker = join(f.root, 'starting'), disconnected = join(f.root, 'disconnected'), resume = join(f.root, 'resume');
   const exitedMarker = join(f.root, 'coordinator-exited'), controls = join(f.root, 'controls-published');
@@ -248,6 +248,7 @@ test('coordinator observes launcher loss during asynchronous startup and release
     child = spawn(process.execPath, [fileURLToPath(new URL('./cli.ts', import.meta.url)), 'launch', configPath], { env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1', MISTRAL_API_KEY: 'unavailable', AUTARK_DIRECT_TOKEN: 'token' }, stdio: ['ignore', 'ignore', 'pipe'] });
     child.stderr!.on('data', data => { stderr += data.toString(); });
     await eventually(() => existsSync(marker));
+    if (earlyFailure) throw Error('Deliberate fixture failure before coordinator PID assignment');
     const startup = JSON.parse(readFileSync(marker, 'utf8')) as { coordinator: number; service: number; at: number };
     coordinator = startup.coordinator;
     assert.ok(Number.isSafeInteger(startup.service));
@@ -270,11 +271,33 @@ test('coordinator observes launcher loss during asynchronous startup and release
     const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
     try { assert.equal(store.list('requests').length, 0); } finally { store.close(); }
     t.diagnostic(JSON.stringify({ startup, disconnectedAt: Number(readFileSync(disconnected, 'utf8')), exit, stderr }));
-  } finally {
-    writeFileSync(resume, 'release gate during cleanup');
-    if (coordinator) { try { process.kill(coordinator, 'SIGTERM'); } catch {} }
-    if (child && child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGKILL'); await exited; }
-    if (coordinator) await eventually(() => existsSync(exitedMarker));
-    rmSync(f.root, { recursive: true, force: true });
+  } catch (error) { failure = error; throw error; }
+  finally {
+    try {
+      writeFileSync(resume, 'release gate during cleanup');
+      if (coordinator) { try { process.kill(coordinator, 'SIGTERM'); } catch {} }
+      // Before the test has learned the coordinator PID, the live launcher remains its
+      // only reaping parent. Its existing SIGTERM handler drains the child before exit.
+      if (child && child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child!.once('exit', resolve)); child.kill('SIGTERM'); await exited; }
+      if (existsSync(marker)) {
+        const observed = JSON.parse(readFileSync(marker, 'utf8')) as { coordinator: number; service: number };
+        await eventually(() => existsSync(exitedMarker));
+        const exit = JSON.parse(readFileSync(exitedMarker, 'utf8')) as { code: number };
+        if (earlyFailure) assert.equal(exit.code, 0, stderr);
+        await eventually(() => { try { process.kill(observed.coordinator, 0); return false; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true; throw error; } });
+        assert.throws(() => process.kill(observed.service, 0), /ESRCH/);
+        for (const name of ['supervisor-lease.sqlite', 'process-lease.sqlite']) { const lease = new ProcessLease(join(f.host.stateDirectory, name)); lease.close(); }
+        t.diagnostic(JSON.stringify({ phase: 'launcher-fixture-cleanup', earlyFailure, learnedCoordinatorBeforeCleanup: coordinator !== undefined, exit }));
+      }
+      rmSync(f.root, { recursive: true, force: true });
+    } catch (cleanup) {
+      if (failure !== undefined) throw new AggregateError([failure, cleanup], 'Launcher fixture failed and cleanup also failed');
+      throw cleanup;
+    }
   }
+}
+
+test('coordinator observes launcher loss during asynchronous startup and releases authority', { timeout: 60000 }, async t => launcherLossFixture(t));
+test('launcher fixture drains a ready child before deleting state when failure precedes PID assignment', { timeout: 60000 }, async t => {
+  await assert.rejects(launcherLossFixture(t, true), error => error instanceof Error && error.message === 'Deliberate fixture failure before coordinator PID assignment');
 });

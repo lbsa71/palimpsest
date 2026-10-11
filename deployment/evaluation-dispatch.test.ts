@@ -507,6 +507,11 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
 });
 
 test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 120000 }, async t => {
+  const scenario = async (name: string, body: () => Promise<void>): Promise<void> => {
+    t.signal.throwIfAborted();
+    await t.test(name, async () => { t.signal.throwIfAborted(); await body(); });
+    t.signal.throwIfAborted();
+  };
   const f = fixture(); let supervisor: ServiceSupervisor | undefined;
   const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
   const authorityStore = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
@@ -543,7 +548,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     assert.equal(observation.inheritedKeys, false); assert.match(observation.kind, /H1 unaccepted/);
     await eventually(() => store.list('host-transport').length, value => value === 9);
 
-    await t.test('lost actual staged controller reply is retained as uncertain and never restaged after restart', async () => {
+    await scenario('lost actual staged controller reply is retained as uncertain and never restaged after restart', async () => {
       const request = { ...(mailbox.request(submission!.id) as SubmissionRequest), requestId: 'lost-submission' };
       const stage = supervisor!.stageControl.bind(supervisor); let calls = 0;
       supervisor!.stageControl = async (externalProof, digest) => { calls++; await stage(externalProof, digest); throw Error('Lost actual controller reply after staging'); };
@@ -558,7 +563,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       assert.equal(mailbox.status(request.requestId)!.status, 'uncertain'); assert.equal(calls, 1);
       assert.equal(supervisor.status().release?.phase, 'accepted');
     });
-    await t.test('physical lost reply remains uncertain across host restart and is never automatically repeated', async () => {
+    await scenario('physical lost reply remains uncertain across host restart and is never automatically repeated', async () => {
       const request = faultRequest('lost-review');
       await assert.rejects(mailbox.requestEvaluation(request), /remains/);
       await eventually(() => mailbox.status(request.requestId), value => value?.status === 'uncertain');
@@ -570,7 +575,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       assert.equal(ledger.request(reviewPhysicalId(request.requestId))!.status, 'uncertain');
       assert.equal(ledger.request(reviewPhysicalId(request.requestId))!.usage.elapsedMs, f.reviewer.maxElapsedMs);
     });
-    await t.test('host interruption aborts a physical reviewer and restart retains uncertainty', async () => {
+    await scenario('host interruption aborts a physical reviewer and restart retains uncertainty', async () => {
       const request = faultRequest('interrupted-review');
       const waiting = assert.rejects(mailbox.requestEvaluation(request), /remains|withdrawn|authority|stale/i);
       await eventually(() => mailbox.status(request.requestId), value => value?.status === 'dispatched');
@@ -585,7 +590,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       assert.deepEqual(readdirSync(join(f.host.stateDirectory, 'host-review-dispatch')), []);
       await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(supervisor.status().evaluation?.activeJob, undefined);
     });
-    await t.test('missing reviewer preserves offline service recovery with explicit unavailable status', async () => {
+    await scenario('missing reviewer preserves offline service recovery with explicit unavailable status', async () => {
       await supervisor!.close(); supervisor = undefined;
       supervisor = await ServiceSupervisor.open({ ...f.options, evaluationDispatcher: { ...f.options.evaluationDispatcher, reviewerFile: join(f.root, 'missing-private-reviewer.json') } });
       assert.equal(supervisor.status().running, true); assert.equal(supervisor.status().evaluation?.available, false); assert.match(supervisor.status().evaluation!.diagnosis!, /unavailable/);
@@ -596,43 +601,43 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       assert.equal(mailbox.fencePending(pending.requestId), true);
       assert.match(mailbox.status(pending.requestId)!.diagnosis!, /operation was not invoked/);
     });
-    await t.test('complete imported mutable code is sealed and closure tampering is unavailable before launch', async () => {
+    await scenario('complete imported mutable code is sealed and closure tampering is unavailable before launch', async () => {
       const tampered = structuredClone(f.reviewer), dependency = tampered.files.find(file => file.mount.endsWith('rules.mjs'))!;
       const originalDependency = readFileSync(dependency.path);
       writeFileSync(dependency.path, "export const heldOutMarker = 'weakened';\n", { mode: 0o600 });
-      await assert.rejects(runExternalReview(tampered, f.host, original, f.policy, f.incumbent.manifest.id, () => {}), /closure changed/);
+      await assert.rejects(runExternalReview(tampered, f.host, original, f.policy, f.incumbent.manifest.id, () => {}, t.signal), /closure changed/);
       writeFileSync(dependency.path, originalDependency, { mode: 0o600 });
     });
-    await t.test('old authority prevents physical dispatch immediately after closure verification', async () => {
+    await scenario('old authority prevents physical dispatch immediately after closure verification', async () => {
       let fences = 0;
-      await assert.rejects(runExternalReview(f.reviewer, f.host, original, f.policy, f.incumbent.manifest.id, () => { fences++; throw Error('Withdrawn author'); }), /Withdrawn author/);
+      await assert.rejects(runExternalReview(f.reviewer, f.host, original, f.policy, f.incumbent.manifest.id, () => { fences++; throw Error('Withdrawn author'); }, t.signal), /Withdrawn author/);
       assert.equal(fences, 1);
     });
-    await t.test('unqualified executable arguments cannot borrow the old evaluator identity', async () => {
+    await scenario('unqualified executable arguments cannot borrow the old evaluator identity', async () => {
       let dispatched = false;
-      await assert.rejects(runExternalReview({ ...f.reviewer, args: ['--eval', 'process.exit(0)'] }, f.host, original, f.policy, f.incumbent.manifest.id, () => { dispatched = true; }), /exact prior policy/);
+      await assert.rejects(runExternalReview({ ...f.reviewer, args: ['--eval', 'process.exit(0)'] }, f.host, original, f.policy, f.incumbent.manifest.id, () => { dispatched = true; }, t.signal), /exact prior policy/);
       assert.equal(dispatched, false);
     });
-    await t.test('authenticated negative review remains explicit feedback instead of uncertainty', async () => {
-      const response = await runExternalReview(f.reviewer, f.host, { ...original, requestId: 'deliberate-negative-review' }, f.policy, f.incumbent.manifest.id, () => {});
+    await scenario('authenticated negative review remains explicit feedback instead of uncertainty', async () => {
+      const response = await runExternalReview(f.reviewer, f.host, { ...original, requestId: 'deliberate-negative-review' }, f.policy, f.incumbent.manifest.id, () => {}, t.signal);
       assert.equal(response.result.receipt.evidence[0]!.verdict, 'fail'); assert.equal(response.result.receipt.evidence[0]!.caseResults[0]!.status, 'fail');
     });
-    await t.test('authenticated inconclusive review retains unavailable case evidence', async () => {
-      const response = await runExternalReview(f.reviewer, f.host, { ...original, requestId: 'deliberate-inconclusive-review' }, f.policy, f.incumbent.manifest.id, () => {});
+    await scenario('authenticated inconclusive review retains unavailable case evidence', async () => {
+      const response = await runExternalReview(f.reviewer, f.host, { ...original, requestId: 'deliberate-inconclusive-review' }, f.policy, f.incumbent.manifest.id, () => {}, t.signal);
       const evidence = response.result.receipt.evidence[0]!;
       assert.equal(evidence.verdict, 'inconclusive'); assert.equal(evidence.caseResults[0]!.status, 'unavailable');
       assert.ok(response.artifacts.some(blob => blob.sha256 === evidence.artifact.sha256));
     });
-    await t.test('negative verdict cannot bypass external response authentication', async () => {
-      await assert.rejects(runExternalReview(f.reviewer, f.host, { ...original, requestId: 'forged-negative-review' }, f.policy, f.incumbent.manifest.id, () => {}), /Invalid external reviewer authentication/);
+    await scenario('negative verdict cannot bypass external response authentication', async () => {
+      await assert.rejects(runExternalReview(f.reviewer, f.host, { ...original, requestId: 'forged-negative-review' }, f.policy, f.incumbent.manifest.id, () => {}, t.signal), /Invalid external reviewer authentication/);
     });
-    await t.test('authority withdrawn before result acceptance fences a complete signed response', async () => {
+    await scenario('authority withdrawn before result acceptance fences a complete signed response', async () => {
       let fences = 0;
-      await assert.rejects(runExternalReview(f.reviewer, f.host, original, f.policy, f.incumbent.manifest.id, () => { if (++fences === 2) throw Error('Withdrawn result authority'); }), /Withdrawn result authority/);
+      await assert.rejects(runExternalReview(f.reviewer, f.host, original, f.policy, f.incumbent.manifest.id, () => { if (++fences === 2) throw Error('Withdrawn result authority'); }, t.signal), /Withdrawn result authority/);
       assert.equal(fences, 2);
     });
-    await t.test('physical review timeout drains children and removes private key snapshots', async () => {
-      await assert.rejects(runExternalReview(f.reviewer, f.host, { ...original, requestId: 'interrupted-review' }, f.policy, f.incumbent.manifest.id, () => {}), /deadline/);
+    await scenario('physical review timeout drains children and removes private key snapshots', async () => {
+      await assert.rejects(runExternalReview(f.reviewer, f.host, { ...original, requestId: 'interrupted-review' }, f.policy, f.incumbent.manifest.id, () => {}, t.signal), /deadline/);
       assert.deepEqual(readdirSync(join(f.host.stateDirectory, 'host-review-dispatch')), []);
     });
   } catch (error) { throw Error(`${error instanceof Error ? error.message : error}; ${JSON.stringify(supervisor?.status().evaluation)}`, { cause: error }); }
