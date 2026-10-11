@@ -44,3 +44,5 @@ AEON_CLAUDE_HANDBACK_RUN=1 AEON_CLAUDE_HANDBACK_EVIDENCE=/home/palimpsest/migrat
 ```
 
 Do not set `AEON_NATIVE_DELEGATION_RUN`. Ordinary tests skip the new physical proof. If its exclusive marker exists, this driver refuses another launch and the unit's one proof is consumed. This command is specified only; it has not been executed.
+
+Fresh review disposition update before any physical work: source gate reopened for the exact-witness omission P2 at initial frozen source. Repair rejects any parent-request non-Agent use, requires exactly four total native tool uses/results, two parent calls/results and two task notifications, plus one exact command/result per actual child. This is a stricter acquired fixture witness; no driver/grant/profile/runtime change. Initial frozen checkpoint, original acquired bytes and first failures remain retained. Independent repaired-source validation is required before root's physical window.

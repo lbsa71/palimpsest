@@ -48,7 +48,8 @@ function claudeReceipts(request: { messages?: any[] }): { index: number; callInd
   const emitted = new Set<number>(), receipts: { index: number; callIndex: number; agentId: string; part: any }[] = [];
   for (const message of request.messages ?? []) {
     if (message.role === 'assistant' && Array.isArray(message.content)) for (const part of message.content) {
-      if (part.type !== 'tool_use' || part.name !== 'Agent') continue;
+      if (part.type !== 'tool_use') continue;
+      if (part.name !== 'Agent') return [];
       const index = ['tool_spawn_0', 'tool_spawn_1'].indexOf(part.id);
       if (index < 0 || emitted.has(index) || !exactObject(part.input, claudeAgentInput(index))) return [];
       emitted.add(index);
@@ -81,8 +82,14 @@ export function claudeParentReceipts(request: { messages?: any[] }): string[] {
 export function claudeObservedToolOutput(request: { messages?: any[] }, index: number): boolean {
   const calls: any[] = [], results: any[] = []; let position = 0, callPosition = -1, resultPosition = -1;
   for (const message of request.messages ?? []) if (Array.isArray(message.content)) for (const part of message.content) {
-    if (message.role === 'assistant' && part.type === 'tool_use' && part.id === `tool_child_${index}`) { calls.push(part); callPosition = position; }
-    if (message.role === 'user' && part.type === 'tool_result' && part.tool_use_id === `tool_child_${index}`) { results.push(part); resultPosition = position; }
+    if (message.role === 'assistant' && part.type === 'tool_use') {
+      if (part.id !== `tool_child_${index}`) return false;
+      calls.push(part); callPosition = position;
+    }
+    if (message.role === 'user' && part.type === 'tool_result') {
+      if (part.tool_use_id !== `tool_child_${index}`) return false;
+      results.push(part); resultPosition = position;
+    }
     position++;
   }
   return callPosition < resultPosition && calls.length === 1 && calls[0].name === 'Bash'
@@ -93,10 +100,18 @@ export function claudeObservedToolOutput(request: { messages?: any[] }, index: n
 export function claudeTaskBindings(stdout: string, childIds: string[], parentRequest: { messages?: any[] }, parentHeaders?: Record<string, unknown>, childHeaders?: Record<string, unknown>[]): boolean {
   let events: any[];
   try { events = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return false; }
+  const nativeBlocks = events.flatMap(event => Array.isArray(event.message?.content) ? event.message.content : []);
+  if (nativeBlocks.filter(part => part.type === 'tool_use').length !== 4 || nativeBlocks.filter(part => part.type === 'tool_result').length !== 4) return false;
   const receipts = claudeReceipts(parentRequest);
+  const parentCalls = events.filter(event => event.type === 'assistant' && event.agent_id === undefined).flatMap(event => Array.isArray(event.message?.content) ? event.message.content.filter((part: any) => part.type === 'tool_use') : []);
+  const parentResults = events.filter(event => event.type === 'user' && event.agent_id === undefined).flatMap(event => Array.isArray(event.message?.content) ? event.message.content.filter((part: any) => part.type === 'tool_result') : []);
+  if (parentCalls.length !== 2 || parentResults.length !== 2
+    || parentCalls.some(part => part.name !== 'Agent' || !['tool_spawn_0', 'tool_spawn_1'].includes(part.id))
+    || parentResults.some(part => !['tool_spawn_0', 'tool_spawn_1'].includes(part.tool_use_id))) return false;
   const inits = events.filter(event => event.type === 'system' && event.subtype === 'init');
   const starts = events.filter(event => event.type === 'system' && event.subtype === 'task_started');
-  if (receipts.length !== 2 || childIds.length !== 2 || new Set(childIds).size !== 2 || starts.length !== 2 || inits.length !== 1) return false;
+  const notifications = events.filter(event => event.type === 'system' && event.subtype === 'task_notification');
+  if (receipts.length !== 2 || childIds.length !== 2 || new Set(childIds).size !== 2 || starts.length !== 2 || notifications.length !== 2 || inits.length !== 1) return false;
   const session = inits[0].session_id;
   if (typeof session !== 'string' || !session || !parentHeaders || !childHeaders || session !== parentHeaders['x-claude-code-session-id']) return false;
   if (childHeaders && (!parentHeaders || childHeaders.length !== 2 || childHeaders.some((headers, index) => claudeChildIdentity(headers, parentHeaders) !== childIds[index]))) return false;
@@ -116,7 +131,7 @@ export function claudeTaskBindings(stdout: string, childIds: string[], parentReq
     const childEvents = events.filter(event => event.agent_id === childId);
     if (childEvents.some(event => event.session_id !== session || event.parent_tool_use_id !== callId)
       || !claudeObservedToolOutput({ messages: childEvents.map(event => event.message).filter(Boolean) }, index)) return false;
-    const completions = events.filter(event => event.type === 'system' && event.subtype === 'task_notification' && event.task_id === childId);
+    const completions = notifications.filter(event => event.task_id === childId);
     if (completions.length !== 1 || completions[0].run_id !== start.run_id || completions[0].session_id !== session || completions[0].tool_use_id !== callId || completions[0].status !== 'completed' || completions[0].summary !== report) return false;
     const returns = events.filter(event => event.type === 'user' && event.message?.content?.some((part: any) => part.type === 'tool_result' && part.tool_use_id === callId));
     if (returns.length !== 1 || returns[0].session_id !== session || returns[0].parent_tool_use_id !== null

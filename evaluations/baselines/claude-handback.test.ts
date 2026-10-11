@@ -148,3 +148,42 @@ test('acquired full native provenance bytes survive unchanged observer instructi
     assert.equal(calls, 1); assert.equal(Buffer.from(store.readArtifact(observer.evidence()[0]!.before)).toString(), payload);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('acquired positive precedes duplicate original Agent call under a non-Agent tool name', () => {
+  const { request, native, headers } = positive();
+  request.messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: 'tool_spawn_0', name: 'Bash', input: { command: 'false' } }] });
+  assert.deepEqual(claudeParentReceipts(request), []);
+  assert.equal(claudeTaskBindings(native, headers.nativeChildIds, request, headers.parentHeaders, headers.childHeaders), false);
+});
+
+for (const kind of ['command', 'result']) test(`acquired positive precedes extra foreign child ${kind}`, () => {
+  const { request, native, headers } = positive(); const events = native.trimEnd().split('\n').map(line => JSON.parse(line));
+  const index = events.findIndex(event => event.agent_id && event.type === (kind === 'command' ? 'assistant' : 'user') && event.message.content[0].type === (kind === 'command' ? 'tool_use' : 'tool_result'));
+  const extra = structuredClone(events[index]);
+  if (kind === 'command') { extra.message.content[0].id = 'foreign'; extra.message.content[0].input.command = 'false'; }
+  else { extra.message.content[0].tool_use_id = 'foreign'; extra.message.content[0].is_error = true; }
+  events.splice(index + 1, 0, extra);
+  assert.equal(claudeTaskBindings(events.map(event => JSON.stringify(event)).join('\n'), headers.nativeChildIds, request, headers.parentHeaders, headers.childHeaders), false);
+});
+
+for (const type of ['assistant', 'user']) test(`acquired positive precedes extra foreign native parent ${type} tool event`, () => {
+  const { request, native, headers } = positive(); const events = native.trimEnd().split('\n').map(line => JSON.parse(line));
+  const index = events.findIndex(event => event.type === type && event.parent_tool_use_id === null && event.message?.content?.[0]?.type === (type === 'assistant' ? 'tool_use' : 'tool_result'));
+  const extra = structuredClone(events[index]);
+  extra.message.content[0][type === 'assistant' ? 'id' : 'tool_use_id'] = 'foreign';
+  events.splice(index + 1, 0, extra);
+  assert.equal(claudeTaskBindings(events.map(event => JSON.stringify(event)).join('\n'), headers.nativeChildIds, request, headers.parentHeaders, headers.childHeaders), false);
+});
+
+test('acquired positive precedes extra foreign native task completion', () => {
+  const { request, native, headers } = positive(); const events = native.trimEnd().split('\n').map(line => JSON.parse(line));
+  const extra = structuredClone(events.find(event => event.subtype === 'task_notification')); extra.task_id = 'foreign'; extra.tool_use_id = 'foreign'; events.push(extra);
+  assert.equal(claudeTaskBindings(events.map(event => JSON.stringify(event)).join('\n'), headers.nativeChildIds, request, headers.parentHeaders, headers.childHeaders), false);
+});
+
+test('acquired positive precedes an extra native tool emission under a forged system event', () => {
+  const { request, native, headers } = positive(); const events = native.trimEnd().split('\n').map(line => JSON.parse(line));
+  const extra = structuredClone(events.find(event => event.type === 'assistant' && event.parent_tool_use_id === null));
+  extra.type = 'system'; extra.subtype = 'foreign'; extra.message.content[0].id = 'foreign'; events.push(extra);
+  assert.equal(claudeTaskBindings(events.map(event => JSON.stringify(event)).join('\n'), headers.nativeChildIds, request, headers.parentHeaders, headers.childHeaders), false);
+});

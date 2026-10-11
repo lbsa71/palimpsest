@@ -38,3 +38,20 @@ External author evidence root: `/home/palimpsest/migration/aeon-1-20261011/claud
 | `acquired-positive-sha256.json` | `ab40699ec7ee1df0b9c0c41ea2a628c5f6c9aa63a03ba3ac24e64eea0a8667b8` |
 
 Root and the fresh reviewer own the next gate. Review must verify the complete positive/negative byte controls, unchanged native request/profile guards, prior immutable inventory, driver/grant and clean source/documentation before root assigns the serialized physical window. Only root can set the new explicit physical launch variables documented in the plan. Stop after the one proof with its actual outcome; a failure stays failed. A successful proof establishes this synthetic native fixture's parent completion only. Live compatibility, model competence, recovery/research affordances, comparator scoring, developmental transfer, Aeon1/H1 remain separate.
+
+Fresh source review reopened the source gate after finding a P2 omission at frozen `c72f4ce`: non-Agent parent tool uses with duplicated original Agent call IDs, extra foreign native parent/child calls/results, and an extra foreign task completion could be skipped while the known success frames still passed. Each retained reproduction first proves the actual acquired positive. The first reviewer failure and author reproductions are preserved; no physical proof was launched.
+
+The narrow repair requires every parent-request tool use to be an expected Agent call, exactly the acquired four total native tool-use and four tool-result blocks (two Agent/two Bash), exactly two native parent uses/results and two completion notifications, and one total child command/result with exact identity. Extra/failed/foreign calls can no longer hide alongside the expected success. Report/native instruction bytes and the distinct follow-up driver/grant remain unchanged. Seven new author regressions cover duplicate other-tool parent calls, foreign child calls/results, foreign native parent calls/results, extra completions and a changed-event-envelope omission; each begins with the acquired positive. Reversed sibling arrival/report-label positives continue to pass.
+
+Repair focused checks: **89 passed, zero failed, one intentional physical skip**, 90 total. Strict TypeScript: **passed**. The prior full-baseline result above belongs to the original source checkpoint; fresh reviewer owns the repaired full-suite and original-artifact audit. Author repair evidence remains external:
+
+| Repair evidence | SHA256 |
+|---|---|
+| `duplicate-call-first-failure.txt` | `099d3a3569d3afd48800c59139a092ec4390299e288aff2928f321146670f889` |
+| `extra-child-command-first-failure.txt` | `eb79a33820f23db5a24f0aca853fea2422d5679fcb8bc90504ee81df56a599d2` |
+| `extra-parent-native-first-failure.txt` | `a6cb3226a1892cb9e6705e3382ff31a531b397b3910bb5c133aa6bd3750b0bb7` |
+| `extra-completion-first-failure.txt` | `182d581baa5b6c7431ab5017ca85a9564c3d8411c93555a8ca328f8f493da54e` |
+| `repair-final-focused.txt` | `ebcd38d8f22dc46726aca981135a00aab7e48349087122e02a32eeffe00173b3` |
+| `repair-final-strict.txt` | `33792e951084ef06e5350c5ba85c3ad69188d94cefd288b7dbd0747999c93997` |
+
+The source gate remains pending fresh verification of this repair. All historical verdicts and accounting remain unchanged; the one physical proof is still unexecuted.
