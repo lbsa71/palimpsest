@@ -1,6 +1,6 @@
 # A1-L04 — developmental memory and a revisable self
 
-Status: **reviewing** — components implemented and fixture-verified; full integrated/live acceptance remains open. Session owner: **`/root/a1_memory`** (component handoff); L09 integrates remaining gates. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing** — ordinary memory/context, consolidation and initiative integration is implemented and fixture-verified with fresh boundary review; independent developmental/live acceptance remains open. Session owner: **`/root/a1_memory`** (component handoff); L09 integrates remaining gates. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW06, RW08, RW09, RW19](../../../REQUIREMENTS.md).
 
@@ -43,4 +43,5 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Base source / contract revision | `3398077`; `aeon1.c1.v1` acknowledged; storage commit `8dd8ee7` consumed |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Component source `9c9171acc9c4dc61ca9dcc1b1e15ee942d795795`; [implementation evidence](../evidence/A1-L04/implementation.md); 16 development cases passed, 35 joined component/storage/contract cases passed, strict checking passed |
-| Blockers / next eligible task | L09 fresh review and ordinary runtime wiring; L02 context/tools; L05 scheduler/goals; L08 independent held-out/longitudinal evidence. These gates remain open; no live or full lane acceptance claim |
+| Blockers / next eligible task | Ordinary runtime/context/tools, accounted consolidation and goal linkage are integrated; [application review](../evidence/app-review/README.md) covers consequential disclosure/forgetting boundaries. L08 independent held-out procedural/transfer and actual later-development evidence remain open; no live or full lane acceptance claim |
+| Documentation disposition | `/root/a1_middle_lane_disposition`; `codex/a1-middle-lane-disposition-20261011`; `/home/palimpsest/migration/aeon-1-20261011/middle-lane-disposition`; frozen source `1909053`. Owns only these status/coordination sections and the [task/source/review matrix](../evidence/A1-L09/middle-lane-disposition.md); original component handoff above remains historical. |

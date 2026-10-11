@@ -1,6 +1,6 @@
 # A1-L05 — goals, drives and initiative
 
-Status: **reviewing** (implemented and fixture-verified component; live and independent qualification open). Session owner: **Codex /root/a1_initiative**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing** — ordinary initiative, scheduler and report integration is implemented and fixture-verified with fresh application/atomic-start review; live and independent developmental qualification open. Session owner: **Codex /root/a1_initiative**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW06, RW07, RW10, RW19](../../../REQUIREMENTS.md).
 
@@ -43,8 +43,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Base source / contract revision | `4e55167` / `aeon1.c1.v1` |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Source `fe834bd` → `3069602` → `fec21b7`; [bounded implementation evidence](../evidence/A1-L05/implementation.md); 14 fixture checks + strict typecheck passed |
-| Blockers / next eligible task | Component handoff delivered. L09 host wiring and L08 fresh review/qualified live unattended growth remain open; no live or autonomous qualification claim |
+| Blockers / next eligible task | Host wakeups, accounted first development/inquiry and receipt-bound reports are integrated; [application review](../evidence/app-review/README.md) and [atomic-start review](../evidence/A1-L09/atomic-start-review.md) cover the current engineering boundaries. L08 qualified unattended cycles, report freshness and later development remain open; no live or autonomous qualification claim |
+| Documentation disposition | `/root/a1_middle_lane_disposition`; `codex/a1-middle-lane-disposition-20261011`; `/home/palimpsest/migration/aeon-1-20261011/middle-lane-disposition`; frozen source `1909053`. Owns only these status/coordination sections and the [task/source/review matrix](../evidence/A1-L09/middle-lane-disposition.md); original component handoff above remains historical. |
 
 ## Current implementation boundary
 
-T01–T05 component code is implemented in `packages/initiative/`, with actual L03 runtime/resource and L04 memory hooks, model-facing attributed goal/drive/progress tools, and receiver-confirmed obligations. The finite delegated implementation goal is complete after its evidence handoff. This does not close full-lane acceptance: independent review, production host wakeup wiring, qualified live model inquiry, actual report freshness and longitudinal development gates remain open as recorded in the evidence.
+T01–T05 component code is implemented in `packages/initiative/`, with actual L03 runtime/resource and L04 memory hooks, model-facing attributed goal/drive/progress tools, and receiver-confirmed obligations. The finite delegated implementation goal is complete after its evidence handoff. Ordinary host wakeups, first-development admission, fair conversation/inquiry service and report delivery are now integrated and have fresh boundary review. This does not close full-lane acceptance: qualified live model inquiry, independently checked report freshness and later developmental transfer remain open. The [current disposition matrix](../evidence/A1-L09/middle-lane-disposition.md) separates those empirical gates from the superseded component-era wiring/review items.

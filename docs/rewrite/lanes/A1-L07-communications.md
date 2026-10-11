@@ -1,6 +1,6 @@
 # A1-L07 — responsive communication and durable follow-through
 
-Status: **reviewing** (bounded components implemented and fixture-integrated; full lane acceptance pending). Session owner: **`/root/a1_communications`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing** — ordinary communication/recovery/report paths integrated and fixture-verified with fresh application/offline boundary review; authentic live interaction and full lane acceptance pending. Session owner: **`/root/a1_communications`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW09, RW10, RW11, RW12, RW19](../../../REQUIREMENTS.md).
 
@@ -43,7 +43,8 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Base source / contract revision | `4e55167` / `aeon1.c1.v1`; actual OperationalStore, DurableRuntime, EffectJournal |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Component source `d4f66a1` after `7003905`; [bounded evidence](../evidence/A1-L07/components-2026-10-11.md); 23 communication tests, joined actual runtime/obligation receipt case, strict typecheck and build pass |
-| Blockers / next eligible task | Root L09 host/scheduler/tool assembly, authenticated live Slack/API smoke and fresh independent review; no external sends authorized for this task |
+| Blockers / next eligible task | Host/scheduler/tool assembly, scoped recovery visibility and durable report reconciliation are integrated; [application review](../evidence/app-review/README.md) and [offline review](../evidence/A1-L09/continuation-review.md) cover bounded consequential joins. Authentic live Slack/direct interaction, reconnect/downtime and current report delivery remain unverified; the read-only recovery probe is narrower. No external sends authorized by this audit |
+| Documentation disposition | `/root/a1_middle_lane_disposition`; `codex/a1-middle-lane-disposition-20261011`; `/home/palimpsest/migration/aeon-1-20261011/middle-lane-disposition`; frozen source `1909053`. Owns only these status/coordination sections and the [task/source/review matrix](../evidence/A1-L09/middle-lane-disposition.md); original component handoff above remains historical. |
 
 ## Bounded component result — 2026-10-11
 
@@ -59,6 +60,12 @@ L05 obligation fixture closes only after actual delivery reconciliation.
 The bounded component goal does not claim full lane acceptance. No private key,
 external Slack message or paid model request was used. Parent-thread lookback,
 retention and permission limitations are explicit in durable recovery gaps.
-Authentic live smoke, host scheduler/tool assembly, process-crash communication
-coverage and fresh independent review remain next acceptance tasks. See the
-package README for exact transport/configuration interfaces and limits.
+Later ordinary application/service integration, fresh application/offline review,
+scoped recovery diagnostics and durable report fixtures supersede the original
+assembly/review blockers. Actual frozen-service SIGKILL/restart and runtime crash
+checks complement communication cursor/reopen/reconnect fixtures; they do not
+constitute a live Slack downtime/reconnect witness. Authentic live interaction,
+responsive follow-through and current receiver-confirmed reports remain open.
+The [current task/source/review matrix](../evidence/A1-L09/middle-lane-disposition.md)
+records these distinct evidence limits. See the package README for exact
+transport/configuration interfaces and limits.
