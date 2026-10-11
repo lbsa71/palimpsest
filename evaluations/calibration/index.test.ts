@@ -156,3 +156,78 @@ test('hard invariants override mean quality, incomplete acceptance cannot pass, 
   results[0]!.costUsd = 0.5;
   assert.match(analyze(plan, [...results, results[0]!], fixtureTrust).reasons.join(' '), /duplicate execution/);
 });
+
+test('authenticated zero scores cannot change through accessors after canonical sealing', () => {
+  const { plan, results } = fixture();
+  for (const r of results) if (r.product === 'candidate') r.score = 0;
+  const receipts = new Set(results.map(recordDigest));
+  const trust: Trust = { ...fixtureTrust, verifyRecord: (r, d) => r.phase === 'pilot' || receipts.has(d) };
+  for (const r of results) if (r.product === 'candidate') {
+    let reads = 0;
+    // recordsDigest, retained-record clone and receipt digest see the signed score.
+    Object.defineProperty(r, 'score', { enumerable: true, get: () => ++reads <= 3 ? 0 : 3 });
+  }
+  assert.throws(() => analyze(plan, results, trust), /inert JSON/);
+});
+
+test('artifact identities reject hidden fields instead of authenticating a partial object', () => {
+  const visible = { score: 0 };
+  const hidden = { score: 0 };
+  Object.defineProperty(hidden, 'hardViolations', { value: ['unauthorized-effect'] });
+  assert.throws(() => artifactDigest('synthetic-test', hidden), /inert JSON/);
+  assert.doesNotThrow(() => artifactDigest('synthetic-test', visible));
+});
+
+test('analysis authenticates detached immutable records even if the caller mutates its originals', () => {
+  const { plan, results } = fixture();
+  for (const r of results) if (r.product === 'candidate') r.score = 0;
+  const receipts = new Set(results.map(recordDigest));
+  let mutated = false;
+  const trust: Trust = {
+    ...fixtureTrust,
+    verifyRecord: (record, d) => {
+      assert.ok(Object.isFrozen(record)); assert.ok(Object.isFrozen(record.hardViolations));
+      if (!mutated) { mutated = true; for (const r of results) r.score = 3; }
+      return record.phase === 'pilot' || receipts.has(d);
+    },
+  };
+  const report = analyze(plan, results, trust);
+  assert.equal(report.status, 'indeterminate');
+  assert.ok(report.records.filter(r => r.product === 'candidate').every(r => r.score === 0));
+  assert.ok(report.families.every(f => f.absolute.mean === 0));
+});
+
+test('inert identity boundary rejects proxies, symbol keys, sparse arrays and nested getters without invoking them', () => {
+  let invoked = false;
+  const accessor = { get score() { invoked = true; return 3; } };
+  const proxy = new Proxy({}, { ownKeys: () => { invoked = true; return []; } });
+  const symbol = { [Symbol('hidden')]: 3 };
+  const sparse = new Array(2); sparse[0] = 3; Object.assign(sparse, { extra: 3 });
+  for (const bad of [accessor, proxy, symbol, sparse]) assert.throws(() => artifactDigest('boundary-test', { nested: bad }), /inert JSON/);
+  assert.equal(invoked, false);
+  assert.equal(artifactDigest('boundary-test', { b: [1, 2], a: 0 }), artifactDigest('boundary-test', { a: 0, b: [1, 2] }));
+});
+
+test('Monte Carlo uncertainty includes every searched family, baseline, count and sensitivity', () => {
+  const c = configuration();
+  c.sensitivity.push({ ...c.sensitivity[0]!, id: 'second-preregistered-model' });
+  c.maxSimulationDraws *= 2;
+  const report = calibrate(c, records(c, c.pilotCases, 'pilot'), fixtureTrust);
+  assert.equal(report.status, 'planned'); assert.equal(report.power.length, 20);
+  const penalty = Math.sqrt(Math.log(c.maxTasksPerFamily * 5 * 2 * 2 / c.monteCarloErrorAlpha) / (2 * c.simulations));
+  for (const cell of report.power) assert.equal(cell.lowerPower, Math.max(0, cell.estimatedPower - penalty));
+  c.sensitivity[1]!.tailMass = 1;
+  const adverse = calibrate(c, records(c, c.pilotCases, 'pilot'), fixtureTrust);
+  assert.equal(adverse.status, 'indeterminate'); assert.equal(adverse.tasksPerFamily, null);
+  assert.ok(adverse.power.some(cell => cell.sensitivity === 'second-preregistered-model' && cell.lowerPower < 0.8));
+});
+
+test('each seal stage and analysis source identity remains mandatory', () => {
+  const { plan, results } = fixture();
+  for (const denied of ['pilot-design-before-pilot', 'configuration-before-candidate', 'calibration-before-candidate', 'plan-before-candidate']) {
+    const report = analyze(plan, results, { ...fixtureTrust, verifySeal: stage => stage !== denied });
+    assert.equal(report.status, 'indeterminate'); assert.equal(report.admissionEligible, false);
+  }
+  const changed = structuredClone(plan); changed.configuration.analysisSourceDigest = h('different-analysis');
+  assert.equal(analyze(changed, results, fixtureTrust).status, 'indeterminate');
+});

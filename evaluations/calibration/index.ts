@@ -1,3 +1,4 @@
+import { types } from 'node:util';
 import { identity, digest, invariant } from '../../packages/contracts/common.ts';
 
 export const families = ['coding', 'research', 'operations', 'recovery', 'delegation'] as const;
@@ -5,7 +6,7 @@ export type Family = typeof families[number];
 export type Product = 'candidate' | 'codex' | 'claude-code';
 export const comparators = ['codex', 'claude-code'] as const;
 const products: Product[] = ['candidate', ...comparators];
-const method = 'A1-L08-v2-cluster-empirical-bernstein-v1';
+const method = 'A1-L08-v2-cluster-empirical-bernstein-v2';
 export interface SystemIdentity {
   model: string; modelVersion: string; effort: string;
   source: string; dependencies: string; prompts: string; tools: string; context: string;
@@ -43,11 +44,41 @@ export interface Trust {
   verifySeal(stage: 'pilot-design-before-pilot' | 'configuration-before-candidate' | 'calibration-before-candidate' | 'plan-before-candidate', digest: string): boolean;
   verifyRecord(record: ScoredRecord, digest: string): boolean;
 }
+/** Reject executable/hidden properties and detach caller state before authentication. */
+function inertSnapshot<T>(value: T): T {
+  const seen = new Set<object>();
+  function copy(input: unknown): unknown {
+    if (input === null || typeof input === 'string' || typeof input === 'boolean') return input;
+    if (typeof input === 'number') { invariant(Number.isFinite(input), 'expected finite inert JSON number'); return input; }
+    invariant(typeof input === 'object' && !types.isProxy(input), 'expected inert JSON data');
+    invariant(!seen.has(input), 'cyclic inert JSON data');
+    const array = Array.isArray(input);
+    invariant(array || Object.getPrototypeOf(input) === Object.prototype || Object.getPrototypeOf(input) === null, 'expected plain inert JSON object');
+    seen.add(input);
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    const keys = Reflect.ownKeys(descriptors);
+    if (array) invariant(keys.length === input.length + 1 && Array.from({ length: input.length }, (_, i) => String(i)).every(k => Object.hasOwn(descriptors, k)), 'expected dense inert JSON array');
+    const entries: [string, unknown][] = [];
+    for (const key of keys) {
+      if (array && key === 'length') continue;
+      invariant(typeof key === 'string', 'expected string inert JSON key');
+      const descriptor = descriptors[key]!;
+      invariant(descriptor.enumerable && Object.hasOwn(descriptor, 'value'), 'expected enumerable inert JSON data property');
+      entries.push([key, copy(descriptor.value)]);
+    }
+    seen.delete(input);
+    return Object.freeze(array ? entries.map(([, v]) => v) : Object.fromEntries(entries));
+  }
+  return copy(value) as T;
+}
 export function artifactDigest(domain: string, value: unknown): string {
-  return identity({ domain: `palimpsest:${method}:${domain}`, value });
+  return identity({ domain: `palimpsest:${method}:${domain}`, value: inertSnapshot(value) });
 }
 export const configurationDigest = (config: Configuration): string => artifactDigest('configuration', config);
-export const pilotDesignDigest = (config: Configuration): string => artifactDigest('pilot-design', { protocol: config.protocol, cases: config.pilotCases, systems: Object.fromEntries(comparators.map(p => [p, config.systems[p]])), evaluatorDigest: config.evaluatorDigest });
+export function pilotDesignDigest(config: Configuration): string {
+  config = inertSnapshot(config);
+  return artifactDigest('pilot-design', { protocol: config.protocol, cases: config.pilotCases, systems: Object.fromEntries(comparators.map(p => [p, config.systems[p]])), evaluatorDigest: config.evaluatorDigest });
+}
 export const recordDigest = (record: ScoredRecord): string => artifactDigest('scored-record', record);
 export interface ClusterSummary {
   family: Family; product: Product; tasks: number; repeats: number;
@@ -163,6 +194,7 @@ function random(seed: number): () => number {
 }
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 export function calibrate(config: Configuration, pilot: ScoredRecord[], trust: Trust): CalibrationReport {
+  config = inertSnapshot(config); pilot = inertSnapshot(pilot);
   const report: CalibrationReport = { status: 'indeterminate', admissionEligible: false, method, configurationDigest: configurationDigest(config), pilotDigest: artifactDigest('pilot', pilot), records: structuredClone(pilot), missing: [], failures: [], reasons: [], summaries: [], power: [], tasksPerFamily: null, requiredExecutions: null, worstCaseCostUsd: null };
   try {
     validateConfiguration(config, trust);
@@ -210,6 +242,8 @@ export function calibrate(config: Configuration, pilot: ScoredRecord[], trust: T
 }
 
 export function freezePlan(configuration: Configuration, calibration: CalibrationReport, acceptanceCases: Case[], executionOrder: string[], trust: Trust): FrozenPlan {
+  configuration = inertSnapshot(configuration); calibration = inertSnapshot(calibration);
+  acceptanceCases = inertSnapshot(acceptanceCases); executionOrder = inertSnapshot(executionOrder);
   validateConfiguration(configuration, trust);
   invariant(calibration.status === 'planned' && calibration.tasksPerFamily !== null, 'calibration not feasible');
   // Recompute to prevent a trusted wrapper from accidentally sealing altered counts or stale pilots.
@@ -222,6 +256,7 @@ export function freezePlan(configuration: Configuration, calibration: Calibratio
   return structuredClone({ configuration, calibration, acceptanceCases, executionOrder });
 }
 export function analyze(plan: FrozenPlan, records: ScoredRecord[], trust: Trust): AnalysisReport {
+  plan = inertSnapshot(plan); records = inertSnapshot(records);
   const report: AnalysisReport = { status: 'indeterminate', admissionEligible: false, method, planDigest: planDigest(plan), recordsDigest: artifactDigest('acceptance-records', records), records: structuredClone(records), reasons: [], missing: [], failures: [], hardViolations: [], families: [] };
   try {
     const frozen = freezePlan(plan.configuration, plan.calibration, plan.acceptanceCases, plan.executionOrder, trust);
