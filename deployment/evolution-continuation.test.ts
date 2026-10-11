@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { candidateIdentity, identity, type EvaluationEvidence, type Run, type ShellResult } from '../packages/contracts/index.ts';
+import { candidateIdentity, identity, type EvaluationEvidence, type PhysicalRequest, type Run, type ShellResult } from '../packages/contracts/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
 import { InitiativeRegistry } from '../packages/initiative/goals/index.ts';
 import { ObligationRegistry } from '../packages/initiative/obligations/index.ts';
@@ -12,7 +12,8 @@ import { DurableRuntime, ResourceLedger } from '../packages/runtime/index.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { ChangeRecord } from '../packages/release/proposals.ts';
-import { EvolutionContinuations, reconcileEvaluationWatch, watchEvaluation } from './evolution-continuation.ts';
+import { evaluationAcknowledgmentPending, EvolutionContinuations, reconcileEvaluationWatch, recordEvaluationAcknowledgment, watchEvaluation } from './evolution-continuation.ts';
+import { EvaluationDispatcher, type ReviewerFile } from './evaluation-dispatch.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 
@@ -140,4 +141,78 @@ test('already reconciled result never forces an otherwise completed model turn b
   const f = fixture();
   try { f.complete(); reconcileEvaluationWatch(f.store, f.request.requestId); assert.equal((await f.runtime.resume(f.run.id, f.prompt)).status, 'completed'); assert.deepEqual(f.continuations.wake(), []); }
   finally { f.close(); }
+});
+
+test('lost local enqueue acknowledgment reconciles exact receiver effect while preserving unknown reviewer usage', async () => {
+  const f = fixture();
+  try {
+    const call = { id: 'enqueue-call', runId: f.run.id, stepId: 'enqueue-step', name: 'candidate_evaluate', arguments: { changeId: f.request.proposal.id } };
+    const effects = new EffectJournal(f.store, f.authorities, {
+      async dispatch(effect) {
+        const state = f.mailbox.enqueueEvaluation(f.request);
+        f.store.transaction(() => recordEvaluationAcknowledgment(f.store, effect.id, f.request, effect.payload,
+          { proposal: { ...f.request.proposal, state: 'evaluation-dispatched' }, evaluation: state }));
+        throw Error('Host died after committing local enqueue but before returning its receipt');
+      }, async reconcile() { throw Error('Never redispatch reviewer or arbitrary receiver'); }
+    });
+    const runtime = new DurableRuntime({ store: f.store, effects, resources: f.resources, shell: { async run(_input, bridge) {
+      await bridge.execute(call); return { status: 'completed', observations: [] };
+    } } });
+    assert.equal((await runtime.resume(f.run.id, f.prompt)).status, 'blocked');
+    const effect = effects.unresolved(f.run.id)[0]!; assert.equal(effect.status, 'uncertain');
+    const review: PhysicalRequest = { id: 'external-review:unknown', runId: f.run.id, purpose: 'review', provider: 'external-offline-review', model: 'external-fixture',
+      promptManifestId: 'closure', requestDigest: identity('physical-review'), reservationId: 'external-review:unknown', status: 'reserved',
+      usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 200 } };
+    f.resources.reserve(review); f.resources.dispatched({ ...review, status: 'dispatched' });
+    const reopened = new OperationalStore({ filename: f.filename });
+    try {
+      const recoveredEffects = new EffectJournal(reopened, f.authorities, { async dispatch() { throw Error('No repeated local or external dispatch'); }, async reconcile() { throw Error('No external lookup'); } });
+      const resources = new ResourceLedger(reopened, { tokens: 0, costUsd: 0, elapsedMs: 100 });
+      const recovered = new DurableRuntime({ store: reopened, effects: recoveredEffects, resources, shell: f.runtime.shell });
+      recovered.recover();
+      const continuations = new EvolutionContinuations({ store: reopened, runtime: recovered, authorityStore: f.authorities });
+      assert.deepEqual(continuations.reconcileAcknowledgments(), [effect.id]); assert.deepEqual(continuations.reconcileAcknowledgments(), []);
+      assert.equal(recoveredEffects.get(effect.id)!.status, 'succeeded');
+      assert.equal(resources.request(effect.id)!.status, 'succeeded'); assert.equal(resources.request(effect.id)!.usage.elapsedMs, 100);
+      assert.equal(resources.request(review.id)!.status, 'uncertain'); assert.equal(resources.request(review.id)!.usage.elapsedMs, 200);
+      assert.equal(resources.snapshot(f.run.id).concurrent, 1);
+      assert.equal(recovered.getRun(f.run.id)!.status, 'ready'); assert.equal(continuations.holds(f.run.id), true);
+      assert.deepEqual(continuations.wake(), []);
+      f.complete(); assert.deepEqual(continuations.wake(), [f.run.id]); assert.deepEqual(continuations.wake(), []);
+      assert.equal(reopened.events(f.run.id).filter(event => event.type === 'local-enqueue-reconciled').length, 1);
+    } finally { reopened.close(); }
+  } finally { f.close(); }
+});
+test('declining a pending review continuation finishes the author without cancelling the queued physical job', async () => {
+  const f = fixture();
+  try {
+    watchEvaluation(f.store, f.request, false);
+    assert.equal((await f.runtime.resume(f.run.id, f.prompt)).status, 'completed');
+    assert.equal(f.mailbox.readEvaluation(f.request).status, 'pending');
+    f.complete(); assert.deepEqual(f.continuations.wake(), []);
+  } finally { f.close(); }
+});
+test('host defers claiming a queued review until its successful local enqueue receiver releases the lineage slot', async () => {
+  const f = fixture(); let dispatcher: EvaluationDispatcher | undefined;
+  try {
+    const call = { id: 'enqueue', runId: f.run.id, stepId: 'step', name: 'candidate_evaluate', arguments: { changeId: f.request.proposal.id } };
+    const effectId = `tool:${call.id}`;
+    const receipt = f.store.putJsonArtifact({ pending: true });
+    const effects = new EffectJournal(f.store, f.authorities, { async dispatch() { return { outcome: 'succeeded', receipt }; }, async reconcile() { throw Error('No physical retry'); } });
+    effects.create({ id: effectId, runId: f.run.id, stepId: call.stepId, kind: call.name, payload: call.arguments, scope: f.scope, authority: f.authority, status: 'pending', revision: 0 });
+    const request: PhysicalRequest = { id: effectId, runId: f.run.id, purpose: 'reasoning', provider: 'effect-receiver', model: call.name, promptManifestId: effectId,
+      requestDigest: identity(call), reservationId: effectId, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
+    f.resources.reserve(request); effects.authorize(effectId, effectId, f.authority);
+    recordEvaluationAcknowledgment(f.store, effectId, f.request, call.arguments, { proposal: f.request.proposal, evaluation: f.mailbox.readEvaluation(f.request) });
+    await effects.dispatch(effectId, f.authority, undefined, () => f.resources.dispatched({ ...request, status: 'dispatched' }));
+    assert.equal(effects.get(effectId)!.status, 'succeeded'); assert.equal(f.resources.snapshot(f.run.id).concurrent, 1);
+    dispatcher = new EvaluationDispatcher({ mailbox: f.mailbox, host: { stateDirectory: f.root, workspaceDirectory: join(f.root, 'workspace'), artifactStore: join(f.root, 'artifacts'), nodeBinary: process.execPath },
+      reviewer: {} as ReviewerFile, policyDigests: [], getPolicy() { throw Error('Must not inspect or dispatch reviewer while enqueue slot is held'); },
+      assertAuthority: grant => f.authorities.assert(grant), dispatchAuthority: (grant, operation) => f.authorities.dispatch(grant, operation), acceptedCandidateId: () => 'fixture-artifact',
+      async release() { throw Error('No release'); }, async stageControl() { throw Error('No stage'); } });
+    assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), true);
+    await dispatcher.processPending(); assert.equal(f.mailbox.status(f.request.requestId)!.status, 'pending'); assert.equal(dispatcher.status().uncertain, 0);
+    f.resources.settle({ ...request, status: 'succeeded' });
+    assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), false); assert.equal(f.resources.snapshot(f.run.id).concurrent, 0);
+  } finally { await dispatcher?.close(); f.close(); }
 });

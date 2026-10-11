@@ -109,7 +109,7 @@ test('ordinary service model tools queue evaluation, resume bound feedback and s
     assert.equal(app.runtime.getRun(run.id)!.status, 'waiting');
     assert.deepEqual(app.resources.snapshot(run.id).requests, usedBeforeRestart.requests);
     assert.equal(calls, 6, 'Restart does not repeat the author or reviewer request');
-    await app.tick();
+    await app.start();
     const submission = await eventually(() => mailbox.jobs().find(job => job.kind === 'submission'), Boolean);
     await mailbox.processSubmission(submission!.id, async (request, externalProof) => {
       assert.deepEqual(externalProof, engineeringResult!.proof);

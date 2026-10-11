@@ -1,4 +1,4 @@
-import { identity, invariant, type Authority, type DataScope, type Goal, type ShellResult } from '../packages/contracts/index.ts';
+import { identity, invariant, transitionRun, type ArtifactRef, type Effect, type PhysicalRequest, type JsonValue, type Run, type Authority, type DataScope, type Goal, type ShellResult } from '../packages/contracts/index.ts';
 import { InitiativeRegistry } from '../packages/initiative/goals/index.ts';
 import type { DurableRuntime } from '../packages/runtime/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
@@ -10,6 +10,26 @@ import type { EvaluationReceipt, EvaluationRequest } from './evolution-tools.ts'
 
 const namespace = 'host.evolution-continuations';
 interface Continuation { requestId: string; requestDigest: string; runId: string; changeId: string; scope: DataScope; authority: Authority; status: 'waiting' | 'notified' | 'declined' | 'reconciled' }
+interface Acknowledgment { effectId: string; runId: string; scope: DataScope; authority: Authority; payload: JsonValue; requestId: string; requestDigest: string; receipt: ArtifactRef }
+/** The local enqueue receiver must release its own slot before a host reviewer can
+ * claim the job. A lost receiver reply remains pending for exact local reconciliation. */
+export function evaluationAcknowledgmentPending(store: OperationalStore, requestId: string): boolean {
+  return store.list<Acknowledgment>('host.evolution-acknowledgments').some(row => {
+    const acknowledgment = row.value;
+    if (acknowledgment.requestId !== requestId) return false;
+    const effect = store.get<Effect>('effects', acknowledgment.effectId)?.value;
+    const reservation = effect?.reservationId ? store.get<{ request: PhysicalRequest }>('requests', effect.reservationId)?.value : undefined;
+    return !effect || effect.status !== 'succeeded' || !reservation || reservation.request.status !== 'succeeded';
+  });
+}
+/** Persist the exact local tool return with its host-supplied effect identity before returning it. */
+export function recordEvaluationAcknowledgment(store: OperationalStore, effectId: string, request: EvaluationRequest, payload: JsonValue, value: unknown): void {
+  const acknowledgment: Acknowledgment = { effectId, runId: request.proposal.runId, scope: structuredClone(request.proposal.scope), authority: structuredClone(request.proposal.authority),
+    payload: structuredClone(payload), requestId: request.requestId, requestDigest: identity(request), receipt: store.putJsonArtifact(JSON.parse(JSON.stringify(value)) as JsonValue) };
+  const row = store.get<Acknowledgment>('host.evolution-acknowledgments', effectId);
+  invariant(!row || identity(row.value) === identity(acknowledgment), 'Local evaluation acknowledgment changed');
+  if (!row) store.put('host.evolution-acknowledgments', effectId, acknowledgment, null);
+}
 /** Subscription changes never cancel an external review or invent its outcome. */
 export function watchEvaluation(store: OperationalStore, request: EvaluationRequest, enabled: boolean): void {
   store.transaction(() => {
@@ -42,10 +62,57 @@ export class EvolutionContinuations {
     const runId = this.store.get<{ runId: string }>('initiative.execution', goal.id)?.value.runId;
     if (!runId || !this.holds(runId)) return true;
     const consumed = this.store.get<{ messageSequence?: number }>('execution', runId)?.value.messageSequence ?? 0;
-    return this.store.events<{ source?: string }>(runId, consumed).some(event => event.type === 'steering' && event.data.source !== 'host.evolution');
+    return this.store.events(runId, consumed).some(event => event.type === 'steering');
   }
   preserveWaiting(runId: string, result: ShellResult): ShellResult {
     return result.status === 'completed' && this.holds(runId) ? { ...result, status: 'checkpointed' } : result;
+  }
+  /** Only a committed local enqueue proves this receiver's known outcome. Physical reviews
+   * and every other uncertain effect keep their independent reservations and recovery rules. */
+  reconcileAcknowledgments(): string[] {
+    const recovered: string[] = [];
+    for (const row of this.store.list<Acknowledgment>('host.evolution-acknowledgments')) {
+      const acknowledgment = row.value;
+      try { this.authorityStore.dispatch(acknowledgment.authority, () => this.store.transaction(() => {
+        const effect = this.runtime.effects.get(acknowledgment.effectId);
+        if (effect?.status !== 'uncertain') return;
+        invariant(effect.id.startsWith('tool:') && effect.kind === 'candidate_evaluate' && effect.runId === acknowledgment.runId && identity(effect.payload) === identity(acknowledgment.payload) &&
+          identity(effect.scope) === identity(acknowledgment.scope) && identity(effect.authority) === identity(acknowledgment.authority), 'Local evaluation effect binding mismatch');
+        const run = this.runtime.getRun(effect.runId);
+        if (!run || ['completed', 'cancelled', 'running'].includes(run.status)) return;
+        invariant(identity(run.scope) === identity(acknowledgment.scope), 'Local evaluation effect audience mismatch');
+        const job = this.store.get<EvolutionJob>('host.evolution-jobs', acknowledgment.requestId)?.value;
+        invariant(job?.kind === 'evaluation' && job.requestDigest === acknowledgment.requestDigest, 'Committed local evaluation job required');
+        const request = this.store.readJsonArtifact<EvaluationRequest>(job.request);
+        invariant(identity(request) === acknowledgment.requestDigest && request.proposal.runId === effect.runId &&
+          identity(request.proposal.scope) === identity(effect.scope) && identity(request.proposal.authority) === identity(effect.authority), 'Local evaluation request binding mismatch');
+        assertReviewLineage(this.store, request);
+        const receipt = this.store.readJsonArtifact<{ proposal: ChangeRecord; evaluation: { requestId: string; candidateId: string; policyDigest: string } }>(acknowledgment.receipt);
+        invariant(receipt.proposal.id === request.proposal.id && receipt.proposal.runId === effect.runId && identity(receipt.proposal.candidate) === identity(request.candidate.manifest) &&
+          receipt.proposal.judgingPolicyDigest === request.policyDigest && identity(receipt.proposal.scope) === identity(effect.scope) &&
+          identity(receipt.proposal.authority) === identity(effect.authority) && receipt.evaluation.requestId === job.id && receipt.evaluation.candidateId === job.candidateId &&
+          receipt.evaluation.policyDigest === job.policyDigest, 'Local evaluation acknowledgment binding mismatch');
+        const reservation = this.store.get<{ request: PhysicalRequest; ceiling: { elapsedMs: number }; charged: { elapsedMs: number } }>('requests', effect.reservationId!)?.value;
+        invariant(reservation && reservation.request.id === effect.id && reservation.request.reservationId === effect.reservationId && reservation.request.purpose === 'reasoning' &&
+          reservation.request.promptManifestId === effect.id && reservation.request.runId === effect.runId && reservation.request.provider === 'effect-receiver' &&
+          reservation.request.model === 'candidate_evaluate' && reservation.request.requestDigest === identity({ id: effect.id.slice(5), runId: effect.runId, stepId: effect.stepId, name: effect.kind, arguments: effect.payload }) &&
+          ['dispatched', 'uncertain'].includes(reservation.request.status), 'Local enqueue receiver reservation required');
+        // Keep the persisted upper charge when elapsed observation was lost; never invent zero.
+        const elapsedMs = Math.max(reservation.request.usage.elapsedMs, reservation.ceiling.elapsedMs, reservation.charged.elapsedMs);
+        this.runtime.effects.recordReconciliation(effect.id, acknowledgment.authority, 'succeeded', acknowledgment.receipt);
+        this.runtime.resources.settle({ ...reservation.request, status: 'succeeded', usage: { ...reservation.request.usage, elapsedMs } });
+        this.store.append({ id: `local-enqueue-reconciled:${effect.id}`, stream: effect.runId, type: 'local-enqueue-reconciled',
+          data: { effectId: effect.id, requestId: job.id, elapsedMs, elapsedBasis: 'retained reservation ceiling; original elapsed observation unavailable', reviewerRedispatched: false } });
+        if (run.status === 'blocked' && this.holds(run.id) && this.runtime.effects.unresolved(run.id).length === 0) {
+          const runRow = this.store.get<Run>('runs', run.id)!; const ready = transitionRun(runRow.value, 'ready');
+          this.store.put('runs', run.id, ready, runRow.revision);
+          this.store.put('host.evolution-recovered-waits', run.id, { requestId: job.id }, this.store.get('host.evolution-recovered-waits', run.id)?.revision ?? null);
+          this.store.append({ id: `local-enqueue-ready:${effect.id}`, stream: run.id, type: 'status', data: ready });
+        }
+        recovered.push(effect.id);
+      })); } catch { /* A mismatched, cancelled or withdrawn acknowledgment never releases a gate. */ }
+    }
+    return recovered;
   }
   wake(): string[] {
     const resumed: string[] = [];
@@ -61,7 +128,8 @@ export class EvolutionContinuations {
           request.proposal.id === subscription.changeId && identity(request.proposal.scope) === identity(subscription.scope) &&
           identity(request.proposal.authority) === identity(subscription.authority) && identity(job.authority) === identity(subscription.authority), 'Evolution continuation binding mismatch');
         const run = this.runtime.getRun(subscription.runId);
-        if (run?.status !== 'waiting') return;
+        const recoveredWait = this.store.get<{ requestId: string }>('host.evolution-recovered-waits', subscription.runId)?.value.requestId === subscription.requestId;
+        if (run?.status !== 'waiting' && !(run?.status === 'ready' && recoveredWait && this.runtime.effects.unresolved(run.id).length === 0)) return;
         invariant(identity(run.scope) === identity(subscription.scope), 'Evolution continuation audience mismatch');
         assertReviewLineage(this.store, request);
         const proposal = this.store.get<ChangeRecord>('release.changes', identity({ runId: subscription.runId, id: subscription.changeId }))?.value;
@@ -74,7 +142,7 @@ export class EvolutionContinuations {
         const execution = this.store.list<{ runId: string }>('initiative.execution').find(entry => entry.value.runId === subscription.runId);
         if (execution) {
           const goal = this.goals.goal(execution.key);
-          if (!goal || goal.status !== 'waiting' || identity(goal.scope) !== identity(subscription.scope)) return;
+          if (!goal || !(goal.status === 'waiting' || goal.status === 'blocked' && recoveredWait) || identity(goal.scope) !== identity(subscription.scope)) return;
           this.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'Bound external evaluation result is available for the original waiting author');
         } else {
           // Delegation/obligation lifecycles own their continuation and are never borrowed here.

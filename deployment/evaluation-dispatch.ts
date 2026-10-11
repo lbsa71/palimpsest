@@ -15,6 +15,7 @@ import type { HostBindings } from './materialize.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
 import { accountedReview, assertReviewLineage, recoverReviewReservations } from './evaluation-resources.ts';
+import { evaluationAcknowledgmentPending } from './evolution-continuation.ts';
 
 /** All runnable bytes must be declared, including interpreters and dynamic libraries.
  * Nothing else on the host filesystem is mounted into the reviewer namespace.
@@ -220,6 +221,7 @@ export class EvaluationDispatcher {
     const job = mailbox.jobs().find(value => value.status === 'pending' && (reviewer || value.kind === 'submission'));
     if (!job || this.#abort.signal.aborted) return;
     if (mailbox.fencePending(job.id)) { this.#diagnosis = mailbox.status(job.id)!.diagnosis; this.#publish(); return; }
+    if (job.kind === 'evaluation' && evaluationAcknowledgmentPending(mailbox.store, job.id)) return;
     this.#activeJob = job.id;
     this.#publish();
     try {

@@ -10,10 +10,10 @@ import { freezeApplication, verifyApplication, type DeploymentInputs } from './c
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { isHumanInput } from './input-origin.ts';
 import { availableModelProfiles, selectModelProfile, type ModelProfile } from './model-grants.ts';
-import { watchEvaluation, reconcileEvaluationWatch } from './evolution-continuation.ts';
+import { watchEvaluation, reconcileEvaluationWatch, recordEvaluationAcknowledgment } from './evolution-continuation.ts';
 import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
 
-export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority }
+export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority; effectId?: string }
 /** Issued by accepted host bootstrap or a host wrapper observing genuinely autonomous goal creation, never from Goal.origin alone. */
 export interface IndependentSelfOrigin { goalId: string; goalDefinition: string; basis: 'accepted-bootstrap' | 'independent-initiative'; originRunId?: string }
 export function goalDefinitionIdentity(goal: Goal): string { return identity({ id: goal.id, origin: goal.origin, purpose: goal.purpose, scope: goal.scope, successCriteria: goal.successCriteria }); }
@@ -249,7 +249,9 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
         let current = proposal.state === 'frozen' ? proposals.transition(id, 'frozen', 'evaluation-dispatched') : proposal;
         if (state.status === 'completed') current = acceptEvaluation(current, req, state.evaluation);
         else watchEvaluation(bound.store, req, a.continueOnResult !== false && state.status !== 'uncertain');
-        return { proposal: current, evaluation: state };
+        const value = { proposal: current, evaluation: state };
+        if (bound.effectId) recordEvaluationAcknowledgment(bound.store, bound.effectId, req, args, value);
+        return value;
       }); } catch (cause) { throw Object.assign(new Error(`External evaluation enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid host result'}`, { cause }), { mayHaveApplied: false }); }
     },
   }, { name: 'release_submit', description: 'Submit this exact candidate and externally issued evaluation receipt to the admitted host release controller. The host decides rejection, ordinary admission or separately staged control upgrade; this tool grants no new authority.', inputSchema: schema({ changeId: string }, ['changeId']),
