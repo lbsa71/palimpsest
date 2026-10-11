@@ -107,10 +107,19 @@ export class EvolutionContinuations {
         this.runtime.resources.settle({ ...reservation.request, status: 'succeeded', usage: { ...reservation.request.usage, elapsedMs } });
         this.store.append({ id: `local-enqueue-reconciled:${effect.id}`, stream: effect.runId, type: 'local-enqueue-reconciled',
           data: { effectId: effect.id, requestId: job.id, elapsedMs, elapsedBasis: 'retained reservation ceiling; original elapsed observation unavailable', reviewerRedispatched: false } });
-        if (run.status === 'blocked' && this.holds(run.id) && this.runtime.effects.unresolved(run.id).length === 0) {
+        if (run.status === 'blocked' && this.runtime.effects.unresolved(run.id).length === 0) {
           const runRow = this.store.get<Run>('runs', run.id)!; const ready = transitionRun(runRow.value, 'ready');
           this.store.put('runs', run.id, ready, runRow.revision);
-          this.store.put('host.evolution-recovered-waits', run.id, { requestId: job.id }, this.store.get('host.evolution-recovered-waits', run.id)?.revision ?? null);
+          if (this.holds(run.id)) {
+            this.store.put('host.evolution-recovered-waits', run.id, { requestId: job.id }, this.store.get('host.evolution-recovered-waits', run.id)?.revision ?? null);
+          } else {
+            // Declining a future result wake does not abandon the interrupted tool turn.
+            // Restore its initiative readiness too; no new slice or grant is issued here.
+            const execution = this.store.list<{ runId: string }>('initiative.execution').find(entry => entry.value.runId === run.id);
+            const goal = execution ? this.goals.goal(execution.key) : undefined;
+            if (goal?.status === 'blocked' && identity(goal.scope) === identity(acknowledgment.scope))
+              this.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'Known local evaluation acknowledgment recovered for the interrupted author');
+          }
           this.store.append({ id: `local-enqueue-ready:${effect.id}`, stream: run.id, type: 'status', data: ready });
         }
         recovered.push(effect.id);

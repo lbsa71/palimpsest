@@ -12,6 +12,7 @@ import { isHumanInput } from './input-origin.ts';
 import { availableModelProfiles, selectModelProfile, type ModelProfile } from './model-grants.ts';
 import { watchEvaluation, reconcileEvaluationWatch, recordEvaluationAcknowledgment } from './evolution-continuation.ts';
 import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
+import type { EvolutionJob } from './evolution-mailbox.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority; effectId?: string }
 /** Issued by accepted host bootstrap or a host wrapper observing genuinely autonomous goal creation, never from Goal.origin alone. */
@@ -238,7 +239,16 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       invariant(a.continueOnResult === undefined || typeof a.continueOnResult === 'boolean', 'Boolean evolution continuation required');
       if (proposal.evaluation) {
         const evaluation = bound.store.readJsonArtifact<EvaluationReceipt>(proposal.evaluation); validateReceipt(evaluation, proposal);
-        return { proposal, evaluation: { status: 'completed', requestId: evaluation.requestId, candidateId: evaluation.candidateId, policyDigest: evaluation.policyDigest, evaluation } };
+        const value = { proposal, evaluation: { status: 'completed', requestId: evaluation.requestId, candidateId: evaluation.candidateId, policyDigest: evaluation.policyDigest, evaluation } };
+        if (bound.effectId) {
+          const job = bound.store.get<EvolutionJob>('host.evolution-jobs', evaluation.requestId)?.value;
+          invariant(job?.kind === 'evaluation' && job.status === 'completed' && job.receipt &&
+            identity(bound.store.readJsonArtifact(job.receipt)) === identity(evaluation), 'Known evaluation requires its exact durable host job');
+          const req = bound.store.readJsonArtifact<EvaluationRequest>(job.request);
+          invariant(identity(req) === job.requestDigest && req.requestId === evaluation.requestId, 'Known evaluation request changed');
+          recordEvaluationAcknowledgment(bound.store, bound.effectId, req, args, value);
+        }
+        return value;
       }
       invariant(['frozen', 'evaluation-dispatched'].includes(proposal.state), 'Freeze before external evaluation');
       const req = request(proposal, 'evaluate');

@@ -15,7 +15,7 @@ import type { ChangeRecord } from '../packages/release/proposals.ts';
 import { evaluationAcknowledgmentPending, EvolutionContinuations, reconcileEvaluationWatch, recordEvaluationAcknowledgment, watchEvaluation } from './evolution-continuation.ts';
 import { EvaluationDispatcher, type ReviewerFile } from './evaluation-dispatch.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
-import type { EvaluationRequest } from './evolution-tools.ts';
+import { evolutionTools, type EvaluationRequest, type EvolutionOptions } from './evolution-tools.ts';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'aeon-evolution-continuation-')), filename = join(root, 'operational.sqlite');
@@ -38,7 +38,7 @@ function fixture() {
   const experience = store.putArtifact('Engineering fixture evidence, not a qualification');
   const proposal: ChangeRecord = { id: 'change', runId: run.id, scope, authority, provenance: { kind: 'human', inputId: 'input', actorId: 'operator' }, justification: 'Observe continuation ordering', goal: { objective: 'Continue the original waiting run', successCriteria: ['no duplicate wake or physical redispatch'] }, experience, state: 'evaluation-dispatched', candidate: manifest, judgingPolicyDigest: identity('prior-policy') };
   const { state: _state, ...rest } = proposal;
-  const request = { requestId: identity('review'), proposal: { ...rest, state: 'frozen' }, candidate: { manifest }, policyDigest: proposal.judgingPolicyDigest } as EvaluationRequest;
+  const request = { requestId: identity({ change: identity({ runId: run.id, id: proposal.id }), candidate: manifest.id, action: 'evaluate', policy: proposal.judgingPolicyDigest }), proposal: { ...rest, state: 'frozen' }, candidate: { manifest }, policyDigest: proposal.judgingPolicyDigest } as EvaluationRequest;
   store.put('release.changes', identity({ runId: run.id, id: proposal.id }), proposal, null);
   const mailbox = new EvolutionMailbox({ store, assertAuthority: grant => authorities.assert(grant), waitMs: 10, pollMs: 1 });
   mailbox.enqueueEvaluation(request); watchEvaluation(store, request, true);
@@ -255,4 +255,85 @@ test('host defers claiming a queued review until its successful local enqueue re
     f.store.put('runs', f.run.id, { ...running.value, status: 'waiting' }, running.revision);
     assert.equal(evaluationAcknowledgmentPending(f.store, f.request.requestId), false);
   } finally { await dispatcher?.close(); f.close(); }
+});
+
+test('lost local acknowledgment resumes the interrupted author even when no result subscription remains', async () => {
+  for (const disposition of ['declined', 'reconciled', 'initiative']) {
+    const f = fixture();
+    try {
+      if (disposition !== 'reconciled') watchEvaluation(f.store, f.request, false);
+      else { f.complete(); reconcileEvaluationWatch(f.store, f.request.requestId); }
+      const call = { id: 'known-return', runId: f.run.id, stepId: 'step', name: 'candidate_evaluate', arguments: { changeId: f.request.proposal.id, continueOnResult: false } };
+      const effects = new EffectJournal(f.store, f.authorities, { async dispatch(effect) {
+        recordEvaluationAcknowledgment(f.store, effect.id, f.request, effect.payload,
+          { proposal: f.request.proposal, evaluation: f.mailbox.readEvaluation(f.request) });
+        throw Error('Host stopped after committing the local return');
+      }, async reconcile() { throw Error('Never repeat external work'); } });
+      const interrupted = new DurableRuntime({ store: f.store, effects, resources: f.resources, shell: { async run(_input, bridge) {
+        await bridge.execute(call); return { status: 'completed', observations: [] };
+      } } });
+      assert.equal((await interrupted.resume(f.run.id, f.prompt)).status, 'blocked');
+      const goals = new InitiativeRegistry(f.store);
+      if (disposition === 'initiative') {
+        const provenance = { sourceIds: ['fixture'], actorId: 'operator', recordedAt: new Date().toISOString(), derivation: 'observed' as const };
+        let goal = goals.propose({ id: 'interrupted-author', origin: { kind: 'self' }, purpose: 'Finish original tool turn', scope: f.scope, successCriteria: ['consume known reply'], evidenceIds: [], dependencyIds: [], resources: f.envelope, priority: 1, nextAction: 'finish', reviewAt: new Date().toISOString() }, provenance);
+        goal = goals.accept(goal.id, goal.revision, 'Fixture author admitted');
+        goals.revise(goal.id, goal.revision, { status: 'blocked' }, 'Local tool acknowledgment lost');
+        f.store.put('initiative.execution', goal.id, { runId: f.run.id }, null);
+      }
+      const reopened = new OperationalStore({ filename: f.filename });
+      try {
+        const recoveredEffects = new EffectJournal(reopened, f.authorities, { async dispatch() { throw Error('Never replay known local or external work'); }, async reconcile() { throw Error('No external lookup'); } });
+        const resources = new ResourceLedger(reopened, { tokens: 0, costUsd: 0, elapsedMs: 100 });
+        const recovered = new DurableRuntime({ store: reopened, effects: recoveredEffects, resources, shell: { async run(_input, bridge) {
+          const observation = await bridge.execute(call);
+          assert.equal((observation.value as any).evaluation.status, disposition === 'reconciled' ? 'completed' : 'pending');
+          return { status: 'completed', observations: [observation] };
+        } } });
+        recovered.recover();
+        const continuation = new EvolutionContinuations({ store: reopened, runtime: recovered, authorityStore: f.authorities });
+        assert.deepEqual(continuation.reconcileAcknowledgments(), [`tool:${call.id}`]);
+        assert.equal(recoveredEffects.unresolved(f.run.id).length, 0);
+        assert.equal(recovered.getRun(f.run.id)!.status, 'ready', disposition);
+        assert.equal(continuation.holds(f.run.id), false);
+        if (disposition === 'initiative') assert.equal(goals.goal('interrupted-author')!.status, 'ready');
+        assert.deepEqual(continuation.wake(), []);
+        assert.equal((await recovered.resume(f.run.id, f.prompt)).status, 'completed');
+        assert.equal(resources.snapshot(f.run.id).requests, 1);
+        assert.deepEqual(continuation.reconcileAcknowledgments(), []);
+        assert.equal(f.mailbox.jobs().length, 1);
+      } finally { reopened.close(); }
+    } finally { f.close(); }
+  }
+});
+
+test('reading an already reconciled evaluation archives its exact local acknowledgment before returning', async () => {
+  const f = fixture();
+  try {
+    f.complete();
+    const key = identity({ runId: f.run.id, id: f.request.proposal.id }), row = f.store.get<ChangeRecord>('release.changes', key)!;
+    f.store.put('release.changes', key, { ...row.value, state: 'evaluated', evaluation: f.mailbox.status(f.request.requestId)!.receipt! }, row.revision);
+    reconcileEvaluationWatch(f.store, f.request.requestId);
+    const options: EvolutionOptions = { artifactStore: f.root, acceptedCandidateId: 'unused', nodeBinary: process.execPath, policyDigest: f.request.policyDigest,
+      maxFiles: 1, maxBytes: 1, eligibleHumanAuthors: new Set(['operator']), assertAuthority: grant => f.authorities.assert(grant),
+      provenanceForRun: () => f.request.proposal.provenance, enqueueEvaluation() { throw Error('No review dispatch'); }, readEvaluation: f.mailbox.readEvaluation,
+      async submitRelease() { throw Error('No release'); } };
+    const effects = new EffectJournal(f.store, f.authorities, { async dispatch(effect) {
+      const descriptor = evolutionTools({ store: f.store, runId: f.run.id, authority: f.authority, scope: f.scope, workspace: f.root, effectId: effect.id }, options)
+        .find(tool => tool.name === 'candidate_evaluate')!;
+      const value = await descriptor.execute(effect.payload);
+      assert.equal((value as any).evaluation.status, 'completed');
+      throw Error('Host stopped before acknowledging known evaluation');
+    }, async reconcile() { throw Error('No external replay'); } });
+    const runtime = new DurableRuntime({ store: f.store, effects, resources: f.resources, shell: { async run(_input, bridge) {
+      await bridge.execute({ id: 'known-evaluation', runId: f.run.id, stepId: 'step', name: 'candidate_evaluate', arguments: { changeId: f.request.proposal.id } });
+      return { status: 'completed', observations: [] };
+    } } });
+    assert.equal((await runtime.resume(f.run.id, f.prompt)).status, 'blocked');
+    const continuation = new EvolutionContinuations({ store: f.store, runtime, authorityStore: f.authorities });
+    assert.deepEqual(continuation.reconcileAcknowledgments(), ['tool:known-evaluation']);
+    assert.equal(runtime.getRun(f.run.id)!.status, 'ready');
+    assert.equal(f.resources.request('tool:known-evaluation')!.status, 'succeeded');
+    assert.equal(f.mailbox.jobs().length, 1);
+  } finally { f.close(); }
 });
