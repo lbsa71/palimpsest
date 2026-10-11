@@ -1,6 +1,6 @@
 # A1-L03 — durable runtime and recovery
 
-Status: **implementing**. Session owner: **/root/a1_runtime**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **reviewing**. Session owner: **/root/a1_runtime**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW05, RW10, RW11, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
 
@@ -42,5 +42,5 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Branch / worktree | codex/a1-runtime-20261011 / /home/palimpsest/migration/aeon-1-20261011/runtime |
 | Base source / contract revision | 3398077 / aeon1.c1.v1 (ACK) |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Implement T01 storage, T02–T04 runtime/effects/resources; joined shell and independent review gates pending |
+| Last handoff / evidence | [Implementation and fixture proof](../evidence/A1-L03/implementation.md); shared storage 8dd8ee7 plus next component handoff revision |
+| Blockers / next eligible task | Selected shell joined fixture proof passes; independent review, real tool/communication integration and live gates remain |

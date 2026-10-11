@@ -24,3 +24,14 @@ test('checkout state and asynchronous transactions are refused', () => {
   const store = new OperationalStore({ filename: filename() });
   assert.throws(() => store.transaction(() => Promise.resolve(1))); store.close();
 });
+
+test('dot-dot named checkout children and symlink aliases are rejected', async () => {
+  const { mkdirSync, symlinkSync } = await import('node:fs');
+  const root=mkdtempSync(join(tmpdir(),'aeon-checkout-'));mkdirSync(join(root,'checkout'));symlinkSync(join(root,'checkout'),join(root,'alias'));
+  assert.throws(()=>new OperationalStore({filename:join(root,'checkout','..state','db.sqlite'),checkoutRoot:join(root,'checkout')}));
+  assert.throws(()=>new OperationalStore({filename:join(root,'alias','db.sqlite'),checkoutRoot:join(root,'checkout')}));
+});
+test('incompatible and partially forged schemas produce open diagnostics', async () => {
+  const { DatabaseSync }=await import('node:sqlite');const path=filename();const db=new DatabaseSync(path);db.exec('CREATE TABLE documents(wrong TEXT); CREATE TABLE events(sequence INTEGER); CREATE TABLE artifacts(bytes BLOB); PRAGMA user_version=1');db.close();
+  assert.throws(()=>new OperationalStore({filename:path}),/cannot open operational state/);
+});
