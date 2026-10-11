@@ -9,6 +9,7 @@ import type { ApplicationTool } from './application.ts';
 import { freezeApplication, verifyApplication, type DeploymentInputs } from './candidate.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { isHumanInput } from './input-origin.ts';
+import { availableModelProfiles, selectModelProfile, type ModelProfile } from './model-grants.ts';
 import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority }
@@ -22,7 +23,7 @@ export interface SubmissionReceipt { requestId: string; candidateId: string; sta
 export interface EvolutionOptions {
   /** All options are host-installed, never supplied by a model tool argument. */
   artifactStore: string; acceptedCandidateId: string; nodeBinary: string; policyDigest: string;
-  maxFiles: number; maxBytes: number; eligibleHumanAuthors: ReadonlySet<string>; allowedModelIds: ReadonlySet<string>;
+  maxFiles: number; maxBytes: number; eligibleHumanAuthors: ReadonlySet<string>; allowedModelProfiles?: readonly ModelProfile[];
   /** Separate bounded runtime staging grant; source/compiler quota is unchanged. */
   runtimeMaxBytes?: number;
   assertAuthority(authority: Authority): void;
@@ -126,10 +127,8 @@ function frozenInputs(staging: string, workspace: string, accepted: FrozenCandid
       const { model: priorModel, pollMs: priorPoll, ...priorGrants } = configuration;
       const { model: nextModel, pollMs: nextPoll, ...nextGrants } = proposed;
       invariant(identity(priorGrants) === identity(nextGrants), 'Candidate settings cannot alter host grants, policy or resource allowances');
-      invariant(options.allowedModelIds.has(nextModel?.id) && Number.isSafeInteger(nextPoll) && nextPoll >= 100, 'Unqualified model or polling configuration');
-      invariant(typeof nextModel.reasoning === 'boolean' && ['none', 'high'].includes(nextModel.effort) && (nextModel.effort !== 'high' || nextModel.reasoning), 'Invalid proposed model profile');
-      for (const field of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(nextModel[field]) && nextModel[field] > 0 && nextModel[field] <= priorModel[field], 'Candidate model exceeds accepted request bounds');
-      invariant(identity(Object.keys(nextModel).sort()) === identity(Object.keys(priorModel).sort()) && identity(nextModel.pricesPerMillion) === identity(priorModel.pricesPerMillion), 'Model descriptor/host prices changed');
+      invariant(Number.isSafeInteger(nextPoll) && nextPoll >= 100, 'Invalid polling configuration');
+      selectModelProfile(nextModel, priorModel, options.allowedModelProfiles);
       Object.assign(configuration, proposed);
     }
   }
@@ -179,7 +178,14 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     const { evaluation, submission, ...frozenProposal } = proposal;
     return { requestId: id, proposal: { ...frozenProposal, state: 'frozen' }, candidate, policyDigest: proposal.judgingPolicyDigest! };
   };
-  return [{ name: 'change_propose', description: 'Record a justified finite source change proposal with visible experience evidence. Origin and human eligibility come from authenticated host provenance; workspace edits confer no production authority.',
+  return [{ name: 'model_profiles', description: 'Inspect the current model and host-permitted provider/model profiles, prices and request ceilings. Permission is not competence qualification; selection still needs candidate evaluation and release.', inputSchema: schema({}, []),
+    execute(args, signal) {
+      allowed(signal); object(args, []);
+      const accepted = verifyApplication(options.artifactStore, options.acceptedCandidateId, options.nodeBinary);
+      const current = (accepted.inputs.configuration as unknown as DeploymentInputs['configuration']).model;
+      return { current, allowed: availableModelProfiles(current, options.allowedModelProfiles), qualification: 'Host permission only; independent candidate evaluation remains required.' };
+    },
+  }, { name: 'change_propose', description: 'Record a justified finite source change proposal with visible experience evidence. Origin and human eligibility come from authenticated host provenance; workspace edits confer no production authority.',
     inputSchema: schema({ changeId: string, justification: string, objective: string, successCriteria: { type: 'array', items: string, minItems: 1, maxItems: 32 }, experienceIds: { type: 'array', items: string, maxItems: 32 } }, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']),
     execute(args, signal) {
       allowed(signal); const a = object(args, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']); const origin = provenance(bound, options);

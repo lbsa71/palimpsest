@@ -2,7 +2,7 @@ import { readFileSync, realpathSync, mkdirSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { invariant, validateScope, type DataScope, type ResourceEnvelope } from '../packages/contracts/index.ts';
 import type { SchedulerPolicy } from '../packages/initiative/index.ts';
-import type { ShellProvider } from '../packages/agent-shell/index.ts';
+import { validateModelProfile, type ModelProfile } from './model-grants.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
 export interface ApplicationConfig {
@@ -15,7 +15,7 @@ export interface ApplicationConfig {
   controlRevision: string;
   promptFile: string;
   compactionPromptFile: string;
-  model: { provider?: ShellProvider; id: string; contextWindow: number; reasoning: boolean; effort: 'none' | 'high'; maxOutputTokens: number; maxRequestsPerSlice: number; timeoutMs: number; pricesPerMillion: { input: number; output: number } };
+  model: ModelProfile;
   resources: ResourceEnvelope;
   resourceLimits?: ResourceLimits;
   conversationResources: ResourceEnvelope;
@@ -45,13 +45,7 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   for (const [a, b] of [[config.stateDirectory, config.workspaceDirectory], [config.stateDirectory, config.applicationRoot], [config.workspaceDirectory, config.applicationRoot]]) invariant(!beneath(a!, b!) && !beneath(b!, a!), 'Source, private state and workspaces must be disjoint');
   invariant(statSync(config.nodeBinary).isFile() && statSync(config.applicationRoot).isDirectory(), 'Missing application/runtime');
   invariant(config.artifactId.length > 0 && config.controlRevision.length > 0, 'Qualified release identities required');
-  invariant(config.model.provider === undefined || ['mistral', 'openai'].includes(config.model.provider), 'Unsupported configured provider');
-  invariant(config.model.id.length > 0 && !config.model.id.includes('latest'), 'Pinned model required');
-  for (const key of ['contextWindow', 'maxOutputTokens', 'maxRequestsPerSlice', 'timeoutMs'] as const) invariant(Number.isSafeInteger(config.model[key]) && config.model[key] > 0, `Invalid model ${key}`);
-  invariant(typeof config.model.reasoning === 'boolean' && (config.model.effort === 'none' || config.model.effort === 'high' && config.model.reasoning), 'Unsupported reasoning profile');
-  invariant(config.model.maxOutputTokens <= config.model.contextWindow, 'Output allowance exceeds configured context window');
-  invariant(config.model.pricesPerMillion && Object.keys(config.model.pricesPerMillion).sort().join(',') === 'input,output', 'Explicit input and output model prices required');
-  for (const value of Object.values(config.model.pricesPerMillion)) invariant(Number.isFinite(value) && value >= 0, 'Finite model price required');
+  validateModelProfile(config.model);
   invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');
   validateEnvelope(config.resources); validateEnvelope(config.conversationResources); validateEnvelope(config.scheduler.resources);
   if (config.resourceLimits) {

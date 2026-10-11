@@ -1,3 +1,4 @@
+import { validateModelGrants, type ModelProfile } from './model-grants.ts';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -26,6 +27,7 @@ export interface SupervisorOptions {
   hostRescue?: ReleaseTarget;
   onHostAccepted?(target: ReleaseTarget, previous: ReleaseTarget): void;
   bootstrap?: { proof: ReleaseProof; policyDigest: string } | (() => { proof: ReleaseProof; policyDigest: string });
+  allowedModelProfiles?: ModelProfile[];
   evaluationDispatcher?: { reviewerFile: string; policyDigests: readonly string[] };
 }
 export interface SupervisorStatus {
@@ -78,6 +80,7 @@ export class ServiceSupervisor {
   private constructor(options: SupervisorOptions) {
     invariant(['engineering', 'product'].includes(options.mode), 'Explicit supervisor mode required');
     validateHostBindings(options.host);
+    if (options.allowedModelProfiles !== undefined) validateModelGrants(options.allowedModelProfiles);
     this.#options = options;
     this.#lease = new ProcessLease(join(options.host.stateDirectory, 'supervisor-lease.sqlite'));
     let authority: AuthorityStore | undefined;
@@ -99,7 +102,7 @@ export class ServiceSupervisor {
             invariant(target.operationalStatePath === options.host.stateDirectory, 'Recovery must retain current operational state');
             await this.#prepare(target.candidate.manifest.id);
             const status = this.#controller.status()!;
-            this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority, { policyDigest: status.probationJudge?.policyDigest ?? status.active.policyDigest });
+            this.#ready = await this.#service.start(target.candidate.manifest.id, target.authority, { policyDigest: status.probationJudge?.policyDigest ?? status.active.policyDigest, ...(options.allowedModelProfiles ? { allowedModelProfiles: options.allowedModelProfiles } : {}) });
           },
         } });
     } catch (error) { this.#evolutionStore?.close(); authority?.close(); this.#lease.close(); throw error; }
@@ -227,7 +230,7 @@ export class ServiceSupervisor {
     if (!current) this.#authority.bootstrap(prior.generation, prior.controlRevision, candidateId);
     this.#controller.bootstrap(proof, policy);
     await this.#prepare(candidateId);
-    this.#ready = await this.#service.start(candidateId, prior, { policyDigest: policy.policyDigest });
+    this.#ready = await this.#service.start(candidateId, prior, { policyDigest: policy.policyDigest, ...(this.#options.allowedModelProfiles ? { allowedModelProfiles: this.#options.allowedModelProfiles } : {}) });
   }
   async #prepare(candidateId: string): Promise<void> {
     const host = this.#options.host, candidate = verifyApplication(host.artifactStore, candidateId, host.nodeBinary);

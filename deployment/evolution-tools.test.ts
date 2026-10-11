@@ -47,7 +47,7 @@ test('runtime adoption preserves authenticated self origin while requiring the s
     new DevelopmentalMemory(fixture.store).ingest({ id: 'continuity-observation', runId: run.id, sourceId: 'fixture:observation', actorId: priorAuthority.generation, scope, at: new Date().toISOString(), channel: 'tool', content: 'A retained measured fixture observation.' });
     const authority = fixture.withdraw(); fixture.runtime.adopt(run.id, authority);
     const ctx = { runId: run.id, store: fixture.store, workspace: root, scope, authority };
-    const options: EvolutionOptions = { artifactStore: join(root, 'unused-artifacts'), acceptedCandidateId: identity('unused'), nodeBinary: process.execPath, policyDigest: identity('fixture-policy'), maxFiles: 100, maxBytes: 10000, eligibleHumanAuthors: new Set(), allowedModelIds: new Set(), assertAuthority: grant => fixture.effects.fence.assert(grant), provenanceForRun: () => ({ kind: 'self', inputId: admitted.id, actorId: admitted.actorId, goalId: goal.id }), async requestEvaluation() { throw Error('Not used'); }, async submitRelease() { throw Error('Not used'); } };
+    const options: EvolutionOptions = { artifactStore: join(root, 'unused-artifacts'), acceptedCandidateId: identity('unused'), nodeBinary: process.execPath, policyDigest: identity('fixture-policy'), maxFiles: 100, maxBytes: 10000, eligibleHumanAuthors: new Set(), allowedModelProfiles: [], assertAuthority: grant => fixture.effects.fence.assert(grant), provenanceForRun: () => ({ kind: 'self', inputId: admitted.id, actorId: admitted.actorId, goalId: goal.id }), async requestEvaluation() { throw Error('Not used'); }, async submitRelease() { throw Error('Not used'); } };
     const created = await call(ctx, options, 'change_propose', { ...proposal(), experienceIds: ['continuity-observation'] });
     assert.equal(created.provenance.actorId, priorAuthority.generation);
     assert.equal(created.authority.generation, authority.generation);
@@ -90,7 +90,8 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
     if (previous) assert.equal(identity(req), previous, 'A reconciled request keeps its complete canonical body');
     else requestBodies.set(req.requestId, identity(req));
   }
-  const options: EvolutionOptions = { artifactStore, acceptedCandidateId: accepted.manifest.id, nodeBinary: process.execPath, policyDigest: policy.policyDigest, maxFiles: 20000, maxBytes: 128 * 1024 * 1024, eligibleHumanAuthors: new Set(['operator']), allowedModelIds: new Set(['fixture-v1', 'fixture-v2']), assertAuthority: grant => authorityStore.assert(grant), provenanceForRun: ctx => ({ kind: 'human', inputId: input(ctx.runId).id, actorId: 'operator' }),
+  const nextModel: DeploymentInputs['configuration']['model'] = { ...inputs.configuration.model, id: 'fixture-v2', provider: 'openai', reasoning: true, effort: 'high', pricesPerMillion: { input: 3, output: 7 } };
+  const options: EvolutionOptions = { artifactStore, acceptedCandidateId: accepted.manifest.id, nodeBinary: process.execPath, policyDigest: policy.policyDigest, maxFiles: 20000, maxBytes: 128 * 1024 * 1024, eligibleHumanAuthors: new Set(['operator']), allowedModelProfiles: [nextModel], assertAuthority: grant => authorityStore.assert(grant), provenanceForRun: ctx => ({ kind: 'human', inputId: input(ctx.runId).id, actorId: 'operator' }),
     async requestEvaluation(req) {
       stableRequest(req);
       const previous = durableEvaluations.get(req.requestId); if (previous) return previous;
@@ -120,13 +121,15 @@ test('bounded proposal→candidate→external build/evaluation→actual L09 admi
     const dependency = join(ctx.workspace, 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts');
     writeFileSync(dependency, readFileSync(dependency, 'utf8') + '\nexport const evolutionFixtureRevision = "changed-dependency-v1";\n');
     writeFileSync(join(ctx.workspace, 'deployment/prompts/mind.md'), 'Changed actual source-owned fixture prompt.');
-    writeFileSync(join(ctx.workspace, 'deployment/candidate-settings.json'), JSON.stringify({ configuration: { ...inputs.configuration, model: { ...inputs.configuration.model, id: 'fixture-v2' }, pollMs: 200 } }));
+    writeFileSync(join(ctx.workspace, 'deployment/candidate-settings.json'), JSON.stringify({ configuration: { ...inputs.configuration, model: nextModel, pollMs: 200 } }));
+    const profiles = await call(ctx, options, 'model_profiles', {});
+    assert.deepEqual(profiles.allowed, [inputs.configuration.model, nextModel]);
     await call(ctx, options, 'change_propose', proposal());
     const frozen = await call(ctx, options, 'candidate_freeze', { changeId: 'change' }) as ChangeRecord;
     assert.notEqual(frozen.candidate!.dependencies, accepted.manifest.dependencies); assert.notEqual(frozen.candidate!.controls, accepted.manifest.controls);
     const candidate = verifyCandidate(artifactStore, frozen.candidate!.id);
     assert.deepEqual(candidate.inputs.prompts, { mind: 'Changed actual source-owned fixture prompt.', compaction: inputs.prompts.compaction });
-    assert.equal((candidate.inputs.model as { id: string }).id, 'fixture-v2');
+    assert.deepEqual(candidate.inputs.model, nextModel);
     assert.equal(existsSync(join(ctx.workspace, 'node_modules')), false);
     writeFileSync(dependency, 'The workspace changed after freezing.');
     failOnce = true;

@@ -1,3 +1,4 @@
+import { validateModelGrants } from './model-grants.ts';
 import { execFileSync } from 'node:child_process';
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -142,7 +143,7 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   invariant(run(executable, ['--version']).trim() === runtime.nodeVersion, 'Pinned Node version differs from frozen coordinator');
   invariant(candidate.files.some(file => file.path === 'deployment/installation.ts') && candidate.files.some(file => file.path === 'deployment/cli.ts') && candidate.files.some(file => file.path === 'deployment/host-successor.ts'), 'Frozen coordinator must include installation, CLI and host-launcher entrypoints');
   const config = JSON.parse(privateFile(value.hostConfigFile, value.uid).toString('utf8')) as SupervisorFile & { evaluationDispatcher?: string };
-  const configFields = ['evidenceDirectory', 'host', 'mode', 'policyFiles', ...(config.bootstrap ? ['bootstrap'] : []), ...(config.evaluationDispatcher !== undefined ? ['evaluationDispatcher'] : [])].sort().join(',');
+  const configFields = ['evidenceDirectory', 'host', 'mode', 'policyFiles', ...(config.bootstrap ? ['bootstrap'] : []), ...(config.evaluationDispatcher !== undefined ? ['evaluationDispatcher'] : []), ...(config.allowedModelProfiles !== undefined ? ['allowedModelProfiles'] : [])].sort().join(',');
   invariant(Object.keys(config).sort().join(',') === configFields && ['product', 'engineering'].includes(config.mode), 'Exact supervisor configuration required');
   invariant(config.host.stateDirectory === value.stateDirectory && config.host.artifactStore === value.artifactStore && config.host.nodeBinary === value.nodeBinary && config.host.workspaceDirectory === workspacePath(value) && config.host.cgroupRoot === `/sys/fs/cgroup/system.slice/${value.unitName}`, 'Host bindings must match installed resources and delegated unit');
   invariant(Object.keys(config.host).sort().join(',') === 'artifactStore,cgroupRoot,nodeBinary,stateDirectory,workspaceDirectory', 'Exact installed host bindings required');
@@ -155,6 +156,7 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   const profile = (candidate.inputs.configuration as unknown as DeploymentInputs['configuration']).resourceLimits;
   invariant(profile && profile.workspaceBytes === value.workspaceBytes && profile.workspaceInodes === value.workspaceInodes, 'Frozen resource profile must match provisioned capacity');
   invariant(Array.isArray(config.policyFiles) && config.policyFiles.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(part => typeof part === 'string')), 'Exact policy registry required');
+  if (config.allowedModelProfiles !== undefined) validateModelGrants(config.allowedModelProfiles);
   if (config.evaluationDispatcher !== undefined) {
     safePath(config.evaluationDispatcher);
     for (const root of [value.hostDataProvisionDirectory, value.workspaceProvisionDirectory]) invariant(!beneath(root, config.evaluationDispatcher), 'Evaluation dispatcher must remain outside writable data roots');

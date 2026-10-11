@@ -43,7 +43,7 @@ test('frozen ordinary application boots, fences stale authority, restarts after 
     rmSync(config.promptFile); materializeConfiguration(candidate, host);
     await assert.rejects(new ServiceProcess(host, secrets).start(candidate.manifest.id, grant), /kernel resource/);
     await assert.rejects(service.start(candidate.manifest.id, grant, { policyDigest: 'not-an-accepted-digest' }), /Public frozen/);
-    const ready = await service.start(candidate.manifest.id, grant, { policyDigest: 'a'.repeat(64), allowedModelIds: ['fixture-no-provider'] });
+    const ready = await service.start(candidate.manifest.id, grant, { policyDigest: 'a'.repeat(64) });
     assert.equal((await fetch(`http://127.0.0.1:${ready.address.port}/`)).status, 401);
     assert.equal((await fetch(`http://127.0.0.1:${ready.address.port}/`, { headers: { authorization: `Bearer ${secrets.directToken}` } })).status, 404);
     const store = new OperationalStore({ filename: join(host.stateDirectory, 'operational.sqlite') });

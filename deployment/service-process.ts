@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, constants, fstatSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { validateModelGrants, type ModelProfile } from './model-grants.ts';
 import { invariant } from '../packages/contracts/index.ts';
 import type { Authority } from '../packages/contracts/index.ts';
 import { candidateNodeBinary, verifyApplication } from './candidate.ts';
@@ -12,10 +13,10 @@ import type { ApplicationSecrets } from './config.ts';
 export interface ServiceReady { kind: 'ready'; candidateId: string; authority: Authority; address: { address: string; family: string; port: number } }
 export interface ServiceProcessOptions { mode: 'engineering' | 'product'; onUnexpectedExit?: () => void }
 /** Previously accepted judging policy information; evaluator keys and grants stay in the parent. */
-export interface EvolutionMetadata { policyDigest: string; allowedModelIds?: string[] }
+export interface EvolutionMetadata { policyDigest: string; allowedModelProfiles?: ModelProfile[] }
 export function validateEvolutionMetadata(metadata: EvolutionMetadata): void {
-  invariant(metadata && Object.keys(metadata).every(key => ['policyDigest', 'allowedModelIds'].includes(key)) && /^[a-f0-9]{64}$/.test(metadata.policyDigest), 'Public frozen evolution policy digest required');
-  if (metadata.allowedModelIds !== undefined) invariant(Array.isArray(metadata.allowedModelIds) && metadata.allowedModelIds.length <= 32 && new Set(metadata.allowedModelIds).size === metadata.allowedModelIds.length && metadata.allowedModelIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 256), 'Bounded public qualified model IDs required');
+  invariant(metadata && Object.keys(metadata).every(key => ['policyDigest', 'allowedModelProfiles'].includes(key)) && /^[a-f0-9]{64}$/.test(metadata.policyDigest), 'Public frozen evolution policy digest required');
+  if (metadata.allowedModelProfiles !== undefined) validateModelGrants(metadata.allowedModelProfiles);
 }
 /** Pin both directories and refuse a pre-existing public or redirected diagnostic sink. */
 function writeDiagnostic(stateDirectory: string, value: object): void {
