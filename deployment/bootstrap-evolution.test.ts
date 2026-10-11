@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs, { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -88,7 +88,7 @@ test('runtime copy must still match the accepted identity after application veri
   } finally { fs.readSync = original; syncBuiltinESMExports(); f.dispose(); }
 });
 
-test('already selected launcher preserves normal-boot readiness callback across pending selection', () => {
+for (const phase of ['requested', 'ready'] as const) test(`selected launcher preserves readiness and reconciles ${phase} selection`, () => {
   const f = fixture();
   try {
     // Narrow launcher seam fixture: retained source imports the reviewed library closure.
@@ -99,7 +99,7 @@ test('already selected launcher preserves normal-boot readiness callback across 
       .replaceAll("from './", `from '${deployment}`).replaceAll("from '../packages/", `from '${packages}`);
     const cli = "if (process.send) process.send({kind:'host-ready'}); setTimeout(()=>process.exit(0),100);";
     const source = join(f.root, 'launcher-source'); mkdirSync(join(source, 'deployment'), { recursive: true });
-    const contents = [['deployment/host-successor.ts', launcher], ['deployment/cli.ts', cli], ['package-lock.json', '{}']];
+    const contents = [['deployment/host-successor.ts', launcher], ['deployment/cli.ts', cli], ['deployment/bootstrap-evolution.ts', '// seam fixture'], ['package-lock.json', '{}']];
     for (const [path, content] of contents) writeFileSync(join(source, path!), content!);
     const files = contents.map(([path, content]) => ({ path: path!, sha256: hashBytes(content!) })).sort((a, b) => a.path.localeCompare(b.path));
     const runtime = { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch };
@@ -107,12 +107,14 @@ test('already selected launcher preserves normal-boot readiness callback across 
     const selected = { candidateId: candidate.manifest.id, policyDigest: f.first.policyDigest };
     const path = join(f.config.host.stateDirectory, 'host-successor.sqlite'), db = new DatabaseSync(path); chmodSync(path, 0o600);
     db.exec('CREATE TABLE selection(singleton INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    db.prepare('INSERT INTO selection VALUES(1,?)').run(JSON.stringify({ selected, rescue: selected, phase: 'requested' })); db.close();
+    db.prepare('INSERT INTO selection VALUES(1,?)').run(JSON.stringify({ selected: phase === 'ready' ? f.first : selected, rescue: selected, phase })); db.close();
+    if (phase === 'ready') { initializeBootstrap(f.config, f.first); f.state('accepted', selected); }
     const configPath = join(f.root, 'config'), marker = join(f.root, 'ready'); writeFileSync(configPath, JSON.stringify(f.config), { mode: 0o600 });
     const module = join(f.config.host.artifactStore, selected.candidateId, 'payload/deployment/host-successor.ts');
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `import {launchHost} from ${JSON.stringify(module)}; import {writeFileSync} from 'node:fs'; await launchHost(${JSON.stringify(configPath)},undefined,()=>writeFileSync(${JSON.stringify(marker)},'ready'));`], { encoding: 'utf8', timeout: 15000 });
     assert.equal(child.status, 0, child.stderr);
     assert.ok(existsSync(marker), 'selected normal bootstrap must retain the readiness callback');
+    if (phase === 'ready') assert.equal(realpathSync(join(f.config.host.stateDirectory, 'boot/active')), join(f.config.host.stateDirectory, 'boot/targets', selected.candidateId), 'committed acceptance must finish interrupted boot publication');
   } finally { f.dispose(); }
 });
 
@@ -140,6 +142,30 @@ test('rescue rotation rejects a witness whose authority was withdrawn after the 
     assert.throws(() => rotateBootstrapRescue(f.config, f.next), /authority/i);
     assert.equal(realpathSync(join(boot, 'rescue')), join(boot, 'targets', f.first.candidateId));
   } finally { f.dispose(); }
+});
+
+test('one selected cwd pins runtime and source across active-pointer replacement', { timeout: 10000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-boot-cwd-')), boot = join(root, 'boot');
+  const entered = join(root, 'entered'), release = join(root, 'release'), result = join(root, 'result');
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    for (const name of ['first', 'next']) {
+      const snapshot = join(boot, name); mkdirSync(join(snapshot, 'payload/deployment'), { recursive: true });
+      writeFileSync(join(snapshot, 'node'), `#!/bin/sh\n/usr/bin/touch ${entered}\nwhile ! test -e ${release}; do /bin/sleep 0.01; done\nexec ${process.execPath} "$@"\n`, { mode: 0o700 });
+      writeFileSync(join(snapshot, 'payload/deployment/bootstrap-evolution.ts'), `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(result)},JSON.stringify({source:${JSON.stringify(name)},cwd:process.cwd()}));`);
+    }
+    fs.symlinkSync(join(boot, 'first'), join(boot, 'active'));
+    const command = bootstrapCommands(root, join(root, 'manifest')).start;
+    child = spawn('/bin/sh', ['-c', command], { stdio: 'ignore' });
+    const exit = new Promise<number | null>(resolve => child!.once('exit', resolve));
+    const deadline = Date.now() + 3000;
+    while (!existsSync(entered) && Date.now() < deadline) await delay(10);
+    assert.ok(existsSync(entered));
+    fs.symlinkSync(join(boot, 'next'), join(boot, '.active')); fs.renameSync(join(boot, '.active'), join(boot, 'active'));
+    writeFileSync(release, ''); assert.equal(await exit, 0);
+    assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), { source: 'first', cwd: join(boot, 'first') });
+    for (const path of ['/tmp/x;touch_bad', '/tmp/$HOME', '/tmp/%n', '/tmp/a/../b']) assert.throws(() => bootstrapCommands(path, join(root, 'manifest')), /Canonical/);
+  } finally { child?.kill('SIGKILL'); rmSync(root, { recursive: true, force: true }); }
 });
 
 test('interruption after active rename preserves latched independent rescue and latest state', () => {
