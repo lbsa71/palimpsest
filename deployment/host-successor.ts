@@ -124,6 +124,7 @@ export async function launchHost(configPath: string, selectedBoot?: string, onRe
         const row = db.prepare('SELECT value FROM release_state WHERE singleton=1').get();
         const state = row ? JSON.parse(String(row.value)) as ReleaseState : undefined;
         if (state?.phase === 'accepted' && identity(state.accepted) !== identity(current.selected)) {
+          publishBootstrapSelection(config, state.accepted);
           current = { selected: state.accepted, rescue: current.selected, phase: 'requested' }; save(config, current);
         }
       } finally { db.close(); }
