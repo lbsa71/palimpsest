@@ -1,6 +1,6 @@
 # A1-L08 — independent competence, development and parity evaluation
 
-Status: **implementing**. Session owner: **Codex /root/a1_evaluation**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing — foundation fixture-verified, empirical acceptance outstanding**. Session owner: **Codex /root/a1_evaluation**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW03, RW04, RW11, RW17, RW18, RW19, RW20](../../../REQUIREMENTS.md).
 
@@ -41,9 +41,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Codex /root/a1_evaluation; finite foundation goal active |
+| Owner session | Codex /root/a1_evaluation; finite foundation goal complete; full lane partial |
 | Branch / worktree | codex/a1-evaluation-20261011; /home/palimpsest/migration/aeon-1-20261011/evaluation |
-| Base source / contract revision | 14c742041270bb2acb15b4903a970394a140493c; C1 draft from L01 |
+| Base source / contract revision | Base 14c742041270bb2acb15b4903a970394a140493c; C1 f11a25b consumer-checked |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Implement frozen protocol and deterministic harness now; full qualification awaits frozen integration, live comparators and elapsed development |
+| Last handoff / evidence | Protocol 20a4159; implementation 3e9d55a; [foundation report](../evaluation/results/2026-10-11-foundation.md), 13 tests and 12 mechanical cases passed |
+| Blockers / next eligible task | L09 integrates foundation; T05/T06 and full qualification await frozen integration, live comparator calibration/runs, elapsed development and fresh independent review |

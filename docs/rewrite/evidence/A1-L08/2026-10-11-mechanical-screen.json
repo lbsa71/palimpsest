@@ -1,0 +1,506 @@
+{
+  "protocol": "8b1652cce731ca840f83bd2504840c17970bf3e6c1e74cc4fd5bf8028b5e97ec",
+  "workload": "4648ff8a0822a5869f28d64fa45a111e4da02b02d8b5691a19cc85f974598dee",
+  "evaluatorArtifact": "fadd81b67a9b2f77852adb6e3a0b235b507d8dd47fe70a9217b9feb2eefcc2c5",
+  "candidate": {
+    "source": "a58938821fc5265f7f9e328c1906b049fc13b9af6df2ee827c2ce77f48b0a9b1",
+    "dependencies": null,
+    "prompts": null,
+    "model": null,
+    "configuration": "01454c2c862e0ea620d98a31ad490d7966f1a9e24c082caf1c887a05d4b270e0"
+  },
+  "evaluatorId": "A1-L08-author-conformance",
+  "schema": "aeon.evaluation.measurement.v1",
+  "independent": false,
+  "evidenceKind": "mechanical",
+  "comparisonMode": "deterministic",
+  "caseResults": [
+    {
+      "id": "S01",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "manifest"
+          },
+          "result": "{\"entry\":\"lib/main\"}"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "lib/main"
+          },
+          "result": "implementation"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "lib/main"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "manifest": "{\"entry\":\"lib/main\"}",
+        "lib/main": "implementation",
+        "answer": "lib/main"
+      },
+      "actions": 3,
+      "elapsedMs": 0.6639729999999986
+    },
+    {
+      "id": "S02",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "check",
+          "args": {},
+          "result": "fail"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "program",
+            "value": "sum"
+          },
+          "result": "written"
+        },
+        {
+          "tool": "check",
+          "args": {},
+          "result": "pass"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "verified"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "program": "sum",
+        "inputs": "[23,24]",
+        "answer": "verified"
+      },
+      "actions": 4,
+      "elapsedMs": 0.11948900000000151
+    },
+    {
+      "id": "S03",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "write",
+          "args": {
+            "path": "program",
+            "value": "range-sum"
+          },
+          "result": "written"
+        },
+        {
+          "tool": "check",
+          "args": {},
+          "result": "pass"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "verified"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "program": "range-sum",
+        "answer": "verified"
+      },
+      "actions": 3,
+      "elapsedMs": 0.08082300000000942
+    },
+    {
+      "id": "S04",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "old-data"
+          },
+          "result": "ERROR: missing path"
+        },
+        {
+          "tool": "list",
+          "args": {},
+          "result": "[\"current-data\"]"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "current-data"
+          },
+          "result": "value-23"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "value-23"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "current-data": "value-23",
+        "answer": "value-23"
+      },
+      "actions": 4,
+      "elapsedMs": 0.073402999999999
+    },
+    {
+      "id": "S05",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "sourceA"
+          },
+          "result": "sourceA: measurement=23"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "sourceB"
+          },
+          "result": "sourceB: independently confirmed=23"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "23 sourceA sourceB"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "sourceA": "sourceA: measurement=23",
+        "sourceB": "sourceB: independently confirmed=23",
+        "answer": "23 sourceA sourceB"
+      },
+      "actions": 3,
+      "elapsedMs": 0.042758999999989555
+    },
+    {
+      "id": "S06",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "old"
+          },
+          "result": "2026-01-01 old value=23"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "correction"
+          },
+          "result": "2026-02-01 correction value=26; provisional"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "26 correction provisional"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "old": "2026-01-01 old value=23",
+        "correction": "2026-02-01 correction value=26; provisional",
+        "answer": "26 correction provisional"
+      },
+      "actions": 3,
+      "elapsedMs": 0.11800599999999406
+    },
+    {
+      "id": "S07",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "read",
+          "args": {
+            "path": "state"
+          },
+          "result": "original-23"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "state",
+            "value": "temporary"
+          },
+          "result": "written"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "state"
+          },
+          "result": "temporary"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "state",
+            "value": "original-23"
+          },
+          "result": "written"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "restored"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "state": "original-23",
+        "answer": "restored"
+      },
+      "actions": 5,
+      "elapsedMs": 0.05092100000000244
+    },
+    {
+      "id": "S08",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "checkpoint",
+          "args": {
+            "correction": "target-23"
+          },
+          "result": "saved"
+        },
+        {
+          "tool": "restart",
+          "args": {},
+          "result": "transient context discarded; read checkpoint"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "checkpoint"
+          },
+          "result": "target-23"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "target-23"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "checkpoint": "target-23",
+        "answer": "target-23"
+      },
+      "actions": 4,
+      "elapsedMs": 0.08635200000000509
+    },
+    {
+      "id": "S09",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "compact",
+          "args": {
+            "constraint": "limit-23"
+          },
+          "result": "context reduced; read summary"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "summary"
+          },
+          "result": "limit-23"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "limit-23"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "summary": "limit-23",
+        "answer": "limit-23"
+      },
+      "actions": 3,
+      "elapsedMs": 0.06848899999999958
+    },
+    {
+      "id": "S10",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "delegate",
+          "args": {
+            "value": "23",
+            "scope": "child"
+          },
+          "result": "child artifact ready"
+        },
+        {
+          "tool": "read",
+          "args": {
+            "path": "child"
+          },
+          "result": "46"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "46"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "child": "46",
+        "answer": "46"
+      },
+      "actions": 3,
+      "elapsedMs": 0.1127389999999906
+    },
+    {
+      "id": "S11",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "effect",
+          "args": {
+            "key": "delivery"
+          },
+          "result": "unknown"
+        },
+        {
+          "tool": "reconcile",
+          "args": {},
+          "result": "receipt-delivery"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "receipt-delivery"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "answer": "receipt-delivery"
+      },
+      "actions": 3,
+      "elapsedMs": 0.027867999999998005
+    },
+    {
+      "id": "S12",
+      "status": "pass",
+      "failedChecks": [],
+      "observations": [
+        {
+          "tool": "write",
+          "args": {
+            "path": "persona",
+            "value": "owned instructions"
+          },
+          "result": "written"
+        },
+        {
+          "tool": "request",
+          "args": {
+            "path": "plain"
+          },
+          "result": "owned instructions"
+        },
+        {
+          "tool": "request",
+          "args": {
+            "path": "resumed"
+          },
+          "result": "owned instructions"
+        },
+        {
+          "tool": "request",
+          "args": {
+            "path": "delegated"
+          },
+          "result": "owned instructions"
+        },
+        {
+          "tool": "write",
+          "args": {
+            "path": "answer",
+            "value": "replaced"
+          },
+          "result": "written"
+        }
+      ],
+      "artifacts": {
+        "persona": "owned instructions",
+        "answer": "replaced"
+      },
+      "actions": 5,
+      "elapsedMs": 0.03860199999999736
+    }
+  ],
+  "resources": {
+    "physicalModelRequests": 0,
+    "modelTokens": null,
+    "cost": null,
+    "interventions": 0,
+    "wallMs": 3.460332000000008
+  },
+  "verdict": "pass",
+  "admission": "ineligible",
+  "parity": "unavailable",
+  "development": "unavailable",
+  "limitations": [
+    "Scripted actor and synthetic tools establish harness mechanics only.",
+    "No product comparison, fresh independent acceptance, real elapsed development or H1 evidence.",
+    "Observation content digest: 519b7873a8fb7dd74936910d4e0560095d64e44ef2416e664325aea6f79d8bd0"
+  ],
+  "provenance": {
+    "revision": "3e9d55afa6837cb78b77b401e4ef31c39569c6c7",
+    "frozenProtocolRevision": "20a4159",
+    "runnerDigest": "06f7b567d14d65f43e0bf8ca99abf832d8b1f8b9cdbb7d34baf009be9d124731"
+  }
+}
