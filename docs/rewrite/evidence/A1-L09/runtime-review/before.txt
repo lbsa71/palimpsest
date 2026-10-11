@@ -1,0 +1,28 @@
+(node:768773) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ withdrawal during actual child startup cannot return a serving readiness receipt (1646.284678ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1941.645616
+
+✖ failing tests:
+
+test at deployment/runtime-review.test.ts:47:1
+✖ withdrawal during actual child startup cannot return a serving readiness receipt (1646.284678ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/runtime-review/deployment/runtime-review.test.ts:56:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /Stale or withdrawn serving authority/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

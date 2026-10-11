@@ -1,0 +1,103 @@
+(node:768807) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ close during application startup cannot leave a listener or background work alive (191.224746ms)
+✔ authenticated health remains alive while cancelled allowance or withdrawn authority holds execution without probing a provider (279.699829ms)
+✔ ordinary authenticated conversation uses actual confined tools and explicit output; memory and budgets survive restart (2194.152398ms)
+✔ ordinary delegation runs a real bounded child, inspects actual artifacts and accounts every request (2872.669638ms)
+✔ queued consolidation executes under the shared ledger with one scoped completion capability and survives restart (1692.676347ms)
+✔ immediate tool memory permits same-run derivation; forgetting does not resurrect on restart (1562.150383ms)
+✔ shared application slots admit inquiry under queued conversations and keep direct status responsive (2916.455448ms)
+✔ steering an active conversation reschedules its durable correction without automatic speech (1532.146293ms)
+✔ graceful close persists unfinished work before abort and restart resumes it (2643.06788ms)
+✔ ordinary promise keeps progress owed and wakes an accounted report run with a confirmed receipt (3322.315401ms)
+✔ ordinary Slack report with a lost receipt remains delivering until reconciliation and never resends (1095.559857ms)
+✔ ordinary Slack reasoning and status tools see durable conversation recovery gaps without foreign channel or thread disclosure (2550.587472ms)
+✔ an accounted consolidation cannot complete after its durable claim revision is replaced (1853.458787ms)
+✔ restart discovers committed steering even if the scheduling callback was lost (2688.463984ms)
+✔ report admission rolls back if durable destination registration fails (516.212445ms)
+✔ a completed extension mutation with an unserializable receipt remains uncertain (1218.168244ms)
+✔ fresh boot makes one accounted developmental start and a model-chosen follow-on goal without human input (2321.431155ms)
+✔ an extension that writes then throws an untyped error holds the physical outcome (2118.841273ms)
+✔ fresh development admission preserves an exhausted allowance without provider calls or repeated runs (1080.325767ms)
+✔ child admission cannot leave an ordinary run when child authority registration fails (354.85892ms)
+✔ explicit OpenAI application uses actual host tools and speech with native Responses continuation and only its selected secret (1392.029979ms)
+✔ OpenAI application blocks unsupported-output and settles trustworthy host usage independently (726.548044ms)
+✔ OpenAI application blocks invalid-usage and settles trustworthy host usage independently (889.120613ms)
+✔ OpenAI application blocks incomplete and settles trustworthy host usage independently (849.705881ms)
+✔ a deferred initial admission cannot retry a failed default Mistral provider turn after a concurrent tick (861.749832ms)
+✖ deployment admission binds actual host controls, fork/build closure and runtime executable (3708.200984ms)
+(node:768810) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ runtime adoption preserves authenticated self origin while requiring the successor grant (122.011522ms)
+▶ bounded proposal→candidate→external build/evaluation→actual L09 admission preserves durable evidence
+  ✔ changed host policy cannot redispatch an uncertain evaluation under a new identity (6.81927ms)
+  ✔ source runtime proposal freezes under old controls and inherited blob survives a small source checkout (31010.061352ms)
+  ✔ authenticated conversation cannot fabricate eligibility or self origin (45.596248ms)
+  ✔ self initiative requires actual bound goal and visible experience, and rejects human steering (166.340476ms)
+  ✔ symlink ancestor, hardlink, special file and byte bounds cannot ingest host content (19591.599157ms)
+  ✔ source settings cannot grant network, spending or eligible-author authority (3522.674693ms)
+  ✔ a file that grows after descriptor read cannot exceed the snapshot grant (2151.87262ms)
+  ✔ external callback self evidence and malformed receipt cannot submit; dispatch remains durable (5611.385492ms)
+  ✔ host submission response loss retains dispatch for idempotent reconciliation (6628.50961ms)
+  ✔ an evaluation receipt cannot be transplanted to another proposal for submission (7.029769ms)
+  ✔ cancellation after evaluator completion preserves uncertainty and the original retry request (4612.017143ms)
+✔ bounded proposal→candidate→external build/evaluation→actual L09 admission preserves durable evidence (111223.162332ms)
+(node:768883) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ accepted host and evaluator code actually replace the coordinator; failed host restores old code offline with latest state (137633.771337ms)
+✔ accepted but unbootable coordinator restores the retained host without evaluating itself or reading provider inputs (77230.102592ms)
+✔ a broken accepted launcher falls back through the retained bootstrap on restart without a surviving old coordinator (26651.187341ms)
+✔ coordinator observes launcher loss during asynchronous startup and releases authority (21817.183645ms)
+✔ runtime staging is bounded, hash-bound and descriptor-pinned without executing candidate bytes (12.751446ms)
+(node:769547) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ withdrawal during actual child startup cannot return a serving readiness receipt (2496.443523ms)
+(node:769577) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ frozen ordinary application boots, fences stale authority, restarts after SIGKILL and preserves current state (44054.240871ms)
+(node:770329) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ unbounded recovery or reconciliation configuration is rejected (86.134369ms)
+✔ production Slack client accepts Socket Mode method and camel case speech, rejects redirects and bounded oversized bodies (284.74399ms)
+✔ direct output view authenticates audience before accessing host explicit speech outbox (157.130965ms)
+✔ distinct conversation runs share the trusted host parent resource envelope (239.241595ms)
+✔ same runtime admission is durable, authenticated, conflicting duplicates rejected and author eligibility separate (91.36379ms)
+✔ mention joins thread, ordinary follow-up steers same run and edited input reaches original run (100.35068ms)
+✔ reordered recovered revisions cannot steer newer input backwards; controls and target bound to dedup (89.762244ms)
+✔ control of an old completed run preserves the thread current run mapping (131.397763ms)
+✔ revised input interrupts its running run and persists correction for resumed execution (220.747121ms)
+✔ real HTTP server serves status and cancellation while a real DurableRuntime shell is waiting (187.986714ms)
+✔ Slack live/history delivery race and restart deduplicate into same durable run (105.622749ms)
+✔ paginated network history recovers first offline mention inside a previously unjoined thread, then ordinary replies (196.398136ms)
+✔ rate-limit preserves cursor and retry deadline; permission and retention gaps remain visible (176.668027ms)
+✔ atomic cursor/admission rollback retains current page after conflicting history (112.09382ms)
+✔ known joined threads are scanned even if channel history contains no parent, with explicit coverage gap (225.729322ms)
+✔ signature authentication rejects altered body and replay timestamp (1.53273ms)
+✔ Socket Mode authenticates tokens, commits before ACK, reconnects and invokes recovery automatically (392.553166ms)
+✔ Socket Mode rejects foreign token identity and does not ACK malformed event intake (207.633047ms)
+✔ explicit speech creates actual receipt; unregistered targets and forged authority/scope cannot send (91.995837ms)
+✔ lost send receipt reconciles durable effect using paginated client_msg_id without resending (164.440801ms)
+✔ missing receipt remains uncertain through bounded scans or missing permission; no automatic retry (108.225363ms)
+✔ matching client ID from another author never confirms delivery; matching bot survives Slack text sanitization (102.340631ms)
+✔ joined actual runtime speech and obligation registry hold unknown delivery until bot receipt reconciles (264.715583ms)
+ℹ tests 69
+ℹ suites 0
+ℹ pass 68
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 267922.842349
+
+✖ failing tests:
+
+test at deployment/candidate.test.ts:11:1
+✖ deployment admission binds actual host controls, fork/build closure and runtime executable (3708.200984ms)
+  Error: Source changed during freeze
+      at freezeCandidate (file:///home/palimpsest/migration/aeon-1-20261011/runtime-review/packages/release/artifacts.ts:129:51)
+      at freezeApplication (file:///home/palimpsest/migration/aeon-1-20261011/runtime-review/deployment/candidate.ts:42:18)
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/runtime-review/deployment/candidate.test.ts:19:23)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)
