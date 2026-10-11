@@ -18,7 +18,7 @@ import { ServiceProcess, type ServiceReady } from './service-process.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
-import { assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type RunningProbationReview } from './control-continuation.ts';
+import { assertControlActivationClaim, assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 import { controlActivationAcknowledgmentPending } from './control-tools.ts';
 
 export interface SupervisorOptions {
@@ -33,7 +33,7 @@ export interface SupervisorOptions {
   allowedModelProfiles?: ModelProfile[];
   evaluationDispatcher?: { reviewerFile: string; policyDigests: readonly string[] };
   /** Host-owned reviewer seam. Ordinary callers may only enqueue exact staged bindings. */
-  controlReview?: Pick<ControlContinuationOptions, 'reserveProbation' | 'reviewProbation' | 'readyToActivate'>;
+  controlReview?: Pick<ControlContinuationOptions, 'reserveProbation' | 'reviewProbation' | 'readyToActivate' | 'finishProbation'>;
 }
 export interface SupervisorStatus {
   coordinator: { processId: number; module: string };
@@ -139,7 +139,7 @@ export class ServiceSupervisor {
   }
   #startControlContinuation(): void {
     const reviewer = this.#options.controlReview ?? {
-      reserveProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.reserveProbation(review),
+      reserveProbation: (review: ProbationReviewRequest, commitReservation: () => void) => this.#dispatcher!.reserveProbation(review, commitReservation),
       reviewProbation: (review: RunningProbationReview, signal: AbortSignal) => this.#dispatcher!.reviewProbation(review, signal),
       finishProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.finishProbation(review),
       readyToActivate: (request: ControlActivationRequest) => this.#dispatcher!.probationAvailable() && !controlActivationAcknowledgmentPending(this.#evolutionStore!, request),
@@ -148,7 +148,7 @@ export class ServiceSupervisor {
       status: () => this.#controller.status()!, stagedControl: id => this.#controller.stagedControl(id),
       assertAuthority: authority => this.#authority.assert(authority), ...reviewer,
       readyToActivate: request => !this.#operation && !this.#closing && !this.#hostHandoffPending && (reviewer.readyToActivate?.(request) ?? true),
-      activate: id => this.activateControl(id), acceptProbation: (proof, review) => this.acceptProbation(proof, review) });
+      activate: (id, review) => this.activateControl(id, review), acceptProbation: (proof, review) => this.acceptProbation(proof, review) });
     this.#controls.start();
   }
   requestControlActivation(request: ControlActivationRequest): ControlContinuationRecord {
@@ -209,7 +209,16 @@ export class ServiceSupervisor {
       return this.#controller.stageControlUpgrade(proof, policy);
     });
   }
-  activateControl(stageId: string): Promise<Authority> { return this.#exclusive(() => this.#controller.activateStagedControl(stageId, randomUUID())); }
+  activateControl(stageId: string, review?: ProbationReviewRequest): Promise<Authority> {
+    return this.#exclusive(() => this.#controller.activateStagedControl(stageId, randomUUID(), review ? commit => this.#evolutionStore!.transaction(() => {
+      // AuthorityStore holds its write lock before this callback; retain the operational
+      // lock through withdrawal so cancellation and producer starts serialize with it.
+      assertControlActivationClaim(this.#evolutionStore!, stageId, review);
+      const record = this.#evolutionStore!.get<ControlContinuationRecord>('host.control-continuations', review.activationId)!.value;
+      invariant(!controlActivationAcknowledgmentPending(this.#evolutionStore!, record.request), 'Control activation producer acknowledgment is incomplete');
+      commit();
+    }) : undefined));
+  }
   async #exclusive<T>(operation: () => Promise<T>): Promise<T> {
     invariant(!this.#closing && !this.#closed && !this.#operation && !this.#hostHandoffPending, 'Supervisor unavailable or release operation in progress');
     this.#lease.assertHeld();

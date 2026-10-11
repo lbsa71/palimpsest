@@ -210,7 +210,7 @@ export class EvaluationDispatcher {
   start(): void { invariant(!this.#loop, 'Evaluation dispatcher already started'); this.#loop = this.#run(); }
   probationAvailable(): boolean { return !!this.options.reviewer && !this.#activeJob && !this.#abort.signal.aborted; }
   /** Host continuation reserves under the old serving authority before activation. */
-  reserveProbation(review: ProbationReviewRequest): void {
+  reserveProbation(review: ProbationReviewRequest, commitReservation?: () => void): void {
     invariant(this.probationAvailable(), 'External probation reviewer unavailable or busy');
     invariant(identity(review.judgeAuthority) === identity(review.proposal.authority) && review.rescueCandidateId === this.options.acceptedCandidateId(), 'Exact original probation judge and rescue required');
     const reviewer = this.options.reviewer!, request = this.#probationRequest(review);
@@ -219,8 +219,12 @@ export class EvaluationDispatcher {
     invariant(policy.controlRevision === review.judgeAuthority.controlRevision && policy.evaluatorArtifacts.get(reviewer.evaluatorId) === hashBytes(Buffer.from(reviewerDescriptor(reviewer))), 'Original probation evaluator unavailable');
     prepareReview({ store: this.options.mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer))),
       evaluatorId: reviewer.evaluatorId, maxElapsedMs: reviewer.maxElapsedMs, assertAuthority: this.options.assertAuthority,
-      dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal });
-    this.options.mailbox.store.put('host.probation-review-contexts', review.id, review, null);
+      dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal,
+      commitReservation: () => {
+        invariant(!this.options.mailbox.store.get('host.probation-review-contexts', review.id), 'Probation reservation already used');
+        commitReservation?.();
+        this.options.mailbox.store.put('host.probation-review-contexts', review.id, review, null);
+      } });
     this.#activeJob = review.id; this.#publish();
   }
   #probationRequest(review: ProbationReviewRequest): EvaluationRequest {

@@ -50,7 +50,18 @@ test('failed probation activation releases processor ownership without releasing
       assertAuthority: () => {}, dispatchAuthority: (_authority, operation) => operation(), acceptedCandidateId: () => review.rescueCandidateId,
       release: async () => authority, stageControl: async () => 'stage' });
     try {
-      dispatcher.reserveProbation(review); assert.equal(dispatcher.probationAvailable(), false);
+      assert.throws(() => dispatcher.reserveProbation(review, () => {
+        store.put('fixture.control-claim', review.id, { claimed: true }, null);
+        throw Error('Producer won the start race');
+      }), /Producer won/);
+      assert.equal(store.get('fixture.control-claim', review.id), undefined);
+      assert.equal(store.get('host.probation-review-contexts', review.id), undefined);
+      assert.equal(ledger.request(reviewPhysicalId(review.id)), undefined);
+      assert.equal(ledger.snapshot('author').requests, 0, 'Deferred activation consumes no physical reservation');
+      assert.equal(dispatcher.probationAvailable(), true);
+      dispatcher.reserveProbation(review, () => store.put('fixture.control-claim', review.id, { claimed: true }, null));
+      assert.equal(dispatcher.probationAvailable(), false);
+      assert.deepEqual(store.get('host.probation-review-contexts', review.id)!.value, review);
       assert.throws(() => dispatcher.finishProbation({ ...review, policyDigest: 'd'.repeat(64) }), /context changed/);
       const physical = ledger.request(reviewPhysicalId(review.id))!;
       if (state !== 'reserved') ledger.dispatched({ ...physical, status: 'dispatched' });
