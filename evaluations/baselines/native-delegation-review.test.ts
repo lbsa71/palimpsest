@@ -131,7 +131,7 @@ test('read-only original artifact audit: immutable sources, instructions, native
         const uncertain = requests.find(row => row.request.status === 'uncertain'); assert.equal(uncertain.charged.tokens, 1004096); assert.equal(uncertain.charged.costUsd, 8.08192);
         const evidence = rows('baseline-attempts').find(row => row.key === uncertain.request.id).value;
         assert.equal(evidence.before.sha256, '4b0918e9667c31253f65af9db57466cc81816e7bbb6f6bbed3e03caf1b2e47c3'); assert.equal(blob(evidence.response).length, 0);
-        const parent = JSON.parse(blob(evidence.before).toString()); assert.deepEqual(claudeParentReceipts(parent), []); assert.equal(claudeTaskBindings(outcome.stdout, summary.nativeChildIds, parent), false);
+        const parent = JSON.parse(blob(evidence.before).toString()); assert.deepEqual(claudeParentReceipts(parent).sort(), ['child-1-observed', 'child-2-observed']); assert.equal(claudeTaskBindings(outcome.stdout, summary.nativeChildIds, parent, summary.parentHeaders, summary.childHeaders), true);
         const starts = outcome.stdout.split('\n').filter(Boolean).map((line: string) => JSON.parse(line)).filter((event: any) => event.type === 'system' && event.subtype === 'task_started'); assert.equal(starts.length, 2);
         for (const [i, childId] of summary.nativeChildIds.entries()) {
           const start = starts.find((event: any) => event.task_id === childId); assert.equal(start.session_id, summary.parentHeaders['x-claude-code-session-id']);
