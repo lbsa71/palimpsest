@@ -43,8 +43,8 @@ function rootPath(path: string): string {
   return root;
 }
 
-/** Called once after the exclusive supervisor lease, within a systemd-delegated service. No sudo at runtime. */
-export async function initializeResourceDelegation(path: string): Promise<void> {
+/** Move only this trusted host into a leaf before spawning descendants. Never reaps command groups. */
+export function enterResourceHostLeaf(path: string): string {
   const root = rootPath(path);
   const available = read(root, 'cgroup.controllers').split(/\s+/);
   if (controllers.some(controller => !available.includes(controller))) throw new Error('Required cgroup controllers unavailable');
@@ -52,6 +52,12 @@ export async function initializeResourceDelegation(path: string): Promise<void> 
   mkdirSync(host, { recursive: true });
   write(host, 'cgroup.procs', process.pid);
   write(root, 'cgroup.subtree_control', controllers.map(controller => '+' + controller).join(' '));
+  return root;
+}
+
+/** Called once after the exclusive supervisor lease, within a systemd-delegated service. No sudo at runtime. */
+export async function initializeResourceDelegation(path: string): Promise<void> {
+  const root = enterResourceHostLeaf(path);
   // Recovery does not reuse stale children or guess PIDs; cgroup.kill includes detached descendants.
   for (const child of readdirSync(root)) {
     if (!child.startsWith('command-')) continue;

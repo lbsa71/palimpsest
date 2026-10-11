@@ -7,6 +7,7 @@ import { hashBytes } from '../packages/release/artifacts.ts';
 import type { ReleaseState, ReleaseTarget } from '../packages/release/controller.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
+import { enterResourceHostLeaf } from '../packages/supervisor/resource-limits.ts';
 import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import type { SupervisorFile } from './cli.ts';
 import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
@@ -143,6 +144,9 @@ async function run(args: string[]): Promise<void> {
   invariant(cwd === join(bootstrapDirectory(manifest.stateDirectory), 'targets', selected.candidateId) && realpathSync(process.execPath) === join(cwd, 'node') && hashBytes(readFileSync(process.execPath)) === descriptor.runtimeHash, 'Exact retained bootstrap runtime required');
   invariant(realpathSync(fileURLToPath(import.meta.url)) === join(manifest.artifactStore, selected.candidateId, 'payload/deployment/bootstrap-evolution.ts'), 'Exact retained bootstrap source required');
   checkInstallation(manifest, 'service', true, { candidateId: selected.candidateId, nodeBinary: process.execPath });
+  // Keep the delegated root empty: the retained launcher stays alive while its
+  // coordinator enables controller delegation. Children inherit this host leaf.
+  enterResourceHostLeaf(config.host.cgroupRoot!);
   const lease = new ProcessLease(join(bootstrapDirectory(manifest.stateDirectory), 'entry.sqlite'));
   try {
     const { launchHost, restoreHostBootstrap } = await import('./host-successor.ts');

@@ -77,8 +77,17 @@ test('complete disposable installation boots the ordinary application and retain
       throw new Error(`Installed fixture not ready: ${readFileSync(join(data, 'work/logs/coordinator.log'), 'utf8').slice(-16000)}`);
     };
     const first = await ready();
+    assert.equal(readFileSync(join(cgroupRoot, 'cgroup.procs'), 'utf8').trim(), '', 'Retained bootstrap must not occupy the internal controller root');
+    const mainPid = execute('/usr/bin/systemctl', ['show', '--property=MainPID', '--value', unitName]).trim();
+    assert.ok(readFileSync(join(cgroupRoot, 'host/cgroup.procs'), 'utf8').trim().split('\n').includes(mainPid), 'Retained bootstrap and its descendants occupy the host leaf');
+    const controllers = readFileSync(join(cgroupRoot, 'cgroup.subtree_control'), 'utf8').trim().split(/\s+/);
+    assert.ok(['cpu', 'memory', 'pids'].every(controller => controllers.includes(controller)));
     const response = await fetch(`http://127.0.0.1:${first.ready.address.port}/health`, { headers: { authorization: 'Bearer fixture-direct-token' } });
-    assert.equal(response.status, 200); assert.equal((await response.json() as { alive: boolean }).alive, true);
+    assert.equal(response.status, 200);
+    const health = await response.json() as { alive: boolean; kernelLimitsConfigured: boolean; execution: { admission: string; reasons: string[]; providerConnectivity: string } };
+    assert.equal(health.alive, true); assert.equal(health.kernelLimitsConfigured, true);
+    assert.equal(health.execution.admission, 'held'); assert.deepEqual(health.execution.reasons, ['allowance-exhausted']);
+    assert.equal(health.execution.providerConnectivity, 'not-probed');
     const store = new OperationalStore({ filename: join(state, 'operational.sqlite') });
     store.put('fixture.current-state', 'latest', { experience: 'retained', uncertainEffect: 'unresolved fixture marker' }, null); store.close();
     stopInstallation(installation);
