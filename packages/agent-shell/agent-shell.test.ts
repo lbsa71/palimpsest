@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Type } from 'typebox';
 import { identity, validateCapturedPrompt, validatePhysicalRequest } from '../contracts/index.ts';
 import type { JsonValue, Observation, PhysicalRequest, PromptFragment, PromptManifest, ShellBridge, ShellCheckpoint, ShellInput, ToolCall } from '../contracts/index.ts';
 import { createAgentShell, SHELL_REVISION } from './index.ts';
@@ -11,7 +10,7 @@ const fragment = (id: string, content: string, order = 0): PromptFragment => ({ 
 const base = fragment('identity', 'I choose my own judgments.');
 const prompt: PromptManifest = { id: 'p1', fragments: [base], requestDigest: digest('not dispatched') };
 const input = (content = 'complete task'): ShellInput => ({ run: { id: 'run1', status: 'running', revision: 0, authority: { generation: 'g1', epoch: 1, controlRevision: 'c1' }, scope: { kind: 'public' } }, messages: [{ role: 'user', content, timestamp: 1 }], prompt });
-const tool = { name: 'edit', description: 'Edit an owned file', parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }) };
+const tool = { name: 'edit', description: 'Edit an owned file', parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } };
 function response(content: string | null, calls: unknown[] = [], finish = calls.length ? 'tool_calls' : 'stop'): Response { return Response.json({ id: 'provider1', model: 'fixture', choices: [{ finish_reason: finish, message: { content, ...(calls.length ? { tool_calls: calls } : {}) } }], usage: { prompt_tokens: 12, completion_tokens: 3 } }); }
 function call(value = 'repaired', id = 'call00001'): unknown { return { id, type: 'function', function: { name: 'edit', arguments: JSON.stringify({ value }) } }; }
 function fixture() {
@@ -189,4 +188,41 @@ test('tool argument validation and length-truncated calls never dispatch an effe
     const shell = createAgentShell({ resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: 1, fetch: async () => response(null, [malformed ? invalid : call()], malformed ? 'tool_calls' : 'length') });
     await shell.run(input(), f.bridge); assert.equal(f.tools.length, 0);
   }
+});
+
+for (const ending of ['error', 'aborted', 'length', 'truncated-tool'] as const) {
+  test(`explicit continuation recovers ${ending} without replaying incomplete calls or deleting audit history`, async () => {
+    const f = fixture(); const controller = new AbortController(); let calls = 0;
+    const shell = createAgentShell({ resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: 3,
+      fetch: async () => {
+        calls++;
+        if (calls > 1) return response('recovered');
+        if (ending === 'error') throw new Error('connection lost');
+        if (ending === 'aborted') { controller.abort(); throw new Error('aborted'); }
+        return response('partial', ending === 'truncated-tool' ? [call()] : [], 'length');
+      } });
+    const first = await shell.run(input(), f.bridge, controller.signal);
+    assert.equal(first.status, ending === 'aborted' ? 'cancelled' : 'blocked');
+    assert.equal(calls, 1, 'a failed or truncated turn must not trigger an automatic paid continuation');
+    const before = await f.bridge.readCheckpoint(first.checkpoint!) as unknown as { messages: { role: string; stopReason?: string }[] };
+    const failed = before.messages.find(item => item.role === 'assistant')!;
+    const retainedRequests = structuredClone([...f.requests.values()]);
+    const second = await shell.run({ ...input(), messages: [], checkpoint: first.checkpoint }, f.bridge);
+    assert.equal(second.status, 'completed'); assert.equal(calls, 2); assert.equal(f.tools.length, 0);
+    const after = await f.bridge.readCheckpoint(second.checkpoint!) as unknown as typeof before;
+    assert.ok(after.messages.some(item => JSON.stringify(item) === JSON.stringify(failed)), 'failed assistant remains auditable');
+    assert.deepEqual([...f.requests.values()].slice(0, 1), retainedRequests, 'explicit continuation does not forgive old request usage');
+    const payload = JSON.parse(f.manifests.at(-1)!.payload);
+    assert.equal(payload.messages.some((item: { role: string }) => item.role === 'assistant'), false, 'incomplete assistant is excluded from provider projection');
+  });
+}
+
+test('a final assistant checkpoint interrupted before terminal status resumes without another paid request', async () => {
+  const f=fixture();let calls=0;
+  const shell=createAgentShell({resolveFragment,tools:[],apiKey:()=> 'key',maxRequests:1,fetch:async()=>{calls++;return response('done');}});
+  const first=await shell.run(input(),f.bridge);
+  const snapshot=await f.bridge.readCheckpoint(first.checkpoint!) as unknown as Record<string,JsonValue>;
+  const checkpoint=await f.bridge.persistCheckpoint(input().run.id,input().run.revision,SHELL_REVISION,{...snapshot,status:'running'});
+  const resumed=await shell.run({...input(),messages:[],checkpoint},f.bridge);
+  assert.equal(resumed.status,'completed');assert.equal(calls,1);
 });

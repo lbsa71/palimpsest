@@ -2,6 +2,7 @@ import { invariant, validateUsage, canonicalJson } from '../../contracts/common.
 import type { ResourceEnvelope } from '../../contracts/common.ts';
 import { validatePhysicalRequest } from '../../contracts/control/index.ts';
 import type { PhysicalRequest } from '../../contracts/control/index.ts';
+import type { Effect } from '../../contracts/execution/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 export interface RequestCeiling { tokens: number; costUsd: number; elapsedMs: number }
 interface Budget { envelope: ResourceEnvelope; startedAt: number; cancelled: boolean }
@@ -60,6 +61,21 @@ export class ResourceLedger {
       const charged=row.value.request.status==='reserved'?{tokens:0,costUsd:0,elapsedMs:0}:{tokens:request.usage.inputTokens===null || request.usage.outputTokens===null ? row.value.ceiling.tokens : request.usage.inputTokens+request.usage.outputTokens,costUsd:request.usage.costUsd??row.value.ceiling.costUsd,elapsedMs:request.status==='uncertain'?Math.max(request.usage.elapsedMs,row.value.ceiling.elapsedMs):request.usage.elapsedMs};
       if (charged.tokens>row.value.ceiling.tokens || charged.costUsd>row.value.ceiling.costUsd || charged.elapsedMs>row.value.ceiling.elapsedMs) { const budget=this.store.get<Budget>('budgets',row.value.rootId)!; this.store.put('budgets',row.value.rootId,{...budget.value,cancelled:true},budget.revision); }
       this.store.put('requests',request.id,{...row.value,request,charged},row.revision);
+    });
+  }
+  /** An authoritative authorized effect proves the receiver was never entered. Retain
+   * its original reservation and charges while repairing a pre-atomic crash gap. */
+  recoverUndispatchedEffects(): void {
+    this.store.transaction(() => {
+      for (const effect of this.store.list<Effect>('effects').map(row => row.value)) {
+        if (effect.status !== 'authorized') continue;
+        const row = this.store.get<Reservation>('requests', effect.reservationId!);
+        invariant(row && row.value.request.provider === 'effect-receiver' && row.value.request.runId === effect.runId && row.value.request.id === effect.id, 'effect reservation mismatch');
+        if (!['dispatched', 'uncertain'].includes(row.value.request.status)) continue;
+        invariant(!effect.receipt, 'undispatched effect has an unexpected receipt');
+        this.store.put('requests', row.value.request.id, { ...row.value, request: { ...row.value.request, status: 'reserved' } }, row.revision);
+        this.store.append({ id: `restore-undispatched:${row.value.request.id}:${row.revision}`, stream: effect.runId, type: 'restored-undispatched-reservation', data: { effectId: effect.id, request: row.value.request } });
+      }
     });
   }
   recoverDispatched(): void { this.store.transaction(()=>{ for(const row of this.store.list<Reservation>('requests')) if(row.value.request.status==='dispatched') this.store.put('requests',row.key,{...row.value,request:{...row.value.request,status:'uncertain'}},row.revision); }); }

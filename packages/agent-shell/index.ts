@@ -77,6 +77,15 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       transcript.push(...input.messages.map(message));
       // Replace every historical application system layer; reintroduce only the current manifest.
       transcript = transcript.filter(item => item.role !== 'system');
+      // Failed model turns remain in durable audit history, but are not valid Pi/provider
+      // continuation messages. Their synthetic truncated-call results are excluded too.
+      function continuationMessages(): Message[] {
+        const incomplete = new Set(transcript.filter(item => item.role === 'assistant' && ['error', 'aborted', 'length'].includes(item.stopReason)).map(item => (item as Message & { aeonStepId?: string }).aeonStepId));
+        return transcript.filter(item => {
+          if (item.role === 'assistant' && ['error', 'aborted', 'length'].includes(item.stopReason)) return false;
+          return item.role !== 'toolResult' || !incomplete.has((item as Message & { aeonStepId?: string }).aeonStepId);
+        });
+      }
       async function save(): Promise<void> {
         const content = json({ schema: SHELL_REVISION, messages: transcript, observationIds, status, compactions, ...(failure ? { failure } : {}) });
         checkpoint = await bridge.persistCheckpoint(input.run.id, input.run.revision, SHELL_REVISION, content);
@@ -135,12 +144,16 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       }
       try {
         if (status === 'completed' && input.messages.length === 0) return { status: 'completed', checkpoint: input.checkpoint, observations };
+        const last = transcript.at(-1);
+        if (input.checkpoint && input.messages.length === 0 && last?.role === 'assistant' && last.stopReason === 'stop') {
+          status = 'completed'; await save(); return { status, checkpoint, observations };
+        }
         status = 'running';
         // Reconstruct pending tools after a crash. The receiver deduplicates/reconciles stable call IDs.
         const resultKey = (item: Message & { aeonStepId?: string }, id: string) => `${item.aeonStepId}:${id}`;
         const results = new Set(transcript.filter(item => item.role === 'toolResult').map(item => resultKey(item, item.toolCallId)));
         for (let index = 0; index < transcript.length; index++) {
-          const item = transcript[index]; if (item.role !== 'assistant') continue;
+          const item = transcript[index]; if (item.role !== 'assistant' || ['error', 'aborted', 'length'].includes(item.stopReason)) continue;
           for (const call of item.content.filter(block => block.type === 'toolCall')) {
             if (results.has(resultKey(item, call.id))) continue;
             const declaration = tools.find(tool => tool.name === call.name);
@@ -154,10 +167,10 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         }
         const model = mistralModel(options.model, options.modelProfile);
         stage = 'model';
-        await runAgentLoopContinue({ messages: [system(), ...transcript], tools: wrapped }, {
+        await runAgentLoopContinue({ messages: [system(), ...continuationMessages()], tools: wrapped }, {
           model, convertToLlm: messages => messages, toolExecution: 'sequential',
           getSteeringMessages: options.steering ? async () => (await options.steering!()).filter(item => item.role !== 'system') : undefined,
-          finishTurn: () => halted ? { action: 'end' } : undefined,
+          finishTurn: ({ message }) => halted || message.stopReason === 'length' ? { action: 'end' } : undefined,
           async prepareRequest() {
             signal?.throwIfAborted();
             if (options.compaction && transcript.length > options.compaction.thresholdMessages) {
@@ -178,7 +191,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
                 stage = 'model';
               }
             }
-            return { context: { messages: [system(), ...transcript], tools: wrapped } };
+            return { context: { messages: [system(), ...continuationMessages()], tools: wrapped } };
           },
         }, emit, signal, transport.stream);
         const final = transcript.findLast(item => item.role === 'assistant');

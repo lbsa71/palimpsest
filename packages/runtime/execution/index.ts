@@ -47,14 +47,14 @@ export class DurableRuntime {
   }
   /** Call once on host startup, after exclusive process authority is acquired. */
   recover(): string[] {
-    return this.store.transaction(()=> {this.effects.recoverDispatched();this.resources.recoverDispatched();
+    return this.store.transaction(()=> {this.effects.recoverDispatched();this.resources.recoverDispatched();this.resources.recoverUndispatchedEffects();
       return this.store.list<Run>('runs').filter(r=>r.value.status==='running').map(r=>{this.status(r.key,this.effects.unresolved(r.key).length?'blocked':'waiting');return r.key;});
     });
   }
   /** Explicit takeover changes the worker grant, retaining all observations and uncertain effects. */
   adopt(runId:string,authority:Authority):void {
     this.effects.fence.assert(authority);
-    this.store.transaction(()=>{const row=this.store.get<Run>('runs',runId);invariant(row && row.value.status!=='running','cannot adopt active run');invariant(!['completed','cancelled'].includes(row.value.status),'cannot adopt terminal run');const next={...row.value,authority,revision:row.value.revision+1};this.store.put('runs',runId,next,row.revision);this.store.append({id:randomUUID(),stream:runId,type:'adopted',data:next});});
+    this.store.transaction(()=>{const row=this.store.get<Run>('runs',runId);invariant(row && row.value.status!=='running','cannot adopt active run');invariant(!['completed','cancelled'].includes(row.value.status),'cannot adopt terminal run');this.effects.adoptUndispatched(runId,authority);const next={...row.value,authority,revision:row.value.revision+1};this.store.put('runs',runId,next,row.revision);this.store.append({id:randomUUID(),stream:runId,type:'adopted',data:next});});
   }
   observations(runId:string):Observation[] {return this.store.list<Observation>('observations').map(r=>r.value).filter(o=>o.runId===runId);}
   private execution(runId:string):ExecutionState {return this.store.get<ExecutionState>('execution',runId)?.value??{};}
@@ -77,8 +77,7 @@ export class DurableRuntime {
         }
         if(current.status==='authorized') {
           const request=runtime.resources.request(current.reservationId!)!;
-          runtime.resources.dispatched({...request,status:'dispatched'});
-          const started=runtime.now();current=await runtime.effects.dispatch(current.id,authority,signal);
+          const started=runtime.now();current=await runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));
           runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:Math.max(0,runtime.now()-started)}});
         }
         if(current.status==='uncertain'||current.status==='dispatched')throw new UncertainEffect('tool outcome unknown; reconcile before another effect');
@@ -109,8 +108,8 @@ export class DurableRuntime {
       const checkpoint=state.checkpoint?{...state.checkpoint,revision:run.revision}:undefined;
       const messages=entries.map(e=>({role:'user',content:typeof e.data.value==='string'?e.data.value:canonicalJson(e.data.value),timestamp:this.now()}));
       const result=await this.shell.run({run,messages,prompt,...(checkpoint?{checkpoint}:{})},this.bridge(runId,run.authority,messageSequence),controller.signal);
-      if(result.checkpoint){validateCheckpoint(result.checkpoint,run);this.store.readArtifact(result.checkpoint.artifact);}
-      this.store.transaction(()=> {for(const observation of result.observations) {validateObservation(observation);invariant(observation.runId===runId,'foreign shell observation');const row=this.store.get<Observation>('observations',observation.id);if(row)invariant(canonicalJson(row.value)===canonicalJson(observation),'conflicting shell observation');else this.store.put('observations',observation.id,observation,null);}this.saveExecution(runId,{...this.execution(runId),lastResult:result,messageSequence,...(result.checkpoint?{checkpoint:result.checkpoint}:{})});});
+      if(result.checkpoint){validateCheckpoint(result.checkpoint,run);const issued=this.execution(runId).checkpoint;invariant(issued && canonicalJson({...issued,revision:run.revision})===canonicalJson(result.checkpoint),'shell returned an unissued checkpoint');this.store.readArtifact(result.checkpoint.artifact);}
+      this.store.transaction(()=> {for(const observation of result.observations) {validateObservation(observation);invariant(observation.runId===runId,'foreign shell observation');const row=this.store.get<Observation>('observations',observation.id);invariant(row && canonicalJson(row.value)===canonicalJson(observation),'shell returned an unissued or changed observation');}this.saveExecution(runId,{...this.execution(runId),lastResult:result,messageSequence,...(result.checkpoint?{checkpoint:result.checkpoint}:{})});});
       if(this.getRun(runId)!.status==='cancelled')return this.getRun(runId)!;
       if(this.effects.unresolved(runId).length)return this.status(runId,'blocked');
       return this.status(runId,result.status==='completed'?'completed':result.status==='blocked'?'blocked':'waiting');

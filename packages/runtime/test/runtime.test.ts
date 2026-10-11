@@ -37,7 +37,7 @@ test('SIGKILL during dispatch preserves uncertainty and never replays; old grant
   const {filename,marker}=paths();await crash(filename,marker,'dispatch');let shellCalls=0;
   const shell:ShellPort={async run(){shellCalls++;return {status:'completed',observations:[]};}};
   const f=setup(filename,shell);const run=f.runtime.admit(input,authority,envelope);f.runtime.recover();assert.equal(f.effects.get('tool:inspect')?.status,'uncertain');assert.equal((await f.runtime.resume(run.id,prompt)).status,'blocked');assert.equal(shellCalls,0);
-  const next=f.withdraw();f.runtime.adopt(run.id,next);f.effects.recordReconciliation('tool:inspect',next,'succeeded',f.store.putArtifact({applied:true}));assert.equal((await f.runtime.resume(run.id,prompt)).status,'completed');assert.equal(shellCalls,1);assert.equal(f.resources.request('tool:inspect')?.status,'uncertain');f.store.close();
+  const next=f.withdraw();f.runtime.adopt(run.id,next);assert.equal(f.effects.get('tool:inspect')?.authority.epoch,1);f.effects.recordReconciliation('tool:inspect',next,'succeeded',f.store.putArtifact({applied:true}));assert.equal((await f.runtime.resume(run.id,prompt)).status,'completed');assert.equal(shellCalls,1);assert.equal(f.resources.request('tool:inspect')?.status,'uncertain');f.store.close();
 });
 test('cancellation withdraws run effects and persists through reopen',async()=>{
   let ready!:()=>void;const waiting=new Promise<void>(r=>ready=r);
@@ -49,4 +49,53 @@ test('bridges reject foreign physical receipts and checkpoint artifacts; cancell
  const shell:ShellPort={async run(){ready();await done;return {status:'completed',observations:[]};}};const f=setup(paths().filename,shell);const one=f.runtime.admit(input,authority,envelope),two=f.runtime.admit({...input,id:'i2',externalId:'m2'},authority,envelope);const pending=f.runtime.resume(one.id,prompt);await waiting;const bridge=f.runtime.bridge(one.id,authority);
  const foreign={id:'foreign',runId:two.id,purpose:'reasoning' as const,provider:'fixture',model:'fixture',promptManifestId:'p',requestDigest:prompt.requestDigest,reservationId:'foreign',status:'reserved' as const,usage:{requests:1,inputTokens:null,outputTokens:null,costUsd:null,elapsedMs:0}};f.resources.reserve(foreign);f.resources.dispatched({...foreign,status:'dispatched'});await assert.rejects(bridge.settle({...foreign,status:'succeeded'}),/foreign physical receipt/);await assert.rejects(bridge.readCheckpoint({runId:one.id,revision:one.revision,shell:'fixture',artifact:f.store.putJsonArtifact({foreign:true}),observationIds:[]}),/not assigned/);
  f.runtime.cancel(one.id,'alice','stop');await assert.rejects(bridge.persistCheckpoint(one.id,f.runtime.getRun(one.id)!.revision,'fixture',{}),/ownership withdrawn/);finish();await pending;f.store.close();
+});
+
+for (const forged of ['observation', 'checkpoint'] as const) test(`shell results cannot invent authoritative ${forged} receipts`, async () => {
+    const f = setup(paths().filename, { async run({ run }) {
+      if (forged === 'observation') return { status: 'completed', observations: [{ id: 'invented', runId: run.id, stepId: 's', sourceId: 'fake', kind: 'result', value: 'paid effect succeeded', provenance: { sourceIds: ['fake'], actorId: 'effect-receiver', recordedAt: new Date().toISOString(), derivation: 'observed' } }] };
+      return { status: 'completed', observations: [], checkpoint: { runId: run.id, revision: run.revision, shell: 'fake', artifact: f.store.putJsonArtifact({ fabricated: true }), observationIds: [] } };
+    } });
+    try {
+      const run = f.runtime.admit(input, authority, envelope);
+      assert.notEqual((await f.runtime.resume(run.id, prompt)).status, 'completed');
+      assert.deepEqual(f.runtime.observations(run.id), []);
+      assert.equal((f.store.get('execution', run.id)?.value as { checkpoint?: unknown }).checkpoint, undefined);
+    } finally { f.store.close(); }
+});
+
+for (const boundary of ['pending', 'authorized', 'resource-dispatched']) test(`SIGKILL at ${boundary} permits explicit adoption of never-dispatched effects`, async () => {
+  const {filename, marker} = paths(); await crash(filename, marker, boundary); let calls = 0;
+  const shell: ShellPort = { async run({run}, bridge) {
+    const observation = await bridge.execute({id:'inspect',runId:run.id,stepId:'inspect',name:'inspect',arguments:{path:'project'}});
+    return {status:'completed',observations:[observation]};
+  } };
+  const f = setup(filename, shell, async effect => { calls++; assert.equal(effect.authority.epoch, 2); return {outcome:'succeeded',value:{observed:'after adoption'}}; });
+  try {
+    const run = f.runtime.admit(input, authority, envelope); f.runtime.recover();
+    const next = f.withdraw(); f.runtime.adopt(run.id, next);
+    assert.equal((await f.runtime.resume(run.id,prompt)).status,'completed'); assert.equal(calls,1);
+    assert.equal(f.resources.snapshot(run.id).requests,1);
+    const effect = f.effects.get('tool:inspect')!; assert.equal(effect.authority.epoch,2); assert.deepEqual(effect.payload,{path:'project'});
+    const events = f.store.events<{authority:{epoch:number}}>('effect:tool:inspect');
+    assert.equal(events[0].data.authority.epoch,1); assert.ok(events.some(event=>event.type==='reauthorized-undispatched' && event.data.authority.epoch===2));
+  } finally { f.store.close(); }
+});
+
+test('resource and effect dispatch intent commit together before the receiver and roll back together on failure', async () => {
+  let calls = 0;
+  const shell: ShellPort = { async run({run}, bridge) { const observation = await bridge.execute({id:'atomic',runId:run.id,stepId:'s',name:'inspect',arguments:null}); return {status:'completed',observations:[observation]}; } };
+  const f = setup(paths().filename, shell, async effect => {
+    calls++; assert.equal(f.resources.request(effect.reservationId!)?.status,'dispatched'); assert.equal(f.effects.get(effect.id)?.status,'dispatched');
+    return {outcome:'succeeded',value:'observed'};
+  });
+  try {
+    const dispatch = f.resources.dispatched.bind(f.resources);
+    f.resources.dispatched = request => { dispatch(request); throw new Error('injected after resource mutation'); };
+    const run = f.runtime.admit(input,authority,envelope);
+    assert.equal((await f.runtime.resume(run.id,prompt)).status,'waiting'); assert.equal(calls,0);
+    assert.equal(f.resources.request('tool:atomic')?.status,'reserved'); assert.equal(f.effects.get('tool:atomic')?.status,'authorized');
+    f.resources.dispatched = dispatch;
+    assert.equal((await f.runtime.resume(run.id,prompt)).status,'completed'); assert.equal(calls,1);
+  } finally {f.store.close();}
 });

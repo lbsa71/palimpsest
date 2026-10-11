@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { identity, invariant, scopeAllows, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
+import { identity, invariant, scopeAllows, validateCapturedPrompt, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
   type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
 import type { ShellOptions } from '../packages/agent-shell/index.ts';
 import { runWorker } from '../packages/supervisor/worker-process.ts';
@@ -48,12 +48,31 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         invariant(hash(value) === fragment.artifact.sha256, 'Worker prompt artifact changed');
         fragments[fragment.artifact.sha256] = value;
       }
+      const baseFragments = [...input.prompt.fragments].sort((a, b) => a.order - b.order);
+      invariant(baseFragments.every(fragment => fragment.role === 'system' || fragment.role === 'developer'), 'Unsupported broker instruction role');
+      const toolDigest = hash(JSON.stringify(options.worker.tools));
+      function expectedFragments(compaction: boolean): PromptFragment[] {
+        const instructions = compaction ? [...baseFragments, { ...options.worker.compaction!.instruction, order: Math.max(-1, ...baseFragments.map(fragment => fragment.order)) + 1 }] : baseFragments;
+        return [...instructions, { id: 'shell.tools', owner: 'tool', role: 'tool', order: Math.max(-1, ...instructions.map(fragment => fragment.order)) + 1,
+          artifact: { uri: `shell:tools:${toolDigest}`, sha256: toolDigest }, scope: input.run.scope, replaceable: true, derivedFrom: [] }];
+      }
       const captured = new Map<string, { manifest: PromptManifest; payload: string }>();
       const observed = new Map<string, JsonValue>();
       let lastCheckpoint = input.checkpoint;
-      const records = new Map<string, { request: PhysicalRequest; payload: string; fetched: boolean; receipt?: TransportReceipt; settled: boolean }>();
+      type RequestRecord = { request: PhysicalRequest; payload: string; fetched: boolean; receipt?: TransportReceipt; settled: boolean };
+      const records = new Map<string, RequestRecord>();
       let physicalRequests = 0;
-      const output = await runWorker({
+      const inFlight = new Set<Promise<unknown>>();
+      async function settleRecord(record: RequestRecord): Promise<void> {
+        if (record.settled) return;
+        const receipt = record.receipt;
+        const status = receipt?.status ?? (record.request.status === 'reserved' ? 'failed' : 'uncertain');
+        await bridge.settle({ ...record.request, status, usage: receipt?.usage ?? { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } });
+        record.settled = true;
+      }
+      let output: JsonValue;
+      try {
+      output = await runWorker({
         command: { workspace: options.workspace(input), protectedPaths: options.protectedPaths, applicationRoot: options.applicationRoot,
           nodeBinary: options.nodeBinary, executable: '/runtime/node', args: [`/app/${options.entrypoint}`],
           timeoutMs: options.timeoutMs, maxOutputBytes: options.maxPayloadBytes * 64, signal },
@@ -72,7 +91,17 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
             case 'capturePrompt': {
               const manifest = args[0] as unknown as PromptManifest; const payload = args[1];
               invariant(typeof payload === 'string' && Buffer.byteLength(payload) <= options.maxPayloadBytes, 'Provider payload too large');
+              validateCapturedPrompt(manifest, payload);
+              const normal = identity(manifest.fragments) === identity(expectedFragments(false));
+              const compaction = !!options.worker.compaction && identity(manifest.fragments) === identity(expectedFragments(true));
+              invariant(normal || compaction, 'Worker changed owned prompt provenance');
               const decoded = JSON.parse(payload) as Record<string, unknown>;
+              invariant(Object.keys(decoded).every(key => ['model', 'messages', 'tools', 'tool_choice', 'reasoning_effort', 'stream', 'max_tokens'].includes(key)), 'Unqualified provider option');
+              const expectedSystem = baseFragments.map(fragment => fragments[fragment.artifact.sha256]).join('\n\n') + (compaction ? `\n\n${fragments[options.worker.compaction!.instruction.artifact.sha256]}` : '');
+              const messages = decoded.messages as { role: string; content: unknown }[];
+              invariant(Array.isArray(messages) && messages[0]?.role === 'system' && messages[0].content === expectedSystem && messages.slice(1).every(message => ['user', 'assistant', 'tool'].includes(message.role)), 'Worker changed owned system instructions');
+              const expectedTools = compaction ? [] : options.worker.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
+              invariant(identity(decoded.tools ?? []) === identity(expectedTools) && decoded.tool_choice === (expectedTools.length ? 'auto' : undefined), 'Worker changed owned tools');
               invariant(decoded.model === options.worker.model && decoded.stream === false, 'Unqualified provider profile');
               invariant(decoded.max_tokens === (options.worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
               invariant(decoded.reasoning_effort === options.worker.reasoningEffort, 'Unqualified reasoning effort');
@@ -119,7 +148,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const started = performance.now();
               record.receipt = receipt;
               options.recordTransport(receipt);
-              try {
+              const operation = (async () => { try {
                 const bounded = AbortSignal.any([workerSignal, AbortSignal.timeout(options.worker.timeoutMs ?? 60_000)]);
                 const response = await options.performRequest(payload, bounded);
                 invariant(Buffer.byteLength(response.body) <= options.maxPayloadBytes, 'Provider response too large');
@@ -135,16 +164,22 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                   receipt.status = 'succeeded';
                 } else if (response.status === 429) receipt.status = 'failed';
                 return json(response);
-              } finally { receipt.usage.elapsedMs = performance.now() - started; options.recordTransport(receipt); }
+              } finally {
+                receipt.usage.elapsedMs = performance.now() - started;
+                options.recordTransport(receipt);
+                // Trusted host evidence is durable before replying, even if the worker dies
+                // or omits its advisory settlement RPC.
+                await settleRecord(record);
+              } })();
+              inFlight.add(operation);
+              try { return await operation; } finally { inFlight.delete(operation); }
             }
             case 'settle': {
               const supplied = args[0] as unknown as PhysicalRequest;
               const record = records.get(supplied.id);
-              invariant(record && !record.settled && supplied.runId === input.run.id, 'Foreign or repeated worker settlement');
-              const receipt = record.receipt;
-              const status = receipt?.status ?? (record.request.status === 'reserved' ? 'failed' : 'uncertain');
-              await bridge.settle({ ...record.request, status, usage: receipt?.usage ?? { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } });
-              record.settled = true;
+              invariant(record && supplied.runId === input.run.id, 'Foreign worker settlement');
+              invariant(!record.fetched || record.settled, 'Provider request still in flight');
+              await settleRecord(record);
               return null;
             }
             case 'persistCheckpoint': {
@@ -158,6 +193,10 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
           }
         },
       });
+      } finally {
+        await Promise.allSettled([...inFlight]);
+        for (const record of records.values()) await settleRecord(record);
+      }
       invariant(typeof output === 'object' && output !== null && !Array.isArray(output), 'Invalid worker result');
       const result = output as unknown as ShellResult;
       invariant(['completed', 'checkpointed', 'cancelled', 'blocked'].includes(result.status), 'Invalid worker completion status');

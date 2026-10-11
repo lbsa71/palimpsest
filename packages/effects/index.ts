@@ -30,16 +30,32 @@ export class EffectJournal {
     return this.store.transaction(() => { const row = this.store.get<Effect>('effects',id); invariant(row,'missing effect'); const next = transitionEffect(row.value,event,authority); this.store.put('effects',id,next,row.revision); this.event(next,event.kind); return next; });
   }
   authorize(id: string, reservationId: string, authority: Authority): Effect { this.fence.assert(authority); return this.transition(id,{kind:'authorize',reservationId},authority); }
-  async dispatch(id: string, authority: Authority, signal?: AbortSignal): Promise<Effect> {
+  /** Explicit takeover only reauthorizes intents that never crossed the durable dispatch boundary. */
+  adoptUndispatched(runId: string, currentAuthority: Authority): void {
+    this.fence.assert(currentAuthority);
+    this.store.transaction(() => {
+      for (const row of this.store.list<Effect>('effects')) {
+        if (row.value.runId !== runId || !['pending', 'authorized'].includes(row.value.status)) continue;
+        invariant(!row.value.receipt, 'undispatched effect has an unexpected receipt');
+        const next = { ...row.value, authority: currentAuthority, revision: row.value.revision + 1 };
+        validateEffect(next); this.store.put('effects', row.key, next, row.revision); this.event(next, 'reauthorized-undispatched');
+      }
+    });
+  }
+  async dispatch(id: string, authority: Authority, signal?: AbortSignal, beforeDispatch?: () => void): Promise<Effect> {
     const effect = this.get(id); invariant(effect,'missing effect'); assertAuthority(effect.authority,authority); invariant(effect.status === 'authorized','effect requires authorization or reconciliation');
     signal?.throwIfAborted(); this.fence.assert(authority);
-    const dispatched = this.transition(id,{kind:'dispatch'},authority);
+    // Resource dispatch and effect intent commit together, before entering the receiver.
+    const dispatched = this.store.transaction(() => {
+      beforeDispatch?.();
+      return this.transition(id,{kind:'dispatch'},authority);
+    });
     // The receiver also MUST fence inside dispatch before starting its actual effect.
     let result: Awaited<ReturnType<EffectReceiver['dispatch']>>;
     try { this.fence.assert(authority); result = await this.receiver.dispatch(dispatched,signal); }
     catch { result = {outcome:'uncertain'}; }
     const now = this.get(id)!;
-    if (now.status === 'uncertain' && result.receipt) return this.recordReconciliation(id,authority,result.outcome==='succeeded'?'succeeded':'unresolved',result.receipt);
+    if (now.status === 'uncertain' && result.receipt) return this.transition(id,{kind:'reconcile',outcome:result.outcome==='succeeded'?'succeeded':'unresolved',receipt:result.receipt},authority);
     if (now.status !== 'dispatched') return now;
     // A late receipt is evidence, even if ownership was withdrawn during the call.
     return this.store.transaction(() => {
@@ -55,10 +71,11 @@ export class EffectJournal {
     }));
   }
   async reconcile(id: string, currentAuthority: Authority): Promise<Effect> {
+    this.fence.assert(currentAuthority);
     const effect = this.get(id); invariant(effect?.status === 'uncertain','only uncertain effects reconcile');
     const result = await this.receiver.reconcile(effect);
     return this.transition(id,{kind:'reconcile',...result},currentAuthority);
   }
-  recordReconciliation(id: string, currentAuthority: Authority, outcome: 'succeeded' | 'not-applied' | 'unresolved', receipt: ArtifactRef): Effect { return this.transition(id,{kind:'reconcile',outcome,receipt},currentAuthority); }
+  recordReconciliation(id: string, currentAuthority: Authority, outcome: 'succeeded' | 'not-applied' | 'unresolved', receipt: ArtifactRef): Effect { this.fence.assert(currentAuthority); return this.transition(id,{kind:'reconcile',outcome,receipt},currentAuthority); }
   unresolved(runId?: string): Effect[] { return this.store.list<Effect>('effects').map(r=>r.value).filter(e=>['dispatched','uncertain'].includes(e.status) && (runId === undefined || e.runId===runId)); }
 }
