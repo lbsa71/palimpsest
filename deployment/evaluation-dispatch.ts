@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, opendirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { canonicalJson, identity, invariant, validateEvaluation, type ArtifactRef, type Authority } from '../packages/contracts/index.ts';
 import { admitCandidate, admissionPolicyIdentity, type AdmissionPolicy } from '../packages/release/admission.ts';
@@ -158,12 +158,28 @@ export interface DispatchOptions {
   release(proof: ReleaseProof): Promise<Authority>; stageControl(proof: ReleaseProof, policyDigest: string): Promise<string>;
 }
 export interface DispatchStatus { available: boolean; activeJob?: string; pending: number; uncertain: number; diagnosis?: string }
+function removeInterruptedSnapshots(host: HostBindings): void {
+  const path = join(host.stateDirectory, 'host-review-dispatch');
+  mkdirSync(path, { recursive: true, mode: 0o700 }); assertPrivateHostDirectory(path);
+  const directory = opendirSync(path);
+  try {
+    let count = 0;
+    for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+      invariant(++count <= 128 && /^physical-[A-Za-z0-9]{6}$/.test(entry.name) && entry.isDirectory(), 'Unexpected or unbounded interrupted reviewer snapshots; host cleanup required');
+      const snapshot = join(path, entry.name); assertPrivateHostDirectory(snapshot); rmSync(snapshot, { recursive: true, force: true });
+    }
+  } finally { directory.closeSync(); }
+}
 /** One host lease owner, one physical review at a time, finite per-job bounds, no uncertain-job retry. */
 export class EvaluationDispatcher {
   readonly options: DispatchOptions;
   readonly #abort = new AbortController();
   #loop?: Promise<void>; #activeJob?: string; #diagnosis?: string;
-  constructor(options: DispatchOptions) { this.options = options; this.#diagnosis = options.unavailableDiagnosis; options.mailbox.recover(); this.#publish(); }
+  constructor(options: DispatchOptions) {
+    this.options = options; this.#diagnosis = options.unavailableDiagnosis;
+    // The owning supervisor lease and parent-death/PID-namespace boundary exclude a live old reviewer.
+    removeInterruptedSnapshots(options.host); options.mailbox.recover(); this.#publish();
+  }
   status(): DispatchStatus {
     const jobs = this.options.mailbox.jobs();
     const diagnosis = this.#diagnosis ?? (!this.options.reviewer ? 'External evaluation unavailable: no qualified reviewer is configured' : undefined);

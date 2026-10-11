@@ -160,8 +160,11 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
       await supervisor!.close(); supervisor = undefined; await waiting;
       assert.equal(mailbox.status(request.requestId)!.status, 'uncertain');
       assert.deepEqual(readdirSync(join(f.host.stateDirectory, 'host-review-dispatch')), []);
+      const interruptedSnapshot = mkdtempSync(join(f.host.stateDirectory, 'host-review-dispatch/physical-'));
+      writeFileSync(join(interruptedSnapshot, 'key'), Buffer.alloc(32, 1), { mode: 0o400 });
       supervisor = await ServiceSupervisor.open(f.options);
       assert.equal(mailbox.status(request.requestId)!.status, 'uncertain');
+      assert.deepEqual(readdirSync(join(f.host.stateDirectory, 'host-review-dispatch')), []);
       await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(supervisor.status().evaluation?.activeJob, undefined);
     });
     await t.test('missing reviewer preserves offline service recovery with explicit unavailable status', async () => {
