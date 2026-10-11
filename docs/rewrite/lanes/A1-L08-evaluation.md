@@ -50,6 +50,8 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 ## Finite integration handoff (2026-10-11)
 
+Root reserves a separate current design task for `/root/a1_development_acquisition_design`, `gpt-6-astra` / high, branch `codex/a1-development-acquisition-design-20261011`, worktree `/home/palimpsest/migration/aeon-1-20261011/development-acquisition-design`, base `678861f`. Exclusive writes: new `docs/rewrite/evidence/A1-L08/development-acquisition-design.md`; runtime, witness contracts, all other plans and historical evidence remain read-only. Its finite goal is to choose the smallest concrete independently qualified acquisition/review path for actual developmental evidence and later autonomous operation, using current machinery and distinguishing necessary bootstrap code from external evidence/access. It must resolve the existing human-only procedure versus an accounted model-review route, including original-grant accounting after the candidate evidence freezes, actual clock/configuration/observer bindings, independence and unaltered acceptance. No model/process/account operation or new framework is authorized by this design task. Root owns adoption and any later implementation assignment.
+
 ```text
 /goal Deliver the pre-live-scoring v2 correction, actual AutarkApplication evaluation adapter, bounded real-tool integration checks and comparator feasibility handoff; finish engineering without claiming full RW03, RW18 or H1.
 ```
