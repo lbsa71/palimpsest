@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,4 +24,19 @@ test('a confined mind can obtain rewrite source, edit a dependency and run actua
     assert.match(readFileSync(join(workspace, 'dist/packages/narrow-schema/vendor/cfworker/validator.js'), 'utf8'), /edited-locally/);
     const secondCheckout = await tools[0]!.execute({}) as { exitCode: number }; assert.notEqual(secondCheckout.exitCode, 0);
   } finally { rmSync(workspace, { recursive: true, force: true }); rmSync(protectedState, { recursive: true, force: true }); }
+});
+
+
+test('source checkout refuses a symlinked ancestor of an explicit nested source root', async () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'aeon-source-ancestor-'));
+  const applicationRoot = join(temporary, 'application'), workspace = join(temporary, 'workspace');
+  mkdirSync(join(applicationRoot, 'unselected', 'agent-shell'), { recursive: true }); mkdirSync(workspace); mkdirSync(join(temporary, 'state'));
+  writeFileSync(join(applicationRoot, 'unselected', 'agent-shell', 'outside.txt'), 'unselected source');
+  symlinkSync('unselected', join(applicationRoot, 'experiments'));
+  try {
+    const tools = sourceWorkspaceTools({ applicationRoot, workspace, protectedPaths: [join(temporary, 'state')], nodeBinary: process.execPath, maxFiles: 10, maxBytes: 1024, timeoutMs: 5000 });
+    const result = await tools[0]!.execute({}) as { exitCode: number };
+    assert.notEqual(result.exitCode, 0, 'nested source entries must not traverse links');
+    assert.equal(existsSync(join(workspace, 'experiments', 'agent-shell', 'outside.txt')), false);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
 });

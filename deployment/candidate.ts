@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
 import { canonicalJson, identity, invariant, type JsonValue } from '../packages/contracts/index.ts';
-import { freezeCandidate, verifyCandidate, type FrozenCandidate } from '../packages/release/artifacts.ts';
+import { freezeCandidate, verifyCandidate, inventoryCandidateSource, type FrozenCandidate } from '../packages/release/artifacts.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import type { ApplicationConfig } from './config.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
@@ -25,15 +24,6 @@ function isControl(path: string): boolean {
   // Even developmental APIs are host mutation receivers; changing their checks is a control change.
   return !path.startsWith('packages/agent-shell/vendor/pi/agent/');
 }
-function inventory(root: string, entries: readonly string[]): Entry[] {
-  const result: Entry[] = [];
-  const visit = (path: string) => {
-    const stat = lstatSync(join(root, path)); invariant(!stat.isSymbolicLink(), 'Deployment source symlinks are not admitted');
-    if (stat.isDirectory()) { for (const name of readdirSync(join(root, path)).sort()) visit(`${path}/${name}`); return; }
-    invariant(stat.isFile() && stat.nlink === 1, 'Deployment source requires regular singly linked files'); result.push({ path, sha256: hash(readFileSync(join(root, path))) });
-  };
-  entries.forEach(visit); return result.sort((a, b) => a.path.localeCompare(b.path, 'en'));
-}
 export function deploymentEntries(sourceRoot: string): string[] {
   const rootNames = new Set(readdirSync(sourceRoot));
   const source = rewriteSourceEntries.filter(path => rootNames.has(path.split('/')[0]!));
@@ -43,11 +33,11 @@ export function deploymentEntries(sourceRoot: string): string[] {
 }
 export function freezeApplication(sourceRoot: string, artifactStore: string, inputs: DeploymentInputs): FrozenCandidate {
   invariant(inputs.runtime.nodeSha256.length === 64 && inputs.runtime.nodeVersion.startsWith('v24.'), 'Pinned Node 24 runtime required');
-  const entries = deploymentEntries(sourceRoot), files = inventory(sourceRoot, entries);
+  const entries = deploymentEntries(sourceRoot), files = inventoryCandidateSource(sourceRoot, entries).map(({ path, sha256 }) => ({ path, sha256 }));
   const nodeModules = files.filter(file => file.path.startsWith('node_modules/'));
   const forkFiles = files.filter(file => file.path.startsWith('packages/agent-shell/vendor/') || file.path.startsWith('packages/narrow-schema/vendor/'));
   const controls = { classifier: 'host-execution-closure-v1', files: files.filter(file => isControl(file.path)), runtime: inputs.runtime, policy: inputs.policy };
-  const dependencies = { installedRuntime: [], lockfile: hash(readFileSync(join(sourceRoot, 'package-lock.json'))), retainedForks: forkFiles, checkBuildToolchain: nodeModules, runtime: inputs.runtime };
+  const dependencies = { installedRuntime: [], lockfile: files.find(file => file.path === 'package-lock.json')!.sha256, retainedForks: forkFiles, checkBuildToolchain: nodeModules, runtime: inputs.runtime };
   const frozen = freezeCandidate(sourceRoot, artifactStore, entries, { dependencies: dependencies as unknown as JsonValue, prompts: inputs.prompts,
     model: inputs.configuration.model as unknown as JsonValue, configuration: inputs.configuration as unknown as JsonValue, controls: controls as unknown as JsonValue, createdBy: inputs.createdBy });
   const actualFiles = frozen.files.map(file => ({ path: file.path, sha256: file.sha256 }));

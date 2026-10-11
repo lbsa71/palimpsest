@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { invariant } from '../packages/contracts/index.ts';
@@ -10,6 +10,20 @@ import type { ApplicationSecrets } from './config.ts';
 
 export interface ServiceReady { kind: 'ready'; candidateId: string; authority: Authority; address: { address: string; family: string; port: number } }
 export interface ServiceProcessOptions { mode: 'engineering' | 'product'; onUnexpectedExit?: () => void }
+/** Pin both directories and refuse a pre-existing public or redirected diagnostic sink. */
+function writeDiagnostic(stateDirectory: string, value: object): void {
+  const state = openSync(stateDirectory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  let directory: number | undefined;
+  try {
+    const path = `/proc/self/fd/${state}/host-diagnostics`;
+    try { mkdirSync(path, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    directory = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const stat = fstatSync(directory);
+    invariant((stat.mode & 0o077) === 0 && stat.uid === process.getuid?.(), 'Private host diagnostics directory required');
+    const fd = openSync(`/proc/self/fd/${directory}/${randomUUID()}.json`, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try { writeFileSync(fd, JSON.stringify(value)); } finally { closeSync(fd); }
+  } finally { if (directory !== undefined) closeSync(directory); closeSync(state); }
+}
 /** The supervisor holds its own lease; each application holds the separate execution lease. */
 export class ServiceProcess {
   readonly host: HostBindings; readonly secrets: ApplicationSecrets;
@@ -26,7 +40,7 @@ export class ServiceProcess {
     const entrypoint = join(this.host.artifactStore, candidateId, 'payload/deployment/service-child.ts');
     const child = spawn(this.host.nodeBinary, [entrypoint], { detached: true, env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
     this.child = child; this.stopping = false;
-    let diagnostic = ''; child.stderr?.on('data', (chunk: Buffer) => { if (Buffer.byteLength(diagnostic) < 32768) diagnostic += chunk.toString('utf8').slice(0, 32768 - diagnostic.length); });
+    let diagnostic = Buffer.alloc(0); child.stderr?.on('data', (chunk: Buffer) => { if (diagnostic.length < 32768) diagnostic = Buffer.concat([diagnostic, chunk.subarray(0, 32768 - diagnostic.length)]); });
     let ready = false;
     this.closed = new Promise(resolve => { child.once('exit', () => { resolve(); if (ready && !this.stopping) this.options.onUnexpectedExit?.(); }); child.once('error', () => resolve()); });
     try {
@@ -41,7 +55,12 @@ export class ServiceProcess {
         });
         child.send({ kind: 'start', mode: this.options.mode, bindings: this.host, candidateId, authority, secrets: this.secrets }, failure => { if (failure) error(); });
       });
-    } catch (error) { const directory = join(this.host.stateDirectory, 'host-diagnostics'); mkdirSync(directory, { recursive: true, mode: 0o700 }); writeFileSync(join(directory, `${randomUUID()}.json`), JSON.stringify({ candidateId, at: new Date().toISOString(), diagnostic }), { mode: 0o600, flag: 'wx' }); await this.stop(); throw error; }
+    } catch (error) {
+      try { writeDiagnostic(this.host.stateDirectory, { candidateId, at: new Date().toISOString(), diagnostic: diagnostic.toString('utf8') }); }
+      catch { /* Failure to retain private diagnostics must never prevent cleanup. */ }
+      finally { await this.stop(); }
+      throw error;
+    }
   }
   async stop(): Promise<void> {
     const child = this.child; if (!child) return;
@@ -50,7 +69,7 @@ export class ServiceProcess {
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([this.closed, new Promise<void>(resolve => { timer = setTimeout(resolve, 5000); })]);
     if (timer) clearTimeout(timer);
-    if (child.exitCode === null && child.signalCode === null && child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; } await this.closed; }
+    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; } await this.closed; }
     this.child = undefined; this.closed = undefined;
   }
 }

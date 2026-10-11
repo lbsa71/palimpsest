@@ -10,19 +10,28 @@ const snapshotScript = String.raw`
 import fs from 'node:fs'; import path from 'node:path'; import crypto from 'node:crypto';
 const config=JSON.parse(process.argv[1]);
 if(fs.readdirSync('/work').length)throw Error('Source snapshot requires an empty exclusive workspace');
-let bytes=0;const files=[];
-function visit(relative){const from=path.join('/app',relative),to=path.join('/work',relative),stat=fs.lstatSync(from);
- if(stat.isSymbolicLink())throw Error('Source symlink rejected');
- if(stat.isDirectory()){fs.mkdirSync(to,{recursive:true});for(const name of fs.readdirSync(from).sort())visit(path.join(relative,name));return;}
- if(!stat.isFile()||stat.nlink!==1)throw Error('Source must contain regular unlinked files');
- if(++config.count>config.maxFiles||(bytes+=stat.size)>config.maxBytes)throw Error('Source snapshot exceeds file/byte grant');
- const content=fs.readFileSync(from);fs.mkdirSync(path.dirname(to),{recursive:true});fs.writeFileSync(to,content,{flag:'wx',mode:stat.mode&0o111?0o700:0o600});
- files.push({path:relative,sha256:crypto.createHash('sha256').update(content).digest('hex'),bytes:content.length});}
+let bytes=0,visited=0;const files=[];
+function openLocal(relative){let fd=fs.openSync('/app',fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
+ try{const parts=relative.split('/');for(let i=0;i<parts.length;i++){const next=fs.openSync('/proc/self/fd/'+fd+'/'+parts[i],fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|(i<parts.length-1?fs.constants.O_DIRECTORY:fs.constants.O_NONBLOCK));fs.closeSync(fd);fd=next;}return fd;}catch(error){fs.closeSync(fd);throw error;}}
+function visit(relative){if(++visited>config.maxFiles*2||relative.split('/').length>64)throw Error('Source snapshot exceeds entry/depth grant');
+ const to=path.join('/work',relative),fd=openLocal(relative);
+ try{const stat=fs.fstatSync(fd,{bigint:true});
+ if(stat.isDirectory()){fs.mkdirSync(to,{recursive:true});const directory=fs.opendirSync('/proc/self/fd/'+fd);try{for(let entry=directory.readSync();entry;entry=directory.readSync())visit(relative+'/'+entry.name);}finally{directory.closeSync();}return;}
+ if(!stat.isFile()||stat.nlink!==1n)throw Error('Source must contain regular unlinked files');
+ if(++config.count>config.maxFiles||stat.size>BigInt(config.maxBytes-bytes))throw Error('Source snapshot exceeds file/byte grant');
+ const content=Buffer.alloc(Number(stat.size));let offset=0;
+ while(offset<content.length){const count=fs.readSync(fd,content,offset,Math.min(content.length-offset,65536),offset);if(!count)throw Error('Source changed during snapshot');offset+=count;}
+ const after=fs.fstatSync(fd,{bigint:true});if(fs.readSync(fd,Buffer.alloc(1),0,1,content.length)||after.size!==stat.size||after.mtimeNs!==stat.mtimeNs||after.ctimeNs!==stat.ctimeNs||after.nlink!==1n)throw Error('Source changed during snapshot');
+ bytes+=content.length;fs.mkdirSync(path.dirname(to),{recursive:true});fs.writeFileSync(to,content,{flag:'wx',mode:stat.mode&0o111n?0o700:0o600});
+ files.push({path:relative,sha256:crypto.createHash('sha256').update(content).digest('hex'),bytes:content.length});
+ }finally{fs.closeSync(fd);}}
 for(const entry of config.entries)if(fs.existsSync(path.join('/app',entry)))visit(entry);
+files.sort((a,b)=>a.path.localeCompare(b.path,'en'));
 console.log(JSON.stringify({files,bytes,source:'accepted application snapshot',copiedAt:new Date().toISOString()}));
 `;
 function object(args: JsonValue, keys: string[]): Record<string, JsonValue> { invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).every(key => keys.includes(key)), 'Invalid source tool arguments'); return args; }
 export function sourceWorkspaceTools(options: SourceWorkspaceOptions): SourceTool[] {
+  invariant(Number.isSafeInteger(options.maxFiles) && options.maxFiles > 0 && options.maxFiles <= 100000 && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0 && options.maxBytes <= 512 * 1024 * 1024, 'Finite bounded source snapshot grants required');
   const run = (args: string[], maxOutputBytes: number, signal?: AbortSignal) => runConfined({ workspace: options.workspace, applicationRoot: options.applicationRoot, protectedPaths: options.protectedPaths, nodeBinary: options.nodeBinary, executable: '/runtime/node', args, timeoutMs: options.timeoutMs, maxOutputBytes, resourceLimits: options.resourceLimits, signal });
   return [{
     name: 'source_checkout', description: 'Copy the explicit accepted rewrite source into this empty isolated workspace, with source hashes. The candidate can then edit dependencies, prompts, tools, controls and plans for evaluation.',
