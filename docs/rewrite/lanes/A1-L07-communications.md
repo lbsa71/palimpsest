@@ -42,13 +42,13 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 | Branch / worktree | `codex/a1-communications-20261011` / `/home/palimpsest/migration/aeon-1-20261011/communications` |
 | Base source / contract revision | `4e55167` / `aeon1.c1.v1`; actual OperationalStore, DurableRuntime, EffectJournal |
 | Additional path reservations | None; use the exclusive scope above |
-| Last handoff / evidence | Component handoff being recorded; 20 communication tests, joined actual runtime/obligation receipt case, strict typecheck and compiled build pass |
+| Last handoff / evidence | Component handoff being recorded; 23 communication tests, joined actual runtime/obligation receipt case, strict typecheck and compiled build pass |
 | Blockers / next eligible task | Root L09 host/scheduler/tool assembly, authenticated live Slack/API smoke and fresh independent review; no external sends authorized for this task |
 
 ## Bounded component result — 2026-10-11
 
 T01–T04 and the deterministic portion of T05 are implemented in fresh TypeScript
-source against actual C1 storage/runtime/effect contracts. Twenty local tests pass:
+source against actual C1 storage/runtime/effect contracts. Twenty-three local tests pass:
 authenticated HTTP remains responsive during a running shell; source revisions and
 controls reach their owned run; Slack mention admission persists joined threads;
 channel/history/reply recovery resumes paginated cursors, rate limits and intake

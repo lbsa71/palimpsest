@@ -40,6 +40,25 @@ test('unbounded recovery or reconciliation configuration is rejected',()=>{
   const f=fixture();const api:SlackApi={async call<T>(){return {messages:[]} as T;}};
   try{const r=recovery(f,api);assert.throws(()=>new SlackRecovery({...r.options,lookbackSeconds:Infinity}),/bounded/);assert.throws(()=>new SlackRecovery({...r.options,maxPagesPerTick:0}),/bound/);assert.throws(()=>createSpeechHandler({store:f.store,fence:f.fence,api,botUserId:'BOT',grants:[],maxReconcilePages:Infinity}),/bound/);}finally{f.close();}
 });
+test('production Slack client accepts Socket Mode method and camel case speech, rejects redirects and bounded oversized bodies',async()=>{
+  let forwarded=0;const methods:string[]=[];
+  const server=createServer((req,res)=>{methods.push(req.url!);if(req.url==='/api/auth.test'){res.writeHead(307,{location:'/must-not-forward'});res.end();return;}if(req.url==='/must-not-forward'){forwarded++;res.end('{}');return;}if(req.url==='/api/conversations.history'){res.end(JSON.stringify({ok:true,messages:[{text:'x'.repeat(1000)}]}));return;}res.end(JSON.stringify(req.url==='/api/apps.connections.open'?{ok:true,url:'wss://wss.slack.com/link?ticket=fake'}:{ok:true,channel:'C1',ts:'55'}));});
+  const url=await listen(server);const client=new SlackClient({token:'fake-token',endpoint:`${url}/api/`,maxResponseBytes:200});
+  try{assert.equal((await client.call<{url:string}>('apps.connections.open',{})).url,'wss://wss.slack.com/link?ticket=fake');assert.equal((await client.call<{ts:string}>('chat.postMessage',{})).ts,'55');await assert.rejects(client.call('auth.test',{}));assert.equal(forwarded,0);await assert.rejects(client.call('conversations.history',{}),/byte bound/);assert(methods.includes('/api/apps.connections.open'));assert(methods.includes('/api/chat.postMessage'));}finally{await closeServer(server);}
+});
+test('direct output view authenticates audience before accessing host explicit speech outbox',async()=>{
+  const f=fixture();const run=f.core.receive(message()).run;let reads=0;
+  const foreign={id:'foreign',scope:{kind:'restricted',principals:['other']} as DataScope,modificationEligible:false};
+  const server=createDirectApi({core:f.core,authenticate:bearerAuthenticator([{token:'owner',principal:actor},{token:'foreign',principal:foreign}]),outputForRun(id){reads++;assert.equal(id,run.id);return [{text:'explicit delivered speech'}];}});const url=await listen(server);
+  try{const path=`${url}/runs/${encodeURIComponent(run.id)}/output`;assert.equal((await fetch(path,{headers:{authorization:'Bearer foreign'}})).status,400);assert.equal(reads,0);const result=await fetch(path,{headers:{authorization:'Bearer owner'}});assert.equal(result.status,200);assert.deepEqual(await result.json(),[{text:'explicit delivered speech'}]);assert.equal(reads,1);}finally{await closeServer(server);f.close();}
+});
+test('distinct conversation runs share the trusted host parent resource envelope',async()=>{
+  const f=fixture({async run(input,bridge,signal){await bridge.execute({id:`request:${input.run.id}`,runId:input.run.id,stepId:'one',name:'test-tool',arguments:{}},signal);return {status:'completed',observations:[]};}});
+  try{const maximum={...resources,maxRequests:1};f.runtime.resources.allocate('host-envelope',maximum);const core=new CommunicationsCore({store:f.store,runtime:f.runtime,grant:()=>({authority,resources:maximum,parentRunId:'host-envelope'})});
+    const first=core.receive(message()).run,second=core.receive({...message('another','1','new request'),conversation:'second'}).run;
+    assert.equal((await f.runtime.resume(first.id,prompt)).status,'completed');assert.equal((await f.runtime.resume(second.id,prompt)).status,'blocked');assert.equal(f.store.list('effects').filter(e=>(e.value as unknown as Effect).status==='failed').length,1);
+  }finally{f.close();}
+});
 
 test('same runtime admission is durable, authenticated, conflicting duplicates rejected and author eligibility separate',()=>{
   const f=fixture();try{

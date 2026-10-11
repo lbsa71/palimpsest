@@ -16,7 +16,9 @@ Explicit control targets must belong to that conversation/source message or appe
 in the host principal's `controlledRunIds` registration. Audience visibility alone
 does not authorize control of another conversation.
 
-The host supplies grants and a scheduling callback. `onReady` runs in a microtask
+The host supplies grants and a scheduling callback. A trusted grant may include
+`parentRunId` so every admitted conversation debits one persisted operating
+envelope instead of resetting resource allowance for each conversation. `onReady` runs in a microtask
 after intake finishes; it is a wake-up hint, not the authoritative queue. The host
 must scan durable ready/waiting runs after restart and queue further execution
 after an active run acknowledges steering. Work never runs inside an HTTP request
@@ -35,6 +37,9 @@ authority. Credentials remain host configuration outside source and logs.
   HTTP 202 without waiting for run execution. Direct source and conversation IDs
   are namespaced to the authenticated principal.
 - `GET /runs/:encodedRunId`: authorized run status during execution.
+- Optional `GET /runs/:encodedRunId/output`: calls host `outputForRun` only after
+  the same audience authorization. The host supplies explicitly published direct
+  speech, rather than an internal reasoning transcript.
 
 Use a configured loopback listener or a separately authenticated encrypted proxy
 for remote access. The adapter supplies authentication, audience checks and body
@@ -52,7 +57,8 @@ cancels the run originating from that message.
 `SlackSocketMode` uses separate bot and app `SlackClient` instances. It verifies
 bot `auth.test` identity, obtains an ephemeral `apps.connections.open` URL with
 the app token, reconnects with bounded backoff and runs `SlackRecovery.tick`
-automatically. Socket payloads are trusted only on that authenticated Slack link;
+automatically. Slack API calls reject redirects and bound response bytes (default 4 MiB).
+Socket payloads are trusted only on that authenticated Slack link;
 workspace identity remains checked. ACK follows committed intake. Persistence
 failure leaves the envelope unacknowledged. `verifySlackSignature` is also exported
 for a host implementing a signed Events API endpoint; no public webhook is added.

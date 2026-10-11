@@ -10,7 +10,7 @@ export interface AuthenticatedMessage { source: string; externalId: string; revi
 export interface Admission { run: Run; duplicate: boolean; modificationEligible: boolean }
 interface MessageRecord { input: InboundInput; runId: string; conversation: string; operation: string }
 interface Conversation { runId: string; scope: DataScope }
-export interface CommunicationsOptions { store: OperationalStore; runtime: DurableRuntime; grant: (actor: Principal) => { authority: Authority; resources: ResourceEnvelope }; onReady?: (run: Run) => void }
+export interface CommunicationsOptions { store: OperationalStore; runtime: DurableRuntime; grant: (actor: Principal) => { authority: Authority; resources: ResourceEnvelope;parentRunId?:string }; onReady?: (run: Run) => void }
 
 /** Authenticated transports construct actors; message bodies can never construct grants. */
 export class CommunicationsCore {
@@ -49,7 +49,7 @@ export class CommunicationsCore {
         this.options.runtime.steer(run.id,input); ready = this.options.runtime.getRun(run.id)!; run = ready;
       } else {
         const grant = this.options.grant(message.actor);
-        run = this.options.runtime.admit(input,grant.authority,grant.resources); ready = run;
+        run = this.options.runtime.admit(input,grant.authority,grant.resources,grant.parentRunId); ready = run;
       }
       const record: MessageRecord = {input,runId:run.id,conversation:message.conversation,operation};
       this.store.put('communications.inputs',input.id,record,null);
