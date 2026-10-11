@@ -8,6 +8,7 @@ import { freezeApplication, verifyApplication, type DeploymentInputs } from './c
 import { beneath, environmentSecrets } from './config.ts';
 import { contentAddressedEvidence, loadHostPolicy, readHostFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
+import { hostSelection, launchHost, requestHostSuccessor } from './host-successor.ts';
 import { ServiceSupervisor, type SupervisorCommand } from './supervisor.ts';
 
 export interface SupervisorFile {
@@ -92,14 +93,22 @@ export async function runCli(args: string[]): Promise<void> {
   if (command === 'inspect' && values.length === 3) {
     const [store, id, node] = values as [string, string, string]; print(verifyApplication(store, id, node).manifest); return;
   }
+  if (command === 'launch' && values.length === 1) { await launchHost(values[0]!); return; }
+  if (command === 'launch-selected' && values.length === 2) { await launchHost(values[0]!, values[1]!); return; }
   if (command === 'supervise' && values.length === 1) {
     const config = JSON.parse(readHostFile(values[0]!).toString('utf8')) as SupervisorFile;
     invariant(Object.keys(config).sort().join(',') === (config.bootstrap ? 'bootstrap,evidenceDirectory,host,mode,policyFiles' : 'evidenceDirectory,host,mode,policyFiles'), 'Exact supervisor configuration fields required');
     invariant(Array.isArray(config.policyFiles) && config.policyFiles.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(value => typeof value === 'string')) && new Set(config.policyFiles.map(([id]) => id)).size === config.policyFiles.length, 'Exact configured policy registry required');
     invariant([config.host.workspaceDirectory, config.host.artifactStore].every(root => !beneath(root, config.evidenceDirectory)), 'Evidence store must remain outside model-accessible roots');
     const paths = new Map(config.policyFiles);
+    let requestHandoff: (() => void) | undefined;
+    const launched = Boolean(process.send && process.env.AEON_HOST_LAUNCHER);
+    const selection = launched ? hostSelection(config) : undefined;
     const supervisor = await ServiceSupervisor.open({ host: config.host, mode: config.mode, secrets: environmentSecrets(process.env),
-      readArtifact: contentAddressedEvidence(config.evidenceDirectory), getPolicy(digest) {
+      readArtifact: contentAddressedEvidence(config.evidenceDirectory),
+      ...(selection?.phase === 'rescue' ? { hostRescue: selection.selected } : {}),
+      ...(launched ? { onHostAccepted: (target, previous) => { requestHostSuccessor(config, target, previous); setTimeout(() => requestHandoff?.(), 50); } } : {}),
+      getPolicy(digest) {
         const path = paths.get(digest); invariant(path, 'Policy digest is absent from the host registry');
         const policy = loadHostPolicy(path, [config.host.workspaceDirectory, config.host.artifactStore]); invariant(policy.policyDigest === digest, 'Host policy registry identity changed'); return policy;
       }, ...(config.bootstrap ? { bootstrap: () => ({ proof: proof(config.bootstrap!.proofFile), policyDigest: config.bootstrap!.policyDigest }) } : {}) });
@@ -107,19 +116,26 @@ export async function runCli(args: string[]): Promise<void> {
     try { server = await serveControls(supervisor, config.host.stateDirectory); }
     catch (error) { await supervisor.close(); throw error; }
     print(supervisor.status());
+    if (launched) process.send?.({ kind: 'host-ready' });
+    let handoff = false;
     const stopped = new Promise<void>(accept => {
+      requestHandoff = () => { handoff = true; accept(); };
       const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); accept(); };
       process.once('SIGTERM', stop); process.once('SIGINT', stop);
+      if (launched) process.once('disconnect', stop);
     });
     await stopped;
     const controlsClosed = closeControls(server);
-    await supervisor.close(); await controlsClosed; return;
+    await supervisor.close(); await controlsClosed;
+    if (launched && process.connected) process.disconnect?.();
+    if (handoff) process.exitCode = 75;
+    return;
   }
   if ((command === 'status' || command === 'recover') && values.length === 1) { print(await requestControl(values[0]!, { kind: command })); return; }
   if ((command === 'release' || command === 'probation') && values.length === 2) { print(await requestControl(values[0]!, { kind: command, proof: proof(values[1]!) })); return; }
   if (command === 'stage-control' && values.length === 3) { print(await requestControl(values[0]!, { kind: command, proof: proof(values[1]!), policyDigest: values[2]! })); return; }
   if (command === 'activate-control' && values.length === 2) { print(await requestControl(values[0]!, { kind: command, stageId: values[1]! })); return; }
-  throw new Error('Usage: cli.ts freeze SOURCE STORE INPUTS | inspect STORE ID NODE | supervise HOST_CONFIG | status STATE | recover STATE | release STATE PROOF | probation STATE PROOF | stage-control STATE PROOF POLICY_DIGEST | activate-control STATE STAGE_ID');
+  throw new Error('Usage: cli.ts freeze SOURCE STORE INPUTS | inspect STORE ID NODE | launch HOST_CONFIG | supervise HOST_CONFIG | status STATE | recover STATE | release STATE PROOF | probation STATE PROOF | stage-control STATE PROOF POLICY_DIGEST | activate-control STATE STAGE_ID');
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void runCli(process.argv.slice(2)).catch(error => { console.error(error instanceof Error ? error.message : 'Host command failed'); process.exitCode = 1; });

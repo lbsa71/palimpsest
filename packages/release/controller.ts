@@ -157,6 +157,21 @@ export class ReleaseController {
     const { probationJudge: _, ...accepted } = state;
     this.#save('probation-accepted', { ...accepted, phase: 'accepted', accepted: state.active, admissionEvidenceIds: receipt.evidenceIds });
   }
+  /** Offline host fallback may restore only a target retained as accepted in this journal.
+   * This changes code selection, never the operational store or monotonic authority ledger. */
+  restoreAccepted(target: ReleaseTarget): void {
+    this.#idle();
+    const state = this.#state();
+    const retained = this.history().findLast(event => {
+      const prior = event.value as Partial<ReleaseState>;
+      return prior.phase === 'accepted' && identity(prior.accepted) === identity(target);
+    });
+    if (!retained) throw new Error('Host rescue target was never accepted');
+    verifyCandidate(this.#options.artifactStore, target.candidateId);
+    const prior = retained.value as ReleaseState;
+    const { probationJudge: _, ...restored } = state;
+    this.#save('host-rescue-selected', { ...restored, accepted: target, admissionEvidenceIds: prior.admissionEvidenceIds });
+  }
   /** Provider-independent code recovery. No evidence provider, model, source checkout or memory snapshot is read. */
   async recover(generation: string): Promise<Authority> {
     this.#idle(); this.#busy = true;

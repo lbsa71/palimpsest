@@ -4,7 +4,7 @@ import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, 
 import { identity, invariant, type Authority } from '../packages/contracts/index.ts';
 import { admitCandidate, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
-import { policyDescriptor, ReleaseController, type ReleaseProof, type ReleaseState } from '../packages/release/controller.ts';
+import { policyDescriptor, ReleaseController, type ReleaseProof, type ReleaseState, type ReleaseTarget } from '../packages/release/controller.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { assertResourceConfinement, initializeResourceDelegation } from '../packages/supervisor/resource-limits.ts';
@@ -20,9 +20,12 @@ export interface SupervisorOptions {
   mode: 'engineering' | 'product';
   getPolicy(digest: string): AdmissionPolicy;
   readArtifact(uri: string): Uint8Array;
+  hostRescue?: ReleaseTarget;
+  onHostAccepted?(target: ReleaseTarget, previous: ReleaseTarget): void;
   bootstrap?: { proof: ReleaseProof; policyDigest: string } | (() => { proof: ReleaseProof; policyDigest: string });
 }
 export interface SupervisorStatus {
+  coordinator: { processId: number; module: string };
   mode: SupervisorOptions['mode'];
   qualification: 'engineering-only' | 'product-policy';
   running: boolean;
@@ -51,6 +54,7 @@ export class ServiceSupervisor {
   #operation?: Promise<unknown>;
   #closing = false;
   #closed = false;
+  #hostHandoffPending = false;
   #delegationInitialized = false;
   #unexpectedExitPending = false;
   #automaticRecoveryAvailable = true;
@@ -88,13 +92,16 @@ export class ServiceSupervisor {
   static async open(options: SupervisorOptions): Promise<ServiceSupervisor> {
     const supervisor = new ServiceSupervisor(options);
     try {
-      if (supervisor.#controller.status()) await supervisor.recover();
+      if (supervisor.#controller.status()) {
+        if (options.hostRescue) supervisor.#controller.restoreAccepted(options.hostRescue);
+        await supervisor.recover();
+      }
       else await supervisor.#exclusive(() => supervisor.#initialize());
       return supervisor;
     } catch (error) { await supervisor.close(); throw error; }
   }
   status(): SupervisorStatus {
-    return { mode: this.#options.mode, qualification: this.#options.mode === 'engineering' ? 'engineering-only' : 'product-policy',
+    return { coordinator: { processId: process.pid, module: import.meta.url }, mode: this.#options.mode, qualification: this.#options.mode === 'engineering' ? 'engineering-only' : 'product-policy',
       running: this.#service.running, processId: this.#service.processId, ready: this.#ready,
       release: this.#controller.status(), failure: this.#failure };
   }
@@ -117,7 +124,14 @@ export class ServiceSupervisor {
       return authority;
     });
   }
-  acceptProbation(proof: ReleaseProof): Promise<void> { return this.#exclusive(async () => this.#controller.acceptProbation(proof)); }
+  acceptProbation(proof: ReleaseProof): Promise<void> { return this.#exclusive(async () => {
+    const prior = this.#controller.status()!;
+    this.#controller.acceptProbation(proof);
+    if (prior.probationJudge?.change === 'control-upgrade' && this.#options.onHostAccepted) {
+      this.#options.onHostAccepted(this.#controller.status()!.accepted, prior.accepted);
+      this.#hostHandoffPending = true;
+    }
+  }); }
   stageControl(proof: ReleaseProof, policyDigest: string): Promise<string> {
     return this.#exclusive(async () => {
       const policy = this.#options.getPolicy(policyDigest);
@@ -127,7 +141,7 @@ export class ServiceSupervisor {
   }
   activateControl(stageId: string): Promise<Authority> { return this.#exclusive(() => this.#controller.activateStagedControl(stageId, randomUUID())); }
   async #exclusive<T>(operation: () => Promise<T>): Promise<T> {
-    invariant(!this.#closing && !this.#closed && !this.#operation, 'Supervisor unavailable or release operation in progress');
+    invariant(!this.#closing && !this.#closed && !this.#operation && !this.#hostHandoffPending, 'Supervisor unavailable or release operation in progress');
     this.#lease.assertHeld();
     const promise = Promise.resolve().then(operation); this.#operation = promise;
     try { const result = await promise; this.#failure = undefined; return result; }
@@ -138,7 +152,7 @@ export class ServiceSupervisor {
     }
   }
   #handleUnexpectedExit(): void {
-    if (!this.#unexpectedExitPending || this.#closing || this.#operation) return;
+    if (!this.#unexpectedExitPending || this.#closing || this.#operation || this.#hostHandoffPending) return;
     this.#unexpectedExitPending = false;
     if (this.#automaticRecoveryAvailable) {
       this.#automaticRecoveryAvailable = false;
