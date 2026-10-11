@@ -1,6 +1,6 @@
 # A1-L02 — selected agent shell and qualification
 
-Status: **architecture selected; implementation planned**. Session owner for implementation: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); [ADR 0032](../../adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi agent core; [qualification](../agent-shell-decision.md) defines Q1–Q5. The 2026-10-11 source/decision subtask is recorded, not completion of this lane.
+Status: **implementing**. Session owner for implementation: **Codex /root/a1_shell**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); [ADR 0032](../../adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi agent core; [qualification](../agent-shell-decision.md) defines Q1–Q5. The 2026-10-11 source/decision subtask is recorded, not completion of this lane.
 
 Requirements: [RW01, RW02, RW04, RW05, RW13, RW16, RW17, RW19, RW21](../../../REQUIREMENTS.md).
 
@@ -39,9 +39,9 @@ Owned by the lead who claims implementation; update before concurrent edits.
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed for implementation; Codex completed the bounded architecture/source decision |
-| Branch / worktree | Decision on `codex/aeon-rewrite-plan-20261011`; implementation worktree not assigned |
-| Base source / contract revision | Decision follows planning commit `dfe9c3c`; C1 not yet implemented; pin implementation base at claim |
+| Owner session | Codex /root/a1_shell; implementation session 1, deterministic fixtures only |
+| Branch / worktree | `codex/a1-shell-20261011`; `/home/palimpsest/migration/aeon-1-20261011/shell` |
+| Base source / contract revision | Base `14c7420`; pinned Pi `89e5c2c075535e2f427c30fc74720d65b2944ff9`; C1 being coordinated with L01 |
 | Additional path reservations | None; use the exclusive scope above and L09 for shared build files |
-| Last handoff / evidence | ADR 0032 and source audit; source choice complete, executable qualification outstanding |
-| Blockers / next eligible task | T01/T02 can begin; C1 required for final adapter, L03/L06/L09 for final integrated gates |
+| Last handoff / evidence | Session 1 implementation and 19 mechanical cases; [evidence](../evidence/A1-L02/2026-10-11-implementation.md); commit recorded in branch handoff |
+| Blockers / next eligible task | T01/T02/T03/T05 executable foundation implemented against C1 f11a25b; Q1 whole-dependency edit ownership, Q3 live screen, integrated Q4 and independent Q5 remain. L03/L06/L09 integration next. |

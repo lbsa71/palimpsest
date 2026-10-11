@@ -1,0 +1,83 @@
+{
+  "upstream": "https://github.com/earendil-works/pi",
+  "commit": "89e5c2c075535e2f427c30fc74720d65b2944ff9",
+  "license": "MIT",
+  "files": [
+    {
+      "source": "packages/agent/src/agent-loop.ts",
+      "retained": "agent/agent-loop.ts",
+      "upstreamSha256": "28a2b03e34a7e32f004aa851e54d3b5be9dad71c392205614cbc9abdf3a9020a"
+    },
+    {
+      "source": "packages/agent/src/types.ts",
+      "retained": "agent/types.ts",
+      "upstreamSha256": "2e116ef60fdaca4e26be5a1ace8d8b47f545d648d365de60b8c9f9d1ba629ee4"
+    },
+    {
+      "source": "packages/agent/src/stream-fn.ts",
+      "retained": "agent/stream-fn.ts",
+      "upstreamSha256": "1f9dee101a5ce1052558458d9ce47e53e05187224e879217899059a80d90bc45"
+    },
+    {
+      "source": "packages/ai/src/utils/transcript.ts",
+      "retained": "ai/utils/transcript.ts",
+      "upstreamSha256": "e0814f35bdcc93b017fa45589a6920e46b5480b88fba01ef93e5d2d4e815f0f2"
+    },
+    {
+      "source": "packages/ai/src/utils/text.ts",
+      "retained": "ai/utils/text.ts",
+      "upstreamSha256": "d37c1825855c7fc71669a545b5b266810242c1c7e58d57228c0c143f29c1c544"
+    },
+    {
+      "source": "packages/ai/src/utils/event-stream.ts",
+      "retained": "ai/utils/event-stream.ts",
+      "upstreamSha256": "9fd5e33a8e295d88b5911af71d7afbfd437c9620288808d18331f16811e24dac"
+    },
+    {
+      "source": "packages/ai/src/utils/validation.ts",
+      "retained": "ai/utils/validation.ts",
+      "upstreamSha256": "460786b57dead200e411b9afec916a5049c96ebcff4da082096456ac06d44fb7"
+    },
+    {
+      "source": "packages/ai/src/providers/model-schema.ts",
+      "retained": "ai/providers/model-schema.ts",
+      "upstreamSha256": "6cfdcf0368299300af277d1952781ed701be55ab6a900454fc3eeeffbe07e178"
+    },
+    {
+      "source": "packages/ai/src/utils/diagnostics.ts",
+      "retained": "ai/utils/diagnostics.ts",
+      "upstreamSha256": "06fcbc2347f65a43938078094a7118036b5f12e73147affb5c73cd72753443f0"
+    },
+    {
+      "source": "packages/ai/src/types.ts",
+      "retained": "ai/types.ts",
+      "upstreamSha256": "19f632e0918cca442d3dfa3572ebabe79453dea0b1f54eadd3287a9c6b515674",
+      "patch": "Retain request/message/tool/model protocol declarations; omit optional provider/classifier/image APIs and compat declarations; telemetry context opaque."
+    }
+  ],
+  "runtimeDependencies": {
+    "typebox": "1.3.27"
+  },
+  "excluded": [
+    "agent class/proxy",
+    "coding-agent",
+    "TUI",
+    "provider SDKs",
+    "OAuth",
+    "catalog",
+    "durable package"
+  ],
+  "patches": [
+    "Agent imports redirected to selected local ai barrel; core loop otherwise retained verbatim.",
+    "pi-ai type-only declaration closure narrowed."
+  ],
+  "retainedTests": [
+    {
+      "source": "packages/ai/test/event-stream.test.ts",
+      "upstreamSha256": "3e8e8bc39b33c79be9858bd3210212658d75de196222c69b61a5a183737ab6d9",
+      "original": "experiments/agent-shell/audit/upstream-event-stream.test.ts.txt",
+      "executed": "packages/agent-shell/upstream-event-stream.test.ts",
+      "patch": "Imports/assertions migrated from vitest to node:test; cases unchanged."
+    }
+  ]
+}
