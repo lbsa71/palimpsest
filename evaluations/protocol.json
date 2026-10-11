@@ -1,0 +1,13 @@
+{
+  "id": "A1-L08-v1",
+  "evidenceKind": "mechanical",
+  "caseIds": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10", "S11", "S12"],
+  "maxActionsPerCase": 64,
+  "runsPerCase": 1,
+  "requiredPasses": 12,
+  "network": false,
+  "paidCalls": false,
+  "productParity": "unavailable-pending-calibration-and-live-runs",
+  "developmentHorizonDays": 28,
+  "transferDelayDays": 7
+}

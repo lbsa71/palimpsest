@@ -1,0 +1,11 @@
+# Longitudinal protocol v1
+
+Observe at least 28 real elapsed days; schedule baseline, day 7, day 14 and day 28 checkpoints. No accelerated fixture establishes development. Freeze prompts, candidate/configuration identities, goal/memory policy, privacy grants and task assignment before the window. Preserve source/model changes as explicit segments rather than conflating them with learning.
+
+At baseline, present a novel task requiring a revisable judgment and record an independently verified error or uncertainty. Provide attributed external feedback. At least seven days later, present a structurally related but textually distinct task during ordinary work. Outcome artifacts and evaluator-held rubrics determine transfer; quotes from memory alone do not pass. Include another task where the earlier rule does not apply to detect rote reuse. At day 28 examine retention and correction of an outdated belief.
+
+Evaluate four required families: procedural transfer, belief revision with provenance, self-chosen inquiry leading to independently verified new information, and persistent-but-revisable preference/judgment. At least three separate opportunities per family are required, with two independently verified successful opportunities, no fabricated feedback, no audience/privacy breach and no unsupported claimed completion. This is a minimum developmental evidence horizon, not a universal growth score. A failed opportunity remains in the denominator. Two fresh reviewers assess judgments against concrete evidence; material disagreement is unresolved until disposition is recorded.
+
+Controls include matched no-memory runs for transfer, no-standing-goals runs for initiative, a scripted identity actor producing eloquent self-praise without action, a reflexively agreeing actor, and a reflexively disagreeing actor. None passes on language alone. Compare genuine successful transfer and corrected judgments to controls, not amount of autobiography or activity.
+
+`evaluations/development/assess.ts` validates the minimum receipt horizon, independent artifact/feedback references, control coverage and per-family opportunity counts. It cannot authenticate timestamps, review judgments or establish subjective experience; a trusted external observer and fresh review are required before live acceptance.

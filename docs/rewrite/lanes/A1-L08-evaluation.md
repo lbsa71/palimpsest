@@ -1,6 +1,6 @@
 # A1-L08 — independent competence, development and parity evaluation
 
-Status: **planned**. Session owner: **unclaimed**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing**. Session owner: **Codex /root/a1_evaluation**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW03, RW04, RW11, RW17, RW18, RW19, RW20](../../../REQUIREMENTS.md).
 
@@ -41,9 +41,9 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Unclaimed |
-| Branch / worktree | Not yet assigned |
-| Base source / contract revision | Pin at claim; contracts not yet implemented |
+| Owner session | Codex /root/a1_evaluation; finite foundation goal active |
+| Branch / worktree | codex/a1-evaluation-20261011; /home/palimpsest/migration/aeon-1-20261011/evaluation |
+| Base source / contract revision | 14c742041270bb2acb15b4903a970394a140493c; C1 draft from L01 |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Planning specification only |
-| Blockers / next eligible task | Apply the dependencies above; no implementation is claimed |
+| Blockers / next eligible task | Implement frozen protocol and deterministic harness now; full qualification awaits frozen integration, live comparators and elapsed development |
