@@ -18,10 +18,10 @@ function grant(context = 100): ObserverGrant {
     profile: { provider: 'anthropic', model: MODEL, effort: 'high', contextContract: context === 1_000_000 ? 'full 1M input contract retained for synthetic native qualification; not a tighter prompt estimate' : 'synthetic unit input bound', contextWindowTokens: context, maxOutputTokens: CAP,
       prices: { source: 'synthetic category rates; not provider pricing', inputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.2, cacheWrite5mUsdPerMillion: 5, cacheWrite1hUsdPerMillion: 8, outputUsdPerMillion: 20 },
       anthropic: { thinking: 'adaptive', serviceTier: 'standard', inferenceGeo: 'global', speed: 'standard', nativeProtocol: {
-        claudeVersion: PINNED_CLAUDE_VERSION, claudeSha256: PINNED_CLAUDE_SHA256, version: '2023-06-01', beta: PINNED_CLAUDE_BETA, qualification: 'synthetic-only' } } },
+        kind: 'opus-adaptive-coding', claudeVersion: PINNED_CLAUDE_VERSION, claudeSha256: PINNED_CLAUDE_SHA256, version: '2023-06-01', beta: PINNED_CLAUDE_BETA, qualification: 'synthetic-only' } } },
     requestTimeoutMs: 10_000, maxRequestBytes: 1_000_000, maxResponseBytes: 1_000_000 };
 }
-function payload(): string { return JSON.stringify({ model: MODEL, max_tokens: 8192, stream: true, thinking: { type: 'adaptive', display: 'omitted' }, output_config: { effort: 'high' },
+function payload(): string { return JSON.stringify({ model: MODEL, max_tokens: 8192, stream: true, thinking: { type: 'adaptive', display: 'updates' }, output_config: { effort: 'high' },
   context_management: { edits: [{ type: 'clear_thinking_20251015', keep: 'all' }, { type: 'clear_tool_uses_20250919', trigger: { type: 'input_tokens', value: 50 }, keep: { type: 'tool_uses', value: 3 }, exclude_tools: ['Bash'], clear_tool_inputs: false }] },
   system: [{ type: 'text', text: 'Native attribution block stays first.' }, { type: 'text', text: 'Native instructions.', cache_control: { type: 'ephemeral' } }],
   messages: [{ role: 'user', content: 'Verify local work.' }, { role: 'system', content: [{ type: 'text', text: 'Native mid-conversation instructions.', cache_control: { type: 'ephemeral' } }], clear_at: 'never', output_config: { effort: 'high' } },
@@ -135,7 +135,7 @@ test('pinned actual native first-party profile executes local coding tool and pr
     grant: grant(1_000_000), maxCliOutputBytes: 1_000_000,
     claudeOptions: { tools: 'Bash,Read,Edit,Write,Glob,Grep' }, provider: { kind: 'fixture', transport: async (body, signal, protocol) => {
       try { signal.throwIfAborted(); calls++; assert.ok(calls <= 2); assert.equal(protocol?.beta, PINNED_CLAUDE_BETA); const request = JSON.parse(body); captured.push(request);
-        assert.equal(request.model, MODEL); assert.equal(request.thinking.type, 'adaptive'); assert.equal(request.output_config.effort, 'high'); assert.equal(request.max_tokens, CAP);
+        assert.equal(request.model, MODEL); assert.equal(request.thinking.type, 'adaptive'); assert.equal(request.thinking.display, 'updates'); assert.deepEqual(request.context_management, { edits: [{ type: 'clear_thinking_20251015', keep: 'all' }] }); assert.equal(request.output_config.effort, 'high'); assert.equal(request.max_tokens, CAP);
         assert.equal(body.includes('PRIVATE_NATIVE_COMPARATOR'), false);
         let block: Record<string, unknown>;
         if (calls === 1) {

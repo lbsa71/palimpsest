@@ -3,9 +3,11 @@ import type { BaselineProfile, ProviderAttempt } from './observer.ts';
 
 export const PINNED_CLAUDE_VERSION = '2.1.296 (Claude Code)';
 export const PINNED_CLAUDE_SHA256 = '24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de';
-export const PINNED_CLAUDE_BETA = 'interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,claude-code-20250219';
+export const HISTORICAL_CLAUDE_FIXTURE_BETA = 'interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,claude-code-20250219';
+/** Captured from the pinned Opus native profile in diagnostic artifact 9cd20c09d128b7b4ee39733820efe12f4aa46d34a3a7e883930dda4c3149b068. */
+export const PINNED_CLAUDE_BETA = 'claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,effort-2025-11-24,thinking-display-updates-2026-08-18';
 export interface AnthropicNativeProtocol {
-  claudeVersion: string; claudeSha256: string; version: '2023-06-01'; beta: string;
+  kind: 'opus-adaptive-coding'; claudeVersion: string; claudeSha256: string; version: '2023-06-01'; beta: string;
   qualification: 'synthetic-only';
 }
 export interface AnthropicProtocolHeaders { version: string; beta: string }
@@ -15,8 +17,8 @@ function object(value: unknown): Record<string, unknown> {
 function fields(value: Record<string, unknown>, allowed: string[]): void { invariant(Object.keys(value).every(key => allowed.includes(key)), 'unknown native Messages feature refused'); }
 function count(value: unknown, positive = false): number { invariant(Number.isSafeInteger(value) && (value as number) >= (positive ? 1 : 0), 'invalid native count'); return value as number; }
 export function validateNativeProtocol(value: AnthropicNativeProtocol): void {
-  fields(value as unknown as Record<string, unknown>, ['claudeVersion', 'claudeSha256', 'version', 'beta', 'qualification']);
-  invariant(value.claudeVersion === PINNED_CLAUDE_VERSION && value.claudeSha256 === PINNED_CLAUDE_SHA256 && value.version === '2023-06-01' && value.beta === PINNED_CLAUDE_BETA && value.qualification === 'synthetic-only', 'unsupported pinned native protocol; new qualification required');
+  fields(value as unknown as Record<string, unknown>, ['kind', 'claudeVersion', 'claudeSha256', 'version', 'beta', 'qualification']);
+  invariant(value.kind === 'opus-adaptive-coding' && value.claudeVersion === PINNED_CLAUDE_VERSION && value.claudeSha256 === PINNED_CLAUDE_SHA256 && value.version === '2023-06-01' && value.beta === PINNED_CLAUDE_BETA && value.qualification === 'synthetic-only', 'unsupported pinned native protocol; new qualification required');
 }
 const CONSUMED_HEADERS = ['accept', 'accept-encoding', 'anthropic-dangerous-direct-browser-access', 'connection', 'content-length', 'content-type', 'host', 'user-agent', 'x-api-key', 'authorization', 'x-app',
   'x-claude-code-session-id', 'x-claude-code-agent-id', 'x-claude-code-parent-agent-id', 'x-stainless-arch', 'x-stainless-lang', 'x-stainless-os', 'x-stainless-package-version', 'x-stainless-retry-count', 'x-stainless-runtime', 'x-stainless-runtime-version', 'x-stainless-timeout'];
