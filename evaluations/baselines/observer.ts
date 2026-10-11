@@ -1,3 +1,5 @@
+import { nativeProtocolHeaders } from './anthropic-native-protocol.ts';
+import type { AnthropicNativeProtocol, AnthropicProtocolHeaders } from './anthropic-native-protocol.ts';
 import { anthropicUsage, validateAnthropicPayload, validateAnthropicProfile } from './anthropic-codec.ts';
 import type { AnthropicReceipt } from './anthropic-codec.ts';
 import { randomUUID } from 'node:crypto';
@@ -15,7 +17,7 @@ export interface BaselineProfile {
   contextContract: string; contextWindowTokens: number; maxOutputTokens: number;
   prices: { source: string; inputUsdPerMillion: number; cachedInputUsdPerMillion: number; outputUsdPerMillion: number; cacheWrite5mUsdPerMillion?: number; cacheWrite1hUsdPerMillion?: number };
   /** Selected explicit native thinking configuration; only global standard synchronous inference is priced. */
-  anthropic?: { thinking: 'adaptive' | 'enabled' | 'disabled'; thinkingBudgetTokens?: number; serviceTier: 'standard'; inferenceGeo: 'global'; speed: 'standard' };
+  anthropic?: { thinking: 'adaptive' | 'enabled' | 'disabled'; thinkingBudgetTokens?: number; serviceTier: 'standard'; inferenceGeo: 'global'; speed: 'standard'; nativeProtocol?: AnthropicNativeProtocol };
 }
 export interface ObserverGrant {
   id: string; resources: ResourceEnvelope; profile: BaselineProfile;
@@ -23,7 +25,7 @@ export interface ObserverGrant {
 }
 export interface ProviderAttempt { method: string; path: string; payload: string; nativeHttp?: { path: string; headers: Record<string, string | string[] | undefined> } }
 export interface ProviderReply { status: number; contentType: string; body: string }
-export type BaselineTransport = (payload: string, signal: AbortSignal) => Promise<Response>;
+export type BaselineTransport = (payload: string, signal: AbortSignal, protocol?: AnthropicProtocolHeaders) => Promise<Response>;
 export interface AttemptEvidence {
   requestId: string; before: ArtifactRef; after: ArtifactRef;
   /** Exact native instructions, input and tool definitions are contained in before/after. */
@@ -182,15 +184,14 @@ export class BaselineObserver {
   async handle(attempt: ProviderAttempt, signal?: AbortSignal): Promise<ProviderReply> {
     signal?.throwIfAborted();
     const claudeFixture = this.grant.profile.provider === 'anthropic-fixture', anthropic = this.grant.profile.provider === 'anthropic', messages = claudeFixture || anthropic;
-    let body: Record<string, unknown>;
+    let body: Record<string, unknown>; let protocol: AnthropicProtocolHeaders | undefined;
     try {
       invariant(attempt.method === 'POST' && attempt.path === (messages ? '/v1/messages' : '/v1/responses') && typeof attempt.payload === 'string', 'invalid native provider route');
       invariant(Buffer.byteLength(attempt.payload) <= this.grant.maxRequestBytes, 'request byte limit exceeded');
       if (attempt.nativeHttp) invariant(messages && ['/v1/messages', '/v1/messages?beta=true'].includes(attempt.nativeHttp.path) && Buffer.byteLength(canonicalJson(attempt.nativeHttp)) <= 16_384, 'invalid native HTTP metadata');
       body = object(JSON.parse(attempt.payload));
       if (anthropic) {
-        // Native beta/OAuth/account headers cannot silently alter the priced first-party contract.
-        if (attempt.nativeHttp) invariant(Object.entries(attempt.nativeHttp.headers).every(([key, value]) => !['anthropic-beta', 'anthropic-workspace-id', 'anthropic-user-profile-id'].includes(key.toLowerCase()) || value === undefined), 'unsupported native Anthropic header refused');
+        protocol = nativeProtocolHeaders(attempt, this.grant.profile);
         validateAnthropicPayload(body, this.grant.profile);
       } else if (claudeFixture) validateClaudeFixturePayload(body, this.grant.profile); else validatePayload(body, this.grant.profile);
     } catch (error) {
@@ -220,7 +221,7 @@ export class BaselineObserver {
     const timer = setTimeout(() => controller.abort(new Error('Baseline attempt deadline exceeded')), this.grant.requestTimeoutMs);
     const chunks: Buffer[] = []; let bytes = 0; let status: number | undefined; let contentType: string | undefined;
     const execute = async () => {
-      controller.signal.throwIfAborted(); const response = await this.transport(outgoing, controller.signal); controller.signal.throwIfAborted();
+      controller.signal.throwIfAborted(); const response = await this.transport(outgoing, controller.signal, protocol); controller.signal.throwIfAborted();
       status = response.status; contentType = response.headers.get('content-type') ?? '';
       invariant(response.body, 'missing provider body'); const reader = response.body.getReader();
       try {

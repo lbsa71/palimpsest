@@ -54,6 +54,10 @@ function validate(input: NativeBaselineRun): void {
   if (input.kind === 'claude' && input.grant.profile.provider === 'anthropic') {
     invariant(input.claudeOptions && typeof input.claudeOptions.tools === 'string' && input.claudeOptions.tools.length > 0, 'explicit real native Claude tool selection required');
     invariant(Object.keys(input.claudeOptions).every(key => ['tools', 'modelRoles'].includes(key)) && Object.keys(input.claudeOptions.modelRoles ?? {}).every(key => ['haiku', 'sonnet', 'opus', 'subagent'].includes(key)), 'unknown native Claude options refused');
+    if (input.grant.profile.anthropic?.nativeProtocol) { const protocol = input.grant.profile.anthropic.nativeProtocol;
+      invariant(input.native.version === protocol.claudeVersion && input.native.files[0]?.sha256 === protocol.claudeSha256, 'native binary/version differs from pinned protocol');
+      invariant(input.provider.kind === 'fixture', 'pinned beta compatibility is synthetic-only; paid feature/pricing qualification required');
+    }
     invariant(Object.values(input.claudeOptions.modelRoles ?? {}).every(model => model === input.grant.profile.model), 'multiple native models require separately priced/qualified profiles');
   } else invariant(input.claudeOptions === undefined, 'native options require separate real Claude profile');
   invariant(input.kind === 'codex' ? input.native.files.map(file => file.name).join(',') === 'codex,codex-code-mode-host' : input.native.files.map(file => file.name).join(',') === 'claude', 'exact native closure required');

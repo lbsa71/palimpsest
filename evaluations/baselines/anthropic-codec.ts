@@ -1,3 +1,4 @@
+import { validateNativeProtocol, validateContextManagement, validateAppliedContextEdits, validateDirectCaller, validateThinkingProgress, PINNED_CLAUDE_BETA } from './anthropic-native-protocol.ts';
 import { invariant, nonempty } from '../../packages/contracts/common.ts';
 import type { ResourceUsage } from '../../packages/contracts/common.ts';
 import type { BaselineProfile, BaselineTransport } from './observer.ts';
@@ -30,7 +31,7 @@ function content(value: unknown, role: 'system' | 'user' | 'assistant'): void {
       fields(part, ['type', 'thinking', 'signature']); invariant(typeof part.thinking === 'string', 'thinking text required'); nonempty(part.signature, 'thinking signature');
     } else if (role === 'assistant' && part.type === 'redacted_thinking') { fields(part, ['type', 'data']); nonempty(part.data, 'redacted thinking'); }
     else if (role === 'assistant' && part.type === 'tool_use') {
-      fields(part, ['type', 'id', 'name', 'input', 'cache_control']); nonempty(part.id, 'tool id'); nonempty(part.name, 'tool name'); object(part.input);
+      fields(part, ['type', 'id', 'name', 'input', 'cache_control', 'caller']); nonempty(part.id, 'tool id'); nonempty(part.name, 'tool name'); object(part.input); validateDirectCaller(part.caller);
     } else if (role === 'user' && part.type === 'tool_result') {
       fields(part, ['type', 'tool_use_id', 'content', 'is_error', 'cache_control']); nonempty(part.tool_use_id, 'tool result id'); content(part.content, 'system');
       invariant(part.is_error === undefined || typeof part.is_error === 'boolean', 'invalid tool result');
@@ -40,7 +41,8 @@ function content(value: unknown, role: 'system' | 'user' | 'assistant'): void {
 export function validateAnthropicProfile(profile: BaselineProfile): void {
   invariant(profile.provider === 'anthropic' && profile.anthropic, 'explicit first-party Anthropic profile required');
   fields(profile.prices as unknown as Record<string, unknown>, ['source', 'inputUsdPerMillion', 'cachedInputUsdPerMillion', 'outputUsdPerMillion', 'cacheWrite5mUsdPerMillion', 'cacheWrite1hUsdPerMillion']);
-  const options = profile.anthropic; fields(options as unknown as Record<string, unknown>, ['thinking', 'thinkingBudgetTokens', 'serviceTier', 'inferenceGeo', 'speed']);
+  const options = profile.anthropic; fields(options as unknown as Record<string, unknown>, ['thinking', 'thinkingBudgetTokens', 'serviceTier', 'inferenceGeo', 'speed', 'nativeProtocol']);
+  if (options.nativeProtocol) validateNativeProtocol(options.nativeProtocol);
   invariant(options.serviceTier === 'standard' && options.inferenceGeo === 'global' && options.speed === 'standard', 'unpriced Anthropic tier/geography/speed refused');
   invariant(['adaptive', 'enabled', 'disabled'].includes(options.thinking), 'explicit thinking profile required');
   if (options.thinking === 'enabled') invariant(count(options.thinkingBudgetTokens) >= 1024 && options.thinkingBudgetTokens! < profile.maxOutputTokens, 'manual thinking requires at least 1,024 tokens below the output cap');
@@ -48,7 +50,8 @@ export function validateAnthropicProfile(profile: BaselineProfile): void {
   for (const value of [profile.prices.cacheWrite5mUsdPerMillion, profile.prices.cacheWrite1hUsdPerMillion]) invariant(typeof value === 'number' && Number.isFinite(value) && value >= 0, 'explicit cache write prices required');
 }
 export function validateAnthropicPayload(body: Record<string, unknown>, profile: BaselineProfile): void {
-  fields(body, ['model', 'messages', 'system', 'tools', 'tool_choice', 'max_tokens', 'stream', 'metadata', 'temperature', 'output_config', 'thinking', 'cache_control', 'service_tier', 'inference_geo']);
+  fields(body, ['model', 'messages', 'system', 'tools', 'tool_choice', 'max_tokens', 'stream', 'metadata', 'temperature', 'output_config', 'thinking', 'cache_control', 'service_tier', 'inference_geo', ...(profile.anthropic?.nativeProtocol ? ['context_management'] : [])]);
+  if (body.context_management !== undefined) validateContextManagement(body.context_management);
   invariant(body.model === profile.model, 'model differs from immutable host profile');
   // Zero requests cache pre-warming, a separate nonstreaming operation. Do not
   // turn it (or a malformed limit) into generation when applying the host cap.
@@ -57,11 +60,14 @@ export function validateAnthropicPayload(body: Record<string, unknown>, profile:
   invariant(body.inference_geo === undefined || body.inference_geo === 'global', 'unpriced request geography refused'); cache(body.cache_control);
   if (body.system !== undefined) content(body.system, 'system');
   invariant(Array.isArray(body.messages), 'explicit Messages input required');
-  for (const raw of body.messages) { const message = object(raw); fields(message, ['role', 'content']); invariant(message.role === 'user' || message.role === 'assistant', 'invalid Messages role'); content(message.content, message.role); }
+  for (const raw of body.messages) { const message = object(raw); fields(message, ['role', 'content', ...(profile.anthropic?.nativeProtocol ? ['cache_control', 'clear_at', 'output_config'] : [])]); invariant(message.role === 'user' || message.role === 'assistant' || (profile.anthropic?.nativeProtocol && message.role === 'system'), 'invalid Messages role'); content(message.content, message.role as 'user' | 'assistant' | 'system');
+    cache(message.cache_control);
+    if (message.clear_at !== undefined) invariant(message.role === 'system' && ['next_user_message', 'never'].includes(String(message.clear_at)), 'invalid mid-conversation system clearing');
+    if (message.output_config !== undefined) { const config = object(message.output_config); fields(config, ['effort']); invariant(message.role === 'system' && config.effort === profile.effort, 'mid-conversation effort differs from host profile'); } }
   if (body.tools !== undefined) {
     invariant(Array.isArray(body.tools), 'explicit local tools required');
     for (const raw of body.tools) { const tool = object(raw); fields(tool, ['type', 'name', 'description', 'input_schema', 'cache_control', 'strict', 'defer_loading']);
-      invariant(tool.type === undefined || tool.type === 'custom', 'server tool refused'); nonempty(tool.name, 'local tool name'); object(tool.input_schema); cache(tool.cache_control);
+      invariant(tool.type === undefined || tool.type === 'custom', 'server tool refused'); nonempty(tool.name, 'local tool name'); object(tool.input_schema); cache(tool.cache_control); invariant(tool.strict === undefined || typeof tool.strict === 'boolean', 'invalid strict local tool schema');
       invariant(tool.defer_loading === undefined || tool.defer_loading === false, 'server tool search refused');
     }
   }
@@ -81,11 +87,14 @@ export function validateAnthropicPayload(body: Record<string, unknown>, profile:
   if (body.metadata !== undefined) { const metadata = object(body.metadata); fields(metadata, ['user_id']); invariant(typeof metadata.user_id === 'string', 'invalid metadata'); }
   invariant(body.temperature === undefined || (typeof body.temperature === 'number' && body.temperature >= 0 && body.temperature <= 1), 'invalid temperature');
 }
-/** First-party synchronous standard transport. Host credentials and endpoint never come from the worker. No retries/beta/ambient auth. */
+/** First-party standard transport. Only host-validated native protocol headers can accompany the body. */
 export function anthropicTransport(apiKey: string, fetcher: typeof fetch = fetch): BaselineTransport {
   invariant(typeof apiKey === 'string' && apiKey.length > 0 && !/[\r\n]/.test(apiKey), 'explicit host credential required');
-  return (payload, signal) => fetcher(ANTHROPIC_MESSAGES_ENDPOINT, { method: 'POST', redirect: 'error', signal,
-    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: payload });
+  return (payload, signal, protocol) => {
+    if (protocol) invariant(protocol.version === '2023-06-01' && protocol.beta === PINNED_CLAUDE_BETA, 'unqualified Anthropic transport protocol');
+    return fetcher(ANTHROPIC_MESSAGES_ENDPOINT, { method: 'POST', redirect: 'error', signal,
+    headers: { 'x-api-key': apiKey, 'anthropic-version': protocol?.version ?? '2023-06-01', ...(protocol ? { 'anthropic-beta': protocol.beta } : {}), 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: payload });
+  };
 }
 
 /** Usage is cumulative. Hold the reservation unless every final priced dimension is exact. */
@@ -114,11 +123,14 @@ export function anthropicUsage(body: string, profile: BaselineProfile, elapsedMs
   const blocks = new Set<number>();
   for (const block of body.split(/\r?\n\r?\n/).filter(Boolean)) {
     const lines = block.split(/\r?\n/), data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'); if (!data) continue;
-    const event = object(JSON.parse(data)); invariant(!stopped && lines.find(line => line.startsWith('event:'))?.slice(6).trim() === event.type, 'unexpected or mismatched Messages SSE');
+    const event = object(JSON.parse(data));
+    if (event.context_management !== undefined) { invariant(profile.anthropic?.nativeProtocol, 'unqualified context response'); validateAppliedContextEdits(event.context_management); }
+    invariant(!stopped && lines.find(line => line.startsWith('event:'))?.slice(6).trim() === event.type, 'unexpected or mismatched Messages SSE');
     if (event.type === 'ping') continue;
     if (event.type === 'message_start') {
       invariant(!started, 'duplicate Messages start'); started = true; const message = object(event.message);
       nonempty(message.id, 'message id'); invariant(message.type === 'message' && message.role === 'assistant' && message.model === profile.model, 'inconsistent Messages identity');
+      if (message.context_management !== undefined) { invariant(profile.anthropic?.nativeProtocol, 'unqualified context response'); validateAppliedContextEdits(message.context_management); }
       invariant(message.container === undefined || message.container === null, 'unpriced server container'); mergeUsage(message.usage);
       for (const key of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']) invariant(totals[key] !== undefined, 'missing initial usage');
       if (message.content !== undefined) { invariant(Array.isArray(message.content) && message.content.length === 0, 'unexpected initial Messages content'); }
@@ -134,9 +146,10 @@ export function anthropicUsage(body: string, profile: BaselineProfile, elapsedMs
     } else if (event.type === 'message_stop') { invariant(started && deltas > 0 && stopReason !== undefined && blocks.size === 0, 'missing completed Messages usage'); stopped = true; }
     else if (event.type === 'content_block_start') {
       invariant(started && deltas === 0, 'unexpected content start'); const index = count(event.index); invariant(!blocks.has(index), 'duplicate content block'); blocks.add(index);
-      const part = object(event.content_block); invariant(['text', 'tool_use', 'thinking', 'redacted_thinking'].includes(String(part.type)), 'server or unknown response content refused');
+      const part = object(event.content_block); if (part.type === 'tool_use') validateDirectCaller(part.caller); invariant(['text', 'tool_use', 'thinking', 'redacted_thinking'].includes(String(part.type)), 'server or unknown response content refused');
     } else if (event.type === 'content_block_delta') {
       invariant(started && deltas === 0 && blocks.has(count(event.index)), 'unexpected content delta'); const delta = object(event.delta);
+      if (delta.type === 'thinking_delta') { invariant(delta.estimated_tokens === undefined || profile.anthropic?.nativeProtocol, 'unqualified thinking progress beta'); validateThinkingProgress(delta); }
       invariant(['text_delta', 'input_json_delta', 'thinking_delta', 'signature_delta'].includes(String(delta.type)), 'unknown response delta refused');
     } else if (event.type === 'content_block_stop') { invariant(blocks.delete(count(event.index)), 'unexpected content stop'); }
     else throw new Error('Unknown or failed Messages event');
