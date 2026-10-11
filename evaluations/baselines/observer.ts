@@ -27,14 +27,14 @@ export interface ObserverGrant {
   id: string; resources: ResourceEnvelope; profile: BaselineProfile;
   requestTimeoutMs: number; maxRequestBytes: number; maxResponseBytes: number;
 }
-export interface ProviderAttempt { method: string; path: string; payload: string; nativeHttp?: { path: string; headers: Record<string, string | string[] | undefined> } }
+export interface ProviderAttempt { method: string; path: string; payload: string; nativeHttp?: { path: string; headers: Record<string, string | string[] | undefined> }; nativeSession?: { sessionId: string; startup: string } }
 export interface ProviderReply { status: number; contentType: string; body: string }
 export type BaselineTransport = (payload: string, signal: AbortSignal, protocol?: AnthropicProtocolHeaders) => Promise<Response>;
 export interface AttemptEvidence {
   requestId: string; before: ArtifactRef; after: ArtifactRef;
   /** Exact native instructions, input and tool definitions are contained in before/after. */
   response?: ArtifactRef; responseStatus?: number; contentType?: string;
-  nativeHttp?: ArtifactRef;
+  nativeHttp?: ArtifactRef; nativeSession?: ArtifactRef;
   outcome?: 'completed' | 'unknown'; reason?: string; usage?: ResourceUsage; anthropicReceipt?: AnthropicReceipt;
 }
 function freeze<T>(value: T): T {
@@ -192,6 +192,12 @@ export class BaselineObserver {
       }
     });
   }
+  /** Host recovery cannot replace a held request, active bridge operation or cancelled grant. */
+  assertQuiescent(): void {
+    const snapshot = this.ledger.snapshot(this.grant.id);
+    invariant(this.active.size === 0 && snapshot.concurrent === 0 && !snapshot.cancelled, 'Baseline recovery requires an uncancelled quiescent original allocation');
+    invariant(this.store.list<{ request: PhysicalRequest }>('requests').every(row => row.value.request.runId !== this.grant.id || row.value.request.status === 'succeeded'), 'Baseline recovery requires known successful original requests');
+  }
   cancel(): void { this.ledger.cancel(this.grant.id); for (const controller of this.active) controller.abort(); }
   evidence(): AttemptEvidence[] { return this.store.list<AttemptEvidence>('baseline-attempts').filter(row => this.ledger.request(row.key)?.runId === this.grant.id).map(row => row.value); }
   async handle(attempt: ProviderAttempt, signal?: AbortSignal): Promise<ProviderReply> {
@@ -202,6 +208,7 @@ export class BaselineObserver {
       invariant(attempt.method === 'POST' && attempt.path === (messages ? '/v1/messages' : '/v1/responses') && typeof attempt.payload === 'string', 'invalid native provider route');
       invariant(Buffer.byteLength(attempt.payload) <= this.grant.maxRequestBytes, 'request byte limit exceeded');
       if (attempt.nativeHttp) invariant(messages && ['/v1/messages', '/v1/messages?beta=true'].includes(attempt.nativeHttp.path) && Buffer.byteLength(canonicalJson(attempt.nativeHttp)) <= 16_384, 'invalid native HTTP metadata');
+      if (attempt.nativeSession) invariant(typeof attempt.nativeSession.sessionId === 'string' && typeof attempt.nativeSession.startup === 'string' && Buffer.byteLength(canonicalJson(attempt.nativeSession)) <= 16_384, 'bounded native session observation required');
       body = object(JSON.parse(attempt.payload));
       if (anthropic) {
         protocol = nativeProtocolHeaders(attempt, this.grant.profile);
@@ -225,7 +232,7 @@ export class BaselineObserver {
     this.store.transaction(() => {
       const before = this.store.putArtifact(attempt.payload), after = this.store.putArtifact(outgoing); request.requestDigest = after.sha256;
       this.ledger.reserve(request); this.store.put('baseline-attempts', id, { requestId: id, before, after,
-        ...(attempt.nativeHttp ? { nativeHttp: this.store.putArtifact(canonicalJson(attempt.nativeHttp)) } : {}) }, null);
+        ...(attempt.nativeHttp ? { nativeHttp: this.store.putArtifact(canonicalJson(attempt.nativeHttp)) } : {}), ...(attempt.nativeSession ? { nativeSession: this.store.putArtifact(canonicalJson(attempt.nativeSession)) } : {}) }, null);
       this.ledger.dispatched({ ...request, status: 'dispatched' });
     });
     const controller = new AbortController();

@@ -20,7 +20,11 @@ async function main(start) {
       !Number.isSafeInteger(start.maxConcurrency) || start.maxConcurrency < 1 || start.maxConcurrency > 8 ||
       !Number.isSafeInteger(start.maxOutputBytes) || start.maxOutputBytes < 1 || start.maxOutputBytes > 2_000_000) throw new Error('Invalid bounded baseline invocation');
   Object.freeze(start);
-  const home = '/tmp/aeon-baseline-home'; mkdirSync(`${home}/claude`, { recursive: true, mode: 0o700 });
+  const recovery = start.nativeRecovery;
+  if (recovery && (Object.keys(recovery).some(key => !['mode', 'sessionId'].includes(key)) || !['start', 'resume'].includes(recovery.mode) || (true) && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(recovery.sessionId))) throw new Error('Exact native recovery invocation required');
+  const gate = recovery ? new (await import('./native-recovery.ts')).NativeSessionEvents('claude', recovery.sessionId, start.maxOutputBytes) : undefined;
+  let recoveryError;
+  const home = recovery ? '/work/.aeon-native-state/claude/home' : '/tmp/aeon-baseline-home'; mkdirSync(`${home}/claude`, { recursive: true, mode: 0o700 });
   let child, inFlight = 0, stopped = false;
   const refusedRoutes = [];
   const server = createServer(async (request, response) => {
@@ -36,7 +40,7 @@ async function main(start) {
       if (stopped) throw new Error('Baseline bridge stopped while reading request');
       const payload = Buffer.concat(chunks).toString('utf8');
       const reply = await rpc('baseline.provider', { method: request.method, path: '/v1/messages', payload,
-        nativeHttp: { path: request.url, headers: request.headers } });
+        ...(gate ? { nativeSession: gate.beforeProvider() } : {}), nativeHttp: { path: request.url, headers: request.headers } });
       if (!reply || !Number.isInteger(reply.status) || typeof reply.body !== 'string' || typeof reply.contentType !== 'string') throw new Error('Invalid host response');
       response.writeHead(reply.status, { 'Content-Type': reply.contentType }).end(reply.body);
     } catch {
@@ -64,12 +68,16 @@ async function main(start) {
     const remaining = Math.max(0, start.maxOutputBytes - outputBytes); destination.push(chunk.subarray(0, remaining)); outputBytes += chunk.length;
     if (outputBytes > start.maxOutputBytes) { exceeded = true; child.kill('SIGKILL'); }
   };
-  child.stdout.on('data', collect(stdout)); child.stderr.on('data', collect(stderr));
+  child.stdout.on('data', chunk => {
+    collect(stdout)(chunk);
+    if (gate) try { gate.feed(chunk); } catch (error) { recoveryError = error.message; stopped = true; child.kill('SIGTERM'); }
+  }); child.stderr.on('data', collect(stderr));
   child.stdin.on('error', () => {}); child.stdin.end(start.prompt);
   const result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })); });
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (pending.size) throw new Error('Baseline exited with a physical observation pending');
-  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, refusedRoutes, invocation: { executable: '/app/claude', args, environment, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
+  if (gate && !recoveryError) try { gate.finish(); } catch (error) { recoveryError = error.message; }
+  send({ kind: 'done', value: { ...result, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exceeded, refusedRoutes, ...(gate ? { recoveryError: recoveryError ?? null } : {}), invocation: { executable: '/app/claude', args, environment, authentication: 'dummy-bridge-token-only', maxConcurrency: start.maxConcurrency, maxRequestBytes: start.maxRequestBytes } } });
 }
 const input = createInterface({ input: process.stdin });
 input.on('line', line => {

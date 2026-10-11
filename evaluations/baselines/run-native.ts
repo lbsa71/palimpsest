@@ -1,5 +1,5 @@
 import { constants, chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { canonicalJson, invariant, nonempty } from '../../packages/contracts/common.ts';
@@ -8,12 +8,15 @@ import { OperationalStore } from '../../packages/storage/index.ts';
 import { ProcessLease } from '../../packages/supervisor/process-lease.ts';
 import { runWorker } from '../../packages/supervisor/worker-process.ts';
 import type { ResourceLimits } from '../../packages/supervisor/resource-limits.ts';
+import { NativeRecovery, NativeSessionEvents, nativeStateHome } from './native-recovery.ts';
+import type { NativeCheckpoint, NativeCheckpointRef } from './native-recovery.ts';
 import type { ClaudeNativeOptions } from './claude-configuration.ts';
 import { claudeInvocation } from './claude-configuration.ts';
 import { anthropicTransport } from './anthropic-codec.ts';
 import { BaselineObserver, openAITransport, validateObserverGrant } from './observer.ts';
 import type { BaselineTransport, ObserverGrant, ProviderAttempt } from './observer.ts';
 
+export type NativeRecoveryRequest = { mode: 'start'; checkpointId: string } | { mode: 'resume'; checkpoint: NativeCheckpointRef; checkpointAfter?: string };
 export interface NativeBaselineRun {
   kind: 'codex' | 'claude';
   privateStateRoot: string; checkoutRoot: string; workspace: string; protectedPaths: string[];
@@ -21,11 +24,12 @@ export interface NativeBaselineRun {
   prompt: string; grant: ObserverGrant; maxCliOutputBytes: number;
   claudeOptions?: ClaudeNativeOptions;
   provider: { kind: 'fixture'; transport: BaselineTransport; resourceLimits?: ResourceLimits } | { kind: 'openai' | 'anthropic'; apiKey: string; resourceLimits: ResourceLimits };
+  recovery?: NativeRecoveryRequest;
   signal?: AbortSignal;
 }
 export interface NativeBaselineResult {
   kind: 'engineering-baseline'; qualification: 'namespace-fixture' | 'kernel-profile';
-  manifest: ArtifactRef; result: ArtifactRef; physicalRequests: number; outcome: JsonValue;
+  manifest: ArtifactRef; result: ArtifactRef; physicalRequests: number; outcome: JsonValue; checkpoint?: NativeCheckpointRef;
 }
 function outside(parent: string, child: string): boolean {
   const path = relative(parent, child); return path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path);
@@ -44,6 +48,16 @@ function sourceIdentity(): { files: { path: string; sha256: string }[]; sha256: 
 function validate(input: NativeBaselineRun): void {
   invariant(input.kind === 'codex' || input.kind === 'claude', 'concrete supported native baseline required');
   validateObserverGrant(input.grant); input.signal?.throwIfAborted();
+  if (input.recovery) {
+    invariant(input.provider.kind === 'fixture', 'Native recovery is opt-in synthetic engineering only');
+    if (input.kind === 'claude') invariant(input.grant.profile.provider === 'anthropic' && input.claudeOptions?.delegation === 'isolated-native', 'Native Claude recovery requires the original isolated safe-mode profile');
+    invariant(input.recovery.mode === 'start' || input.recovery.mode === 'resume', 'Explicit recovery start or exact checkpoint required');
+    invariant(Object.keys(input.recovery).every(key => (input.recovery!.mode === 'start' ? ['mode', 'checkpointId'] : ['mode', 'checkpoint', 'checkpointAfter']).includes(key)), 'Unknown recovery option');
+    const id = input.recovery.mode === 'start' ? input.recovery.checkpointId : input.recovery.checkpoint.id;
+    invariant(typeof id === 'string' && id.length > 0 && id.length <= 128, 'Explicit bounded checkpoint ID required');
+    if (input.recovery.mode === 'resume') invariant(Number.isSafeInteger(input.recovery.checkpoint.generation) && input.recovery.checkpoint.generation > 0 && Number.isSafeInteger(input.recovery.checkpoint.revision) && input.recovery.checkpoint.revision > 0, 'Exact checkpoint revision/generation required');
+    else invariant(readdirSync(input.workspace).length === 0, 'Native recovery requires a blank initial workload workspace');
+  }
   invariant(input.grant.resources.maxRequests <= 64 && input.grant.resources.maxElapsedMs <= 900_000, 'baseline run exceeds 64 requests or 15 minute engineering ceiling');
   for (const path of [input.privateStateRoot, input.checkoutRoot, input.workspace, ...input.native.files.map(file => file.path), ...input.protectedPaths]) invariant(isAbsolute(path), 'absolute host paths required');
   invariant(input.protectedPaths.length > 0, 'evaluator/control protected paths required');
@@ -67,7 +81,7 @@ function validate(input: NativeBaselineRun): void {
     if (input.claudeOptions.delegation !== undefined) {
       invariant(input.claudeOptions.delegation === 'isolated-native' && input.provider.kind === 'fixture' && input.grant.profile.anthropic?.nativeProtocol, 'native Claude delegation requires pinned synthetic-only profile');
       claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, claudeOptions: input.claudeOptions }, 0);
-      invariant(readdirSync(input.workspace).length === 0, 'isolated native delegation requires a blank initial workspace without project configuration');
+      invariant(input.recovery?.mode === 'resume' || readdirSync(input.workspace).length === 0, 'isolated native delegation requires a blank initial workspace without project configuration');
     }
     invariant(Object.values(input.claudeOptions.modelRoles ?? {}).every(model => model === input.grant.profile.model), 'multiple native models require separately priced/qualified profiles');
   } else invariant(input.claudeOptions === undefined, 'native options require separate real Claude profile');
@@ -79,7 +93,7 @@ function validate(input: NativeBaselineRun): void {
 /** Callable engineering runner. No ambient credential discovery, default grant, paid test or automatic resume. */
 export async function runNativeBaseline(input: NativeBaselineRun): Promise<NativeBaselineResult> {
   // Snapshot invocation options before the asynchronous native launch.
-  input = { ...input, ...(input.claudeOptions ? { claudeOptions: structuredClone(input.claudeOptions) } : {}) };
+  input = { ...input, ...(input.recovery ? { recovery: structuredClone(input.recovery) } : {}), ...(input.claudeOptions ? { claudeOptions: structuredClone(input.claudeOptions) } : {}) };
   validate(input);
   const checkout = realpathSync(input.checkoutRoot), workspace = realpathSync(input.workspace);
   // Create private storage only after checking its nearest existing parent through realpath.
@@ -104,6 +118,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
   const lease = new ProcessLease(join(stateRoot, 'lease.sqlite'));
   let store: OperationalStore | undefined; let image: string | undefined; let observer: BaselineObserver | undefined;
   const pendingOperations = new Set<Promise<unknown>>();
+  let preserveReadyAllocation = false;
   try {
     store = new OperationalStore({ filename: join(stateRoot, 'observer.sqlite'), checkoutRoot: checkout });
     observer = new BaselineObserver({ store, grant: input.grant, transportKind: input.provider.kind, transport: input.provider.kind === 'fixture' ? input.provider.transport : input.provider.kind === 'anthropic' ? anthropicTransport(input.provider.apiKey) : openAITransport(input.provider.apiKey) });
@@ -112,7 +127,11 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
     for (const file of files) invariant(lstatSync(file.path).isFile() && sha256(file.path) === file.sha256, 'ordinary pinned native closure required');
     const workerName = `${input.kind}-worker.mjs`;
     const worker = new URL(`./${workerName}`, import.meta.url);
+    const previous = store.get<{ specification: { nativeRecovery?: { initialSessionId: string | null } }; status: string }>('baseline-run', 'run');
+    const initialSessionId = input.recovery ? (input.recovery.mode === 'resume' ? previous?.value.specification.nativeRecovery?.initialSessionId ?? null : input.kind === 'claude' ? randomUUID() : null) : null;
+    const declaredSession = input.recovery ? { mode: 'start' as const, ...(initialSessionId ? { sessionId: initialSessionId } : {}) } : undefined;
     const specification = {
+      nativeRecovery: input.recovery ? { initialSessionId, home: nativeStateHome(input.kind), storeLimits: { files: 256, entries: 512, bytes: 16 * 1024 * 1024 }, restore: 'unavailable; verify retained workspace bytes' } : null,
       grant: observer.grant, prompt: store.putArtifact(input.prompt), workspace,
       native: { kind: input.kind, version: input.native.version, files },
       workerSha256: createHash('sha256').update(readFileSync(worker)).digest('hex'), nodeSha256: sha256(process.execPath),
@@ -122,26 +141,37 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
       providerTransport: input.provider.kind,
       qualification: input.provider.resourceLimits ? 'kernel-profile' as const : 'namespace-fixture' as const,
       kernelLimits: input.provider.resourceLimits ?? null,
-      nativeInvocation: input.kind === 'claude' ? claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) }, 0) : null,
+      nativeInvocation: input.kind === 'claude' ? claudeInvocation({ model: input.grant.profile.model, effort: input.grant.profile.effort, profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}), ...(input.recovery ? { nativeRecovery: { mode: 'start', sessionId: initialSessionId! } } : {}) }, 0) : null,
       nativeConfiguration: input.kind === 'codex'
-        ? { ignoreUserConfig: true, ignoreRules: true, ephemeral: true, webSearch: 'disabled', requestRetries: 0, streamRetries: 0, credentials: 'dummy-bridge-token-only' }
-        : { bare: input.claudeOptions?.delegation === undefined, safeMode: input.claudeOptions?.delegation === 'isolated-native', delegation: input.claudeOptions?.delegation ?? null, suppliedAgents: null, settingSources: '', tools: input.claudeOptions?.tools ?? 'Bash', effort: input.grant.profile.effort, modelRoles: input.claudeOptions?.modelRoles ?? (input.grant.profile.provider === 'anthropic-fixture' ? { haiku: input.grant.profile.model, sonnet: input.grant.profile.model, opus: input.grant.profile.model, subagent: input.grant.profile.model } : null), thinking: input.grant.profile.anthropic?.thinking ?? 'disabled', strictMcpConfig: true, disableSlashCommands: true, noSessionPersistence: true, nativePermissions: 'bypassed only inside namespace', retries: 'each observed separately; host grant unchanged', credentials: 'dummy-bridge-token-only', scope: input.grant.profile.provider === 'anthropic-fixture' ? 'synthetic Messages only' : 'first-party standard Messages engineering; native affordance/kernel/live qualification outstanding' },
+        ? { ignoreUserConfig: true, ignoreRules: true, ephemeral: !input.recovery, webSearch: 'disabled', requestRetries: 0, streamRetries: 0, credentials: 'dummy-bridge-token-only' }
+        : { bare: input.claudeOptions?.delegation === undefined, safeMode: input.claudeOptions?.delegation === 'isolated-native', delegation: input.claudeOptions?.delegation ?? null, suppliedAgents: null, settingSources: '', tools: input.claudeOptions?.tools ?? 'Bash', effort: input.grant.profile.effort, modelRoles: input.claudeOptions?.modelRoles ?? (input.grant.profile.provider === 'anthropic-fixture' ? { haiku: input.grant.profile.model, sonnet: input.grant.profile.model, opus: input.grant.profile.model, subagent: input.grant.profile.model } : null), thinking: input.grant.profile.anthropic?.thinking ?? 'disabled', strictMcpConfig: true, disableSlashCommands: true, noSessionPersistence: !input.recovery, nativePermissions: 'bypassed only inside namespace', retries: 'each observed separately; host grant unchanged', credentials: 'dummy-bridge-token-only', scope: input.grant.profile.provider === 'anthropic-fixture' ? 'synthetic Messages only' : 'first-party standard Messages engineering; native affordance/kernel/live qualification outstanding' },
     };
-    const previous = store.get<{ specification: typeof specification; status: string }>('baseline-run', 'run');
+    const immutable = ({ prompt: _prompt, ...value }: typeof specification) => canonicalJson(value);
+    const identity = immutable(specification);
+    const recovery = input.recovery ? new NativeRecovery({ observer, lease, workspace, kind: input.kind }) : undefined;
+    let generation = 1, resumed: NativeCheckpoint | undefined;
     if (previous) {
-      invariant(canonicalJson(previous.value.specification) === canonicalJson(specification), 'immutable baseline run changed');
-      throw new Error('Baseline run already attempted; automatic resume or retry is refused');
-    }
-    const manifest = store.putArtifact(canonicalJson(specification));
-    store.put('baseline-run', 'run', { specification, status: 'started', manifest }, null);
+      if (input.recovery?.mode !== 'resume') {
+        invariant(canonicalJson(previous.value.specification) === canonicalJson(specification), 'immutable baseline run changed');
+        throw new Error('Baseline run already attempted; automatic resume or retry is refused');
+      }
+      invariant(immutable(previous.value.specification as typeof specification) === identity, 'immutable baseline run changed');
+      resumed = recovery!.consume({ ...input.recovery.checkpoint, identity }); generation = resumed.generation;
+    } else invariant(input.recovery?.mode !== 'resume', 'No original native run/checkpoint exists');
+    const nativeSession = input.recovery ? resumed ? { mode: 'resume' as const, sessionId: resumed.sessionId } : declaredSession : undefined;
+    const manifest = store.putArtifact(canonicalJson(input.recovery ? { ...specification, generation, nativeSession: nativeSession ?? null, checkpoint: input.recovery.mode === 'resume' ? input.recovery.checkpoint : null } : specification));
+    store.put('baseline-launches', String(generation), { manifest, status: 'started' }, null);
+    store.put('baseline-run', 'run', { specification: previous?.value.specification ?? specification, status: 'started', manifest, generation }, previous?.revision ?? null);
     image = mkdtempSync(join(tmpdir(), `aeon-${input.kind}-image-`));
     for (const file of files) copyFileSync(file.path, join(image, file.name), constants.COPYFILE_FICLONE);
     copyFileSync(worker, join(image, workerName));
+    if (input.recovery) copyFileSync(new URL('./native-recovery.ts', import.meta.url), join(image, 'native-recovery.ts'));
     if (input.kind === 'claude') {
       const configuration = new URL('./claude-configuration.ts', import.meta.url);
       copyFileSync(configuration, join(image, 'claude-configuration.ts'));
       invariant(sha256(join(image, 'claude-configuration.ts')) === specification.sourceIdentity.files.find(file => file.path === 'evaluations/baselines/claude-configuration.ts')!.sha256, 'staged Claude configuration changed');
     }
+    if (input.recovery) invariant(sha256(join(image, 'native-recovery.ts')) === specification.sourceIdentity.files.find(file => file.path === 'evaluations/baselines/native-recovery.ts')!.sha256, 'Staged native recovery gate changed');
     // Hash the actual copies, closing an input change during staging.
     invariant(files.every(file => sha256(join(image!, file.name)) === file.sha256) && sha256(join(image, workerName)) === specification.workerSha256, 'staged native image changed');
     const remainingMs = Math.floor(input.grant.resources.maxElapsedMs - observer.ledger.snapshot(input.grant.id).elapsedMs);
@@ -155,19 +185,49 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
         ...(input.provider.resourceLimits ? { resourceLimits: input.provider.resourceLimits } : {}) },
       initial: { prompt: input.prompt, model: input.grant.profile.model, effort: input.grant.profile.effort,
         maxConcurrency: observer.grant.resources.maxConcurrency, maxRequestBytes: input.grant.maxRequestBytes, maxOutputBytes: input.maxCliOutputBytes,
+        ...(nativeSession ? { nativeRecovery: nativeSession } : {}),
         ...(input.kind === 'claude' ? { profile: input.grant.profile.provider, ...(input.claudeOptions ? { claudeOptions: input.claudeOptions } : {}) } : {}) },
       maxMessageBytes, maxRequests: input.grant.resources.maxRequests,
       async handle(method, args, signal) {
         invariant(method === 'baseline.provider' && args.length === 1, 'only native provider attempts permitted');
-        const operation = observer!.handle(args[0] as unknown as ProviderAttempt, signal); pendingOperations.add(operation);
+        const attempt = args[0] as unknown as ProviderAttempt;
+        if (nativeSession) {
+          try {
+            invariant(attempt.nativeSession, 'Native startup identity missing before provider dispatch');
+            const gate = new NativeSessionEvents(input.kind, resumed?.sessionId ?? initialSessionId ?? undefined, input.maxCliOutputBytes);
+            gate.feed(Buffer.from(attempt.nativeSession.startup + '\n'));
+            invariant(gate.beforeProvider().sessionId === attempt.nativeSession.sessionId, 'Native startup identity mismatch');
+          } catch (error) {
+            store!.put('native-recovery-refusals', randomUUID(), { generation, request: store!.putArtifact(Buffer.from(attempt.payload ?? '').subarray(0, input.grant.maxRequestBytes)), observation: store!.putArtifact(canonicalJson(attempt.nativeSession ?? null)), reason: error instanceof Error ? error.message.slice(0, 256) : 'Native identity unavailable' }, null);
+            observer!.cancel(); throw error;
+          }
+        }
+        const operation = observer!.handle(attempt, signal); pendingOperations.add(operation);
         try { return await operation as unknown as JsonValue; } finally { pendingOperations.delete(operation); }
       },
     });
     const result = store.putArtifact(canonicalJson(outcome));
-    const row = store.get('baseline-run', 'run')!;
-    store.put('baseline-run', 'run', { specification, status: 'completed', manifest, result }, row.revision);
+    const launch = store.get('baseline-launches', String(generation))!;
+    store.put('baseline-launches', String(generation), { manifest, result, status: 'completed' }, launch.revision);
+    let checkpoint: NativeCheckpointRef | undefined;
+    const checkpointId = input.recovery?.mode === 'start' ? input.recovery.checkpointId : input.recovery?.checkpointAfter;
+    if (recovery && checkpointId) {
+      const observed = outcome as unknown as { code: number | null; signal: string | null; exceeded: boolean; stdout: string; recoveryError?: string | null };
+      invariant(observed.recoveryError === null, 'Native recovery event observation unavailable');
+      const gate = new NativeSessionEvents(input.kind, resumed?.sessionId ?? initialSessionId ?? undefined, input.maxCliOutputBytes); gate.feed(Buffer.from(observed.stdout)); gate.finish();
+      const cleanup = store.putArtifact(canonicalJson({ observation: 'runWorker returned after awaited confinement cleanup', generation, nativeExit: observed.code, nativeSignal: observed.signal, pendingOperations: pendingOperations.size, namespace: 'PID namespace drained on owner exit', kernel: specification.kernelLimits ? 'command cgroup drained and removed before return' : null }));
+      store.transaction(() => {
+        checkpoint = recovery.publish({ id: checkpointId, generation, identity, outcome: observed, pendingOperations: pendingOperations.size, cleanup, manifest, result });
+        const row = store!.get('baseline-run', 'run')!;
+        store!.put('baseline-run', 'run', { specification: previous?.value.specification ?? specification, status: 'ready', manifest, result, generation, checkpoint }, row.revision);
+      });
+      preserveReadyAllocation = true;
+    } else {
+      const row = store.get('baseline-run', 'run')!;
+      store.put('baseline-run', 'run', { specification: previous?.value.specification ?? specification, status: 'completed', manifest, result, generation }, row.revision);
+    }
     return { kind: 'engineering-baseline', qualification: specification.qualification, manifest, result,
-      physicalRequests: observer.ledger.snapshot(input.grant.id).requests, outcome };
+      physicalRequests: observer.ledger.snapshot(input.grant.id).requests, outcome, ...(checkpoint ? { checkpoint } : {}) };
   } catch (error) {
     observer?.cancel();
     if (store) {
@@ -178,7 +238,7 @@ export async function runNativeBaseline(input: NativeBaselineRun): Promise<Nativ
     throw new Error(`${input.kind === 'codex' ? 'Codex' : 'Claude'} engineering baseline unavailable or stopped; inspect private durable evidence`);
   } finally {
     // runWorker can terminate before an aborted handler returns. Cancellation keeps its worst-case reservation held.
-    observer?.cancel(); await Promise.allSettled([...pendingOperations]);
+    if (!preserveReadyAllocation) observer?.cancel(); await Promise.allSettled([...pendingOperations]);
     if (image) rmSync(image, { recursive: true, force: true }); store?.close(); lease.close();
   }
 }
