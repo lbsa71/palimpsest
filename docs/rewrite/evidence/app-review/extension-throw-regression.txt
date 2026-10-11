@@ -1,0 +1,32 @@
+(node:738623) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ an extension that writes then throws an untyped error holds the physical outcome (467.449034ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 838.10175
+
+✖ failing tests:
+
+test at deployment/application.test.ts:353:1
+✖ an extension that writes then throws an untyped error holds the physical outcome (467.449034ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:363:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

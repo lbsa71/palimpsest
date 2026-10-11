@@ -1,0 +1,59 @@
+(node:735250) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ restart discovers committed steering even if the scheduling callback was lost (15066.277484ms)
+✖ report admission rolls back if durable destination registration fails (68.442257ms)
+✖ a completed extension mutation with an unserializable receipt remains uncertain (404.049318ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 0
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15844.517535
+
+✖ failing tests:
+
+test at deployment/application.test.ts:261:1
+✖ restart discovers committed steering even if the scheduling callback was lost (15066.277484ms)
+  Error: Condition not reached: {"authority":{"controlRevision":"fixture-controls","epoch":1,"generation":"fixture-instance"},"id":"run:2be2ad9a85273641e515d0e079eddaf7fa6f78898e70e7eb772f7acb885d09bf","revision":2,"scope":{"kind":"restricted","principals":["operator"]},"status":"blocked"}
+      at eventually (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:29:220)
+      at async TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:273:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
+
+test at deployment/application.test.ts:283:1
+✖ report admission rolls back if durable destination registration fails (68.442257ms)
+  AssertionError [ERR_ASSERTION]: No orphan runtime without a durable delivery owner
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:292:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at deployment/application.test.ts:297:1
+✖ a completed extension mutation with an unserializable receipt remains uncertain (404.049318ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'completed'
+  - 'blocked'
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:307:12)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

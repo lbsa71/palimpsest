@@ -1,0 +1,35 @@
+(node:737738) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ child admission cannot leave an ordinary run when child authority registration fails (66.047529ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 370.27017
+
+✖ failing tests:
+
+test at deployment/application.test.ts:383:1
+✖ child admission cannot leave an ordinary run when child authority registration fails (66.047529ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'run:2e674330c176729b3c982b43af6cadf2b4f7e366c28246934f0618f6ec8749d8',
+  +   'run:82bc2ed2f6afda425140cb2f82deced540518a2047e7265cd2e7cc6eacc65bd0'
+    ]
+  
+      at TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:395:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'run:2e674330c176729b3c982b43af6cadf2b4f7e366c28246934f0618f6ec8749d8', 'run:82bc2ed2f6afda425140cb2f82deced540518a2047e7265cd2e7cc6eacc65bd0' ],
+    expected: [ 'run:2e674330c176729b3c982b43af6cadf2b4f7e366c28246934f0618f6ec8749d8' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

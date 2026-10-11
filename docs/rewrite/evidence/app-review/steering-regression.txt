@@ -1,0 +1,21 @@
+(node:735339) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ restart discovers committed steering even if the scheduling callback was lost (15347.362307ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15667.210701
+
+✖ failing tests:
+
+test at deployment/application.test.ts:261:1
+✖ restart discovers committed steering even if the scheduling callback was lost (15347.362307ms)
+  Error: Condition not reached: 1
+      at eventually (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:29:220)
+      at async TestContext.<anonymous> (file:///home/palimpsest/migration/aeon-1-20261011/app-review/deployment/application.test.ts:281:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
