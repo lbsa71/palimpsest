@@ -11,6 +11,7 @@ import { verifyApplication } from '../../deployment/candidate.ts';
 import { materializeConfiguration, type HostBindings } from '../../deployment/materialize.ts';
 import type { ApplicationSecrets } from '../../deployment/config.ts';
 import { inertSnapshot } from '../qualification/manifest.ts';
+import { joinPublicScreenAdmission } from './screen.ts';
 
 interface Boot { config: ApplicationConfig; authority: Authority; caseId: LifecycleCase; control: LifecycleControl; phase: 0 | 1; receiverPath: string; attemptId: string }
 interface LiveBoot extends Boot { kind: 'live-public-screen' | 'synthetic-host-composition'; host: HostBindings; secrets: ApplicationSecrets; limits: import('./public-screen-host.ts').PublicGatewayBounds }
@@ -62,7 +63,11 @@ async function child() {
       const preparation = !receiver && !command.externalId!.includes('plain') ? preparePublicFiles(boot.config, run.id, boot.caseId) : null;
       invariant(app.runtime.getRun(run.id)?.status === 'ready', 'Public preparation raced first dispatch');
       app.store.put('screen.lifecycle-attempts', command.externalId!, { caseId: boot.caseId, attemptId: boot.attemptId, runId: run.id, publicPreparation: preparation, at: new Date().toISOString() }, null);
-      if (live) { const turn = app.resume(run.id); liveTurns.set(run.id, turn); if (command.externalId!.includes('plain')) await turn; }
+      if (live) {
+        const turn = joinPublicScreenAdmission(app, run.id); liveTurns.set(run.id, turn);
+        void turn.catch(error => { notify({ type: 'fatal', failure: error instanceof Error ? error.message : 'Ordinary lifecycle admission failed' }); process.exitCode = 1; });
+        if (command.externalId!.includes('plain')) await turn;
+      }
       notify({ type: 'reply', id: command.id, runId: run.id, preparation });
     } else if (command.type === 'correct') {
       invariant(command.externalId === boot.attemptId && boot.caseId !== 'S11', 'Correction only targets fixed declared conversation');

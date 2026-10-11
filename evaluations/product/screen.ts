@@ -45,6 +45,12 @@ export interface ScreenOptions {
   mode: 'synthetic-application' | 'synthetic-host-composition' | 'live-public-screen'; observer: AdapterOptions['observer']; manifest: AdapterOptions['manifest'];
   privatePacketPath: string; timeoutMs: number; liveSeal?: AdapterOptions['liveSeal'];
 }
+/** Ordinary ingress binds the admitted conversation before any new host entry joins its turn. */
+export async function joinPublicScreenAdmission(app: Pick<AutarkApplication, 'tick' | 'resume' | 'store'>, runId: string) {
+  await app.tick();
+  invariant(app.store.get<{ target?: unknown }>('host.run-grants', runId)?.value.target, 'Ordinary screen ingress did not bind its conversational destination');
+  return app.resume(runId);
+}
 function orderedTools(app: AutarkApplication, runId: string): ToolWitness[] {
   const events = app.store.events<Observation>(runId).filter(event => event.type === 'observation');
   invariant(events.length <= 128, 'Screen observation bound exceeded');
@@ -78,7 +84,7 @@ function inOrder(tools: ToolWitness[], predicates: ((tool: ToolWitness) => boole
 /** Temporal checks consume retained real tool receipts, never candidate claims or host setup. */
 export function assessScreenWitness(caseId: ScreenCaseId, witness: ScreenWitness, packet: PrivateScreenPacket): EvaluationResult {
   const checks: EvaluationResult['checks'] = [];
-  const check = (id: string, passed: boolean, evidence: unknown) => checks.push({ id, passed, evidence: hash(JSON.stringify(evidence) ?? 'undefined') });
+  const check = (id: string, passed: boolean, evidence: unknown) => checks.push({ id, passed, evidence: identity(JSON.parse(JSON.stringify(evidence ?? null))) });
   check('real-completed-run', witness.status === 'completed', { runId: witness.runId, status: witness.status });
   check('explicit-output', witness.outputs.length > 0, witness.outputs);
   const read = (path: string) => (tool: ToolWitness) => named(tool, 'workspace_read', path) && ok(tool);
@@ -214,10 +220,14 @@ export async function runScreenCase(options: ScreenOptions) {
     app = new AutarkApplication(options.application);
     // Deliberately no await/start before this fixed synchronous barrier.
     preparation = seedBeforeDispatch(app, options.caseId, options.attemptId);
-    if (options.mode === 'live-public-screen' || options.mode === 'synthetic-host-composition') liveTurn = app.resume(preparation.runId);
+    if (options.mode === 'live-public-screen' || options.mode === 'synthetic-host-composition') {
+      liveTurn = joinPublicScreenAdmission(app, preparation.runId);
+      void liveTurn.catch(error => { failure ??= error instanceof Error ? error.message : 'Ordinary screen admission failed'; });
+    }
     const signal = AbortSignal.timeout(options.timeoutMs);
     while (true) {
-      signal.throwIfAborted(); const run = app.runtime.getRun(preparation.runId); invariant(run, 'Screen run disappeared');
+      signal.throwIfAborted(); if (failure) throw new Error(failure);
+      const run = app.runtime.getRun(preparation.runId); invariant(run, 'Screen run disappeared');
       if (['completed', 'waiting', 'blocked', 'cancelled'].includes(run.status)) break;
       await new Promise(resolve => setTimeout(resolve, 20));
     }
