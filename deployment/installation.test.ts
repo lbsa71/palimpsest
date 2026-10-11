@@ -89,17 +89,17 @@ test('preflight rehashes coordinator/runtime and rejects a mismatched frozen cap
       writeFileSync(value.hostConfigFile, JSON.stringify({ ...baseConfig, evaluationDispatcher: join(value.stateDirectory, 'reviewer.json') }));
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /dispatcher must remain outside/);
       writeFileSync(value.hostConfigFile, JSON.stringify({ ...baseConfig, evaluationDispatcher: join(root, 'private-dispatcher.json') }));
-      assert.throws(() => checkInstallation(selectedValue, 'service', false), /Selected provider credential unavailable/);
+      assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Missing selected provider is held at inference; this process lacks delegation.
       const journal = join(value.stateDirectory, 'host-successor.sqlite'), db = new DatabaseSync(journal); chmodSync(journal, 0o600);
-      assert.throws(() => checkInstallation(selectedValue, 'service', false), /Selected provider credential unavailable/); // Interrupted first schema creation remains a bootstrap decision.
+      assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Interrupted first schema creation remains a bootstrap decision.
       db.exec('CREATE TABLE selection(singleton INTEGER PRIMARY KEY, value TEXT NOT NULL)');
       const save = (phase: string) => db.prepare('INSERT OR REPLACE INTO selection VALUES(1,?)').run(JSON.stringify({ phase, selected: { candidateId: openai.manifest.id }, rescue: { candidateId: mistral.manifest.id } }));
       save('ready');
-      assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Selected OpenAI credential passes; undelegated test process fails closed.
+      assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Selected payload is rehashed; undelegated test process fails closed.
       db.prepare('UPDATE selection SET value=?').run(' '.repeat(8193));
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /Bounded boot-selection record/);
       save('booting');
-      assert.throws(() => checkInstallation(selectedValue, 'service', false), /Selected provider credential unavailable/); // Interrupted boot will select the old Mistral rescue.
+      assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Old Mistral rescue remains bootable without its provider key.
       db.close();
     } finally {
       for (const [key, old] of Object.entries(saved)) if (old === undefined) delete process.env[key]; else process.env[key] = old;

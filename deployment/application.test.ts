@@ -53,6 +53,32 @@ test('authenticated health remains alive while cancelled allowance or withdrawn 
     assert.equal(calls, 0);
   } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
+test('offline recovery retains state and queues work without consuming requests until the selected provider credential returns', async () => {
+  const f = fixture(); let app: AutarkApplication | undefined; let calls = 0;
+  const performRequest = async () => { calls++; return stop('Recovered queued work.'); };
+  try {
+    app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'initial-fixture', directToken: 'offline-token' }, performRequest });
+    app.store.put('fixture.latest-state', 'lived', { experience: 'latest', uncertainEffect: 'do-not-retry' }, null);
+    const originalAllocation = app.store.get('allocations', 'operating-envelope:v1'); await app.close(); app = undefined;
+    app = new AutarkApplication({ ...f, secrets: { openaiApiKey: 'unrelated-provider', directToken: 'offline-token' }, performRequest });
+    await app.start();
+    assert.deepEqual(app.store.get('fixture.latest-state', 'lived')!.value, { experience: 'latest', uncertainEffect: 'do-not-retry' });
+    assert.deepEqual(app.store.get('allocations', 'operating-envelope:v1'), originalAllocation);
+    const url = `http://127.0.0.1:${(app.directApi.address() as AddressInfo).port}`;
+    const response = await fetch(`${url}/health`, { headers: { authorization: 'Bearer offline-token' } });
+    const health = await response.json() as any;
+    assert.equal(health.alive, true); assert.equal(health.execution.admission, 'held');
+    assert.ok(health.execution.reasons.includes('provider-credential-unavailable'));
+    const received = await fetch(`${url}/inputs`, { method: 'POST', headers: { authorization: 'Bearer offline-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ externalId: 'offline-queued', revision: '1', conversation: 'recovery', text: 'Retain this request for when inference is available.' }) });
+    assert.equal(received.status, 202); await app.tick();
+    const { run } = await received.json() as { run: Run };
+    await app.resume(run.id); assert.equal(calls, 0); assert.equal(app.store.list('requests').length, 0);
+    await app.close(); app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'returned-fixture', directToken: 'offline-token' }, performRequest });
+    await app.start(); await eventually(() => app!.runtime.getRun(run.id)?.status, status => status === 'completed');
+    assert.equal(calls, 1); assert.deepEqual(app.store.get('allocations', 'operating-envelope:v1'), originalAllocation);
+  } finally { await app?.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
 function stop(text: string) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: text } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
 async function eventually<T>(read: () => T, accept: (value: T) => boolean): Promise<T> { const end = Date.now() + 15000; while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > end) throw new Error(`Condition not reached: ${JSON.stringify(value)}`); await new Promise(resolve => setTimeout(resolve, 20)); } }
 
@@ -465,7 +491,8 @@ test('explicit OpenAI application uses actual host tools and speech with native 
   const f = fixture(); f.config.model = { ...f.config.model, provider: 'openai', id: 'openai-fixture-v1', reasoning: true, effort: 'high' }; let app: AutarkApplication | undefined; let calls = 0;
   const history: unknown[][] = [];
   try {
-    assert.throws(() => new AutarkApplication({ ...f, secrets: { mistralApiKey: 'unused', directToken: 'fixture' }, async performRequest() { throw Error('No dispatch'); } }), /Selected provider credential/);
+    const offline = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'unused', directToken: 'fixture' }, async performRequest() { throw Error('No dispatch'); } });
+    assert.ok((offline.health() as any).execution.reasons.includes('provider-credential-unavailable')); await offline.close();
     app = new AutarkApplication({ ...f, secrets: { openaiApiKey: 'selected-private-fixture', directToken: 'fixture' }, async performRequest(payload) {
       assert.ok(!payload.includes('selected-private-fixture')); const request = JSON.parse(payload); assert.equal(request.model, 'openai-fixture-v1'); assert.deepEqual(request.reasoning, { effort: 'high' });
       const frame = request.input.filter((item: any) => item.role === 'user').map((item: any) => { try { return JSON.parse(item.content); } catch { return {}; } }).findLast((item: any) => item.hostContext).hostContext;

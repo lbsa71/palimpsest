@@ -62,7 +62,7 @@ export class AutarkApplication {
   private readonly rootAllocation = 'operating-envelope:v1';
   constructor(options: ApplicationOptions) {
     this.options = options; this.config = validateConfiguration(options.config);
-    const config = this.config; selectedProviderKey(config.model, options.secrets); options.authorityStore.assert(options.authority);
+    const config = this.config; options.authorityStore.assert(options.authority);
     invariant(options.authorityStore.current()?.artifactId === config.artifactId && options.authority.controlRevision === config.controlRevision, 'Application differs from admitted authority');
     this.lease = options.lease ?? new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     try {
@@ -262,12 +262,16 @@ export class AutarkApplication {
     }
   }
   output(runId: string): JsonValue[] { return this.store.list<{ runId: string; receipt: JsonValue }>('communications.direct-outbox').filter(row => row.value.runId === runId).map(row => row.value.receipt); }
+  private providerAvailable(): boolean {
+    try { selectedProviderKey(this.config.model, this.options.secrets); return true; } catch { return false; }
+  }
   /** Process liveness is separate from permission/capacity to admit more physical work.
    * This read-only diagnosis never makes a provider call or exposes private run state. */
   health(): JsonValue {
     const reasons: string[] = [];
     if (this.closing) reasons.push('stopping');
     if (!this.directApi.listening) reasons.push('listener-unavailable');
+    if (!this.providerAvailable()) reasons.push('provider-credential-unavailable');
     try { this.options.authorityStore.assert(this.options.authority); this.lease.assertHeld(); }
     catch { reasons.push('authority-unavailable'); }
     try {
@@ -310,6 +314,7 @@ export class AutarkApplication {
   async resume(runId: string, signal: AbortSignal = this.shutdown.signal): Promise<Run> {
     const existing = this.active.get(runId); if (existing) return existing;
     const run = this.runtime.getRun(runId); invariant(run, 'Unknown run');
+    if (!this.providerAvailable()) { if (!['completed', 'cancelled'].includes(run.status)) this.enqueue(runId); return run; }
     if (this.occupied() >= this.config.maxConcurrentRuns || this.closing) { this.enqueue(runId); return run; }
     const queued = this.store.get('host.pending-runs', runId); if (queued) this.store.delete('host.pending-runs', runId, queued.revision);
     const bootstrapRun = this.store.get<{ runId: string }>('host.bootstrap', 'development:v1')?.value.runId;
@@ -335,6 +340,9 @@ export class AutarkApplication {
     if (this.ticking || this.closing) return; this.ticking = true;
     try {
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake();
+      // Offline recovery retains intake and known local reconciliation. Missing credentials
+      // must not consume scheduler slices or physical reservations on repeated polling.
+      if (!this.providerAvailable()) return;
       // Give development first access to a freed slot on alternating admissions.
       if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns) { this.developmentTurn = false; this.startDevelopment(); }
       const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))

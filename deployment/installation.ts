@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { invariant } from '../packages/contracts/index.ts';
 import { verifyApplication, type DeploymentInputs } from './candidate.ts';
-import { beneath, environmentSecrets, selectedProviderKey } from './config.ts';
+import { beneath, environmentSecrets } from './config.ts';
 import type { SupervisorFile } from './cli.ts';
 import { bootstrapCommands } from './bootstrap-evolution.ts';
 
@@ -165,10 +165,11 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   for (const [, path] of config.policyFiles) { safePath(path); for (const root of [value.hostDataProvisionDirectory, value.workspaceProvisionDirectory]) invariant(!beneath(root, path), 'Policies must remain outside model roots'); }
   const controllers = readFileSync('/sys/fs/cgroup/cgroup.controllers', 'utf8').split(/\s+/);
   invariant(['cpu', 'memory', 'pids'].every(controller => controllers.includes(controller)), 'Linux cgroup v2 cpu/memory/pids controllers required');
-  const secrets = environmentSecrets(context === 'admin' ? validateEnvironmentFile(privateFile(value.environmentFile, 0)) : process.env);
+  // Direct authentication remains required; model credentials are only needed to infer.
+  // The independently retained rescue must boot when the provider account is unavailable.
+  environmentSecrets(context === 'admin' ? validateEnvironmentFile(privateFile(value.environmentFile, 0)) : process.env);
   const selected = boot?.candidateId ?? selectedProviderCandidate(value);
-  const selectedCandidate = selected === candidateId ? candidate : verifyApplication(value.artifactStore, selected, executable);
-  selectedProviderKey((selectedCandidate.inputs.configuration as unknown as DeploymentInputs['configuration']).model, secrets);
+  if (selected !== candidateId) verifyApplication(value.artifactStore, selected, executable);
   if (context === 'admin') invariant(process.getuid?.() === 0, 'Administrator operation required');
   else {
     invariant(process.getuid?.() === value.uid && process.getgid?.() === value.gid, 'Configured service UID/GID required');
