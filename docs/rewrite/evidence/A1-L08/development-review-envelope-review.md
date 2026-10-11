@@ -64,3 +64,46 @@ Root has received the exact reproductions and requested an immutable failure/spe
 ### R3 cancellation boundary follow-up
 
 After initial immutable checkpoint `4ce1f653cbeb3fc938b821f597a7714db87e9f2e`, two narrow cases distinguish cancellation from loss of settlement authority. With reviewer B reserved before A's overrun but dispatched afterward, the expected rejection still fails (same sole synthetic finding). With B both reserved and dispatched before A's overrun, B's later authenticated settlement correctly succeeds and preserves all 212 charged tokens. A repair must keep the second case retainable. Targeted Node command `node --test --test-name-pattern='root overrun also|physical overrun retains' evaluations/development/review-envelope-review.test.ts` returned 2 tests, 1 passed, 1 failed, exit 1. This is the same R3 finding, not a fourth defect.
+
+## Independent repair verification
+
+A new actual finite goal began before repair verification. The reviewer inspected frozen amendments `7b06c3c1deabb862b97b15296f2946ebd92cccae` and `7f4cc39485b4cc2d2af5c0dab41f6d91ac286bba`, then merged exact clean author repair **`104b5d3df6822fb580c606663659789a94176db7`** in the isolated reviewer worktree. The original failure checkpoints above remain immutable. Only the two reviewer-owned files were edited by this reviewer; the imported author implementation, fixture and specification retain their exclusive-author provenance.
+
+**Final disposition: R1, R2 and R3 are resolved for this bounded mechanical envelope.** This is source-level engineering acceptance of the repaired contract, conditional on the documented qualification/preflight boundaries below. It does not accept the recorder/bridge/model-review integration, external trust or live developmental evidence, reviewer competence, parity, H1 or automatic admission.
+
+The mandatory repaired wire adds accepted original cancellation state, authenticated B/C cancellation state, and observer-signed execution derivations. No legacy shape or compatibility branch is used. The independent positive constructor was adapted from the exact author repair to supply full canonical B input, actual captured model payload, raw provider response, exact extracted output bytes and request/settlement/response/derivation pins. The synthetic preregistered per-artifact cap is now 200,000 bytes to fit full B input; the one-million-byte total and host maxima are unchanged. This is fixture setup, not authorization to raise an actual attempt's allowance.
+
+Every historical R1/R2/R3 rejection predicate remains. New pin maintenance changes only what is needed to make the mutated history internally consistent: request/settled-state/receipt identities and true final cancellation. The early-judgment test also pins observer derivation to the same earlier time, so it fails on impossible causal timing rather than a superficial host/reviewer timestamp mismatch. No helper rewrites model reasons or judgment outcomes to repair an adversarial test.
+
+| Finding | Verified repaired behavior | Disposition |
+|---|---|---|
+| R1 | Both assigned reviewer judgments must have succeeded original-root model execution, authenticated exact settlement/response, exact canonical B as a user-message input, final provider text and deterministic reason-to-judgment derivation. Deleting all reviewer work and recomputing C fails; judgment/derivation before model completion fails. Prefix/suffix substring and assistant-role input substitutions fail. Re-signing a changed raw model reason cannot preserve the old signed judgment artifact; tool continuations cannot substitute for final output. | Resolved mechanically. Semantic understanding, competence, actual isolated contexts and observation completeness remain external qualifications. |
+| R2 | Replay checks original wall lifetime and prior physical charges before adding each new reservation ceiling. The original 187,000 + 500,000 > 600,000 ms counterexample is rejected. | Resolved for the original root. Actual intermediate allocation clocks and ancestor enforcement remain bridge qualification facts, not inferred from a submitted path. |
+| R3 | Physical ceiling overrun latches cancellation; subsequent reservation and dispatch of already reserved work fail. Already dispatched work may settle. An uncertain 201-token overrun may reconcile down to actual usage, with final total 14 tokens, while C must still retain cancellation. Falsely clearing C fails. | Resolved for accepted preattempt cancellation and observed physical overruns, including persistence across the B/T boundary in source. Manual cancellation during the attempt is a separately explicit unsupported closure below. |
+
+While inspecting the in-progress repair, this reviewer identified that equal timestamps alone would not prove a declared evidence read occurred before deriving dispatch. The author repaired the causal comparison before the final checkpoint: the succeeded `evidence_read` event must occur earlier in ordered T as well as no later by timestamp, under the correct role/effect allowlist, for an authorized B artifact with exact payload/response bytes. The retained independent positive read adds one accounted request and one physical millisecond; a later-in-T read with the same timestamp fails. This concern was caught by source inspection before a frozen red run; no observed first failure is claimed for it.
+
+### Exact checks and fixture setup correction
+
+The first adapted review-only run on the repair was **20 passed / 1 failed**. All original defect reproductions passed their rejection assertions. The sole failure was a constructor preflight: `Artifact allowance exceeds total bound` in the shared-byte test, because the new full-B artifact cap exceeded that old test's reduced total. The reviewer corrected only this fixture's preregistered per-artifact cap and total so every actual artifact is individually feasible while their joined bytes exceed the total; its original rejection predicate remains. The targeted rerun passed. This setup failure was not a production defect and is retained here rather than omitted.
+
+Final commands used Node `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node` selected through `PATH`:
+
+```text
+node --test evaluations/development/review-envelope-review.test.ts evaluations/development/review-envelope.test.ts evaluations/development/witness.test.ts evaluations/development/witness-review.test.ts
+84 passed, 0 failed, 0 skipped; exit 0
+npm run check
+normal strict TypeScript compilation passed; exit 0
+git diff --check
+passed
+```
+
+The 84 checks comprise 22 reviewer-owned cases, 37 repaired author-envelope cases and 25 unchanged v1 witness/review cases. These results independently replace the earlier author-only test-count claim for this exact repair checkpoint. Full integration/physical aggregate execution is root-owned and was not run by this reviewer.
+
+### Remaining explicit boundaries
+
+The qualified quiescent-boundary restriction described above still applies. Preflight must enforce the anchor fence or refuse; neither this review nor fixture clocks establish the fence. Full B input and retained raw evidence also require a feasible preregistered artifact/context/resource plan before live dispatch.
+
+**Manual/root cancellation during T is not represented as an event by this finite wire.** If it happens without an already cancelled accepted anchor or inferable physical overrun, an authentic C with `rootCancelled: true` is explicitly refused by the verifier's cancellation comparison. The independent test verifies that the result retains C's true cancellation flag, all six submitted T transitions and the claimed 14 charged tokens, while `finalAccounting` is null and both eligibility flags remain false. The bridge must retain actual ledger costs and stop dispatch under actual cancellation; it must never substitute `false` to obtain a prepared envelope. Root accepted this explicit unsupported-closure boundary and the bridge author was informed. An absence of observed overrun is not independent proof that no external/manual cancellation occurred.
+
+The reviewed implementation conserves and validates authenticated submitted evidence; it does not certify completeness of an external observer or the actual host. The raw model decoder binds actual captured final text and reasons, while judgments about genuine development still require competent independent reviewers. Existing v1 entrypoint meanings and explicitly named v2 projection wrappers remain unchanged. The work used only isolated pure fixtures, source review, normal strict compilation and Git bookkeeping; no provider/account/network operation, native workload, physical process boundary, Slack message, publication, deployment or broad copy/hash sweep occurred.
