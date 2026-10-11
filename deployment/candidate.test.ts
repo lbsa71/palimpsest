@@ -22,6 +22,10 @@ test('deployment admission binds actual host controls, fork/build closure and ru
     assert.ok(controls.files.some(file => file.path === 'packages/release/controller.ts'));
     assert.ok(controls.files.some(file => file.path === 'packages/development/index.ts'));
     assert.ok(controls.files.some(file => file.path === 'deployment/application.ts'));
+    assert.ok(controls.files.some(file => file.path === 'evaluations/offline-review/index.ts'));
+    assert.ok(controls.files.some(file => file.path === 'evaluations/offline-review/runner.mjs'));
+    assert.ok(controls.files.some(file => file.path === 'evaluations/offline-review/reviewer.mjs'));
+    assert.ok(!controls.files.some(file => file.path.startsWith('evaluations/offline-review/') && file.path.endsWith('.test.ts')));
     const forged = freezeCandidate(root, store, deploymentEntries(root), { ...candidate.inputs, controls: { ...(candidate.inputs.controls as object), files: [] } });
     assert.throws(() => verifyApplication(store, forged.manifest.id, process.execPath), /Control declaration/);
     assert.throws(() => verifyApplication(store, candidate.manifest.id, join(root, 'package.json')), /Runtime requires a regular|Pinned runtime changed/);

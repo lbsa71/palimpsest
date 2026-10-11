@@ -15,7 +15,8 @@ import type { HostBindings } from './materialize.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
-import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
+import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewOperationId, type ReviewResourceOptions } from './evaluation-resources.ts';
+import { loadOfflinePlan, offlineOperation, runOfflineCase, type OfflineObservation } from '../evaluations/offline-review/index.ts';
 import { evaluationAcknowledgmentPending } from './evolution-continuation.ts';
 import { assertProbationLineage, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 
@@ -58,9 +59,9 @@ export function loadReviewerFile(path: string, host: HostBindings): ReviewerFile
 }
 
 /** One physical operation; failure may have occurred after review and is never retryable automatically. */
-export async function runExternalReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
+async function runSealedReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
   policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal, dispatch?: (launch: () => void) => void,
-  physicalAuthority = request.proposal.authority): Promise<ReviewResponse> {
+  physicalAuthority = request.proposal.authority, offlineObservations?: OfflineObservation[]): Promise<ReviewResponse> {
   validateReviewer(config, host); signal?.throwIfAborted();
   const descriptor = Buffer.from(reviewerDescriptor(config)), descriptorDigest = hashBytes(descriptor);
   invariant(policy.policyDigest === request.policyDigest && admissionPolicyIdentity(policy) === request.policyDigest && policy.controlRevision === request.proposal.authority.controlRevision &&
@@ -88,7 +89,8 @@ export async function runExternalReview(config: ReviewerFile, host: HostBindings
     }
     const keyPath = join(workspace, 'key'); writeFileSync(keyPath, key, { mode: 0o400 }); args.push('--ro-bind', keyPath, '/reviewer-key', '--', config.executable, ...config.args);
     const input = Buffer.from(JSON.stringify({ version: 1, request, candidateRoot: '/candidate', recoveryArtifact, recoveryBytes: recoveryBytes.toString('base64'),
-      evaluatorArtifact: { uri: `sha256:${descriptorDigest}`, sha256: descriptorDigest }, evaluatorBytes: descriptor.toString('base64') }) + '\n');
+      evaluatorId: config.evaluatorId, evaluatorArtifact: { uri: `sha256:${descriptorDigest}`, sha256: descriptorDigest }, evaluatorBytes: descriptor.toString('base64'),
+      ...(offlineObservations ? { offlineObservations } : {}) }) + '\n');
     invariant(input.byteLength <= config.maxOutputBytes, 'External reviewer request exceeds bounds');
     // Authority is checked again after all verification/snapshot work, immediately before physical dispatch.
     assertAuthority(physicalAuthority); signal?.throwIfAborted();
@@ -148,6 +150,13 @@ export async function runExternalReview(config: ReviewerFile, host: HostBindings
       proof.proposal.id === request.requestId && identity(proof.proposal.candidate) === identity(candidate.manifest) &&
       identity(proof.proposal.priorAuthority) === identity(request.proposal.authority) && identity(proof.proposal.evidence) === identity(receipt.evidence) &&
       receipt.evidence.length > 0 && receipt.evidence.length <= 32 && proof.signed.length === receipt.evidence.length, 'Complete external result request binding required');
+    if (offlineObservations) for (const observation of offlineObservations) {
+      const matches = receipt.evidence.flatMap(e => e.caseResults).filter(c => c.id === observation.caseId);
+      const original = Buffer.from(canonicalJson(observation)), digest = hashBytes(original);
+      invariant(matches.length === 1 && matches[0]!.status === (observation.passed ? 'pass' : 'fail') &&
+        matches[0]!.observations.sha256 === digest && identity(matches[0]!.usage) === identity(observation.physical.usage) &&
+        hashBytes(read(matches[0]!.observations.uri)) === digest, 'Reviewer changed or omitted original offline candidate evidence');
+    }
     for (const evidence of receipt.evidence) {
       validateEvaluation(evidence);
       invariant(evidence.candidateId === candidate.manifest.id && evidence.controlRevision === policy.controlRevision && evidence.independent &&
@@ -163,6 +172,42 @@ export async function runExternalReview(config: ReviewerFile, host: HostBindings
       candidate.manifest.controls === request.proposal.authority.controlRevision ? 'ordinary' : 'control-upgrade');
     return { result, artifacts: [...artifacts].map(([sha256, bytes]) => ({ sha256, base64: Buffer.from(bytes).toString('base64') })) };
   } finally { rmSync(workspace, { recursive: true, force: true }); }
+}
+
+/** Existing standalone offline reviewer API. A behavioral plan cannot silently skip its probes. */
+export async function runExternalReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
+  policy: AdmissionPolicy, acceptedCandidateId: string, assertAuthority: (authority: Authority) => void, signal?: AbortSignal,
+  dispatch?: (launch: () => void) => void, physicalAuthority = request.proposal.authority): Promise<ReviewResponse> {
+  invariant(!config.files.some(file => file.mount === '/reviewer/offline-validator-plan.json'), 'Behavioral reviewer requires original accounted candidate observations');
+  return runSealedReview(config, host, request, policy, acceptedCandidateId, assertAuthority, signal, dispatch, physicalAuthority);
+}
+
+/** Serial sibling executions: every probe and sealed reviewer has its own physical reservation. */
+export async function runAccountedExternalReview(config: ReviewerFile, host: HostBindings, request: EvaluationRequest,
+  policy: AdmissionPolicy, acceptedCandidateId: string, resource: ReviewResourceOptions & { prepared?: boolean }): Promise<ReviewResponse> {
+  validateReviewer(config, host);
+  const evaluatorDigest = hashBytes(Buffer.from(reviewerDescriptor(config)));
+  invariant(resource.request === request && resource.evaluatorDigest === evaluatorDigest && resource.evaluatorId === config.evaluatorId &&
+    policy.policyDigest === request.policyDigest && admissionPolicyIdentity(policy) === request.policyDigest &&
+    policy.controlRevision === request.proposal.authority.controlRevision && policy.evaluatorArtifacts.get(config.evaluatorId) === evaluatorDigest,
+  'Behavioral review requires the exact original judging policy and resource context');
+  invariant(hashBytes(readHostFile(config.keyFile, 65536)) === hashBytes(policy.evaluatorKeys.get(config.evaluatorId) ?? new Uint8Array()), 'External reviewer key differs from prior policy');
+  const candidate = verifyApplication(host.artifactStore, request.candidate.manifest.id, host.nodeBinary);
+  invariant(identity(candidate) === identity(request.candidate), 'Offline request differs from frozen candidate');
+  const accepted = verifyApplication(host.artifactStore, acceptedCandidateId, host.nodeBinary);
+  const resourceLimits = materializeConfiguration(accepted, host).resourceLimits;
+  const offline = loadOfflinePlan(config), observations: OfflineObservation[] = [];
+  if (offline) {
+    invariant(offline.plan.cases.every(c => policy.requiredCases.includes(c.id)), 'Offline cases must be declared in the original policy');
+    for (const [index, c] of offline.plan.cases.entries()) observations.push(await runOfflineCase({ config, host, request,
+      plan: offline.plan, planDigest: offline.digest, case: c, resourceLimits,
+      resource: { ...resource, prepared: !!resource.prepared && index === 0 } }));
+    // Detect private plan/source changes after candidate execution and before the signer starts.
+    invariant(identity(loadOfflinePlan(config)) === identity(offline), 'Offline plan changed during candidate observation');
+  }
+  return accountedReview({ ...resource, operation: undefined, maxElapsedMs: config.maxElapsedMs, prepared: !!resource.prepared && !offline },
+    gate => runSealedReview(config, host, request, policy, acceptedCandidateId, resource.assertAuthority, gate.signal, gate.dispatch,
+      resource.physicalAuthority ?? request.proposal.authority, offline ? observations : undefined));
 }
 
 export interface DispatchOptions {
@@ -225,13 +270,16 @@ export class EvaluationDispatcher {
     assertProbationLineage(this.options.mailbox.store, review);
     const policy = this.options.getPolicy(review.policyDigest);
     invariant(policy.controlRevision === review.judgeAuthority.controlRevision && policy.evaluatorArtifacts.get(reviewer.evaluatorId) === hashBytes(Buffer.from(reviewerDescriptor(reviewer))), 'Original probation evaluator unavailable');
+    const offline = loadOfflinePlan(reviewer), first = offline?.plan.cases[0];
     prepareReview({ store: this.options.mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer))),
+      ...(first ? { operation: offlineOperation(offline!.digest, first) } : {}),
       evaluatorId: reviewer.evaluatorId, maxElapsedMs: reviewer.maxElapsedMs, assertAuthority: this.options.assertAuthority,
       dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal,
       commitReservation: () => {
         invariant(!this.options.mailbox.store.get('host.probation-review-contexts', review.id), 'Probation reservation already used');
         commitReservation?.();
         this.options.mailbox.store.put('host.probation-review-contexts', review.id, review, null);
+        this.options.mailbox.store.put('host.probation-review-operations', review.id, offline?.plan.cases.map(c => offlineOperation(offline.digest, c)) ?? [], null);
       } });
     this.#activeJob = review.id; this.#publish();
   }
@@ -248,10 +296,15 @@ export class EvaluationDispatcher {
       const saved = store.get('host.probation-review-contexts', review.id)?.value;
       invariant(!saved || identity(saved) === identity(review), 'Probation cleanup context changed');
       const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 });
-      const physical = ledger.request(reviewPhysicalId(review.id));
-      if (!physical) return;
-      invariant(physical.provider === 'external-offline-review' && physical.runId === review.proposal.runId && physical.requestDigest === identity(this.#probationRequest(review)), 'Exact probation cleanup reservation required');
-      if (physical.status === 'reserved') ledger.settle({ ...physical, status: 'failed', usage: { ...physical.usage, elapsedMs: 0 } });
+      const request = this.#probationRequest(review);
+      const operations = store.get<{ id: string; digest: string }[]>('host.probation-review-operations', review.id)?.value ?? [];
+      for (const operation of [undefined, ...operations]) {
+        const physical = ledger.request(reviewOperationId({ request, operation }));
+        if (!physical) continue;
+        invariant(physical.provider === 'external-offline-review' && physical.runId === review.proposal.runId &&
+          physical.requestDigest === (operation ? identity({ request, operation }) : identity(request)), 'Exact probation cleanup reservation required');
+        if (physical.status === 'reserved') ledger.settle({ ...physical, status: 'failed', usage: { ...physical.usage, elapsedMs: 0 } });
+      }
     });
     if (this.#activeJob === review.id) this.#activeJob = undefined;
     this.#publish();
@@ -265,11 +318,10 @@ export class EvaluationDispatcher {
     const request = this.#probationRequest(review), combined = AbortSignal.any([signal, this.#abort.signal]);
     const assertCurrent = (authority: Authority) => { this.options.assertAuthority(authority); assertProbationLineage(mailbox.store, review); };
     try {
-      const response = await accountedReview({ store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer))),
+      const response = await runAccountedExternalReview(reviewer, this.options.host, request, this.options.getPolicy(review.policyDigest), review.rescueCandidateId,
+      { store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer))),
         evaluatorId: reviewer.evaluatorId, maxElapsedMs: reviewer.maxElapsedMs, prepared: true, physicalAuthority,
-        assertAuthority: assertCurrent, dispatchAuthority: this.options.dispatchAuthority, signal: combined },
-      gate => runExternalReview(reviewer, this.options.host, request, this.options.getPolicy(review.policyDigest), review.rescueCandidateId,
-        assertCurrent, gate.signal, gate.dispatch, physicalAuthority));
+        assertAuthority: assertCurrent, dispatchAuthority: this.options.dispatchAuthority, signal: combined });
       this.options.dispatchAuthority(physicalAuthority, () => mailbox.store.transaction(() => {
         combined.throwIfAborted(); assertProbationLineage(mailbox.store, review);
         invariant(response.result.proof.proposal.evidence.every(value => !review.admissionEvidenceIds.includes(value.id)), 'Probation requires fresh independent evidence');
@@ -302,10 +354,10 @@ export class EvaluationDispatcher {
     this.#publish();
     try {
       if (job.kind === 'evaluation') await mailbox.processEvaluation(job.id, async request => {
-        const response = await accountedReview({ store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer!))),
+        const response = await runAccountedExternalReview(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest), this.options.acceptedCandidateId(),
+        { store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer!))),
           evaluatorId: reviewer!.evaluatorId, maxElapsedMs: reviewer!.maxElapsedMs, assertAuthority: this.options.assertAuthority, dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal },
-        gate => runExternalReview(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest),
-          this.options.acceptedCandidateId(), this.options.assertAuthority, gate.signal, gate.dispatch));
+        );
         for (const blob of response.artifacts) mailbox.store.putArtifact(Buffer.from(blob.base64, 'base64'));
         return response.result;
       }, this.#abort.signal, (request, result) => this.options.dispatchAuthority(request.proposal.authority, () => mailbox.store.transaction(() => {

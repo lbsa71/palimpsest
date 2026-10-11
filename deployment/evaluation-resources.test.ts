@@ -8,7 +8,7 @@ import { identity, type PhysicalRequest } from '../packages/contracts/index.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
-import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
+import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewOperationId, reviewPhysicalId } from './evaluation-resources.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 
 function fixture(maxConcurrency = 3) {
@@ -23,6 +23,43 @@ function fixture(maxConcurrency = 3) {
   const options = { store, request, evaluatorDigest: identity('closure'), evaluatorId: 'qualified-offline-fixture', maxElapsedMs: 1000, assertAuthority: () => {}, dispatchAuthority: (_grant: unknown, operation: () => void) => operation(), now: () => now };
   return { directory, filename, store, ledger, options, setTime: (value: number) => { now = value; }, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
+test('sibling probes and sealed reviewer each charge the original maxConcurrency-one lineage across transfer', async () => {
+  const f = fixture(1), operation = { id: 'validator', digest: identity('original-private-case') };
+  const first = { ...f.options, operation };
+  try {
+    const parent = f.store.get('allocations', 'parent'), child = f.store.get('allocations', 'child');
+    prepareReview(first);
+    const successor = { generation: 'successor', epoch: 3, controlRevision: 'next' }, row = f.store.get<any>('runs', 'child')!;
+    f.store.put('runs', 'child', { ...row.value, authority: successor }, row.revision);
+    const transferred = { ...f.options, physicalAuthority: successor,
+      assertAuthority: (value: unknown) => assert.deepEqual(value, successor),
+      dispatchAuthority: (value: unknown, run: () => void) => { assert.deepEqual(value, successor); run(); } };
+    f.setTime(10);
+    await accountedReview({ ...transferred, operation, prepared: true }, async gate => { gate.dispatch(() => {}); f.setTime(20); });
+    await accountedReview(transferred, async gate => { gate.dispatch(() => {}); f.setTime(30); });
+    assert.equal(f.ledger.request(reviewOperationId(first))!.usage.elapsedMs, 20);
+    assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.usage.elapsedMs, 10);
+    assert.deepEqual(f.store.get('allocations', 'parent'), parent); assert.deepEqual(f.store.get('allocations', 'child'), child);
+    assert.equal(f.ledger.snapshot('parent').requests, 2); assert.equal(f.ledger.snapshot('parent').concurrent, 0);
+    await assert.rejects(accountedReview({ ...transferred, operation, prepared: true }, async () => {}), /unused prepared/);
+    await assert.rejects(accountedReview(transferred, async () => {}), /already used/);
+  } finally { f.close(); }
+});
+test('probe cancellation and restart preserve its distinct unknown charge and prevent a free signer', async () => {
+  const f = fixture(1), options = { ...f.options, operation: { id: 'validator', digest: identity('private-case') } };
+  try {
+    const running = accountedReview(options, async gate => {
+      gate.dispatch(() => {});
+      return new Promise<void>((_resolve, reject) => gate.signal.addEventListener('abort', () => reject(gate.signal.reason), { once: true }));
+    });
+    setTimeout(() => f.ledger.cancel('parent'), 1);
+    await assert.rejects(running, /cancelled/);
+    recoverReviewReservations(f.store);
+    assert.equal(f.ledger.request(reviewOperationId(options))!.status, 'uncertain');
+    await assert.rejects(accountedReview(f.options, async () => {}), /cancelled/);
+    assert.equal(f.ledger.snapshot('parent').requests, 1); assert.equal(f.ledger.snapshot('parent').concurrent, 1);
+  } finally { f.close(); }
+});
 test('canceled/expired reviewer lineage dispatches zero physical operations', async () => {
   for (const cancellation of ['allocation', 'run', 'expiry']) {
     const f = fixture(); let spawns = 0;

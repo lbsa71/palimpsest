@@ -5,15 +5,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { identity, type ArtifactRef, type Authority, type EvaluationEvidence } from '../packages/contracts/index.ts';
-import { admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '../packages/release/admission.ts';
+import { canonicalJson, identity, type ArtifactRef, type Authority, type EvaluationEvidence } from '../packages/contracts/index.ts';
+import { admitCandidate, admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import { policyDescriptor, type ReleaseProof } from '../packages/release/controller.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
-import { EvaluationDispatcher, reviewerDescriptor, runExternalReview, type ReviewerFile } from './evaluation-dispatch.ts';
+import { EvaluationDispatcher, reviewerDescriptor, runAccountedExternalReview, runExternalReview, type ReviewerFile } from './evaluation-dispatch.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 import type { SubmissionRequest } from './evolution-tools.ts';
@@ -21,6 +21,7 @@ import { contentAddressedEvidence } from './host-policy.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { ServiceSupervisor } from './supervisor.ts';
 import { reviewPhysicalId } from './evaluation-resources.ts';
+import { loadOfflinePlan, offlinePlanMount, offlineRunnerDigest, type OfflineObservation, type OfflinePlan } from '../evaluations/offline-review/index.ts';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const markerPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
@@ -157,7 +158,7 @@ async function eventually<T>(read: () => T, accept: (value: T) => boolean): Prom
   const deadline = Date.now() + 30000;
   while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > deadline) throw Error('Fixture deadline: ' + JSON.stringify(value)); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
-function fixture(activate = false, governance = false) {
+function fixture(activate = false, governance = false, offline = false) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-external-dispatch-'));
   const source = join(root, 'source'); mkdirSync(source);
   for (const entry of rewriteSourceEntries) if (existsSync(join(repository, entry))) { mkdirSync(dirname(join(source, entry)), { recursive: true }); cpSync(join(repository, entry), join(source, entry), { recursive: true }); }
@@ -172,8 +173,22 @@ function fixture(activate = false, governance = false) {
   retain(process.execPath, '/reviewer/node');
   const linked = spawnSync('/usr/bin/ldd', [process.execPath], { encoding: 'utf8' }); assert.equal(linked.status, 0, linked.stderr);
   for (const path of new Set(linked.stdout.match(/\/[^\s()]+/g))) retain(path, path);
-  const script = join(reviewerRoot, 'reviewer.mjs'); writeFileSync(script, reviewerSource, { mode: 0o600 }); retain(script, '/reviewer/reviewer.mjs');
+  const script = join(reviewerRoot, 'reviewer.mjs'); writeFileSync(script, offline ? readFileSync(join(repository, 'evaluations/offline-review/reviewer.mjs')) : reviewerSource, { mode: 0o600 }); retain(script, '/reviewer/reviewer.mjs');
   const rules = join(reviewerRoot, 'rules.mjs'); writeFileSync(rules, "export const heldOutMarker = 'externalDispatchEngineeringFixture = true';\n", { mode: 0o600 }); retain(rules, '/reviewer/rules.mjs');
+  if (offline) {
+    const plan: OfflinePlan = { version: 1, kind: 'validator-string-length', runnerDigest: offlineRunnerDigest(), cases: [{ id: 'validator-string-length', timeoutMs: 3000, maxOutputBytes: 4096,
+      inputs: [
+        { schema: { type: 'string', minLength: 1 }, value: '' },
+        { schema: { type: 'string', minLength: 1, maxLength: 1 }, value: 'a' },
+        { schema: { type: 'string', maxLength: 1 }, value: 'ab' },
+        { schema: { type: 'string', minLength: 1, maxLength: 1 }, value: '\ud83d\ude80' },
+        { schema: { type: 'string', minLength: 2 }, value: '\ud83d\ude80' },
+        { schema: { type: 'string', minLength: 1, maxLength: 1 }, value: '\ud83d' },
+        { schema: { type: 'string', minLength: 1, maxLength: 1 }, value: '\ude80' },
+        { schema: { type: 'string' }, value: 17 },
+      ], expected: [false, true, false, true, false, true, true, false] }] };
+    const path = join(reviewerRoot, 'private-plan.json'); writeFileSync(path, canonicalJson(plan), { mode: 0o600 }); retain(path, offlinePlanMount);
+  }
   const reviewer: ReviewerFile = { evaluatorId: 'physical-engineering-reviewer', files, executable: '/reviewer/node', args: ['--jitless', '--max-old-space-size=64', '/reviewer/reviewer.mjs'], keyFile,
     pollMs: 10, maxElapsedMs: 15000, maxOutputBytes: 8 * 1024 * 1024, maxClosureBytes: 256 * 1024 * 1024, memoryBytes: 8 * 1024 * 1024 * 1024 };
   const reviewerFile = join(reviewerRoot, 'config.json'); writeFileSync(reviewerFile, JSON.stringify(reviewer), { mode: 0o600 });
@@ -184,7 +199,7 @@ function fixture(activate = false, governance = false) {
   const futureReviewer = { ...reviewer, files: reviewer.files.map(file => ({ ...file, sha256: file.mount === '/reviewer/reviewer.mjs' ? hashBytes(futureReviewerSource) : file.mount === '/reviewer/rules.mjs' ? hashBytes(futureRules) : file.sha256 })) };
   const futureReviewerDigest = hashBytes(reviewerDescriptor(futureReviewer));
   const evaluator = blob(reviewerDescriptor(reviewer));
-  const fields = { kind: 'engineering' as const, requiredCases: ['held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
+  const fields = { kind: 'engineering' as const, requiredCases: [offline ? 'validator-string-length' : 'held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
   const modifiedBytes = readFileSync(join(source, markerPath), 'utf8') + marker;
   // Frozen fixture transport replaces the provider completely. It exercises the ordinary service child/tools.
   const calls = [['source_checkout', {}], ['workspace_write', { path: markerPath, content: modifiedBytes, expectedSha256: hashBytes(readFileSync(join(source, markerPath))) }],
@@ -232,8 +247,85 @@ function fixtureGovernance(profile) {
   const options = { host, mode: 'engineering' as const, secrets: { mistralApiKey: 'no-paid-provider-access', directToken: 'fixture-token' }, readArtifact: contentAddressedEvidence(evidenceDirectory),
     getPolicy: (digest: string) => { const result = policies.get(digest); assert.ok(result, 'Unknown registered policy'); return result; }, bootstrap: { proof: bootstrapProof, policyDigest: policy.policyDigest },
     evaluationDispatcher: { reviewerFile, policyDigests: [...policies.keys()] } };
-  return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources, futureReviewerDigest };
+  return { root, host, incumbent, policy, nextPolicy, options, reviewer, reviewerFile, evidenceDirectory, resources, futureReviewerDigest, source, inputs };
 }
+
+test('offline behavioral reviewer confines candidate probes and reaches ordinary staged admission and fresh probation', { timeout: 180000, skip: process.env.AEON_OFFLINE_REVIEW_FIXTURE !== '1' }, async t => {
+  const f = fixture(true, false, true); let supervisor: ServiceSupervisor | undefined;
+  const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+  const authorityStore = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+  try {
+    supervisor = await ServiceSupervisor.open(f.options);
+    const response = await fetch(`http://127.0.0.1:${supervisor.status().ready!.address.port}/inputs`, { method: 'POST', headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ externalId: 'offline-validator', revision: '1', conversation: 'offline-review', text: 'Execute the finite offline behavioral review fixture.' }) });
+    assert.equal(response.status, 202);
+    const record = await eventually(() => {
+      const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
+      if (value && ['uncertain', 'rejected'].includes(value.status)) throw Error(JSON.stringify(value));
+      if (supervisor!.status().evaluation?.uncertain) throw Error(JSON.stringify(supervisor!.status().evaluation));
+      return value;
+    }, value => value?.status === 'accepted');
+    assert.ok(record?.review && record.probationProof);
+    const proof = store.readJsonArtifact<ReleaseProof>(record.probationProof);
+    assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
+    assert.deepEqual(proof.proposal.priorAuthority, record.review.judgeAuthority);
+    assert.ok(proof.proposal.evidence.every(e => !record.review!.admissionEvidenceIds.includes(e.id)));
+    const physical = () => store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').map(r => r.value.request).filter(r => r.provider === 'external-offline-review');
+    assert.equal(physical().length, 4, 'Two actual candidate commands and two separate sealed reviewers');
+    assert.ok(physical().every(r => r.status === 'succeeded' && r.runId === record.request.runId));
+    assert.equal(physical().filter(r => r.id.includes(':probe:')).length, 2);
+    for (const original of record.review.allocationLineage) {
+      const { cancelled, ...fields } = store.get<any>('allocations', original.id)!.value;
+      assert.equal(cancelled, false); assert.deepEqual({ id: original.id, ...fields }, original);
+    }
+    const observation = store.readJsonArtifact<OfflineObservation>(proof.proposal.evidence[0]!.caseResults[0]!.observations);
+    assert.equal(observation.passed, true); assert.equal(observation.candidateId, record.review.candidate.manifest.id);
+    assert.equal(observation.physical.usage.requests, 1); assert.equal(observation.physical.runId, record.request.runId);
+
+    // These extra checks use explicit engineering allocations under the unchanged operating grant.
+    const resource = (id: string, candidate: ReturnType<typeof freezeApplication>) => {
+      const authority = supervisor!.status().ready!.authority, runId = `offline-negative:${id}`;
+      const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }); ledger.allocate(runId, f.resources, 'operating-envelope:v1');
+      store.put('runs', runId, { id: runId, status: 'completed', revision: 0, scope: { kind: 'public' }, authority }, null);
+      const request: EvaluationRequest = { requestId: id, candidate, policyDigest: f.nextPolicy.policyDigest, proposal: { ...record.review!.proposal, runId, authority } };
+      const options = { store, request, evaluatorDigest: hashBytes(reviewerDescriptor(f.reviewer)), evaluatorId: f.reviewer.evaluatorId, maxElapsedMs: f.reviewer.maxElapsedMs,
+        assertAuthority: (a: Authority) => authorityStore.assert(a), dispatchAuthority: (a: Authority, run: () => void) => authorityStore.dispatch(a, run) };
+      return { request, options, ledger };
+    };
+    await t.test('seeded Unicode semantic regression fails independent outcomes and admission; replay does not launch again', async () => {
+      writeFileSync(join(f.source, markerPath), 'export function ucs2length(s: string): number { return s.length; }\n');
+      const bad = freezeApplication(f.source, f.host.artifactStore, f.inputs), r = resource('regressed-validator', bad);
+      const result = await runAccountedExternalReview(f.reviewer, f.host, r.request, f.nextPolicy, record.review!.candidate.manifest.id, r.options);
+      assert.equal(result.result.receipt.evidence[0]!.verdict, 'fail');
+      assert.equal(result.result.receipt.evidence[0]!.caseResults[0]!.status, 'fail');
+      const artifacts = new Map(result.artifacts.map(a => [`sha256:${a.sha256}`, Buffer.from(a.base64, 'base64')]));
+      assert.throws(() => admitCandidate(f.host.artifactStore, result.result.proof.proposal, r.request.proposal.authority, f.nextPolicy, result.result.proof.signed, uri => artifacts.get(uri)!, 'control-upgrade'));
+      const count = physical().length;
+      await assert.rejects(runAccountedExternalReview(f.reviewer, f.host, r.request, f.nextPolicy, record.review!.candidate.manifest.id, r.options), /already used/);
+      assert.equal(physical().length, count);
+    });
+    await t.test('candidate attempts to read reviewer namespace and original private files fail while behavior still passes', async () => {
+      const privatePaths = ['/reviewer-key', offlinePlanMount, f.reviewer.keyFile, ...f.reviewer.files.filter(x => x.mount === offlinePlanMount).map(x => x.path)];
+      const attack = `import { readFileSync } from 'node:fs'; for (const path of ${JSON.stringify(privatePaths)}) { let read = false; try { readFileSync(path); read = true; } catch {} if (read) throw Error('Private judge material exposed'); }\nexport function ucs2length(s: string): number { return [...s].length; }\n`;
+      writeFileSync(join(f.source, markerPath), attack);
+      const candidate = freezeApplication(f.source, f.host.artifactStore, f.inputs), r = resource('private-isolation', candidate);
+      const result = await runAccountedExternalReview(f.reviewer, f.host, r.request, f.nextPolicy, record.review!.candidate.manifest.id, r.options);
+      assert.equal(result.result.receipt.evidence[0]!.verdict, 'pass');
+      assert.ok(result.artifacts.every(a => !Buffer.from(a.base64, 'base64').includes(readFileSync(f.reviewer.keyFile))));
+    });
+    await t.test('tampered private plan and direct unaccounted reviewer cannot omit required probes', async () => {
+      const planFile = f.reviewer.files.find(file => file.mount === offlinePlanMount)!, original = readFileSync(planFile.path);
+      writeFileSync(planFile.path, Buffer.from(original.toString().replace('"expected":[false', '"expected":[true')));
+      try { assert.throws(() => loadOfflinePlan(f.reviewer), /differs from accepted/); }
+      finally { writeFileSync(planFile.path, original); }
+      await assert.rejects(runExternalReview(f.reviewer, f.host, { requestId: 'omitted-probe' } as EvaluationRequest, f.nextPolicy, record.review!.candidate.manifest.id, () => {}), /requires original accounted/);
+    });
+    await supervisor.close(); supervisor = undefined;
+    supervisor = await ServiceSupervisor.open(f.options);
+    assert.equal(supervisor.status().release?.accepted.candidateId, record.review.candidate.manifest.id);
+    assert.equal(physical().length, 8, 'Completed probe/reviewer pairs do not repeat on restart');
+  } finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
 
 test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 120000 }, async t => {
   const f = fixture(); let supervisor: ServiceSupervisor | undefined;

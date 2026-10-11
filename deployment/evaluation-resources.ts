@@ -13,8 +13,18 @@ export interface ReviewResourceOptions {
   dispatchAuthority(authority: Authority, operation: () => void): void; signal?: AbortSignal; now?: () => number;
   /** Synchronous host state committed atomically with the original reservation, under both locks. */
   commitReservation?: () => void;
+  /** A separate physical candidate probe; absent identifies the sealed reviewer itself. */
+  operation?: { id: string; digest: string };
+  /** Host-checked probation continuation; judging authority in request remains unchanged. */
+  physicalAuthority?: Authority;
 }
 export function reviewPhysicalId(jobId: string): string { return `external-review:${jobId}`; }
+export function reviewOperationId(options: Pick<ReviewResourceOptions, 'request' | 'operation'>): string {
+  if (!options.operation) return reviewPhysicalId(options.request.requestId);
+  invariant(/^[a-zA-Z0-9_-]{1,64}$/.test(options.operation.id) && /^[a-f0-9]{64}$/.test(options.operation.digest), 'Bounded exact offline operation identity required');
+  return `${reviewPhysicalId(options.request.requestId)}:probe:${options.operation.id}`;
+}
+function operationDigest(options: ReviewResourceOptions): string { return options.operation ? identity({ request: options.request, operation: options.operation }) : identity(options.request); }
 /** Caller holds the operational transaction when accepting a result or launching a child. */
 export function assertReviewLineage(store: OperationalStore, request: EvaluationRequest, now = Date.now, physicalAuthority = request.proposal.authority): void {
   const run = store.get<Run>('runs', request.proposal.runId)?.value;
@@ -35,12 +45,12 @@ export function assertReviewLineage(store: OperationalStore, request: Evaluation
 export function prepareReview(options: ReviewResourceOptions): void {
   const { store, request } = options, now = options.now ?? Date.now;
   invariant(Number.isSafeInteger(options.maxElapsedMs) && options.maxElapsedMs > 0, 'Finite review reservation required');
-  const id = reviewPhysicalId(request.requestId);
+  const id = reviewOperationId(options), authority = options.physicalAuthority ?? request.proposal.authority;
   const physical: PhysicalRequest = { id, runId: request.proposal.runId, purpose: 'review', provider, model: options.evaluatorId,
-    promptManifestId: `reviewer-closure:${options.evaluatorDigest}`, requestDigest: identity(request), reservationId: id, status: 'reserved',
+    promptManifestId: `reviewer-closure:${options.evaluatorDigest}`, requestDigest: operationDigest(options), reservationId: id, status: 'reserved',
     usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs } };
-  options.dispatchAuthority(request.proposal.authority, () => store.transaction(() => {
-    options.signal?.throwIfAborted(); options.assertAuthority(request.proposal.authority); assertReviewLineage(store, request, now);
+  options.dispatchAuthority(authority, () => store.transaction(() => {
+    options.signal?.throwIfAborted(); options.assertAuthority(authority); assertReviewLineage(store, request, now, authority);
     options.commitReservation?.();
     new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now).reserve(physical);
     store.put(preparationNamespace, id, { physical, startedAt: now(), maxElapsedMs: options.maxElapsedMs }, null);
@@ -53,13 +63,12 @@ export async function accountedReview<T>(options: ReviewResourceOptions & { prep
 operation: (gate: { signal: AbortSignal; dispatch(launch: () => void): void }) => Promise<T>): Promise<T> {
   const { request, store } = options, now = options.now ?? Date.now;
   const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: options.maxElapsedMs }, now);
-  invariant(!options.physicalAuthority || options.prepared, 'Transferred review requires its original prepared reservation');
   if (!options.prepared) prepareReview(options);
   // Claim before asynchronous preparation. A duplicate must never enter the operation or
   // settle the owner's physical request after losing a race at the launch gate.
   const prepared = store.transaction(() => {
-    const row = store.get<PreparedReview>(preparationNamespace, reviewPhysicalId(request.requestId)), prepared = row?.value;
-    invariant(row && prepared && !prepared.claimed && prepared.maxElapsedMs === options.maxElapsedMs && prepared.physical.requestDigest === identity(request) &&
+    const row = store.get<PreparedReview>(preparationNamespace, reviewOperationId(options)), prepared = row?.value;
+    invariant(row && prepared && !prepared.claimed && prepared.maxElapsedMs === options.maxElapsedMs && prepared.physical.requestDigest === operationDigest(options) &&
       prepared.physical.model === options.evaluatorId && prepared.physical.promptManifestId === `reviewer-closure:${options.evaluatorDigest}` &&
       identity(ledger.request(prepared.physical.id)) === identity(prepared.physical), 'Exact unused prepared review reservation required');
     store.put(preparationNamespace, prepared.physical.id, { ...prepared, claimed: true }, row.revision);

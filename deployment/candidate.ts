@@ -17,6 +17,8 @@ export interface DeploymentInputs {
 interface Entry { path: string; sha256: string }
 /** Host-executed authority/effect/storage/admission code and its entire transitive library closure. */
 function isControl(path: string): boolean {
+  // The external dispatcher executes this prior-owned observation boundary on the host.
+  if (path.startsWith('evaluations/offline-review/')) return !path.endsWith('.test.ts') && !path.endsWith('.md');
   if (path.startsWith('node_modules/')) return true;
   if (path.startsWith('deployment/')) return !path.startsWith('deployment/prompts/') && !path.endsWith('.test.ts');
   if (!path.startsWith('packages/')) return path === runtimeBundlePath || ['package.json', 'package-lock.json', 'tsconfig.json', 'AGENTS.md', 'REQUIREMENTS.md'].includes(path);
