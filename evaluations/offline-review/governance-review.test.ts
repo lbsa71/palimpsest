@@ -204,11 +204,12 @@ const retained = process.env.AEON_GOVERNANCE_REVIEW_AUDIT_DIR;
 if (retained) test('review audit: retained physical responses, artifacts, selected bytes and original lineage agree', () => {
   const read = <T>(name: string): T => JSON.parse(readFileSync(join(retained, name), 'utf8')) as T;
   const planBytes = readFileSync(join(retained, 'old-private-plan.json')), plan = parseOfflinePlan(planBytes);
+  assert.equal(plan.runnerDigest, offlineRunnerDigest(), 'Reinspection requires the retained original runner source and Node binary');
   assert.equal(plan.cases.length, 1);
   const c = plan.cases[0]!; assert.equal(c.kind, 'reviewer-behavior');
   const descriptor = read<Parameters<typeof reviewerDescriptor>[0]>('old-reviewer-descriptor.json');
   const descriptorDigest = hashBytes(reviewerDescriptor(descriptor));
-  const expected = ['always-accepting', 'always-refusing', 'good-private-isolation', 'ignores-request-binding', 'promotes-failed-command', 'undeclared-dependency'];
+  const expected = ['always-accepting', 'always-refusing', 'good-private-isolation', 'ignores-request-binding', 'promotes-failed-command', 'undeclared-dependency', 'undeclared-system-module'];
   assert.deepEqual(readdirSync(retained).filter(name => name.endsWith('-response.json')).map(name => name.slice(0, -14)).sort(), expected);
   const allocations = read<{ child: { rootId: string; parentRunId: string; envelope: { maxConcurrency: number } }; parent: { rootId: string; envelope: { maxConcurrency: number } } }>('original-allocations.json');
   assert.equal(allocations.child.rootId, allocations.parent.rootId);
@@ -230,6 +231,7 @@ if (retained) test('review audit: retained physical responses, artifacts, select
     assert.equal(assessOffline(c, observation.command), passed);
     assert.equal(evidence.verdict, passed ? 'pass' : 'fail'); assert.equal(observation.passed, passed);
     assert.equal(observation.requestId, request.requestId); assert.equal(observation.candidateId, request.candidate.manifest.id);
+    assert.equal(observation.policyDigest, request.policyDigest);
     assert.equal(observation.evaluatorDigest, descriptorDigest); assert.equal(observation.planDigest, hashBytes(planBytes));
     assert.equal(observation.runnerDigest, plan.runnerDigest); assert.equal(observation.inputDigest, identity(c.inputs));
     assert.deepEqual(response.result.proof.proposal.candidate, request.candidate.manifest);
