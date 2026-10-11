@@ -170,7 +170,7 @@ test('complete disposable installation retains current state, with optional inst
       assert.deepEqual(bootReady.authority, successorBooted.release.authority); assert.equal(bootReady.target.candidateId, successor.manifest.id);
       assert.ok(successorBooted.ready.authority.epoch > successorRunning.ready.authority.epoch);
       const current = new OperationalStore({ filename: join(state, 'operational.sqlite') });
-      current.put('fixture.current-state', 'latest', { experience: 'latest after installed succession', uncertainEffect: 'unresolved; do not retry' }, null);
+      current.put('fixture.current-state', 'latest', { experience: 'latest after installed succession', uncertainEffect: 'unresolved; do not retry' }, current.get('fixture.current-state', 'latest')!.revision);
       const latest = current.get('fixture.current-state', 'latest'); current.close();
       const brokenRunning = await promote(broken, successorBooted, candidatePolicy(successor), successor);
       assert.ok(brokenRunning.ready.authority.epoch > successorBooted.ready.authority.epoch);
