@@ -3,6 +3,7 @@ import { identity, invariant, scopeAllows, validateCapturedPrompt, validatePhysi
   type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
 import type { ShellOptions } from '../packages/agent-shell/index.ts';
 import { runWorker } from '../packages/supervisor/worker-process.ts';
+import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
 export interface TransportReceipt {
   requestId: string;
@@ -20,6 +21,7 @@ export interface BrokerShellOptions {
   workspace(input: ShellInput): string;
   protectedPaths: string[];
   nodeBinary: string;
+  resourceLimits?: ResourceLimits;
   worker: WorkerConfig;
   timeoutMs: number;
   maxPayloadBytes: number;
@@ -75,7 +77,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
       output = await runWorker({
         command: { workspace: options.workspace(input), protectedPaths: options.protectedPaths, applicationRoot: options.applicationRoot,
           nodeBinary: options.nodeBinary, executable: '/runtime/node', args: [`/app/${options.entrypoint}`],
-          timeoutMs: options.timeoutMs, maxOutputBytes: options.maxPayloadBytes * 64, signal },
+          timeoutMs: options.timeoutMs, maxOutputBytes: options.maxPayloadBytes * 64, resourceLimits: options.resourceLimits, signal },
         initial: json({ input, options: options.worker, fragments }), maxMessageBytes: options.maxPayloadBytes,
         maxRequests: Math.max(64, options.worker.maxRequests * 16),
         async handle(method, args, workerSignal) {

@@ -1,5 +1,11 @@
 # Current progress and evidence
 
+## 2026-10-11 — joined application, review and service qualification
+
+All nine lanes now have implemented components or evaluation machinery integrated locally. The actual confined application executes iterative tools, delegated child runs, consolidation and durable owed replies; frozen release machinery handles probation, staged controls and provider-independent recovery. Fresh review continues to find and repair concrete scope, accounting and process-lifecycle defects. Source and runtime dependency closures are explicit, and there are no installed npm runtime dependencies.
+
+This is engineering progress, **not Aeon 1 acceptance or deployment**. Service composition, model-accessible evolution, kernel enforcement and first-start initiative are being integrated. Live cognition, elapsed developmental transfer, both comparator runs and accepted H1 remain open. The [execution record](rewrite/execution.md) names every active owner, finite subagent goal, integrated revision and evidence limitation. The old service remains decommissioned; the rewrite has not been pushed or activated.
+
 ## 2026-10-11 — Aeon 1 implementation started
 
 The user authorized the full Aeon 1 implementation goal with maximal useful parallelism and goals for subagents. Contracts, Pi integration and evaluation are being implemented in three isolated worktrees while the lead implements supervisor/release foundations. The [execution record](rewrite/execution.md) tracks ownership, integration and remaining evidence. No replacement service is deployed; acceptance has not been claimed.

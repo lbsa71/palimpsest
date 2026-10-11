@@ -11,7 +11,7 @@ export function fixtureConfiguration(root: string, applicationRoot: string): App
   const resources = { maxRequests: 64, maxTokens: 30000, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 2 };
   return { stateDirectory, workspaceDirectory, applicationRoot, nodeBinary: process.execPath, workerEntrypoint: 'deployment/shell-worker.ts', artifactId: 'evaluation-integration-fixture', controlRevision: 'evaluation-v2-fixture', promptFile, compactionPromptFile,
     model: { id: 'mistral-fixture-v2', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 1024, maxRequestsPerSlice: 12, timeoutMs: 10000, pricesPerMillion: { input: 0, output: 0 } }, resources, conversationResources: resources,
-    scheduler: { windowMs: 60000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [],
+    scheduler: { windowMs: 60000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], bootstrapInitiative: false,
     direct: { host: '127.0.0.1', port: 0, actorId: 'evaluator', scope: { kind: 'restricted', principals: ['evaluator'] }, modificationEligible: false } };
 }
 const answer = (message: unknown, finish_reason: string) => ({ status: 200, body: JSON.stringify({ model: 'mistral-fixture-v2', choices: [{ finish_reason, message }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) });

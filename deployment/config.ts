@@ -2,6 +2,7 @@ import { readFileSync, realpathSync, mkdirSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { invariant, validateScope, type DataScope, type ResourceEnvelope } from '../packages/contracts/index.ts';
 import type { SchedulerPolicy } from '../packages/initiative/index.ts';
+import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
 export interface ApplicationConfig {
   stateDirectory: string;
@@ -15,6 +16,7 @@ export interface ApplicationConfig {
   compactionPromptFile: string;
   model: { id: string; contextWindow: number; reasoning: boolean; effort: 'none' | 'high'; maxOutputTokens: number; maxRequestsPerSlice: number; timeoutMs: number; pricesPerMillion: { input: number; output: number } };
   resources: ResourceEnvelope;
+  resourceLimits?: ResourceLimits;
   conversationResources: ResourceEnvelope;
   scheduler: SchedulerPolicy;
   /** Default true: one accounted first-development opportunity per lived-state store. */
@@ -48,6 +50,11 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   for (const value of Object.values(config.model.pricesPerMillion)) invariant(Number.isFinite(value) && value >= 0, 'Finite model price required');
   invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');
   validateEnvelope(config.resources); validateEnvelope(config.conversationResources); validateEnvelope(config.scheduler.resources);
+  if (config.resourceLimits) {
+    invariant(isAbsolute(config.resourceLimits.cgroupRoot) && resolve(config.resourceLimits.cgroupRoot) === config.resourceLimits.cgroupRoot, 'Canonical host resource delegation required');
+    invariant(Object.keys(config.resourceLimits).sort().join(',') === 'cgroupRoot,cpuPeriodMicros,cpuQuotaMicros,maxFileBytes,maxOpenFiles,memoryBytes,pids,workspaceBytes,workspaceInodes', 'Exact kernel resource profile required');
+    for (const [key, value] of Object.entries(config.resourceLimits)) if (key !== 'cgroupRoot') invariant(Number.isSafeInteger(value) && Number(value) > 0, 'Finite positive kernel resource ceiling required');
+  }
   for (const envelope of [config.conversationResources, config.scheduler.resources]) for (const key of Object.keys(config.resources) as (keyof ResourceEnvelope)[]) invariant(envelope[key] <= config.resources[key], 'Child allowance exceeds operating envelope');
   invariant(Number.isSafeInteger(config.maxConcurrentRuns) && config.maxConcurrentRuns > 0 && config.maxConcurrentRuns <= config.resources.maxConcurrency, 'Invalid run concurrency');
   invariant(Number.isSafeInteger(config.pollMs) && config.pollMs >= 100, 'Invalid polling interval');

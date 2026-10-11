@@ -5,9 +5,10 @@ import { canonicalJson, identity, invariant, type JsonValue } from '../packages/
 import { freezeCandidate, verifyCandidate, type FrozenCandidate } from '../packages/release/artifacts.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import type { ApplicationConfig } from './config.ts';
+import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
 export interface DeploymentInputs {
-  configuration: Omit<ApplicationConfig, 'stateDirectory' | 'workspaceDirectory' | 'applicationRoot' | 'nodeBinary' | 'workerEntrypoint' | 'artifactId' | 'controlRevision' | 'promptFile' | 'compactionPromptFile'>;
+  configuration: Omit<ApplicationConfig, 'stateDirectory' | 'workspaceDirectory' | 'applicationRoot' | 'nodeBinary' | 'workerEntrypoint' | 'artifactId' | 'controlRevision' | 'promptFile' | 'compactionPromptFile' | 'resourceLimits'> & { resourceLimits?: Omit<ResourceLimits, 'cgroupRoot'> };
   prompts: { mind: string; compaction: string };
   runtime: { nodeVersion: string; nodeSha256: string; platform: string; arch: string };
   policy: JsonValue;

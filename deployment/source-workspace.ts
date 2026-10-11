@@ -1,7 +1,8 @@
 import { invariant, type JsonValue } from '../packages/contracts/index.ts';
 import { runConfined } from '../packages/supervisor/confinement.ts';
+import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
-export interface SourceWorkspaceOptions { applicationRoot: string; workspace: string; protectedPaths: string[]; nodeBinary: string; maxFiles: number; maxBytes: number; timeoutMs: number }
+export interface SourceWorkspaceOptions { applicationRoot: string; workspace: string; protectedPaths: string[]; nodeBinary: string; maxFiles: number; maxBytes: number; timeoutMs: number; resourceLimits?: ResourceLimits }
 export interface SourceTool { name: string; description: string; inputSchema: object; execute(args: JsonValue, signal?: AbortSignal): Promise<JsonValue> }
 /** These explicit roots constitute the rewrite source; history and installed packages are not copied. */
 export const rewriteSourceEntries = ['packages', 'deployment', 'evaluations', 'experiments/agent-shell', 'docs/rewrite', 'docs/adr', 'AGENTS.md', 'README.md', 'PLAN.md', 'REQUIREMENTS.md', 'GROWTH.md', 'package.json', 'package-lock.json', 'tsconfig.json'];
@@ -22,7 +23,7 @@ console.log(JSON.stringify({files,bytes,source:'accepted application snapshot',c
 `;
 function object(args: JsonValue, keys: string[]): Record<string, JsonValue> { invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).every(key => keys.includes(key)), 'Invalid source tool arguments'); return args; }
 export function sourceWorkspaceTools(options: SourceWorkspaceOptions): SourceTool[] {
-  const run = (args: string[], maxOutputBytes: number, signal?: AbortSignal) => runConfined({ workspace: options.workspace, applicationRoot: options.applicationRoot, protectedPaths: options.protectedPaths, nodeBinary: options.nodeBinary, executable: '/runtime/node', args, timeoutMs: options.timeoutMs, maxOutputBytes, signal });
+  const run = (args: string[], maxOutputBytes: number, signal?: AbortSignal) => runConfined({ workspace: options.workspace, applicationRoot: options.applicationRoot, protectedPaths: options.protectedPaths, nodeBinary: options.nodeBinary, executable: '/runtime/node', args, timeoutMs: options.timeoutMs, maxOutputBytes, resourceLimits: options.resourceLimits, signal });
   return [{
     name: 'source_checkout', description: 'Copy the explicit accepted rewrite source into this empty isolated workspace, with source hashes. The candidate can then edit dependencies, prompts, tools, controls and plans for evaluation.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },

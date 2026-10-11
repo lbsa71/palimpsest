@@ -7,13 +7,13 @@ Integration checkout: `/home/palimpsest/src/palimpsest`, branch `codex/aeon-1-im
 | Lane | Current owner / worktree | Goal scope | State |
 |---|---|---|---|
 | A1-L01 | `/root/a1_contracts`; `/home/palimpsest/migration/aeon-1-20261011/contracts` | Executable shared contracts, failure semantics, scope ledger and C1 consumer gate | Component integrated; C1 consumer/fresh review gate open; `gpt-6-astra`, high |
-| A1-L02 | `/root/a1_shell`; `/home/palimpsest/migration/aeon-1-20261011/shell` | Narrow Pi source closure, real loop, prompt/transport control and deterministic qualification | Component integrated; fresh core review and dependency narrowing active; `gpt-6.1-sol`, high |
+| A1-L02 | Lead after shell/schema/core-review handoffs | Narrow Pi source closure, real loop, prompt/transport control and deterministic qualification | Source-owned shell/schema and core repairs integrated; live competence pending |
 | A1-L08 | `/root/a1_evaluation`; `/home/palimpsest/migration/aeon-1-20261011/evaluation` | Predeclared evaluation, runnable screen, comparator feasibility and evidence envelopes | Foundation integrated; empirical protocol review and runs pending; `gpt-6-astra`, high |
 | A1-L09 | `/root`; integration checkout | Supervisor/release boundary, build/installation, incremental integration and eventual H1 | Implementing |
 | A1-L03 | `/root/a1_runtime`; `/home/palimpsest/migration/aeon-1-20261011/runtime` | Durable storage, inbox/execution, effects, physical accounting and recovery | Durable runtime/effects/resources integrated; fresh review active; `gpt-6.1-sol`, high |
 | A1-L04 | `/root/a1_memory`; `/home/palimpsest/migration/aeon-1-20261011/memory` | Developmental retrieval, provenance, consolidation and revisable self | Component integrated; joined host qualification pending; `gpt-6.1-sol`, high |
 | A1-L05 | `/root/a1_initiative`; `initiative` worktree | Goals/drives/plans/scheduler/obligations with explicit model progress | Component integrated, 14 tests; finite goal complete; fresh review/live gates open |
-| A1-L06 | `/root/a1_tools`; `tools` worktree | Confined repository/command/research tools and bounded child runtimes | Component integrated, 12 tests; finite goal complete; ordinary delegation wiring pending |
+| A1-L06 | Lead after tools/application-integration handoffs | Confined repository/command/research tools and bounded child runtimes | Ordinary child execution and parent inspection integrated; application/resource review active |
 | A1-L07 | `/root/a1_communications`; `communications` worktree | Authenticated direct/Slack intake, recovery and explicit speech | Component integrated, 23 tests; finite goal complete; live/fresh review pending |
 
 The exact finite lane goals and task acceptance remain in the [lane documents](aeon-1.md). A component handoff releases a slot without representing unfinished live/integrated gates as accepted. Fresh reviews use isolated context and frozen artifacts.
@@ -49,3 +49,26 @@ Frozen integration base `b95ee1d` includes L01–L08 components. Root owns the o
 The integration checkout uses the selected Pi loop in a real namespace worker. Host tools, physical model reservations and independently observed provider receipts cross a bounded authenticated pipe; workers receive neither provider keys nor host state paths. Real confined-worker tests cover invented observations and unreserved provider calls. An ordinary authenticated direct conversation now writes and executes a workspace file, produces only explicit speech output, and retains memory/budgets across application restart. These are deterministic model-fixture results, not live cognition or deployment.
 
 The root has not pushed, installed or activated the rewrite. No live model generation or external Slack sends have occurred. Current complete aggregate evidence before ordinary application work was 105 tests plus strict typecheck/build; later component and application checks are recorded separately until the next aggregate run. Claude Code comparison access remains unresolved. Codex comparison is available to investigate locally; neither comparator has been scored.
+
+## Joined runtime and service qualification wave
+
+The following later handoffs supersede the earlier wave's activity states, without accepting any entire lane:
+
+- Fresh core review repaired seven consequential continuation, observation, dispatch and recovery boundaries (`c5b25fb`, evidence `7bb3403`); eighteen regression failures were reproduced against the frozen pre-fix base. The reviewed component run passed 145 tests.
+- ADR 0033 and the narrow source-owned schema validator replaced TypeBox (`d7bddd6`, `664df19`, `e35b1f8`). The runtime has zero installed npm dependencies; pinned TypeScript and its explicit closure remain check/build dependencies.
+- Durable release transfer, probation, separately staged control upgrades and offline recovery are integrated (`043c1b9`), followed by fresh boundary repairs (`1fa9012`). Actual subprocess/SIGKILL fixtures preserve current state; these are not an independently qualified product release.
+- Ordinary application delegation, accounted consolidation and durable conversation obligations are integrated (`e2a2cab`, `edd5582`). Its handoff reported ten application tests and 279 aggregate tests passing on that branch. Fresh privacy, registration and first-start initiative review remains active.
+- Source checkout/check tools and complete source/toolchain/runtime artifact binding are integrated (`814c19a`). The model can edit retained dependency source and run the accepted compiler in confinement. Full model-authored release qualification remains open.
+- Evaluation v2 replaces arbitrary preregistration horizons with declared real operational boundaries, retaining v1 unchanged in its archive (`21eb5b4`, `ccc0628`). The actual application fixture executes edit, failing command, repair, successful verification and explicit speech. Nineteen evaluation tests passed; synthetic replies establish wiring only. Neither comparator nor developmental transfer has been scored.
+- Aggregate kernel CPU/memory/process ceilings and fixed-capacity workspace provisioning are integrated for review (`1171ae1`). The author reported eight real bounded resource tests and twenty component tests. Fresh review reproduced a pre-exec parent-death race and is repairing it before production integration.
+
+Current exclusive claims, each with its own finite tool goal:
+
+| Session | Owned work | Model/effort | Required handoff |
+|---|---|---|---|
+| `/root/a1_app_review`, `app-review` worktree | Joined application/development/initiative/communication review and fixes; accounted one-time bootstrap initiative | `gpt-6-astra`, high | Reproduced failures, repaired scope/accounting/registration boundaries, actual fixture continuation and no-repeat restart evidence |
+| `/root/a1_evolution_tools`, `evolution-tools` worktree | Model-accessible proposal, bounded frozen snapshot, independent evaluation request and release-submission tools | `gpt-6.1-sol`, high | Exact candidate/provenance binding, prior-policy control staging, uncertainty persistence; no fabricated independent acceptance |
+| `/root/a1_resource_review`, `resource-review` worktree | Fresh kernel-confinement review, bounded adversarial reproductions and repairs | `gpt-6-astra`, high | Actual limit/parent-death tests, cleanup, frozen commit and explicit deployment dependencies |
+| `/root` | Integration, configuration/lockfile, frozen service process, host supervisor/CLI and final qualification | Inherited lead model | Fresh review, reproducible service lifecycle, full L08 evidence and H1 |
+
+No live model generation, Slack sends, push or replacement deployment has occurred. Initial live API budget and Claude Code comparison access are pending user answers; independent implementation and fixture verification continue. Product startup must fail closed without enforced kernel resources. A service that starts successfully under engineering fixtures will remain labelled engineering. The full root goal stays active until all declared Aeon 1 gates are actually satisfied.

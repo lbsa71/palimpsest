@@ -146,7 +146,7 @@ export class AutarkApplication {
       const permittedTools = toolDefinitions.filter(tool => this.toolGrant(input.run.id).actions.includes(tool.name));
       const tools = [...permittedTools.map(tool => ({ ...tool, parameters: tool.parameters as unknown as Tool['parameters'] })), ...descriptors.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema as Tool['parameters'] }))];
       const broker = createBrokerShell({ applicationRoot: config.applicationRoot, entrypoint: config.workerEntrypoint, workspace: () => record.workspace,
-        protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary,
+        protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
         worker: { model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
           compaction: { thresholdMessages: 60, retainMessages: 20, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
@@ -206,7 +206,7 @@ export class AutarkApplication {
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);
     const child = this.store.get<{ allowedEffects: string[] }>('host.child-runs', runId)?.value;
-    return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64 },
+    return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, resourceLimits: this.config.resourceLimits },
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
       actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
