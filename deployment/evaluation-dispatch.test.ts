@@ -639,7 +639,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
   finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('ordinary author activates its exact stage and receives fresh physical probation under the original judge', { timeout: 120000 }, async () => {
+test('ordinary author activates its exact stage and receives fresh physical probation under the original judge', { timeout: 120000 }, async t => {
   const f = fixture(true); let supervisor: ServiceSupervisor | undefined;
   const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
   try {
@@ -649,11 +649,13 @@ test('ordinary author activates its exact stage and receives fresh physical prob
       body: JSON.stringify({ externalId: 'ordinary-control-cycle', revision: '1', conversation: 'control-cycle', text: 'Execute the finite engineering control lifecycle.' }) });
     assert.equal(response.status, 202);
     const { run } = await response.json() as { run: { id: string } };
+    const acceptanceStarted = Date.now();
     const record = await eventually(() => {
       const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
       if (value && ['rejected', 'uncertain'].includes(value.status)) throw Error(JSON.stringify({ control: value.status, diagnosis: value.diagnosis, host: supervisor!.status().evaluation }));
       return value;
-    }, value => value?.status === 'accepted');
+    }, value => value?.status === 'accepted', 90000);
+    t.diagnostic(JSON.stringify({ phase: 'ordinary-control-acceptance', elapsedMs: Date.now() - acceptanceStarted }));
     assert.ok(record?.review && record.physicalAuthority && record.probationProof);
     assert.equal(record.request.runId, run.id);
     const status = supervisor.status();
