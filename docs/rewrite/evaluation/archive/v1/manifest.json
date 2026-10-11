@@ -1,0 +1,27 @@
+{
+  "sourceRevision": "e35b1f8",
+  "originalProtocolRevision": "20a4159",
+  "reason": "Pre-live-scoring correction of unjustified calendar and sample assumptions; no scored live outcomes exist. Historical results remain untouched.",
+  "files": {
+    "docs/rewrite/evaluation/protocol.md": {
+      "archive": "docs/rewrite/evaluation/archive/v1/protocol.md",
+      "sha256": "c9967fe54a6a0b7209a71b26a0f4713b3f3e1e5199f8cda4ae78aa287e2c46b8"
+    },
+    "docs/rewrite/evaluation/development.md": {
+      "archive": "docs/rewrite/evaluation/archive/v1/development.md",
+      "sha256": "0c5b28532db24ca64798bb8128944333d711cdc3d0b657d8e021e76f195bcead"
+    },
+    "evaluations/protocol.json": {
+      "archive": "docs/rewrite/evaluation/archive/v1/protocol.json",
+      "sha256": "8034aab2fab69709743ea82ab69ae84dc1e526ac82a2f25fe1ce74e732d903f7"
+    },
+    "evaluations/development/assess.ts": {
+      "archive": "docs/rewrite/evaluation/archive/v1/assess.ts",
+      "sha256": "5db2860a68445844012a5f16b49ffc114d632eaaf72e108cb1bde440e3fd0ebc"
+    },
+    "evaluations/development/assess.test.ts": {
+      "archive": "docs/rewrite/evaluation/archive/v1/assess.test.ts",
+      "sha256": "78631a01725e9ec0bed8469a3cac3dfb78a9b43d9e4cf212dc29695cb0459fa1"
+    }
+  }
+}

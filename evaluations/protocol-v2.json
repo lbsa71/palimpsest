@@ -1,0 +1,35 @@
+{
+  "id": "A1-L08-v2",
+  "registeredBeforeLiveScoring": true,
+  "supersedesForFutureQualification": "A1-L08-v1",
+  "liveScoredRunsAtCorrection": 0,
+  "mechanicalProtocol": "protocol.json",
+  "h1Development": {
+    "claim": "operational continuity and delayed transfer, not long-term growth",
+    "schedulerWindow": "actual frozen deployment configuration",
+    "minimumElapsedSchedulerWindows": 3,
+    "minimumAutonomousCycles": 3,
+    "minimumTransferDelaySchedulerWindows": 1,
+    "minimumInterveningUnrelatedExperiences": 3,
+    "families": ["transfer", "belief-revision", "inquiry", "judgment"],
+    "opportunitiesPerFamily": 3,
+    "minimumVerifiedSuccessesPerFamily": 2,
+    "deadline": "finite host-granted deadline sealed before dispatch"
+  },
+  "parity": {
+    "status": "closed-pending-comparator-calibration-and-independent-manifest",
+    "pilotTasksPerFamily": 5,
+    "pilotRepeats": 3,
+    "families": 5,
+    "acceptanceTaskCount": null,
+    "noninferiorityMargins": null,
+    "absoluteQualityFloors": null,
+    "sampleSelection": "pre-candidate comparator-only task-cluster power simulation",
+    "minimumPlanningPower": 0.8,
+    "oneSidedFamilyAlpha": 0.01,
+    "outcomeDrivenExpansion": false
+  },
+  "integration": { "maxProviderFixtureResponses": 12, "maxReservedRequests": 64, "maxTokens": 30000, "maxWallMs": 60000, "paidCalls": false },
+  "liveGrant": null,
+  "H1": "unaccepted"
+}

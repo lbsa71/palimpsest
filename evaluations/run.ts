@@ -9,7 +9,7 @@ import { mechanicalReport } from './report.ts';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const read = (name: string) => readFile(new URL(name, import.meta.url), 'utf8');
 const protocol = await read('protocol.json');
-const protocolProse = await read('../docs/rewrite/evaluation/protocol.md');
+const protocolProse = await read('../docs/rewrite/evaluation/archive/v1/protocol.md');
 const workload = await read('execution/screen.ts');
 const evaluator = await read('report.ts');
 const actor = await read('execution/reference-actor.ts');

@@ -1,0 +1,17 @@
+# Comparator feasibility — 2026-10-11, v2
+
+No comparator generation was run. Read-only local inspection reconfirmed `/home/palimpsest/.local/bin/codex --version` as **codex-cli 0.162.1**, and `codex exec --help` exposed `--ignore-user-config`, `--ephemeral`, `--sandbox workspace-write`, `--json`, `--cd`, `--model` and stdin `-`. `command -v claude` returned no path. The earlier [availability inventory](../../../evaluations/baselines/availability.json) remains preserved. An authentication file's presence is not verified model access or a grant. The existing Claude account location remains unresolved; no account was provisioned or credential content inspected.
+
+| Comparison | Actual status | Next prerequisite |
+|---|---|---|
+| Candidate Mistral vs Codex, fixed identical model | Unavailable/unverified | Establish identical model/version access and matched tools/context; the installed CLI alone cannot establish this |
+| Candidate Mistral vs Claude Code, fixed identical model | Unavailable | Locate authorized installed account/runtime; then verify same-model support rather than assume it |
+| Best-system Codex | Installed, no scored runs | Isolated pinned config and effective instruction/tool/context capture; verified access; explicit cost/request/time grant and observer enforcement |
+| Best-system Claude Code | Unavailable in inspected PATH, no scored runs | Authorized account/runtime location, interface/version inspection and equivalent bounded execution preparation |
+| Full RW03/H1 parity | Unavailable | Both named baselines, sealed calibration-derived acceptance manifest and actual independent comparisons passing all thresholds |
+
+`evaluations/baselines/plan.ts` prepares reviewable Codex arguments without dispatch. The installed help is authoritative for this installed version. [Official OpenAI documentation](https://developers.openai.com/blog/codex-as-a-platform) describes `codex exec` as an interface for noninteractive jobs; it does not establish this account's entitlement, model availability or sandbox isolation from evaluator-private files. The OpenAI Docs skill was used for that check. No Claude interface is invented while its runtime remains unavailable.
+
+Use a clean external host environment and freeze all effective inputs, including native prompts, user/project instruction files, hooks/plugins, tool schemas and context policy. `--ignore-user-config` does not claim to suppress all of those sources; `workspace-write` alone does not hide host-readable private fixtures. Retain native product behavior for best-system comparison while recording differences. Same-model analysis requires a genuinely identical model and affordances; otherwise label the comparison end-to-end and disclose confounders.
+
+The finite grant proposal is 75 comparator-only calibration executions per available product, five tasks × five families × three repeats. The per-execution proposed ceiling is 64 physical requests, 144,000 total tokens and 15 minutes, including children and retries. Actual cost is **unknown** until pinned models, prices, entitlement and an enforceable host budget are supplied. Nothing in this document grants spending. An external observer must be able to stop all physical calls at the granted ceiling; unresolved CLI subagent/provider accounting leaves bounded execution unavailable. Freeze the acceptance count only after comparator variance and product-failure costs justify it; the former arbitrary 300-run requirement is not retained.

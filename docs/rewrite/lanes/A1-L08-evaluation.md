@@ -1,6 +1,6 @@
 # A1-L08 — independent competence, development and parity evaluation
 
-Status: **implementing — foundation fixture-verified, empirical acceptance outstanding**. Session owner: **Codex /root/a1_evaluation**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **implementing — actual application fixture-verified; v2 protocol corrected before live scoring; empirical acceptance outstanding**. Session owner: **Codex /root/a1_evaluation_integration**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW03, RW04, RW11, RW17, RW18, RW19, RW20](../../../REQUIREMENTS.md).
 
@@ -41,9 +41,17 @@ Owned by the lead who claims this lane; update here before concurrent implementa
 
 | Field | Current value |
 |---|---|
-| Owner session | Codex /root/a1_evaluation; finite foundation goal complete; full lane partial |
-| Branch / worktree | codex/a1-evaluation-20261011; /home/palimpsest/migration/aeon-1-20261011/evaluation |
-| Base source / contract revision | Base 14c742041270bb2acb15b4903a970394a140493c; C1 f11a25b consumer-checked |
+| Owner session | Codex /root/a1_evaluation_integration; finite adapter/protocol engineering handoff; full lane partial |
+| Branch / worktree | codex/a1-evaluation-integration-20261011; /home/palimpsest/migration/aeon-1-20261011/evaluation-integration |
+| Base source / contract revision | Integration base e35b1f8eb18a06e397e039251af06626b2224595; C1 f11a25b consumer-checked |
 | Additional path reservations | None; use the exclusive scope above |
 | Last handoff / evidence | Protocol 20a4159; implementation 3e9d55a; [foundation report](../evaluation/results/2026-10-11-foundation.md), 13 tests and 12 mechanical cases passed |
-| Blockers / next eligible task | L09 integrates foundation; T05/T06 and full qualification await frozen integration, live comparator calibration/runs, elapsed development and fresh independent review |
+| Blockers / next eligible task | L09 integrates actual application adapter and v2 preregistration; T05/T06 await isolated private workloads, host grant, comparator calibration/runs, real operational-boundary development and fresh independent review |
+
+## Finite integration handoff (2026-10-11)
+
+```text
+/goal Deliver the pre-live-scoring v2 correction, actual AutarkApplication evaluation adapter, bounded real-tool integration checks and comparator feasibility handoff; finish engineering without claiming full RW03, RW18 or H1.
+```
+
+This session owns the same L08 paths and changes no application or deployment code. Parent L09 delegates independent implementation/review work separately. The v1 archive and original results remain immutable. [Protocol v2](../evaluation/protocol.md) selects operational boundaries from actual scheduler configuration instead of inventing a calendar horizon, and requires comparator variance/product needs before freezing parity samples and margins. The [adapter](../../../evaluations/product/adapter.ts) exercises actual confined Pi, runtime, tools and direct output. External private workloads and evaluator modules are supported, but their independence and host seals are not self-authenticating. All author-run reports remain ineligible for admission. [Comparator feasibility](../evaluation/comparator-feasibility-v2.md) records both unavailable claims explicitly.
