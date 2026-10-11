@@ -53,6 +53,15 @@ export async function runCodexBaseline(input: CodexBaselineRun): Promise<CodexBa
   const stateRoot = nearest(input.privateStateRoot);
   invariant(outside(checkout, stateRoot) && outside(workspace, stateRoot) && outside(stateRoot, workspace), 'baseline state must be external to checkout and workspace');
   mkdirSync(stateRoot, { recursive: true, mode: 0o700 }); chmodSync(stateRoot, 0o700);
+  // SQLite follows existing database/sidecar links. Refuse them before opening
+  // either database, so private evidence cannot escape through a workspace alias.
+  for (const database of ['lease.sqlite', 'observer.sqlite']) {
+    for (const suffix of ['', '-journal', '-wal', '-shm']) {
+      const path = join(stateRoot, database + suffix);
+      const stat = lstatSync(path, { throwIfNoEntry: false });
+      invariant(!stat || (stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid!()), 'private state requires owned ordinary files without links');
+    }
+  }
   const lease = new ProcessLease(join(stateRoot, 'lease.sqlite'));
   let store: OperationalStore | undefined; let image: string | undefined; let observer: BaselineObserver | undefined;
   const pendingOperations = new Set<Promise<unknown>>();

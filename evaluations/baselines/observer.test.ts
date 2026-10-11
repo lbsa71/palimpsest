@@ -43,7 +43,7 @@ test('native instructions and tools survive explicit output/store/stream control
   try {
     const original = fixturePayload(); const reply = await f.observer.handle(attempt(original)); const after = JSON.parse(forwarded), before = JSON.parse(original);
     assert.equal(after.instructions, before.instructions); assert.deepEqual(after.input, before.input); assert.deepEqual(after.reasoning, before.reasoning);
-    assert.equal(after.max_output_tokens, 20); assert.equal(after.store, false); assert.equal(after.stream, true);
+    assert.equal(after.max_output_tokens, 20); assert.equal(after.store, false); assert.equal(after.stream, true); assert.equal(after.service_tier, 'default');
     const evidence = f.observer.evidence()[0]!;
     assert.equal(Buffer.from(f.store.readArtifact(evidence.before)).toString(), original);
     assert.equal(Buffer.from(f.store.readArtifact(evidence.after)).toString(), forwarded);
@@ -131,6 +131,7 @@ const badStreams: Record<string, () => Response> = {
   missingUsage: () => new Response(fixtureSSE(undefined, { usage: null })),
   failedStatus: () => new Response(fixtureSSE(undefined, { status: 'failed' })),
   wrongModel: () => new Response(fixtureSSE('other-model')),
+  unpricedTier: () => new Response(fixtureSSE(undefined, { service_tier: 'priority' })),
   duplicateFinal: () => new Response(fixtureSSE() + fixtureSSE()),
   inconsistentTotal: () => new Response(fixtureSSE(undefined, { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 99, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } })),
   exceedsContext: () => new Response(fixtureSSE(undefined, { usage: { input_tokens: 101, output_tokens: 5, total_tokens: 106, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } })),

@@ -127,6 +127,7 @@ function finalUsage(body: string, profile: BaselineProfile, elapsedMs: number): 
     }
   }
   invariant(final && final.status === 'completed' && final.model === profile.model, 'missing or inconsistent final response');
+  invariant(final.service_tier === undefined || final.service_tier === 'default', 'unpriced final service tier');
   const usage = object(final.usage), input = count(usage.input_tokens), output = count(usage.output_tokens);
   invariant(count(usage.total_tokens) === input + output, 'inconsistent total usage');
   const cached = count(object(usage.input_tokens_details).cached_tokens);
@@ -174,7 +175,7 @@ export class BaselineObserver {
     invariant(Buffer.byteLength(attempt.payload) <= this.grant.maxRequestBytes, 'request byte limit exceeded');
     const body = object(JSON.parse(attempt.payload)); validatePayload(body, this.grant.profile);
     // Instructions and input remain exactly as emitted. Only explicit host accounting controls change.
-    const outgoing = JSON.stringify({ ...body, max_output_tokens: this.grant.profile.maxOutputTokens, store: false, stream: true });
+    const outgoing = JSON.stringify({ ...body, max_output_tokens: this.grant.profile.maxOutputTokens, store: false, stream: true, service_tier: 'default' });
     invariant(Buffer.byteLength(outgoing) <= this.grant.maxRequestBytes, 'modified request byte limit exceeded');
     const id = randomUUID(), startedAt = this.now();
     const request: PhysicalRequest = { id, runId: this.grant.id, purpose: 'reasoning', provider: 'openai', model: this.grant.profile.model,

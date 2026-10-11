@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, linkSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import test from 'node:test';
@@ -93,5 +93,30 @@ test('actual native Codex CLI and tool runner compose with durable host grants a
       assert.equal(store.get<any>('baseline-run', 'run')!.value.status, 'completed');
     } finally { store.close(); }
     await assert.rejects(runCodexBaseline(f.input), /unavailable or stopped/); assert.equal(calls, 2, 'Completed runner cannot replay a grant');
+  } finally { f.dispose(); }
+});
+
+for (const name of ['observer.sqlite', 'lease.sqlite', 'observer.sqlite-wal', 'observer.sqlite-shm', 'observer.sqlite-journal', 'lease.sqlite-journal']) test(`runner refuses linked private state ${name} before opening any database`, async () => {
+  const f = fixture();
+  try {
+    mkdirSync(f.stateRoot, { mode: 0o700 });
+    const exposed = join(f.workspace, 'exposed-state');
+    writeFileSync(exposed, '');
+    symlinkSync(exposed, join(f.stateRoot, name));
+    await assert.rejects(runCodexBaseline(f.input));
+    assert.equal(readFileSync(exposed).length, 0, 'private state must not write through a link');
+    assert.equal(existsSync(join(f.stateRoot, name === 'lease.sqlite' ? 'observer.sqlite' : 'lease.sqlite')), false);
+  } finally { f.dispose(); }
+});
+
+test('runner refuses hardlinked private state before creating a lease', async () => {
+  const f = fixture();
+  try {
+    mkdirSync(f.stateRoot, { mode: 0o700 });
+    const exposed = join(f.workspace, 'exposed-state'); writeFileSync(exposed, '');
+    linkSync(exposed, join(f.stateRoot, 'observer.sqlite'));
+    await assert.rejects(runCodexBaseline(f.input), /private state/);
+    assert.equal(readFileSync(exposed).length, 0);
+    assert.equal(existsSync(join(f.stateRoot, 'lease.sqlite')), false);
   } finally { f.dispose(); }
 });
