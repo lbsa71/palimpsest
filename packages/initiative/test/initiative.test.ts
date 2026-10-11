@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Type } from 'typebox';
 import { createAgentShell } from '../../agent-shell/index.ts';
 import { OperationalStore, RevisionConflict } from '../../storage/index.ts';
 import { DevelopmentalMemory } from '../../development/index.ts';
@@ -113,7 +112,7 @@ test('unattended actual Pi/runtime/memory cycles resume after window and restart
   const file = filename(); let now = Date.parse(at), f = fixture(file, () => new Date(now).toISOString()); evidence(f);
   for (const [i, purpose] of ['compare image symmetries', 'test observed parsing duplicate', 'measure unsupported benchmark operation'].entries()) ready(f, `inquiry-${i}`, { purpose, evidenceIds: ['episode'] });
   const modelCalls: string[] = [], observations: string[] = []; let round = 0;
-  const shell = createAgentShell({ resolveFragment: async () => '', tools: [{ name: 'measure', description: 'Observe a bounded fixture artifact', parameters: Type.Object({}, { additionalProperties: false }) }], apiKey: () => 'fixture-key', maxRequests: 2, fetch: async (_url, init) => { const body = JSON.parse(String(init?.body)); modelCalls.push(body.messages[0].content); return round++ % 2 === 0 ? response(null, true) : response('Observed fixture measurement; inference remains limited.'); } });
+  const shell = createAgentShell({ resolveFragment: async () => '', tools: [{ name: 'measure', description: 'Observe a bounded fixture artifact', parameters: { type: 'object', properties: {}, additionalProperties: false } }], apiKey: () => 'fixture-key', maxRequests: 2, fetch: async (_url, init) => { const body = JSON.parse(String(init?.body)); modelCalls.push(body.messages[0].content); return round++ % 2 === 0 ? response(null, true) : response('Observed fixture measurement; inference remains limited.'); } });
   let r = runtime(f, shell, () => now, async effect => { observations.push(effect.id); return { outcome: 'succeeded', value: { measured: effect.id, fixture: true } }; });
   let scheduler = new FairScheduler(f.store, f.goals, f.obligations, 'joined', policy({ maxSlicesPerWindow: 1 }), now);
   const options = () => ({ scheduler, runtime: r.runtime, memory: f.memory, authority, prompt: () => prompt, decide: (_goal: Goal, observed: Observation[]) => ({ kind: 'complete' as const, evidenceIds: observed.map(o => o.id), reason: 'fixture observation satisfies finite comparison criteria; no live growth claim' }) });
