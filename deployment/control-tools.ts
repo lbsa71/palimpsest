@@ -42,9 +42,19 @@ export function controlActivationAcknowledgmentPending(store: OperationalStore, 
     const ack = row.value;
     if (ack.request.id !== request.id) return false;
     if (identity(ack.request) !== identity(request)) return true;
+    // A settled tool can precede the producer's final checkpoint. Let the current slice
+    // finish before reserving its remaining single slot or withdrawing its grant.
+    if (store.get<Run>('runs', request.runId)?.value.status === 'running') return true;
     const effect = store.get<Effect>('effects', ack.effectId)?.value;
     const physical = effect?.reservationId ? store.get<{ request: PhysicalRequest }>('requests', effect.reservationId)?.value.request : undefined;
-    return !effect || effect.status !== 'succeeded' || !effect.receipt || identity(store.readJsonArtifact(effect.receipt)) !== identity(store.readJsonArtifact(ack.receipt)) || physical?.status !== 'succeeded';
+    try {
+      return !effect || effect.status !== 'succeeded' || !effect.receipt || effect.kind !== 'control_activate' || effect.runId !== request.runId ||
+        identity(effect.payload) !== identity(ack.payload) || identity(effect.scope) !== identity(request.scope) || identity(effect.authority) !== identity(ack.authority) ||
+        identity(store.readJsonArtifact(effect.receipt)) !== identity(store.readJsonArtifact(ack.receipt)) || !physical || physical.status !== 'succeeded' ||
+        physical.id !== effect.id || physical.reservationId !== effect.reservationId || physical.runId !== effect.runId || physical.provider !== 'effect-receiver' ||
+        physical.purpose !== 'reasoning' || physical.model !== effect.kind || physical.promptManifestId !== effect.id ||
+        physical.requestDigest !== identity({ id: effect.id.slice(5), runId: effect.runId, stepId: effect.stepId, name: effect.kind, arguments: effect.payload });
+    } catch { return true; }
   });
 }
 export function controlTools(context: EvolutionContext, assertAuthority: (authority: Authority) => void): ApplicationTool[] {
@@ -123,7 +133,9 @@ export class ControlAuthorContinuations {
     const recovered: string[] = [];
     for (const { value: ack } of this.store.list<ControlAcknowledgment>(acknowledgments)) {
       const run = this.runtime.getRun(ack.request.runId); if (!run) continue;
-      try { this.authorityStore.dispatch(run.authority, () => this.store.transaction(() => {
+      const serving = this.authorityStore.current(); if (!serving?.generation) continue;
+      const authority: Authority = { generation: serving.generation, epoch: serving.epoch, controlRevision: serving.controlRevision };
+      try { this.authorityStore.dispatch(authority, () => this.store.transaction(() => {
         const effect = this.runtime.effects.get(ack.effectId);
         if (!effect || !['uncertain', 'succeeded'].includes(effect.status)) return;
         invariant(effect.id.startsWith('tool:') && effect.kind === 'control_activate' && effect.runId === ack.request.runId &&
@@ -143,7 +155,7 @@ export class ControlAuthorContinuations {
           reservation.request.requestDigest === identity({ id: effect.id.slice(5), runId: effect.runId, stepId: effect.stepId, name: effect.kind, arguments: effect.payload }) &&
           ['dispatched', 'uncertain'].includes(reservation.request.status) && identity(run.scope) === identity(ack.request.scope), 'Exact local control receiver reservation required');
         const elapsedMs = Math.max(reservation.request.usage.elapsedMs, reservation.ceiling.elapsedMs, reservation.charged.elapsedMs);
-        if (effect.status === 'uncertain') this.runtime.effects.recordReconciliation(effect.id, run.authority, 'succeeded', ack.receipt);
+        if (effect.status === 'uncertain') this.runtime.effects.recordReconciliation(effect.id, authority, 'succeeded', ack.receipt);
         this.runtime.resources.settle({ ...reservation.request, status: 'succeeded', usage: { ...reservation.request.usage, elapsedMs } });
         this.store.append({ id: `local-control-reconciled:${effect.id}`, stream: effect.runId, type: 'local-control-reconciled', data: {
           effectId: effect.id, activationId: ack.request.id, elapsedMs, elapsedBasis: 'retained receiver charge and reservation ceiling', externalReviewRetried: false } });
