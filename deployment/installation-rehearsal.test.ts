@@ -34,6 +34,19 @@ test('complete disposable installation retains current state, with optional inst
   const privateRoot = join(root, 'private'); mkdirSync(privateRoot, { mode: 0o700 }); chownSync(privateRoot, uid, gid);
   const privateWrite = (path: string, value: string | Uint8Array) => { writeFileSync(path, value, { mode: 0o600 }); chownSync(path, uid, gid); };
   let installation: Installation | undefined, installed = false;
+  const archiveDiagnostics = () => {
+    // Optional evidence must never prevent privileged fixture cleanup or hide its failure.
+    try {
+      const logDirectory = process.env.AEON_FIXTURE_LOG_DIRECTORY;
+      if (!logDirectory || !existsSync(join(data, 'work/logs/coordinator.log'))) return;
+      assert.ok(logDirectory.startsWith('/') && !logDirectory.startsWith(repository + '/') && !logDirectory.startsWith(root + '/'), 'Fixture logs must remain outside frozen source and temporary cleanup');
+      mkdirSync(logDirectory, { recursive: true });
+      cpSync(join(data, 'work/logs/coordinator.log'), join(logDirectory, `${unitName}.coordinator.log`));
+      writeFileSync(join(logDirectory, `${unitName}.systemd.txt`), soft('/usr/bin/systemctl', ['show', unitName, '--property=MainPID,ActiveState,SubState,Result,NRestarts']));
+    } catch (error) {
+      t.diagnostic(`Optional fixture trace archival failed; cleanup continues: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   try {
     execute(process.execPath, [join(repository, 'deployment/installation-entry.mjs'), 'create-host-data', data, String(uid), String(gid), String(1024 * 1024 * 1024), '32768']);
     const source = join(root, 'source'); mkdirSync(source);
@@ -224,6 +237,7 @@ test('complete disposable installation retains current state, with optional inst
         hostDataUsage: execute('/usr/bin/df', ['-B1', join(data, 'work')]).trim(), providerEnvironmentEntries: 0, liveProviderRequests: 0, externalMessages: 0 }));
     }
     t.diagnostic(JSON.stringify({ kind: 'installed-engineering-fixture', candidateId: candidate.manifest.id, firstEpoch: first.ready.authority.epoch, secondEpoch: second.ready.authority.epoch, liveProviderRequests: 0, externalMessages: 0 }));
+    archiveDiagnostics(); // Ordinary uninstall unmounts the coordinator log's volume.
     stopInstallation(installation, true); installed = false;
     assert.ok(existsSync(join(data, 'workspace.ext4')), 'Uninstall preserves the complete bounded data image');
     assert.ok(existsSync(join(installation.workspaceProvisionDirectory, 'workspace.ext4')), 'Uninstall preserves the complete workspace image');
@@ -232,13 +246,7 @@ test('complete disposable installation retains current state, with optional inst
     throw error;
   } finally {
     // Explicit out-of-source traces survive even when a failed rehearsal is cleaned up.
-    const logDirectory = process.env.AEON_FIXTURE_LOG_DIRECTORY;
-    if (logDirectory && existsSync(join(data, 'work/logs/coordinator.log'))) {
-      assert.ok(logDirectory.startsWith('/') && !logDirectory.startsWith(repository + '/') && !logDirectory.startsWith(root + '/'), 'Fixture logs must remain outside frozen source and temporary cleanup');
-      mkdirSync(logDirectory, { recursive: true });
-      cpSync(join(data, 'work/logs/coordinator.log'), join(logDirectory, `${unitName}.coordinator.log`));
-      writeFileSync(join(logDirectory, `${unitName}.systemd.txt`), soft('/usr/bin/systemctl', ['show', unitName, '--property=MainPID,ActiveState,SubState,Result,NRestarts']));
-    }
+    archiveDiagnostics();
     if (installation) {
       if (installed) { try { stopInstallation(installation, true); installed = false; } catch {} }
       // Failure cleanup is restricted to this random fixture's exact rendered unit bytes.
