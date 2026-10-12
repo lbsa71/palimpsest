@@ -9,6 +9,9 @@ export const domains = Object.freeze({ attempt: 'aeon.development.attempt.v1', o
 export const families: readonly Family[] = ['transfer', 'belief-revision', 'inquiry', 'judgment'];
 export const controlKinds = ['no-memory', 'no-standing-goals', 'scripted-praise', 'always-agree', 'always-oppose'] as const;
 export const boundaries = ['restart', 'contextReduction', 'laterRetrieval', 'spontaneousInitiative', 'contradictoryFeedback', 'nonApplicableRule'] as const;
+export const developmentCapacityProfile = 'complete-pages-bounded-20261012' as const;
+export const developmentCapacityLimits = Object.freeze({ maxRecords: 32768, maxArtifactBytes: 32 * 1024 * 1024, maxEvidenceBytes: 1024 * 1024 * 1024 });
+export const developmentOperationalArtifactBytes = 1_000_000;
 type Boundary = typeof boundaries[number];
 type ControlKind = typeof controlKinds[number];
 type Outcome = 'pass' | 'fail' | 'unavailable';
@@ -16,8 +19,8 @@ export interface Accounting {
   grantId: string; usage: ResourceUsage; chargedTokens: number; chargedCostUsd: number; chargedElapsedMs: number;
   requestIds: string[]; unknownRequestIds: string[];
 }
-export interface DevelopmentAttempt {
-  version: 1; id: string; evidenceKind: 'synthetic' | 'live-development'; candidate: CandidateManifest;
+interface DevelopmentAttemptFields {
+  id: string; evidenceKind: 'synthetic' | 'live-development'; candidate: CandidateManifest;
   protocolDigest: string; acquisitionDigest: string; priorPolicyDigest: string;
   candidateArtifact: ArtifactRef; configurationArtifact: ArtifactRef; schedulerWindowMs: number; contextWindowTokens: number;
   grant: { id: string; issuedAt: string; expiresAt: string; resources: ResourceEnvelope; originalAccounting: Accounting };
@@ -29,6 +32,9 @@ export interface DevelopmentAttempt {
   reviewers: { id: string; contextDigest: string }[];
   limits: { maxRecords: number; maxArtifactBytes: number; maxEvidenceBytes: number };
 }
+export interface DevelopmentAttemptV1 extends DevelopmentAttemptFields { version: 1 }
+export interface DevelopmentAttemptV2 extends DevelopmentAttemptFields { version: 2; capacityProfile: typeof developmentCapacityProfile }
+export type DevelopmentAttempt = DevelopmentAttemptV1 | DevelopmentAttemptV2;
 type ObservationData =
   | { kind: 'start' }
   | { kind: 'end'; accounting: Accounting }
@@ -96,11 +102,11 @@ function accounting(a: Accounting): void {
   invariant(a.chargedTokens >= (a.usage.inputTokens ?? 0) + (a.usage.outputTokens ?? 0) && a.chargedCostUsd >= (a.usage.costUsd ?? 0), 'Conservative accounting understates known usage');
   invariant(a.unknownRequestIds.length > 0 || a.usage.inputTokens !== null && a.usage.outputTokens !== null && a.usage.costUsd !== null, 'Unknown usage needs original unresolved request identities');
 }
-function verifyAttempt(document: Signed<DevelopmentAttempt>, trust: DevelopmentTrust): DevelopmentAttempt {
+export function verifyDevelopmentAttempt(document: Signed<DevelopmentAttempt>, trust: DevelopmentTrust): DevelopmentAttempt {
   const m = authenticate(domains.attempt, document, trust.issuers);
   invariant(identity(m) === trust.acceptedAttemptDigest, 'Attempt lacks accepted external integrity disposition');
-  exact(m, 'version,id,evidenceKind,candidate,protocolDigest,acquisitionDigest,priorPolicyDigest,candidateArtifact,configurationArtifact,schedulerWindowMs,contextWindowTokens,grant,registeredAt,notBefore,deadlineAt,observerId,cycles,opportunities,controls,boundaries,reviewers,limits');
-  invariant(m.version === 1 && ['synthetic', 'live-development'].includes(m.evidenceKind), 'Unsupported development manifest'); id(m.id); validateCandidate(m.candidate);
+  exact(m, `version,id,evidenceKind,candidate,protocolDigest,acquisitionDigest,priorPolicyDigest,candidateArtifact,configurationArtifact,schedulerWindowMs,contextWindowTokens,grant,registeredAt,notBefore,deadlineAt,observerId,cycles,opportunities,controls,boundaries,reviewers,limits${m.version === 2 ? ',capacityProfile' : ''}`);
+  invariant((m.version === 1 || m.version === 2 && m.capacityProfile === developmentCapacityProfile) && ['synthetic', 'live-development'].includes(m.evidenceKind), 'Unsupported development manifest/profile'); id(m.id); validateCandidate(m.candidate);
   for (const n of ['protocolDigest', 'acquisitionDigest', 'priorPolicyDigest'] as const) digest(m[n]);
   positive(m.schedulerWindowMs); positive(m.contextWindowTokens); id(m.observerId);
   invariant(m.observerId === trust.observer.id, 'Unqualified observer'); digest(trust.observer.artifactDigest);
@@ -128,17 +134,20 @@ function verifyAttempt(document: Signed<DevelopmentAttempt>, trust: DevelopmentT
   }
   unique(principals); unique(groups);
   exact(m.limits, 'maxRecords,maxArtifactBytes,maxEvidenceBytes');
-  for (const [n, cap] of [[m.limits.maxRecords, 512], [m.limits.maxArtifactBytes, 1_000_000], [m.limits.maxEvidenceBytes, 8 * 1024 * 1024]]) { positive(n!); invariant(n! <= cap!, 'Development evidence exceeds host ceiling'); }
+  const caps = m.version === 1 ? { maxRecords: 512, maxArtifactBytes: 1_000_000, maxEvidenceBytes: 8 * 1024 * 1024 } : developmentCapacityLimits;
+  for (const key of ['maxRecords', 'maxArtifactBytes', 'maxEvidenceBytes'] as const) { positive(m.limits[key]); invariant(m.limits[key] <= caps[key], 'Development evidence exceeds host ceiling'); }
   invariant(m.limits.maxArtifactBytes <= m.limits.maxEvidenceBytes, 'Artifact allowance exceeds total bound');
   return m;
 }
-function artifactReader(m: DevelopmentAttempt, reader: BoundedArtifactReader, artifacts: CollectedDevelopment['artifacts'], initialBytes: number) {
+function artifactReader(m: DevelopmentAttempt, reader: BoundedArtifactReader, artifacts: CollectedDevelopment['artifacts'], initialBytes: number, initialRecords = 0) {
   let used = initialBytes; const seen = new Map<string, Uint8Array>();
   return (ref: ArtifactRef): Uint8Array => {
     exact(ref, 'uri,sha256'); digest(ref.sha256); invariant(ref.uri === `sha256:${ref.sha256}` || ref.uri === `aeon:artifact:${ref.sha256}` || ref.uri === `shell:tools:${ref.sha256}`, 'Retained content-addressed artifact required');
     const prior = seen.get(ref.uri); if (prior) return prior;
-    const bound = Math.min(m.limits.maxArtifactBytes, m.limits.maxEvidenceBytes - used); invariant(bound > 0, 'Total evidence allowance exhausted');
-    const bytes = Uint8Array.from(reader(ref, bound)); invariant(bytes.byteLength <= bound, 'Reader exceeded artifact allowance'); invariant(hashBytes(bytes) === ref.sha256, 'Retained artifact digest mismatch');
+    if (m.version === 2) invariant(initialRecords + artifacts.length < m.limits.maxRecords, 'Development artifact record allowance exceeded');
+    const bound = Math.min(developmentOperationalArtifactBytes, m.limits.maxArtifactBytes, m.limits.maxEvidenceBytes - used); invariant(bound > 0, 'Total evidence allowance exhausted');
+    const returned = reader(ref, bound); invariant(returned.byteLength <= bound, 'Reader exceeded artifact allowance');
+    const bytes = Uint8Array.from(returned); invariant(hashBytes(bytes) === ref.sha256, 'Retained artifact digest mismatch');
     used += bytes.byteLength; seen.set(ref.uri, bytes); artifacts.push({ artifact: ref, bytes: bytes.byteLength }); return bytes;
   };
 }
@@ -165,9 +174,9 @@ function observation(o: DevelopmentObservation): void {
  * Invalid submitted records remain in the proposed evidence, with explicit failed findings. */
 function collectEvidence(manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], trust: DevelopmentTrust, reader: BoundedArtifactReader, now: number, requestProfiles?: DevelopmentRequestProfiles): CollectedDevelopment {
   manifest = inertSnapshot(manifest); observations = inertSnapshot(observations);
-  const m = verifyAttempt(manifest, trust); invariant(observations.length <= m.limits.maxRecords, 'Too many developmental records');
+  const m = verifyDevelopmentAttempt(manifest, trust); invariant(observations.length <= m.limits.maxRecords, 'Too many developmental records');
   const bytes = Buffer.byteLength(canonicalJson({ manifest, observations })); invariant(bytes <= m.limits.maxEvidenceBytes, 'Submitted evidence exceeds byte allowance');
-  const findings: Finding[] = [], artifacts: CollectedDevelopment['artifacts'] = [], read = artifactReader(m, reader, artifacts, bytes);
+  const findings: Finding[] = [], artifacts: CollectedDevelopment['artifacts'] = [], read = artifactReader(m, reader, artifacts, bytes, observations.length);
   const fail = (code: string, detail: string, status: Finding['status'] = 'failed') => findings.push({ code, detail, status });
   try {
     const frozen = JSON.parse(Buffer.from(read(m.candidateArtifact)).toString('utf8')) as FrozenCandidate;
@@ -290,7 +299,7 @@ function prepareEvidence(evidence: CollectedDevelopment, reviews: Signed<Develop
   const fail = (code: string, detail: string, status: Finding['status'] = 'failed') => findings.push({ status, code, detail });
   const initialBytes = Buffer.byteLength(canonicalJson({ evidence, reviews })) + evidence.artifacts.reduce((n, a) => n + a.bytes, 0);
   invariant(initialBytes <= m.limits.maxEvidenceBytes, 'Review evidence exceeds original byte allowance');
-  const read = artifactReader(m, reader, [], initialBytes), accepted = new Map<string, DevelopmentReview>();
+  const read = artifactReader(m, reader, [], initialBytes, evidence.observations.length + evidence.artifacts.length + reviews.length), accepted = new Map<string, DevelopmentReview>();
   for (const document of reviews) {
     try {
       const role = trust.reviewers.get(document.signer); invariant(role && m.reviewers.some(r => r.id === document.signer), 'Unauthorized reviewer');

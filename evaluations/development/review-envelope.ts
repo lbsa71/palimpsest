@@ -3,7 +3,7 @@ import { validateEnvelope } from '../../deployment/config.ts';
 import { validateModelProfile, type ModelProfile } from '../../deployment/model-grants.ts';
 import { hashBytes } from '../../packages/release/artifacts.ts';
 import { authenticate, inertSnapshot, type Signed } from '../qualification/manifest.ts';
-import { collectDevelopmentEvidenceProjection, prepareDevelopmentEvidenceProjection, DevelopmentArtifactUnavailable, type Accounting, type BoundedArtifactReader, type CollectedDevelopment, type DevelopmentAttempt, type DevelopmentObservation, type DevelopmentReview, type DevelopmentTrust, type Finding, type ProposedDevelopment } from './witness.ts';
+import { collectDevelopmentEvidenceProjection, prepareDevelopmentEvidenceProjection, developmentCapacityLimits, developmentCapacityProfile, developmentOperationalArtifactBytes, verifyDevelopmentAttempt, DevelopmentArtifactUnavailable, type Accounting, type BoundedArtifactReader, type CollectedDevelopment, type DevelopmentAttempt, type DevelopmentObservation, type DevelopmentReview, type DevelopmentTrust, type Finding, type ProposedDevelopment } from './witness.ts';
 
 export const reviewEnvelopeDomains = Object.freeze({
   registration: 'aeon.development.registration.v2', behavior: 'aeon.development.behavior.v2',
@@ -111,13 +111,15 @@ function retained(reader: BoundedArtifactReader, limits: DevelopmentAttempt['lim
   let total = overhead; const bytes = new Map<string, Uint8Array>();
   invariant(total <= limits.maxEvidenceBytes, 'Aggregate envelope overhead exceeds evidence allowance');
   const read = (ref: ArtifactRef, callerBound = limits.maxArtifactBytes) => {
+    integer(callerBound, 'artifact read bound');
     exact(ref, 'uri,sha256'); digest(ref.sha256);
     invariant([`sha256:${ref.sha256}`, `aeon:artifact:${ref.sha256}`, `shell:tools:${ref.sha256}`].includes(ref.uri), 'Content-addressed retained bytes required');
     const prior = bytes.get(ref.sha256); if (prior) { invariant(prior.byteLength <= callerBound, 'Cached artifact exceeds caller bound'); return prior; }
     invariant(bytes.size < limits.maxRecords, 'Retained artifact record allowance exceeded');
     const bound = Math.min(callerBound, limits.maxArtifactBytes, limits.maxEvidenceBytes - total);
     invariant(bound > 0, 'Aggregate evidence allowance exhausted');
-    const data = Uint8Array.from(reader(ref, bound)); invariant(data.byteLength <= bound, 'Reader exceeded v2 pre-read bound'); equal(hashBytes(data), ref.sha256, 'Retained artifact digest mismatch');
+    const returned = reader(ref, bound); invariant(returned.byteLength <= bound, 'Reader exceeded v2 pre-read bound');
+    const data = Uint8Array.from(returned); equal(hashBytes(data), ref.sha256, 'Retained artifact digest mismatch');
     total += data.byteLength; bytes.set(ref.sha256, data); return data;
   };
   return { read, scan: (value: unknown) => refs(value, read), index: () => [...bytes].map(([sha256, data]) => ({ artifact: { uri: `sha256:${sha256}`, sha256 }, bytes: data.byteLength })).sort((a, b) => a.artifact.sha256.localeCompare(b.artifact.sha256)) };
@@ -141,17 +143,29 @@ export function collectDevelopmentAccountingTail(registrationDigest: string, beh
   const input = inertSnapshot({ registrationDigest, behavior, transitions, reviews, retainedArtifacts, limits });
   digest(input.registrationDigest); invariant(input.registrationDigest === input.behavior.registrationDigest, 'Tail changed registration/B');
   equal(input.limits, input.behavior.manifest.value.limits, 'Tail changed original evidence allowance');
+  const m = input.behavior.manifest.value;
+  invariant(m.version === 1 || m.version === 2 && m.capacityProfile === developmentCapacityProfile, 'Unsupported tail attempt/profile');
+  exact(m, `version,id,evidenceKind,candidate,protocolDigest,acquisitionDigest,priorPolicyDigest,candidateArtifact,configurationArtifact,schedulerWindowMs,contextWindowTokens,grant,registeredAt,notBefore,deadlineAt,observerId,cycles,opportunities,controls,boundaries,reviewers,limits${m.version === 2 ? ',capacityProfile' : ''}`);
+  exact(input.limits, 'maxRecords,maxArtifactBytes,maxEvidenceBytes');
+  const caps = m.version === 1 ? { maxRecords: 512, maxArtifactBytes: 1_000_000, maxEvidenceBytes: 8 * 1024 * 1024 } : developmentCapacityLimits;
+  for (const key of ['maxRecords', 'maxArtifactBytes', 'maxEvidenceBytes'] as const) {
+    integer(input.limits[key], 'tail evidence allowance'); invariant(input.limits[key] > 0 && input.limits[key] <= caps[key], 'Tail evidence exceeds host ceiling');
+  }
+  invariant(input.limits.maxArtifactBytes <= input.limits.maxEvidenceBytes, 'Tail artifact allowance exceeds total bound');
   limits = input.limits; validateIndex(input.behavior.artifactIndex, limits);
   const storage = retained(reader, limits), original = new Set(input.behavior.artifactIndex.map(e => e.artifact.sha256));
   for (const entry of input.behavior.artifactIndex) invariant(storage.read(entry.artifact).byteLength === entry.bytes, 'Retained B index byte length changed');
-  storage.scan({ transitions: input.transitions, reviews: input.reviews, retainedArtifacts: input.retainedArtifacts });
+  const operationalRead = (ref: ArtifactRef) => storage.read(ref, developmentOperationalArtifactBytes);
+  refs({ transitions: input.transitions, reviews: input.reviews }, operationalRead);
+  storage.scan(input.retainedArtifacts);
   for (const transition of input.transitions) if (transition.state.prompt) {
-    const captured = JSON.parse(Buffer.from(storage.read(transition.state.prompt)).toString('utf8')); storage.scan(captured);
+    const captured = JSON.parse(Buffer.from(operationalRead(transition.state.prompt)).toString('utf8')); refs(captured, operationalRead);
   }
   const tail: DevelopmentAccountingTail = { version: 2, registrationDigest, behaviorDigest: identity(input.behavior), transitions: input.transitions, artifactIndex: storage.index().filter(e => !original.has(e.artifact.sha256)) };
   const originalCount = input.behavior.manifest.value.grant.originalAccounting.requestIds.length;
   invariant(input.behavior.observations.length + originalCount + input.behavior.requests.length + input.behavior.transitions.length + input.behavior.artifactIndex.length + tail.transitions.length + input.reviews.length + tail.artifactIndex.length <= limits.maxRecords, 'Joined bounded record allowance exceeded');
   invariant(Buffer.byteLength(canonicalJson(tail)) + storage.index().reduce((n, e) => n + e.bytes, 0) <= limits.maxEvidenceBytes, 'Tail evidence allowance exceeded');
+  if (m.version === 2) invariant(Buffer.byteLength(canonicalJson(tail)) <= limits.maxArtifactBytes, 'Tail metadata artifact allowance exceeded');
   return tail;
 }
 
@@ -159,7 +173,7 @@ export function collectDevelopmentAccountingTail(registrationDigest: string, beh
 export function developmentRequestIdentity(request: PhysicalRequest): string { const { status, usage, ...immutable } = request; return identity(immutable); }
 
 function registration(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, trust: DevelopmentEnvelopeTrust, now: number) {
-  const r = authenticate(reviewEnvelopeDomains.registration, document, trust.behavior.issuers), m = manifest.value;
+  const r = authenticate(reviewEnvelopeDomains.registration, document, trust.behavior.issuers), m = verifyDevelopmentAttempt(manifest, trust.behavior);
   exact(r, 'version,attemptDigest,rootId,rootCancelled,registeredAt,reviewDeadlineAt,observerClosureDigest,closureVerifierDigest,assignmentDigest,roles,originalRequests');
   invariant(typeof r.rootCancelled === 'boolean', 'Explicit original cancellation anchor required');
   invariant(r.rootCancelled || !r.originalRequests.some(overrun), 'Original cancellation anchor erases known physical overrun');
@@ -264,7 +278,7 @@ function replay(transitions: readonly DevelopmentAccountingTransition[], initial
         invariant(release || receipt.dispatched === true && prior && ['dispatched', 'uncertain'].includes(prior.request.status), 'Settlement forged dispatch ordering');
         if (receipt.status === 'succeeded') invariant(receipt.response, 'Successful settlement lacks retained response bytes');
         if (release) invariant(receipt.usage.inputTokens === 0 && receipt.usage.outputTokens === 0 && receipt.usage.costUsd === 0 && receipt.usage.elapsedMs === 0, 'Unlaunched release claims physical usage');
-        if (receipt.response) read(receipt.response, m.limits.maxArtifactBytes);
+        if (receipt.response) read(receipt.response, developmentOperationalArtifactBytes);
       } else if (prior) {
         if (s.request.status === 'dispatched') equal(s.request.usage, prior.request.usage, 'Dispatch forged raw provider usage');
         else invariant(s.request.status === 'uncertain' && ['inputTokens', 'outputTokens', 'costUsd'].every(k => s.request.usage[k as 'inputTokens'] === null) && s.request.usage.elapsedMs >= prior.request.usage.elapsedMs, 'Settlement requires authenticated transport receipt');
@@ -376,6 +390,7 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
   const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, rootCancelled: history.rootCancelled, evidence, artifactIndex: storage.index() };
   invariant(behaviorRecords(r, behavior) <= m.limits.maxRecords, 'Behavior record allowance exceeded');
   invariant(Buffer.byteLength(canonicalJson(behavior)) + behavior.artifactIndex.reduce((n, a) => n + a.bytes, 0) <= m.limits.maxEvidenceBytes, 'Behavior evidence allowance exceeded');
+  if (m.version === 2) invariant(Buffer.byteLength(canonicalJson(behavior)) <= m.limits.maxArtifactBytes, 'Behavior metadata artifact allowance exceeded');
   return behavior;
 }
 
@@ -388,6 +403,11 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     const observer = new Map([[trust.behavior.observer.id, trust.behavior.observer.key]]);
     const b = authenticate(reviewEnvelopeDomains.behavior, envelope.behavior, observer); exact(b, 'version,registrationDigest,frozenAt,manifest,observations,requests,transitions,rootCancelled,evidence,artifactIndex'); invariant(b.version === 2, 'Unsupported B version');
     const { r, m, roles } = registration(envelope.registration, b.manifest, trust, now);
+    if (m.version === 2) {
+      invariant(Buffer.byteLength(canonicalJson(envelope)) <= m.limits.maxArtifactBytes, 'Final envelope metadata artifact allowance exceeded');
+      invariant(Buffer.byteLength(canonicalJson(envelope.behavior)) <= m.limits.maxArtifactBytes, 'Signed B metadata artifact allowance exceeded');
+      invariant(Buffer.byteLength(canonicalJson(envelope.accountingTail)) <= m.limits.maxArtifactBytes, 'Signed T metadata artifact allowance exceeded');
+    }
     const storage = retained(reader, m.limits, Buffer.byteLength(canonicalJson(envelope)));
     validateIndex(b.artifactIndex, m.limits);
     const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now, b.artifactIndex.map(e => e.artifact)); equal(b, collected, 'Changed immutable B/evidence/artifact index');

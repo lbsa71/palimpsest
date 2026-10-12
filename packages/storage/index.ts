@@ -123,6 +123,11 @@ export class OperationalStore {
     invariant(!this.developmentFence && this.depth === 0, 'reentrant development acquisition forbidden');
     return this.transaction(() => { this.developmentFence = true; try { return synchronous(fn()); } finally { this.developmentFence = false; } });
   }
+  /** Historical use can nest in an ordinary transaction; it never establishes a committed cut. */
+  private withDevelopmentReadFence<T>(fn: () => T): T {
+    invariant(!this.developmentFence, 'reentrant development acquisition forbidden');
+    return this.transaction(() => { this.developmentFence = true; try { return synchronous(fn()); } finally { this.developmentFence = false; } });
+  }
   transaction<T>(fn: () => T): T {
     const outer = this.depth === 0; const savepoint = `nested_${this.depth}`;
     this.db.exec(outer ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`); this.depth++;
@@ -406,7 +411,7 @@ export class OperationalStore {
     // Bound caller metadata before copying it; the trusted recorder fixes this exact complete scope.
     let refBytes = 0;
     for (let i = 0; i < required.length; i++) { const original = required[i]!; this.validateRef(original); const ref = { versionId: original.versionId, namespace: original.namespace, key: original.key, revision: original.revision, sha256: original.sha256 }; this.validateRef(ref); invariant(i === 0 || request.requiredVersions[i - 1]!.versionId < ref.versionId, 'duplicate or unordered required version'); refBytes = checked(refBytes + Buffer.byteLength(canonicalJson(ref))); invariant(refBytes <= request.maxVersionBytes, 'historical version scope exceeds bound'); request.requiredVersions.push(ref); }
-    return this.withDevelopmentFence(() => {
+    return this.withDevelopmentReadFence(() => {
       try {
         const prefix = this.developmentPreflight('events', request.maxPageBytes, request.prefix.lastSequence);
         invariant(prefix.last === request.prefix.lastSequence && prefix.bytes <= request.maxPrefixBytes && this.developmentHighWater() >= prefix.last, 'historical source prefix differs or exceeds bound');

@@ -1,19 +1,24 @@
-import { closeSync, constants, fsyncSync, fstatSync, openSync, readSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, fstatSync, openSync, opendirSync, readSync, writeFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, identity, invariant, type ArtifactRef } from '../../packages/contracts/index.ts';
 import { hashBytes } from '../../packages/release/artifacts.ts';
 import { ProcessLease } from '../../packages/supervisor/process-lease.ts';
 
+export type QualificationStoreProfile = 'default' | 'complete-pages-bounded-20261012';
 /** A host-private, descriptor-pinned, write-once store. The caller provisions its directory. */
 export class QualificationStore {
   private fd: number;
   private lease: ProcessLease;
   readonly directory: string;
   readonly capacityBytes: number;
-  constructor(directory: string, capacityBytes = 32 * 1024 * 1024) {
+  readonly profile: QualificationStoreProfile;
+  private readonly entryLimit: number;
+  constructor(directory: string, capacityBytes = 32 * 1024 * 1024, profile: QualificationStoreProfile = 'default') {
     this.directory = directory; this.capacityBytes = capacityBytes;
+    invariant(profile === 'default' || profile === 'complete-pages-bounded-20261012', 'Unknown private store profile');
+    this.profile = profile; this.entryLimit = profile === 'default' ? 4096 : 32768;
     invariant(isAbsolute(directory) && resolve(directory) === directory && !directory.startsWith('/usr/'), 'Canonical private store required');
-    invariant(Number.isSafeInteger(capacityBytes) && capacityBytes > 0 && capacityBytes <= 256 * 1024 * 1024, 'Bounded private store capacity required');
+    invariant(Number.isSafeInteger(capacityBytes) && capacityBytes > 0 && capacityBytes <= (profile === 'default' ? 256 : 1024) * 1024 * 1024, 'Bounded private store capacity required');
     let fd = openSync('/', constants.O_RDONLY | constants.O_DIRECTORY);
     try {
       for (const part of directory.split('/').filter(Boolean)) { const next = openSync(`/proc/self/fd/${fd}/${part}`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW); closeSync(fd); fd = next; }
@@ -35,9 +40,26 @@ export class QualificationStore {
     return this.usage().usedBytes;
   }
   usage(): { usedBytes: number; entryCount: number } {
-    this.lease.assertHeld(); const names = readdirSync(this.path('.'));
-    invariant(names.length < 4096, 'Private evidence entry limit');
-    return { usedBytes: names.filter(file => !['writer.sqlite', 'writer.sqlite-journal'].includes(file)).reduce((total, file) => total + this.read(file).byteLength, 0), entryCount: names.length };
+    this.lease.assertHeld();
+    const directory = opendirSync(this.path('.'), { bufferSize: 1 }); let usedBytes = 0, entryCount = 0;
+    try {
+      for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        invariant(++entryCount < this.entryLimit, 'Private evidence entry limit');
+        const writer = entry.name === 'writer.sqlite' || entry.name === 'writer.sqlite-journal';
+        invariant(writer || /^[a-f0-9]{64}$/.test(entry.name) || /^(claim|grant)-[a-f0-9]{64}$/.test(entry.name), 'Unknown evidence name');
+        const fd = openSync(this.path(entry.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+          const stat = fstatSync(fd, { bigint: true });
+          invariant(stat.isFile() && stat.nlink === 1n && stat.uid === BigInt(process.getuid!()) && (stat.mode & 0o077n) === 0n, 'Private evidence file changed');
+          invariant(stat.size >= 0n && stat.size <= BigInt(writer ? Number.MAX_SAFE_INTEGER : this.capacityBytes), 'Private evidence exceeds store capacity');
+          if (!writer) {
+            usedBytes += Number(stat.size);
+            invariant(usedBytes <= this.capacityBytes, 'Private evidence capacity exhausted');
+          }
+        } finally { closeSync(fd); }
+      }
+      return { usedBytes, entryCount };
+    } finally { directory.closeSync(); }
   }
   private path(name: string): string { return `/proc/self/fd/${this.fd}/${name}`; }
   private read(name: string, maxBytes = this.capacityBytes): Buffer {
@@ -66,7 +88,7 @@ export class QualificationStore {
     this.lease.assertHeld();
     const { usedBytes: used, entryCount } = this.usage();
     invariant(used + bytes.byteLength <= this.capacityBytes, 'Private evidence capacity exhausted');
-    invariant(entryCount + 1 < 4096, 'Private evidence entry limit');
+    invariant(entryCount + 1 < this.entryLimit, 'Private evidence entry limit');
     const fd = openSync(this.path(name), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o400);
     try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
     fsyncSync(this.fd);
