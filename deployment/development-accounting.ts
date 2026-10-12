@@ -43,6 +43,7 @@ const pending = (q: PhysicalRequest) => ['reserved', 'dispatched', 'uncertain'].
 /** Host-only bridge. An isolated local ledger is never independent physical authority. */
 export class DevelopmentAccounting {
   readonly resources: ResourceLedger;
+  get originalResources(): ResourceLedger { return this.options.original; }
   readonly registration: DevelopmentRegistration;
   readonly role: DevelopmentRoleBinding;
   readonly registrationDigest: string;
