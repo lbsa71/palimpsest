@@ -1,0 +1,104 @@
+# A1-L08-OD2-a source projection
+
+2026-10-12. Owner `/root/a1_development_observer`, branch `codex/a1-development-observer-20261012`, base `5bc15dc5fc946bc78398617ebffdb3a79a7857e0`, root claim `462d6de`. Exclusive writes: this evidence and new `evaluations/development/development-observer.ts` / `.test.ts`. Actual finite tool goal created before source investigation. Requirements RW09, RW10, RW18–RW20; governing ordinary-driver specification and accepted JR1 v2. Recorder `53e8298` is a read-only source-shape reference. No sibling source imports, configuration changes or source-resolution overlays.
+
+```text
+/goal Deliver the smallest bounded source projector reproducing new ordinary scheduler and registered assignment provenance from retained v2 captures, preserve unavailable causal sources, run focused offline checks and strict compilation, and hand off exact source/interface with recorder integration and qualification gates open.
+```
+
+## Pre-code API and acceptance freeze
+
+Reuse existing `DevelopmentSnapshot`, `JournalRef`, `StoredEvent`, contracts and scheduler/communications wire. No scheduler, signing service, workflow framework or authority layer is added. Public synchronous function:
+
+```ts
+projectDevelopmentSources(input: DevelopmentSourceInput): DevelopmentSourceProjection
+```
+
+Input contains `before`, `after`, `current` content-addressed capture refs; `assignmentPacket` ref; exact expected `roleId`, `configurationDigest`, `pathIdentity`, `journal` binding; bounds `maxCaptureBytes`, `maxArtifactBytes`, `maxRows`, `maxProofBytes`; and `readArtifact(ref, maxBytes): Uint8Array`. Capture bytes are exactly recorder shape `{roleId, source:{pathIdentity,journalDigest}, configurationDigest, clock, snapshot}`. Clock is `{kind:'host'|'synthetic',wallMs,monotonicMs,bootId,processStart}`. `current` is mandatory even when equal to `after`: it supplies the latest available payload dispositions known to the host. Assignment packet is exact v1 ordinary ingress entries `{id,roleId,message}` with source/externalId/revision/conversation/text/actor. Packet acceptance/signature and attempt-use withdrawal remain recorder-owned gates.
+
+Output is version 1 **proposed mechanical facts**, never `DevelopmentObservation`, signed evidence or acceptance: capture refs/digests/cursors, clock interval and clock kind, cycles, assignments, and explicit unavailable reasons. Each fact carries exact global event `{id,sequence,stream,type}` positions and used `JournalRef` identities. Cycle facts contain selected scheduler sequence, selected goal revision/origin/provenance, execution/run links, newly reserved physical request IDs/statuses and retained result/error/uncertain observation links. Origin classification is `request` or `unknown`; self/maintenance/parent labels never become spontaneity. Assignment facts retain exact packet identity/entry digest and exact input, communication event, admitted/steering event, run and result links. A revision can reuse a run. Source fact existence cannot prove completion, semantic task success, growth, host independence or independence from steering.
+
+Validate canonical bytes, artifact digest, fixed read/output bounds, exact role/configuration/path/journal binding, complete global prefix, unique events/rows/payloads, v2 anchor/mutation/withdrawal graph, payload commitments and current reconstructed inventory. Old schema, missing payload, orphan/ref mismatch, fabricated withdrawn disposition, revision gaps, changed prefix, clock regressions or changed host session are unavailable. All used versions must remain available in `current`; earlier/later rows cannot substitute for an intermediate withdrawn/missing version. Projection has no cache. Caller must rerun with the latest retained current capture immediately before recorder admission; a separately validated JR2 withdrawal gate still fences attempt use.
+
+Only `scheduler:ordinary` selected goal events newly present between `before` and `after` can propose a cycle. Match selected goal to its journal version at selection; bind execution and actual initiative admission to a run; require a newly created physical request version after selection and before the next ordinary selection (and within `after`), with exact retained prompt/payload artifact integrity. Preserve request status and steering/admission ancestry. No timestamp is inferred for StoredEvent. Bounds describe the enclosing before/after interval, never an exact event time; guaranteed separation is `later.before.wallMs - earlier.after.wallMs`, only after recorder-owned host qualification. Synthetic clocks remain synthetic; raw `kind:host` is not qualification. New communication ingress must similarly occur in the interval, match packet text/identity/actor/audience/modification eligibility and actual admitted/steering event, and retain actual run/observation versions.
+
+Causal offline checks frozen before implementation: real small journaled SQLite with ordinary FairScheduler/InitiativeRunner/runtime/ledger and CommunicationsCore; new selection/request and input/steering reuse succeed mechanically; repeated delayed capture of the same selection yields no new cycle; input mutation, unrelated run/request, missing/intermediate payload, withdrawal, prefix/current substitution, forged graph/disposition, digest/capture/proof bounds and clock/session changes refuse; self label preserves unknown origin; failed/uncertain source results remain visible. No paid provider work, native acquisition, host mounts, network, private state or production service. Strict compilation joins existing accepted source only.
+
+## Narrow downstream integration proposal
+
+OD2-b recorder owner receives the typed input/output above. It constructs expected values from its accepted plan and retained source inventory, pins packet ref and current capture, verifies JR2 attempt-use eligibility, invokes this projector itself, retains bounded canonical proof bytes, then admits only its specifically supported mechanical observation kinds. It must not accept caller-supplied projected completion/spontaneity/success/token facts or expose a generic arbitrary-observation signing callback. Unsupported witness observation kinds remain unavailable. Integration, fresh joined review, feedback/control/restart/context sensors, genuine elapsed acquisition and live/H1 gates remain open.
+
+## Execution and handoff
+
+**Implemented and fixture-verified; not integrated or qualified.** Pre-code freeze is `a495782`. Source imports only accepted storage/contracts/communications types within this checkout. No new dependencies, live provider work, process confinement, listeners or network were used. Production/configuration/plan/historical source remained read-only.
+
+The concrete exports are `DevelopmentSourceInput`, `DevelopmentSourceProjection`, `DevelopmentSourceCapture`, `DevelopmentSourceClock`, `DevelopmentCycleSource`, `DevelopmentAssignmentSource`, `DevelopmentSourceProof`, `DevelopmentEventPosition`, `DevelopmentRuntimeResultSource`, and `projectDevelopmentSources`. Each cycle now directly retains `{before,after,lowerWallMs,upperWallMs,clockKind}` rather than relying solely on the enclosing projection. The recorder must establish separation using the later lower bound minus earlier upper bound; `observedAt` alone cannot qualify W. `current` is an explicit host-provided latest-known source assumption; it cannot authenticate its own freshness or replace JR2 durable attempt-use/custodian disposition.
+
+Actual fixture inspection refined two source bindings without changing the frozen authority boundary. A runtime-issued model request's captured `aeon:artifact` payload is resolved to its retained `sha256` copy and verified against the request/prompt digest. Runtime tool requests instead bind to their exact effect row and reconstructed ToolCall identity; no nonexistent tool prompt is required. Runtime result source records `{status,messageSequence,observationIds}` from `execution.lastResult` and its actual stored observations. An assignment revision can retain its admitted/steering ingress while its result remains null/unavailable until the durable `messageSequence` reaches that specific input. This prevents an earlier result on a reused run from awarding the later revision success. Result kinds/statuses are mechanical, with no semantic success interpretation.
+
+Observed initial focused run: **20 pass / 3 fail / 23 total**. All three failures came from the author's URI assumption: the projector required the operational prompt URI itself to be `sha256`, despite the recorder retaining a copy under that URI. The test fixture used real OperationalStore prompt records and exposed the defect. The source was corrected before any implementation/test commit, so there is no fabricated red revision. A subsequent focused run passed 23; final four additional cases specifically closed outstanding causal concerns: unconsumed later steering, new selection without a request, foreign-run request substitution, and later current-prefix replacement.
+
+Final commands from this worktree, pinned runtime `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node`:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/development-observer.test.ts
+# 27 tests: 27 pass, 0 fail, 0 skipped; ~3.4 seconds. SQLite emitted its ordinary experimental warning.
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+# exit 0; repository strict compilation, accepted-base closure only.
+git diff --check
+# exit 0.
+```
+
+Cases include real small SQLite v2 graphs; FairScheduler `ordinary`, InitiativeRunner, DurableRuntime, ResourceLedger and EffectJournal; exact CommunicationsCore admitted/steering input records and run reuse; preserved failed/uncertain physical requests; host-label/synthetic distinction; payload/current/prefix/digest/clock/session/schema/row/proof failures and operational withdrawal. They do not prove provider/model competence, qualified host-clock acquisition, complete ordinary-app shutdown/quiescence, retained full workload capacity or live elapsed operation. Packet bytes are authenticated only by recorder-owned accepted plan/registration outside this projector; local digest equality alone cannot establish an accepted assignment packet.
+
+Root's separately reported capacity inquiry (`a11b21a`, pre-code `54259b2`/`5666ab7`) found full snapshots refuse after eight separate actual ordinary ingress conversations: 370 combined rows but 1,127,064 conservative bytes; twelve reach 546 rows / 1,668,758 bytes. This task did not reproduce that inquiry or alter the fixed bounds. A separately designed bounded retained-page reader may consume the same global event/version proof identities after its own source/review gate; the current implementation remains the bounded materialized v2 path. No silent truncation, raised allowance, reader overlay or incremental implementation was added.
+
+Handoff is finite OD2-a source projection only. Root/recorder owner performs OD2-b after accepted JR2: constructs pinned input from actual recorder inventory/accepted role and packet, checks durable withdrawal/use/freshness eligibility, reads only retained bytes, retains bounded canonical proof, and exposes only specifically supported observation admission. Fresh independent OD3 review, recorder source integration, feedback judgments, matched controls, restart/context sensors, host qualification, full capacity, live development and H1 remain open. The author tool goal completes at this source/evidence handoff rather than waiting active for those separate gates.
+
+Exact source/test checkpoint: `e4b2bb4` following pre-code `a495782`, on accepted base `5bc15dc5fc946bc78398617ebffdb3a79a7857e0`. This subsequent evidence-only checkpoint records that source identity; root receives its exact handoff revision in the coordination message.
+
+## New finite repair goal and pre-code freeze
+
+Root assigned a new actual finite repair goal after changes-required independent handoff `822dd03b4daab4f81da91e320599de729fc8683d`. That review, criteria `9e8e462` and red tests `be63324`, were fast-forward imported **unchanged** into this source closure before editing. The source subject remains `ebbb96c`; the review's 18 checks preserved three failures (two carried-result attribution cases and one explicit request-corruption probe); joined 45 checks were 42 pass / 3 fail / 0 skip, strict passing. The earlier author goal remains complete; this new goal repairs only those defects within the original three exclusive author files.
+
+```text
+/goal Repair OD2 result-origin and immutable request provenance against unchanged independent review822dd03, freeze causal source rules, preserve all red predicates, validate the joined closure and hand off exact repaired source with fresh independent re-review pending.
+```
+
+Before code, the exact repair rules are frozen:
+
+1. Resolve `lastResult` from its **producing execution version**, not the latest checkpoint/failure cursor. Replay retained execution versions and actual run `running`/disposition status chronology. A checkpoint-owned execution mutation is identified by its immediately following matching `checkpoint` event and cannot produce a shell result. A result-producing mutation must sit in an actual running invocation and precede the actual disposition run mutation/status event; retain those event positions and its exact `JournalRef`. Its `messageSequence` must bind the admitted/steering history for that invocation. Later writes that carry the same `lastResult` preserve that older origin and cursor.
+2. Successful ordinary runtime result writes can change `lastResult`; failure writes cannot. Equality alone does not imply a carried result: a non-checkpoint write followed by the actual disposition, with no `failure` field, is distinguishable from the runtime failure branch even for identical result bytes. An equal result with inherited failure metadata and a waiting/blocked disposition may be ambiguous with another identical failure write; preserve the older origin/null for later work rather than invent production. A completed disposition provides additional success-path chronology. Never modify the shared runtime or add a caller-authorized result assertion. Actual canceled/unfinished or otherwise unsupported boundaries remain unavailable.
+3. Extend `DevelopmentRuntimeResultSource` with `origin:{invocation,execution,disposition}` containing exact event positions and producing JournalRef. Earlier supported assignments retain their older result; an interrupted later revision receives null/unavailable because its input sequence is newer than the producer's cursor. A later initiative slice requires that the result-producing version follow that slice's selection; a new checkpoint/failure revision alone is insufficient. Physical failed opportunities and retained observations remain mechanically visible.
+4. Reuse existing `developmentRequestIdentity` (excludes only status/usage). Compare the revision-1 reserved request to **every retained version** of that physical request through the projected slice end, preserving the same immutable root/ceiling and request identity while allowing legitimate status/usage/charged changes. Resolve prompt/payload/tool identity from the reservation; never use a substituted final identity. The review's direct `OperationalStore.put` substitution is corruption probing, not ordinary ResourceLedger behavior. Missing/withdrawn intermediate versions still refuse.
+5. Run unchanged independent 18 and author 27 plus added actual-runtime cases for identical legitimate re-produced results, carried failure with repeated error metadata, supported recovery and intermediate request substitution/restoration. Strict compilation and review-file identity checks remain required. Signing/JR2/recorder/page adaptation, live operation, original capacity/freshness limits and all other acceptance gates remain open.
+
+This section is the repair behavioral freeze; source edits follow a separate checkpoint.
+
+## Repair execution and bounded handoff
+
+Repair freeze `3b9af13` preceded source edits. The two imported review files remain byte-for-byte unchanged from `822dd03`; neither review assertions nor its historical changes-required disposition was edited. Shared runtime, ledger, configuration and source plans remain untouched.
+
+The repaired result resolver locates the producing execution mutation using actual `running` invocation and immediately following run mutation/status disposition. It retains that producer's `JournalRef`, invocation/disposition event positions and invocation-consumed admitted/steering sequence in `DevelopmentRuntimeResultSource.origin`. Checkpoint-owned mutations are identified by their matching actual checkpoint event. Failure writes change or retain failure metadata while carrying the prior result; the resolver walks back to the supported older producer and keeps its original cursor. Later assignment revisions and later selected slices do not acquire that old result. Equal freshly returned result bytes without failure metadata still establish a new origin, avoiding a content-digest proxy for chronology. Equal content with inherited failure metadata and a waiting/blocked disposition may remain ambiguous; that unsupported later origin stays null. Canceled/unfinished or nonconforming chronology likewise cannot manufacture a producer.
+
+The request path imports `developmentRequestIdentity` from the existing accepted review-envelope module and compares every retained intermediate request version to the initial reservation's immutable identity/root/ceiling. Revision continuity and version interval continuity must hold. Status, usage and charged resource changes remain allowed. Prompt/tool binding is evaluated only after that immutable lineage check. The review's final substitution now refuses, as does an added probe that corrupts an intermediate prompt identity and then restores the final row. These probes use explicit `OperationalStore.put`; they do not suggest ordinary ResourceLedger permits such mutations.
+
+Observed checks using the same pinned Node24 binary and accepted source closure:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/development-observer.test.ts evaluations/development/development-observer-review.test.ts
+# First repair run: existing 45 checks, 45 pass / 0 fail / 0 skip.
+# Final run after four frozen additional causal cases: 49 checks, 49 pass / 0 fail / 0 skip; ~8.4 seconds.
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+# exit 0 after source repair and final added fixtures.
+git diff --exit-code 822dd03 -- evaluations/development/development-observer-review.test.ts docs/rewrite/evidence/A1-L08/development-observer-review.md
+# exit 0: independent criteria/tests/evidence unchanged.
+git diff --check
+# exit 0.
+```
+
+The final closure includes unchanged independent 18, unchanged original author 27, and four new author causal checks: identical returned result content on a new invocation; repeated failure metadata in a later initiative slice; fresh observed recovery after inherited failure; and intermediate request substitution followed by restoration. The repeated-error case uses the actual shell/checkpoint/failure/runtime path and preserves a null later result while retaining the new physical opportunity. SQLite emitted its ordinary experimental warning. No paid provider, native/host confinement, network, listener, page capture or private state was exercised.
+
+This bounded repair author goal hands off **fixture-verified source, fresh independent re-review pending**. It does not overwrite the previous changes-required review or claim independent acceptance. OD2-b signing and accepted JR2 durable attempt-use/custodian withdrawal, recorder freshness/clock ownership, full capture capacity, paged adaptation, matched controls, feedback, restart/context sensors, live development and H1 remain open. The exact repair source checkpoint and final evidence revision are supplied to root below and in the coordination handoff.
+
+Exact repaired source/author-test checkpoint: `853c687`, following repair freeze `3b9af13` and unchanged review `822dd03`. This evidence-only checkpoint records that source; final handoff revision is returned to root in the coordination message. The new actual repair goal completes at this handoff.
