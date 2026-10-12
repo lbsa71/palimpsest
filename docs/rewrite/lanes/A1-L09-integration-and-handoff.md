@@ -1,5 +1,7 @@
 # A1-L09 — integration, whole-system evolution and handoff
 
+**Scoped active claim, 2026-10-12:** `/root` owns the [first live Slack pilot](../slack-pilot.md) from `debadd9` on `codex/aeon-slack-pilot-20261012`. Only ordinary startup, conversation and continuity are in scope; earlier backlog claims remain inactive. Root owns pilot documentation and private host artifacts; source changes require exact observed-blocker claims. All delegates use Sol.
+
 **Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
 
 Status: **implementing**. Session owner: **/root**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).

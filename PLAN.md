@@ -1,5 +1,7 @@
 # Aeon implementation and self-improvement plan
 
+**2026-10-12 scoped resumption:** the user authorized the [first live Slack pilot](docs/rewrite/slack-pilot.md), prioritizing a usable conversation and only repairs to observed launch blockers. The broader backlog remains hibernated; the previous repair-first restart order does not govern this pilot. Agents use Sol only.
+
 Planning baseline: **2026-10-11**. Full rewrite; **no legacy support**. The old systemd installation is [decommissioned](docs/rewrite/decommission.md). Aeon 1 implementation is authorized but **hibernated at the user’s request on 2026-10-12**. Read the [restart guide](docs/rewrite/RESUME.md) before resuming; it records exact checkpoints, unresolved findings and the next parallel tasks. All prior ownership claims are inactive until explicitly reclaimed. The [execution record](docs/rewrite/execution.md) preserves integration and evidence. Planning specifications alone do not establish implemented or deployed capabilities.
 
 The three dimensions are **Aeon → Lane → Task**: who carries the responsibility, which independent session owns an outcome, and what concrete work its subagents can complete. Maintaining this structure is itself [requirement RW19](REQUIREMENTS.md) and is enforced by [AGENTS.md](AGENTS.md) and the [planning workflow](docs/rewrite/workflow.md).
