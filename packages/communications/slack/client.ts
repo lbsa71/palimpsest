@@ -18,16 +18,41 @@ export class SlackClient implements SlackApi {
     invariant(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(method),'invalid Slack method');
     signal?.throwIfAborted();
     const timeout=communicationTimeout(this.schedule,this.timeoutMs,signal);
-    let failed=false;let failure:unknown;
+    const failures:unknown[]=[];
+    let responseBody:ReadableStream<Uint8Array>|null=null;
+    let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+    let consumed=false;
+    let result!:T;
     try {
-    const transport=this.transport;const response=await transport(`${this.endpoint}${method}`,{method:'POST',redirect:'error',headers:{authorization:`Bearer ${this.token}`,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(parameters),signal:timeout.signal});
-    timeout.signal.throwIfAborted();
-    if(response.status===429){const seconds=Number(response.headers.get('retry-after'));throw new SlackError('ratelimited',Number.isFinite(seconds)&&seconds>=0?seconds*1000:1000);}
-    if(!response.ok)throw new SlackError(`http_${response.status}`);
-    const reader=response.body?.getReader();invariant(reader,'Slack response body absent');const chunks:Uint8Array[]=[];let size=0;
-    try{for(;;){const part=await reader.read();timeout.signal.throwIfAborted();if(part.done)break;size+=part.value.byteLength;invariant(size<=this.maxResponseBytes,'Slack response exceeds configured byte bound');chunks.push(part.value);}}
-    catch(error){try{await reader.cancel();}catch(cleanup){throw new AggregateError([error,cleanup],'Slack response cleanup failed');}throw error;}finally{reader.releaseLock();}
-    const body=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {ok?:boolean;error?:string};if(body.ok!==true)throw new SlackError(body.error??'malformed_response');return body as T;
-    } catch(error){failed=true;failure=error;throw error;} finally {try{timeout.cancel();}catch(error){if(failed)throw new AggregateError([failure,error],'Slack request timer cleanup failed');throw error;}}
+      const transport=this.transport;
+      const response=await transport(`${this.endpoint}${method}`,{method:'POST',redirect:'error',headers:{authorization:`Bearer ${this.token}`,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(parameters),signal:timeout.signal});
+      // Own the body before any status or cancellation check can exit the request.
+      responseBody=response.body;
+      timeout.signal.throwIfAborted();
+      if(response.status===429){const seconds=Number(response.headers.get('retry-after'));throw new SlackError('ratelimited',Number.isFinite(seconds)&&seconds>=0?seconds*1000:1000);}
+      if(!response.ok)throw new SlackError(`http_${response.status}`);
+      reader=responseBody?.getReader();invariant(reader,'Slack response body absent');
+      const chunks:Uint8Array[]=[];let size=0;
+      for(;;){
+        const part=await reader.read();
+        if(part.done)consumed=true;
+        timeout.signal.throwIfAborted();
+        if(part.done)break;
+        size+=part.value.byteLength;
+        invariant(size<=this.maxResponseBytes,'Slack response exceeds configured byte bound');
+        chunks.push(part.value);
+      }
+      const body=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {ok?:boolean;error?:string};
+      if(body.ok!==true)throw new SlackError(body.error??'malformed_response');
+      result=body as T;
+    } catch(error){failures.push(error);} finally {
+      // Each cleanup is attempted once, even when an earlier operation/cleanup failed.
+      if(responseBody&&!consumed){try{if(reader)await reader.cancel();else await responseBody.cancel();}catch(error){failures.push(error);}}
+      if(reader){try{reader.releaseLock();}catch(error){failures.push(error);}}
+      try{timeout.cancel();}catch(error){failures.push(error);}
+    }
+    if(failures.length===1)throw failures[0];
+    if(failures.length>1)throw new AggregateError(failures,'Slack request cleanup failed',{cause:failures[0]});
+    return result;
   }
 }
