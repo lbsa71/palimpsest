@@ -5,7 +5,7 @@ import { developmentControlAlgorithm, developmentControlAlgorithmDigest, develop
 import { inertSnapshot, type Signed } from '../qualification/manifest.ts';
 import { hashBytes } from '../../packages/release/artifacts.ts';
 import { projectDevelopmentPageSources, type DevelopmentPageReader, type DevelopmentPageSourceInput, type DevelopmentEventPosition } from './development-observer.ts';
-import { developmentRequestIdentity, type DevelopmentAccountingTransition, type DevelopmentRoleBinding } from './review-envelope.ts';
+import { developmentRequestIdentity, type DevelopmentAccountingTransition, type DevelopmentRegistration, type DevelopmentRoleBinding } from './review-envelope.ts';
 import { deriveDevelopmentAssignment, deriveDevelopmentOpportunity, encodeDevelopmentSourceProof, validateSourceAdmissionPolicy, validateDevelopmentWorkload, verifyDevelopmentSourceCheck, type DevelopmentAssignmentProof, type DevelopmentCheckInput, type DevelopmentSourceCheck, type SourceAdmissionContext, type SourceAdmissionResult, type SourceInterval } from './development-source-admission.ts';
 
 export interface DevelopmentControlSources {
@@ -123,6 +123,39 @@ function sourceInventory(c: SourceAdmissionContext, input: DevelopmentPageSource
   return { p, reader, events, rows, version, current };
 }
 interface Seal { version: 1; mode: DevelopmentControlConfig; configurationDigest: string; closureDigest: string; roleId: string; roleDigest: string; registrationDigest: string; attemptDigest: string; originalRoot: { rootId: string; parentRunId: string | null; envelope: ResourceEnvelope; startedAt: number; budgetEnvelope: ResourceEnvelope; budgetStartedAt: number }; grantBinding: ControlGrantBinding; source: string; originalSource: string; journal: unknown; initial: ArtifactRef }
+/** Discover actual work independently of bridge state; a missing bridge never removes a request. */
+function originalPhysicalInventory(rows: PhysicalDocumentRow[], registration: DevelopmentRegistration, role: DevelopmentRoleBinding, expected: Set<string>): PhysicalRequest[] {
+  interface Allocation { rootId: string; parentRunId?: string; envelope: ResourceEnvelope }
+  interface Binding { localId: string; parentRunId: string; envelope: ResourceEnvelope; roleId: string; registrationDigest: string }
+  const allocations = new Map(rows.filter(r => r.namespace === 'allocations').map(r => [r.key, r.value as unknown as Allocation]));
+  const bindings = new Map(rows.filter(r => r.namespace === 'development.accounting.allocations').map(r => [r.key, r.value as unknown as Binding]));
+  const registrationDigest = identity(registration), mappedRun = (id: string) => id === 'operating-envelope:v1' ? role.allocationId : `development-run:${identity([registrationDigest, role.id, id])}`;
+  const selected: PhysicalRequest[] = [];
+  for (const row of rows.filter(r => r.namespace === 'requests')) {
+    const physical = row.value as unknown as { rootId: string; request: PhysicalRequest }, q = physical.request;
+    const expectedIdentity = expected.has(row.key) || expected.has(q.id);
+    if (physical.rootId !== registration.rootId && allocations.get(q.runId)?.rootId !== registration.rootId && bindings.get(q.runId)?.roleId !== role.id && !expectedIdentity) continue;
+    validatePhysicalRequest(q);
+    invariant(row.key === q.id && physical.rootId === registration.rootId, 'Original physical keyed identity/root differs');
+    const path: string[] = []; let id: string | undefined = q.runId;
+    while (id) {
+      invariant(path.length < 32 && !path.includes(id), 'Original physical allocation lineage invalid'); path.unshift(id);
+      const allocation: Allocation = required(allocations.get(id), 'Original physical allocation lineage unavailable');
+      invariant(allocation.rootId === registration.rootId, 'Original physical allocation root differs'); id = allocation.parentRunId;
+    }
+    invariant(path[0] === registration.rootId, 'Original physical allocation root differs');
+    if (!path.includes(role.allocationId) && !expectedIdentity && bindings.get(q.runId)?.roleId !== role.id) continue;
+    invariant(path[1] === role.allocationId, 'Original physical role lineage differs');
+    invariant(equal(allocations.get(role.allocationId)!.envelope, role.resources), 'Original actual role envelope differs');
+    for (let n = 2; n < path.length; n++) {
+      const run = path[n]!, allocation = allocations.get(run)!, binding = required(bindings.get(run), 'Original role run binding unavailable');
+      const parent = n === 2 ? 'operating-envelope:v1' : required(bindings.get(path[n - 1]!), 'Original role parent binding unavailable').localId;
+      invariant(binding.registrationDigest === registrationDigest && binding.roleId === role.id && typeof binding.localId === 'string' && binding.localId.length > 0 && mappedRun(binding.localId) === run && binding.parentRunId === parent && mappedRun(binding.parentRunId) === allocation.parentRunId && equal(binding.envelope, allocation.envelope), 'Original role run binding differs');
+    }
+    selected.push(q);
+  }
+  return selected;
+}
 function prepare(c: SourceAdmissionContext, s: DevelopmentControlSources) {
   validateSourceAdmissionPolicy(c); const workload = validateDevelopmentWorkload(c), registration = c.plan.registration.value, manifest = c.plan.manifest.value;
   const control = required(manifest.controls.find(x => x.id === s.controlId), 'Unknown control'), role = required(registration.roles.find(x => x.assignmentId === control.id), 'Control role unavailable');
@@ -159,15 +192,19 @@ function prepare(c: SourceAdmissionContext, s: DevelopmentControlSources) {
   }
   if (scripted || control.kind === 'no-standing-goals') for (const row of local.current.rows.filter(x => x.namespace === 'initiative.obligations')) invariant(!(row.value as unknown as { goalId?: string }).goalId, 'Goal-linked obligation contaminates control');
   for (const m of mutations) invariant(!['host.evolution-continuations', 'host.evolution-jobs', 'host.evolution-acknowledgments', 'host.evolution-recovered-waits', 'host.control-continuations', 'host.control-author-watches', 'host.control-acknowledgments'].includes(m.data.namespace), 'Unqualified extension history contaminates matched profile');
-  const currentRequests = local.current.rows.filter(x => x.namespace === 'requests').map(x => (x.value as unknown as { request: PhysicalRequest }).request), currentOriginal = original.current.rows.filter(x => x.namespace === 'development.accounting.latest' && (x.value as unknown as { roleId: string }).roleId === role.id).map(x => (x.value as unknown as { request: PhysicalRequest }).request);
-  for (const q of [...currentRequests, ...currentOriginal]) { validatePhysicalRequest(q); if (['reserved', 'dispatched', 'uncertain'].includes(q.status)) throw new Unavailable('Control current physical settlement unavailable'); }
+  const currentRequests = local.current.rows.filter(x => x.namespace === 'requests').map(x => (x.value as unknown as { request: PhysicalRequest }).request);
+  const localRequests = local.rows.filter(x => x.namespace === 'requests').map(x => (x.value as unknown as { request: PhysicalRequest }).request); localRequests.forEach(validatePhysicalRequest);
+  const requestId = (localId: string) => `development-request:${identity([identity(registration), role.id, localId])}`;
+  const requestIds = localRequests.map(q => requestId(q.id)), expectedRequests = new Set(requestIds);
+  const originalRequests = originalPhysicalInventory(original.rows, registration, role, expectedRequests), currentOriginalRequests = originalPhysicalInventory(original.current.rows, registration, role, expectedRequests);
+  const currentOriginal = original.current.rows.filter(x => x.namespace === 'development.accounting.latest' && (x.value as unknown as { roleId: string }).roleId === role.id).map(x => (x.value as unknown as { request: PhysicalRequest }).request);
+  for (const q of [...currentRequests, ...currentOriginal, ...originalRequests, ...currentOriginalRequests]) { validatePhysicalRequest(q); if (['reserved', 'dispatched', 'uncertain'].includes(q.status)) throw new Unavailable('Control current physical settlement unavailable'); }
+  invariant(equal(originalRequests.map(q => q.id).sort(), [...requestIds].sort()) && equal(currentOriginalRequests.map(q => q.id).sort(), [...requestIds].sort()), 'Complete original physical request inventory differs');
   const roleAfter = local.reader.manifest, roleBefore = before.manifest;
   const expected = c.plan.protocol!.schedule.filter(x => x.roleId === role.id).map(x => x.assignmentId); invariant(equal(s.assignments.map(x => x.assignmentId), expected) && new Set(expected).size === expected.length, 'Complete ordered role assignment coverage required');
   const assignments = new Map(s.assignments.map(a => { invariant(a.source.roleId === role.id && a.source.configurationDigest === role.configurationDigest && equal(a.source.current, s.role.current) && equal(a.source.pathIdentity, s.role.pathIdentity) && equal(a.source.journal, s.role.journal), 'Assignment capture role/source differs'); const endpoint = a.source.openAcquiredCapture(a.source.after).manifest; invariant(endpoint.cut.lastSequence <= roleAfter.cut.lastSequence && endpoint.clock.kind === roleAfter.clock.kind && endpoint.clock.bootId === roleAfter.clock.bootId && endpoint.clock.processStart === roleAfter.clock.processStart && endpoint.clock.wallMs <= roleAfter.clock.wallMs && endpoint.clock.monotonicMs <= roleAfter.clock.monotonicMs, 'Assignment endpoint exceeds declared role after cut'); const proof = take(deriveDevelopmentAssignment(c, a.source, a.assignmentId)); invariant(proof.source.assignment.ingress.sequence > roleBefore.cut.lastSequence && proof.source.assignment.proof.events.every(e => e.sequence <= roleAfter.cut.lastSequence), 'Control assignment falls outside declared role interval'); return [a.assignmentId, proof] as const; }));
   const transitions = original.events.filter(e => e.type === 'physical-transition' && (e.data as unknown as DevelopmentAccountingTransition).state.roleId === role.id).map(event => ({ event, value: event.data as unknown as DevelopmentAccountingTransition }));
-  const localRequests = local.rows.filter(x => x.namespace === 'requests').map(x => (x.value as unknown as { request: PhysicalRequest }).request); localRequests.forEach(validatePhysicalRequest);
-  const requestId = (localId: string) => `development-request:${identity([identity(registration), role.id, localId])}`;
-  const requestIds = localRequests.map(q => requestId(q.id)); invariant(new Set(requestIds).size === requestIds.length && equal([...new Set(transitions.map(t => t.value.state.request.id))].sort(), [...requestIds].sort()), 'Complete original/local request inventory differs');
+  invariant(new Set(requestIds).size === requestIds.length && equal([...new Set(transitions.map(t => t.value.state.request.id))].sort(), [...requestIds].sort()), 'Complete original/local request inventory differs');
   invariant(equal(currentRequests, localRequests) && equal(currentOriginal.map(q => q.id).sort(), [...requestIds].sort()), 'Physical inventory changed beyond declared after cuts');
   for (const q of localRequests) { const history = transitions.filter(x => x.value.state.request.id === requestId(q.id)), expectedRun = `development-run:${identity([identity(registration), role.id, q.runId])}`; invariant(history.length >= 2 && history[0]!.value.beforeDigest === null && history[0]!.value.state.request.status === 'reserved' && history[1]!.value.state.request.status === 'dispatched', 'Original reservation/dispatch missing');
     const mapped = { ...q, id: requestId(q.id), runId: expectedRun, reservationId: requestId(q.reservationId), ...(q.parentRequestId ? { parentRequestId: requestId(q.parentRequestId) } : {}) }; invariant(developmentRequestIdentity(mapped) === developmentRequestIdentity(history[0]!.value.state.request), 'Local/original immutable request identity differs');
