@@ -312,9 +312,10 @@ test('actual OpenAI Pi transport derives final response using the accepted v2 de
 });
 
 
-function actualRecorderFixture(t: TestContext, shortRoleIds = false) {
+function actualRecorderFixture(t: TestContext, shortRoleIds = false, snapshotComposition = false) {
   const g = fixture(t), o = g.options, registration = structuredClone(o.registration.value);
   const priorFreeze = g.originalStore.get('development.accounting.freeze', identity(registration))!; g.originalStore.delete('development.accounting.freeze', identity(registration), priorFreeze.revision);
+  if (snapshotComposition) { g.f.m.limits.maxArtifactBytes = 850_000; registration.attemptDigest = identity(g.f.m); g.f.trust.acceptedAttemptDigest = identity(g.f.m); for (const session of o.sessions) { session.plan.maxPayloadBytes = 65_536; session.plan.maxResponseBytes = 8192; } }
   if (shortRoleIds) for (const [i,role] of registration.roles.entries()) if (role.kind !== 'candidate') { const session = o.sessions.find(s=>s.roleId===role.id); role.id=`r${i}`; if (session) session.roleId=role.id; }
   const put = (value: unknown) => g.raw.putBytes(Buffer.from(canonicalJson(value)));
   const configurations = new Map<string, ReturnType<typeof put>>(), closures = new Map<string, ReturnType<typeof put>>();
@@ -333,9 +334,9 @@ function actualRecorderFixture(t: TestContext, shortRoleIds = false) {
     let stateFile = g.originalStore.filename, workspace = join(g.directory, `candidate-work`);
     if (role.kind === 'reviewer') { stateFile = session!.stateFile; workspace = session!.workspace; }
     else { const stateDirectory = join(g.directory, `behavior-state-${i}`); mkdirSync(stateDirectory, { mode: 0o700 }); if (role.kind !== 'candidate') stateFile = join(stateDirectory, 'local.sqlite'); workspace = join(stateDirectory, 'work'); mkdirSync(workspace, { mode: 0o700 }); }
-    return { roleId: role.id, stateFile, workspace, configuration: configurations.get(role.id)!, closure: closures.get(role.id)!, journal: null, maxDrafts: session ? 3 : 1, maxPayloadBytes: session ? 250000 : 5000, maxPromptBytes: session ? 250000 : 5000, maxFragmentBytes: 1000, maxResponseBytes: session ? 50000 : 1000 };
+    return { roleId: role.id, stateFile, workspace, configuration: configurations.get(role.id)!, closure: closures.get(role.id)!, journal: null, maxDrafts: session ? 3 : 1, maxPayloadBytes: session ? (snapshotComposition ? 65_536 : 250000) : 5000, maxPromptBytes: session ? (snapshotComposition ? 8192 : 250000) : 5000, maxFragmentBytes: 1000, maxResponseBytes: session ? (snapshotComposition ? 8192 : 50000) : 1000 };
   });
-  const plan: DevelopmentAcquisitionPlan = { version: 1, id: 'actual-recorder-synthetic-review', manifest: g.f.manifest(), registration: o.registration, assignmentPacket, originalStateFile: g.originalStore.filename, closures: { node: identity('synthetic node closure'), dependencies: g.f.m.candidate.dependencies, prompts: g.f.m.candidate.prompts, tools: identity('bounded evidence_read source'), acquisition: g.f.m.acquisitionDigest }, rawStore: g.raw.identity(), roles: rolePlans, capacity: { captureBytes: 2200000, maxSnapshots: 8, maxSnapshotBytes: 250000, envelopeBytes: 250000, transitionBytes: 10000, failureBytes: 4096, inventoryEntryBytes: 512, maxArtifacts: 256, maxObservations: 32 } };
+  const plan: DevelopmentAcquisitionPlan = { version: 1, id: 'actual-recorder-synthetic-review', manifest: g.f.manifest(), registration: o.registration, assignmentPacket, originalStateFile: g.originalStore.filename, closures: { node: identity('synthetic node closure'), dependencies: g.f.m.candidate.dependencies, prompts: g.f.m.candidate.prompts, tools: identity('bounded evidence_read source'), acquisition: g.f.m.acquisitionDigest }, rawStore: g.raw.identity(), roles: rolePlans, capacity: { captureBytes: snapshotComposition ? 6_100_000 : 2200000, maxSnapshots: snapshotComposition ? 7 : 8, maxSnapshotBytes: snapshotComposition ? 850_000 : 250000, envelopeBytes: 250000, transitionBytes: snapshotComposition ? 4096 : 10000, failureBytes: 4096, inventoryEntryBytes: 512, maxArtifacts: 256, maxObservations: 32 } };
   const recorderStateFile = join(g.directory, 'host', 'recorder.sqlite'); writeFileSync(recorderStateFile, '', { mode: 0o600 }); const recorderState = new OperationalStore({ filename: recorderStateFile });
   g.setTime(Date.parse(g.f.m.registeredAt));
   const trust: AcquisitionPlanTrust = { acceptedPlanDigest: identity(plan), issuers: g.f.trust.issuers, envelope: o.trust };
@@ -354,8 +355,21 @@ function actualRecorderFixture(t: TestContext, shortRoleIds = false) {
   return { ...g, recorder, candidate, behavior };
 }
 
+test('authored original 250000-byte source allocation still refuses the real tool-read path', { skip: !enabled }, async t => {
+  const g = actualRecorderFixture(t), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact, counts = new Map<string, number>();
+  g.provide(role => {
+    const n = counts.get(role) ?? 0; counts.set(role, n + 1); const out = g.response(), body = JSON.parse(out.body); body.model = g.options.sessions.find(s => s.roleId === role)!.profile.id;
+    if (n === 0) body.choices[0] = { finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'actual-read', type: 'function', function: { name: 'evidence_read', arguments: JSON.stringify({ artifact }) } }] } };
+    return { ...out, body: JSON.stringify(body) };
+  });
+  await assert.rejects(g.run(), /snapshot exceeds bound/);
+  assert.equal(g.recorder.plan.capacity.maxSnapshotBytes, 250000); assert.equal(g.recorder.plan.capacity.captureBytes, 2200000);
+  assert.equal(g.recorder.plan.manifest.value.limits.maxArtifactBytes, 250000); assert.equal(g.recorder.plan.manifest.value.limits.maxEvidenceBytes, 8000000);
+  assert.ok(g.options.original.snapshot('original').requests > 0); assert.ok(g.payloads.length > 0);
+});
+
 for (const toolRead of [false, true]) test(`actual finite recorder callbacks and unchanged final envelope join (tool: ${toolRead})`, { skip: !enabled }, async t => {
-  const g = actualRecorderFixture(t), counts = new Map<string, number>(), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
+  const g = actualRecorderFixture(t, false, toolRead), counts = new Map<string, number>(), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
   g.provide(role => {
     const n = (counts.get(role) ?? 0) + 1; counts.set(role, n); const out = g.response(); const body = JSON.parse(out.body); body.model = g.options.sessions.find(s => s.roleId === role)!.profile.id;
     if (toolRead && n === 1) body.choices[0] = { finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'actual-read', type: 'function', function: { name: 'evidence_read', arguments: JSON.stringify({ artifact }) } }] } };
