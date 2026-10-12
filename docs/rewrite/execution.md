@@ -4,7 +4,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 ## Current disposition — developmental acquisition and native recovery
 
-**User steering, 2026-10-12:** select reasoning Mistral Large4 if available. Official model/reasoning documentation confirms public preview `mistral-large-4-0` with high effort. Root reserves ADR0034, `docs/rewrite/model-selection.json`, updates to the tokenizer/readiness/boundary planning artifacts and L02 lane. This changes the chosen future Autark profile; it does not rewrite frozen synthetic fixtures, consumed attempts or original grants. The existing transport already supports explicit high effort and native thinking replay. Account access, exact context/tokenizer relationship and live qualification remain distinct from selecting the model.
+**User steering, 2026-10-12:** [ADR0034](../adr/0034-select-mistral-large-4-reasoning.md) selects reasoning Mistral Large4, `mistral-large-4-0` / high, with the [machine-readable target](model-selection.json). Official model/reasoning docs confirm its preview and advertised1M context. Root updated L02, readiness, tokenizer and boundary planning; existing transport supports high effort/native thinking replay. This supersedes the Medium3.5 proposal without changing frozen synthetic fixtures, consumed attempts or grants. Account/runtime profile, exact Large4 tokenization/context and live qualification remain open. DB2-Q1a Medium byte verification completed within its bounded claim; those cached bytes remain Medium-only evidence and no dependency was installed.
 
 ### Current finite ownership — 04:04 UTC
 

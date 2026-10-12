@@ -37,3 +37,6 @@ Reuse the existing Pi loop, service supervisor, process lease, confinement, reco
 ## Evidence and disposition
 
 Read-only checks inspected `acquisition-plan.ts` reservation/validation, `acquire.ts` slot/freeze code, the ordinary driver, `service-process.ts`, `service-child.ts`, worker cleanup and the three linked design inputs. Integer arithmetic is shown above and can be checked without executing a workload. No runtime/source test is appropriate for this documentation-only inquiry. Reference and diff checks follow before handoff. The root inquiry is complete when this entry check is committed; DB0 whole-profile adoption and its next design task remain open. This inquiry does not close any developmental boundary or H1 gate.
+
+
+Model steering after this inquiry: [ADR0034](../../../adr/0034-select-mistral-large-4-reasoning.md) selects reasoning Large4. The next design must account for its advertised1M context and presently unverified tokenizer/serving relationship; the earlier Medium asset is not applicable evidence. Do not adopt a boundary tuple based on a smaller substituted context.

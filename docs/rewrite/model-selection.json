@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "selectedAt": "2026-10-12",
+  "selectedBy": "user",
+  "status": "selected-awaiting-qualification",
+  "provider": "mistral",
+  "modelId": "mistral-large-4-0",
+  "reasoning": true,
+  "effort": "high",
+  "endpoint": "https://api.mistral.ai/v1/chat/completions",
+  "lifecycle": "public-preview",
+  "advertisedContext": "1M",
+  "qualifiedContextWindowTokens": null,
+  "qualifiedTokenizerDigest": null,
+  "runtimeProfileDigest": null,
+  "adr": "../adr/0034-select-mistral-large-4-reasoning.md",
+  "sources": [
+    "https://docs.mistral.ai/models/mistral-large",
+    "https://docs.mistral.ai/studio/conversations/reasoning",
+    "https://docs.mistral.ai/inference/model-lifecycle"
+  ]
+}

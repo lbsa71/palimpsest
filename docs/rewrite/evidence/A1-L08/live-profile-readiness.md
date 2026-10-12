@@ -1,5 +1,7 @@
 # Live profile readiness: Mistral candidate and native Claude accounting
 
+**Selection update, 2026-10-12:** the user selected reasoning Mistral Large4. [ADR0034](../../../adr/0034-select-mistral-large-4-reasoning.md) adopts `mistral-large-4-0` / high as the primary profile to qualify. The Medium3.5 proposal below is preserved historical evidence and is superseded as the target. No earlier account, grant, price, tokenizer or context qualification transfers automatically.
+
 2026-10-11. **Finite source inquiry complete; proposals are not live qualification.** A1-L08-T02/T06, RW03/RW17. Owner `/root/a1_live_profile_readiness`; branch `codex/a1-live-profile-readiness-20261011`; worktree `/home/palimpsest/migration/aeon-1-20261011/live-profile-readiness`; examined source **`ea5e4453a810dd6ed66bf5017bdeb17b532cb01a`**. Exclusive write scope: this new report. Root owns integration after the frozen aggregate check. No shared availability, protocol, lane, configuration or runtime source changed.
 
 ```text

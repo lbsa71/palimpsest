@@ -11,6 +11,8 @@ The three dimensions are **Aeon → Lane → Task**: who carries the responsibil
 3. [Acceptance](docs/acceptance.md), [open decisions](docs/open-decisions.md), and [reuse ledger](docs/rewrite/reuse-ledger.md): evidence gates and unresolved choices with owners.
 4. Your lane and its dependencies. Copy the lane's `/goal` into a fresh session, claim ownership, and delegate its concrete tasks using the listed model/effort guidance. This plan does not automatically launch those sessions.
 
+Primary model selected by the user on2026-10-12: **Mistral Large4 with high reasoning**, `mistral-large-4-0`. [ADR0034](docs/adr/0034-select-mistral-large-4-reasoning.md) and the [selection record](docs/rewrite/model-selection.json) supersede the earlier Medium3.5 proposal. Exact runtime profile, account/context/tokenizer and competence qualification remain open; Pi remains the shell.
+
 ## Aeon 1 — Codex bootstraps the evolving mind-self
 
 The [technical overview](docs/rewrite/aeon-1.md) defines contract gate C1, parallel waves W0–W3 and capability handoff H1. Nine independently ownable lanes contain **48 delegable tasks**.

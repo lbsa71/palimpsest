@@ -1,5 +1,7 @@
 # Development tokenizer prerequisite dossier
 
+**Current target, 2026-10-12:** [ADR0034](../../../adr/0034-select-mistral-large-4-reasoning.md) selects user-requested `mistral-large-4-0` / high. All Medium3.5 asset findings below remain scoped to that model; further counter qualification now targets Large4. Its publisher repository is currently an upcoming release. No Medium asset or context value establishes Large4 token equivalence.
+
 2026-10-12. A1-L02 DB2-Q public inquiry, owner `/root`, claim `58c0554`, under the active Aeon 1 goal. **Finite public-source inquiry complete; exact hosted token counting remains unqualified.** No tokenizer, package, model asset or new runtime was installed. This document does not adopt the older DB0 capacity figures or authorize inference. The candidate profile in [live-profile readiness](../A1-L08/live-profile-readiness.md) is still a proposal.
 
 ```text
@@ -53,3 +55,21 @@ Local agreement with an oracle and a finite set of hosted usage matches do not p
 ## Inquiry receipt
 
 Read official Mistral documentation, its GitHub source and publisher-owned Hugging Face pages on 2026-10-12 UTC, plus the local serializer/readiness/boundary design. Exact-commit Hugging Face blob URLs and the GitHub API/tag lookup returned tool access errors; no missing content or immutable library pin was inferred from them. Available template commit and asset listings supply the identities above. No account, private data, inference, package execution, download/install, source change or test was performed for this inquiry. Markdown references and diff formatting are checked as documentation, not runtime evidence. The finite dossier is complete; DB2-Q1–Q4, fresh consequential acceptance, real context-boundary proof and H1 remain open.
+
+
+## Bounded Medium byte-pinning receipt, completed before model reselection
+
+Root claim `c4f7590` allowed one20-MiB tokenizer and2-MiB metadata total, no installation or code execution. Direct bounded public HTTPS retrieval succeeded where the web tool could not open the exact URLs. The public cache is outside Git at `/home/palimpsest/migration/aeon-1-20261011/tokenizer-prerequisite`; `receipts.json` records exact URLs, lengths and hashes. This closes Q1a byte identification only, not dependency/native closure or hosted equivalence.
+
+| Pinned file | Bytes | Verified SHA256 |
+|---|---:|---|
+| Medium `tekken.json`, revision `32f566da413d9fde169ee1276a7551f4a2d660fb` | 16,275,354 | `b1272b956bd6edd2d2c674c76896c7661308c9e723997b0afb55ecb429cb5dc7` |
+| Same revision `config.json` | 1,923 | `d476b773299e1a292dd7813d1816635ed49895bdb635808764b452253f08ed3e` |
+| Same revision model `LICENSE` | 1,695 | `648194727930df730890e9f9affdbcc5c930d406d6829559b25ca3d5a973fc8c` |
+| Common v1.12.0 `pyproject.toml` | 3,065 | `209cb8179738eb19e66d332cfb8ff48737cf86b0a430df54e8bdae4d6e03765a` |
+| Common v1.12.0 `LICENSE` | 11,339 | `5ed6f79e77734b5a60740dd821af5ecac9a6f33709c860eea4e20fcb6cca7fcc` |
+| Chat template revision `22b2b868a15677cfa6061277ed2f653d1349a9ab` | 14,255 | `68827dcf5d4e50e91db5e7b8b8bc4f0d477a5a2cf5cbcb6eca8b22b0751a8686` |
+
+Read-only `git ls-remote` identifies v1.12.0 annotated tag `dc2d3d8f2aeb75cd8ed4db75d2249d490cf803c2`, peeled source commit `f3bb6e8be220e44ea37b82467abfac6ac16925f1`; metadata above came from the peeled commit. Observed mutable HEAD was `81708fdaad39fd64eaef52e46d551d98a5bd9529`; it was not used as the pin. The inspected Medium asset is v15, with130,072 vocabulary entries plus1,000 special tokens; model settings allow `none`/`high`, default `none`. Its nested `text_config.max_position_embeddings` is262144. These are byte-verified Medium facts.
+
+The pinned library license is Apache2.0. The model repository's separate Modified MIT license contains attribution and a company/employer revenue condition; it is not interchangeable with the library license. No redistribution or runtime adoption is made here. The pinned template confirms the earlier fallback-persona finding. Full dependency installation, build closure, exact counting, prompt equivalence and provider usage comparison were not performed. The user then selected Large4, so these bytes are retained as scoped research, not a substitute tokenizer.
