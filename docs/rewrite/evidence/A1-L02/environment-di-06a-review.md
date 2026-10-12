@@ -1,0 +1,51 @@
+# DI06a independent schema and metadata review
+
+2026-10-12. Aeon 1 / L02 / DI06a fresh review by `/root/a1_environment_schema_review`, isolated branch `codex/a1-environment-di-06a-review-20261012`, frozen base `d4378d8213c0350e23251138d91140ab33f6e108`. Actual finite goal created. Exclusive writes: this new report and `deployment/environment-di-06a-review.test.ts`. Source, existing tests, manifests and auditor remain read-only. Interface: [DI06/DI06a release](../A1-L01/environment-di-06-interface.md), [DI01](../A1-L01/environment-di-01.md), [DI plan](../A1-L09/environment-di-plan.md).
+
+```text
+/goal Independently review the exact DI06a implementation and joined source metadata, freeze held-out behavioral predicates before source/test inspection, run new and unchanged checks without altering controls, and deliver an accepted-or-changes-required two-file handoff. Broader DI06, DI26, DI28 and H1 are separate.
+```
+
+## Frozen independent criteria
+
+Recorded before inspecting implementation or author test bodies (author narrative/results were supplied as inputs). (1) Constant Node default has no import-time browser observation or shared mutable URL; inspect the full import closure and, if useful, evaluate the changed module in an isolated controlled realm without patching process globals. (2) Explicit base affects relative external references and addSchema consistently, while absolute root and nested identifiers override that base; fragments, escaped pointers, anchors and finite recursive input retain assertion behavior. (3) Reusing deeply frozen/shared caller schemas across validators with distinct bases, then mutating caller-owned inputs after construction/addSchema, cannot change an earlier instance or contaminate a later one through private reference metadata. (4) Invalid base/identifier failures remain visible, with caller data untouched; failure is never converted into success by a resolver or implicit network access. (5) Direct dereference detaches explicit mutable URL data; the unchanged three-argument shell composition and standalone validation remain valid. (6) All eight retained source bytes match manifest identities and applying the complete patch to independently SHA-verified pinned upstream reproduces the exact retained files under the unchanged auditor. (7) Existing author/official/tool-schema assertions and strict compilation pass unchanged; old predicates/auditor/source are byte-identical to the frozen base. Original failed probes, if any, are retained and explained.
+
+No provider, network, native comparator, credential, Slack, physical acquisition, installation, deployment or full benchmark work is authorized. Tests use explicit data and isolated in-process realms only; ordinary bounded source/audit/compiler commands are allowed. No subordinate agent is needed for this finite independent review.
+
+## Results
+
+**Accepted for the bounded DI06a implementation and its joined schema source metadata. Fixture-verified; no blocking finding.** Independent criteria were committed as `19ffbc5` before implementation and author-test inspection. Reviewed author source `f7db5dc`, metadata `f39e863`, join `8929868`, frozen review base `d4378d8`. The final handoff consists of `19ffbc5` plus the subsequent commit containing this report and the new test; root records its exact commit identity on integration.
+
+The 12 new held-out tests cover frozen shared nested graphs under two different bases; relative dot segments and query-bearing IDs; absolute nested resource IDs and anchors under HTTPS/file bases; Unicode/escaped JSON pointers and boolean schemas; three-level recursion through an added resource with an exact deep error location; caller objects carrying earlier genuine nonenumerable dereference metadata; deep root/addSchema snapshots across mutations and later instances; explicit addSchema ID override; invalid base refusal before a caller getter executes; malformed/duplicate ID failure without replacing an existing child; missing external-reference failure followed by explicit registration; capture of a URL before a schema getter mutates the caller URL; and inert initialization of every retained module in an isolated realm. Every acceptance and rejection assertion passed.
+
+The isolated-realm test reads all eight actual retained files, erases TypeScript through Node's native API, replaces only static local import/export syntax with an in-process linker, and executes unchanged bodies once per realm. Realm-local getters throw if module initialization samples browser globals, process, transport, clocks, timers, URL construction or structuredClone. All eight modules initialize with zero such reads. It does not mutate process globals or loaded application modules and does not spawn a process. Native Node import and actual validation are separately exercised by all runtime cases. This is a bounded initialization observation plus full closure inspection, not a formal proof of every future invocation. Node emits its expected experimental warning for `stripTypeScriptTypes`; no case is skipped.
+
+Source inspection confirms the import-time browser branch is removed; only the immutable `https://github.com/cfworker` string is exported. Each dereference call creates/detaches its URL. Validator validates the fourth string before cloning/traversing input, owns a private cloned schema graph, and reuses its captured base for addSchema. Existing recursive validation remains unchanged. The unchanged Pi consumer retains its three-argument constructor with the constant Node base. No fetch/resolver or new environmental capability appears in the retained closure.
+
+## Commands and observations
+
+All commands ran in the isolated worktree with Node `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node` (below, `NODE` denotes that exact executable). The existing dependency directory was linked as ignored `node_modules -> /home/palimpsest/src/palimpsest/node_modules`; no package was installed.
+
+| Check | Observation |
+|---|---|
+| `NODE --test --test-concurrency=1 deployment/environment-di-06a-review.test.ts` | First held-out execution: **12/12 pass**, 0 failures/skips/cancellations, 214.429395 ms; `/tmp/aeon-schema-di-independent-first.log`. |
+| `NODE --test --test-concurrency=1 deployment/environment-di-06a-review.test.ts deployment/environment-di-06a.test.ts packages/narrow-schema/schema.test.ts packages/agent-shell/schema-regression.test.ts` | Final run: **123/123 pass**, 0 failures/skips/cancellations, 967.298288 ms; `/tmp/aeon-schema-di-review-joined-final.log`. Includes the unchanged 111 author/retained/shell cases. |
+| `NODE node_modules/typescript/bin/tsc --noEmit` | Final strict pass, exit 0; `/tmp/aeon-schema-di-review-strict-final.log`. |
+| `NODE packages/narrow-schema/audit-source.mjs /tmp/palimpsest-schema-upstream-71fp0zaj` | Unchanged auditor passes: pinned upstream `5409fdc2bd144f68e8b28c61c71fcb16600000a6`, 8 retained files, 1,720 lines, 53,977 bytes, no external runtime imports, 14 unchanged fixture files / 373 official assertions, `upstreamHashesChecked: true`; `/tmp/aeon-schema-di-review-source-audit.log`. The auditor counts/identifies fixture assertions; the runtime suite executes the retained fixture checks. |
+| Complete local patch application | Independently SHA-verified each of the eight staged `entry.source` upstream files and each retained file against the manifest, copied upstream bytes into fresh `/tmp/aeon-schema-di-review-roundtrip-bqpntfmk`, then ran `patch --batch --fuzz=0 -p1 -d /tmp/aeon-schema-di-review-roundtrip-bqpntfmk -i /home/palimpsest/migration/aeon-1-20261011/environment-di-06a-review/packages/narrow-schema/vendor/cfworker/local.patch`. Exit 0, no offsets/fuzz. Subsequent Python byte comparisons and SHA checks reproduced **all eight exact retained files**, including unchanged files. |
+| Original-control preservation | `git diff --exit-code f7db5dc^ f7db5dc -- packages/narrow-schema/schema.test.ts packages/agent-shell/schema-regression.test.ts packages/narrow-schema/audit-source.mjs packages/narrow-schema/test/fixtures` and the same comparison for `f39e863^ f39e863` (also including retained LICENSE) return 0. Metadata diff changes only the two reported retained hashes and adds its patch description; upstream pins remain unchanged. |
+| Review scope | `git diff --exit-code d4378d8 -- packages deployment/environment-di-06a.test.ts` returns 0; `git diff --check` passes. Only the two assigned new files enter the handoff. |
+
+Preserved failed check: the first strict run exited 1 with TS2345 at reviewer test line 30 because `Schema.properties` is typed `boolean | Schema` and `Reflect.ownKeys` requires an object. `/tmp/aeon-schema-di-review-strict.log` retains that exact diagnostic. Added an explicit `as Schema` cast for the known object fixture; no assertion, source, existing test or control changed. Both the first joined run (123/123, 826.226707 ms) and final joined run passed. No behavioral failure receipt was discarded.
+
+## Exact reviewed identities and handoff limits
+
+| Artifact | SHA-256 |
+|---|---|
+| `dereference.ts` | `02b3b5c74ac924c28e7fa944feb068134f4ab7857347db47436ab0453fd32810` |
+| `validator.ts` | `1953629b154a296ba6dd537e3f3f0350b7ec3f13811e2489357677bce828da8a` |
+| `local.patch` | `eb7f8a56a6e3eacf52213d557112bffc843c73ca79681a66b8bcc94be8580708` |
+| `source-manifest.json` | `9a6327e546eac403bb8c29d38a566c25a193a3931ea5c4f36fb92487f2224c51` |
+| Unchanged `audit-source.mjs` | `43039e2640fea9e51e186dc67b8291d548dc38632125bd344a708d5410a6fc75` |
+
+Root may integrate these two review files and record the bounded acceptance. Broader Pi environmental work DI06, the remainder of script/environment task DI26, joined closure DI28, live Q3 and H1 remain separate gates. Standalone dereference still annotates its explicitly supplied schema; the new instance-isolation guarantee belongs to Validator's clones. These tests exercise JSON-compatible schema data and the named URI/reference cases, not every arbitrary JavaScript object or complete JSON Schema conformance. No network acquisition, provider request, private credential access, physical/live sensor work, native comparator, Slack, deployment or full benchmark occurred. This finite review is complete and does not wait for those broader gates.
