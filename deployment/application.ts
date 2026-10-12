@@ -438,7 +438,7 @@ export class AutarkApplication {
     try {
       const usage = this.resources.snapshot(this.rootAllocation), limit = this.resources.effectiveEnvelope(this.rootAllocation);
       if (usage.cancelled) reasons.push('allowance-cancelled');
-      if (usage.requests >= limit.maxRequests || limit.maxTokens !== null && usage.tokens >= limit.maxTokens || usage.costUsd >= limit.maxCostUsd || usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
+      if (limit.maxRequests !== null && usage.requests >= limit.maxRequests || limit.maxTokens !== null && usage.tokens >= limit.maxTokens || limit.maxCostUsd !== null && usage.costUsd >= limit.maxCostUsd || usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
       if (usage.concurrent >= limit.maxConcurrency || this.occupied() >= this.config.maxConcurrentRuns) reasons.push('capacity-occupied');
     } catch { reasons.push('accounting-unavailable'); }
     return { alive: true, execution: { admission: reasons.length ? 'held' : 'available', reasons,

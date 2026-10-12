@@ -35,3 +35,24 @@ test('conversation deadline and amendment require exact operator configuration',
   f.config.conversationTimeoutMs=10000;f.config.allowanceAmendment={} as never;assert.throws(()=>validateConfiguration(f.config),/allowance amendment/);
  }finally{f.authorityStore.close();rmSync(f.root,{recursive:true,force:true});}
 });
+
+test('uncapped operator policy retains charges and permits real composition work beyond the original total',async()=>{
+ const f=fixture();let calls=0;
+ f.config.allowanceAmendment={id:'uncapped-coding-trial',authorizationRef:'fixture:user-disable-local-caps',rootId:'operating-envelope:v1',expectedEnvelopeDigest:identity(f.config.resources),cumulativeTokenLimit:null,cumulativeCostLimit:null,cumulativeRequestLimit:null,scope:'root-and-descendants',descendantCostLimit:'root',descendantRequestLimit:'root'};
+ f.config.conversationTimeoutMs=10000;
+ const app=new AutarkApplication({...f,secrets:{mistralApiKey:'fixture',directToken:'fixture'},performRequest:async()=>{calls++;return response;}});
+ try{
+  const charged={id:'retained-unknown',runId:'operating-envelope:v1',purpose:'reasoning' as const,provider:'fixture',model:'fixture',promptManifestId:'fixture',requestDigest:identity('retained-unknown'),reservationId:'retained-unknown',status:'reserved' as const,usage:{requests:1,inputTokens:0,outputTokens:0,costUsd:5.5,elapsedMs:0}};
+  app.resources.reserve(charged);app.resources.dispatched({...charged,status:'dispatched'});app.resources.settle({...charged,status:'uncertain'});
+  const before=app.store.get('requests',charged.id),allocation=app.store.get<{envelope:unknown;startedAt:number}>('allocations','operating-envelope:v1')!.value;
+  assert.equal(app.resources.snapshot('operating-envelope:v1').costUsd,5.5);
+  assert.ok(!(app.health() as {execution:{reasons:string[]}}).execution.reasons.includes('allowance-exhausted'));
+  const run=app.communications.receive({source:'direct',externalId:'uncapped-coding',revision:'1',conversation:'uncapped-coding',text:'Check the coding path.',actor:{id:'operator',scope:f.config.direct.scope,modificationEligible:true}}).run;
+  assert.equal((await app.resume(run.id)).status,'completed');assert.equal(calls,1);
+  assert.deepEqual(app.store.get('requests',charged.id),before);
+  assert.deepEqual(app.store.get<{envelope:unknown;startedAt:number}>('allocations','operating-envelope:v1')!.value.envelope,allocation.envelope);
+  assert.equal(app.store.get<{startedAt:number}>('allocations','operating-envelope:v1')!.value.startedAt,allocation.startedAt);
+  assert.ok(app.resources.snapshot('operating-envelope:v1').costUsd>5.5);
+  assert.equal(app.resources.effectiveEnvelope(run.id).maxCostUsd,null);assert.equal(app.resources.effectiveEnvelope(run.id).maxRequests,null);
+ }finally{await app.close();f.authorityStore.close();rmSync(f.root,{recursive:true,force:true});}
+});
