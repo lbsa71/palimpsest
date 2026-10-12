@@ -12,6 +12,7 @@ export interface AllowanceAmendment {
   cumulativeTokenLimit: null; scope: 'root-and-descendants'; descendantCostLimit: 'root';
   descendantRequestLimit?: 'root';
   cumulativeCostLimit?: null; cumulativeRequestLimit?: null;
+  resumeAfterElapsedOverrun?: { requestId: string; expectedRequestDigest: string };
 }
 export function validateAllowanceAmendment(amendment: AllowanceAmendment): void {
   invariant(amendment, 'Invalid allowance amendment');
@@ -24,6 +25,13 @@ export function validateAllowanceAmendment(amendment: AllowanceAmendment): void 
       invariant(amendment[field] === null, 'Invalid allowance amendment');
     }
   }
+  if (Object.hasOwn(amendment, 'resumeAfterElapsedOverrun')) {
+    expectedKeys.push('resumeAfterElapsedOverrun');
+    const recovery = amendment.resumeAfterElapsedOverrun;
+    invariant(recovery && Object.keys(recovery).sort().join(',') === 'expectedRequestDigest,requestId'
+      && typeof recovery.requestId === 'string' && recovery.requestId.trim().length > 0
+      && typeof recovery.expectedRequestDigest === 'string' && /^[a-f0-9]{64}$/.test(recovery.expectedRequestDigest), 'Invalid allowance amendment');
+  }
   invariant(Object.keys(amendment).sort().join(',') === expectedKeys.sort().join(',') && (!sharesRequests || amendment.descendantRequestLimit === 'root'), 'Invalid allowance amendment');
   invariant([amendment.id, amendment.authorizationRef, amendment.rootId].every(value => typeof value === 'string' && value.trim().length > 0)
     && typeof amendment.expectedEnvelopeDigest === 'string' && /^[a-f0-9]{64}$/.test(amendment.expectedEnvelopeDigest)
@@ -32,7 +40,10 @@ export function validateAllowanceAmendment(amendment: AllowanceAmendment): void 
 export type EffectiveResourceEnvelope = Omit<ResourceEnvelope, 'maxTokens' | 'maxCostUsd' | 'maxRequests'> & {
   maxTokens: number | null; maxCostUsd: number | null; maxRequests: number | null;
 };
-interface AmendmentRecord { amendment: AllowanceAmendment; originalEnvelope: ResourceEnvelope; authority: Authority; appliedAt: number }
+interface AmendmentRecord {
+  amendment: AllowanceAmendment; originalEnvelope: ResourceEnvelope; authority: Authority; appliedAt: number;
+  elapsedOverrunRecovery?: { priorBudget: Budget; cause: Reservation };
+}
 interface Budget { envelope: ResourceEnvelope; startedAt: number; cancelled: boolean; elapsedFloorMs?: number }
 interface Allocation { rootId: string; parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt:number; elapsedFloorMs?: number }
 interface Reservation { rootId: string; request: PhysicalRequest; ceiling: RequestCeiling; charged: RequestCeiling }
@@ -62,6 +73,26 @@ export class ResourceLedger {
       if (existing) invariant(canonicalJson(existing.value.amendment) === canonicalJson(accepted) && identity(existing.value.originalEnvelope) === accepted.expectedEnvelopeDigest, 'Allowance amendment identity changed');
       else {
         const record: AmendmentRecord = { amendment: accepted, originalEnvelope: allocation.value.envelope, authority, appliedAt: this.now() };
+        if (accepted.resumeAfterElapsedOverrun) {
+          const recovery = accepted.resumeAfterElapsedOverrun, cause = this.store.get<Reservation>('requests', recovery.requestId)?.value;
+          invariant(budget.value.cancelled && cause && identity(cause) === recovery.expectedRequestDigest
+            && cause.rootId === accepted.rootId && cause.request.id === recovery.requestId && this.root(cause.request.runId) === accepted.rootId,
+          'Elapsed overrun recovery requires the exact cancelled root cause');
+          validatePhysicalRequest(cause.request); this.validateCeiling(cause.ceiling); this.validateCeiling(cause.charged);
+          invariant(cause.request.status === 'uncertain' && cause.request.usage.inputTokens === null && cause.request.usage.outputTokens === null
+            && cause.request.usage.costUsd === null && cause.charged.elapsedMs > cause.ceiling.elapsedMs
+            && cause.charged.tokens <= cause.ceiling.tokens && cause.charged.costUsd <= cause.ceiling.costUsd,
+          'Elapsed overrun recovery requires an uncertain elapsed-only overrun');
+          invariant(!this.cancelled(cause.request.runId), 'Elapsed overrun recovery cannot clear allocation cancellation');
+          for (const row of this.store.list<Reservation>('requests')) {
+            if (row.value.rootId !== accepted.rootId || row.key === recovery.requestId) continue;
+            this.validateCeiling(row.value.ceiling); this.validateCeiling(row.value.charged);
+            invariant(row.value.charged.tokens <= row.value.ceiling.tokens && row.value.charged.costUsd <= row.value.ceiling.costUsd
+              && row.value.charged.elapsedMs <= row.value.ceiling.elapsedMs, 'Elapsed overrun recovery has another physical overrun');
+          }
+          record.elapsedOverrunRecovery = { priorBudget: budget.value, cause };
+          this.store.put('budgets', accepted.rootId, { ...budget.value, cancelled: false }, budget.revision);
+        }
         this.store.put('resource.allowance-amendments', accepted.id, record, null);
         this.store.append({ id: `allowance-amendment:${accepted.id}`, stream: accepted.rootId, type: 'allowance-amended', data: record });
       }

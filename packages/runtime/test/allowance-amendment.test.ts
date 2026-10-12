@@ -6,17 +6,17 @@ import { tmpdir } from 'node:os';
 import { identity, type ResourceEnvelope } from '../../contracts/common.ts';
 import type { PhysicalRequest } from '../../contracts/control/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
-import { BudgetExceeded, ResourceLedger, validateAllowanceAmendment, type AllowanceAmendment } from '../resources/index.ts';
+import { BudgetExceeded, ResourceLedger, validateAllowanceAmendment, type AllowanceAmendment, type RequestCeiling } from '../resources/index.ts';
 
 const envelope: ResourceEnvelope = { maxRequests: 20, maxTokens: 160, maxCostUsd: 5, maxElapsedMs: 1000, maxConcurrency: 8 };
 const host = { authority: { generation: 'accepted', epoch: 1, controlRevision: 'incumbent-reviewed' }, assertAuthority: () => {} };
 function request(id: string, runId = 'child', costUsd: number | null = null): PhysicalRequest {
   return { id, runId, purpose: 'reasoning', provider: 'fixture', model: 'fixture', promptManifestId: 'p', requestDigest: identity(id), reservationId: id, status: 'reserved', usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd, elapsedMs: 0 } };
 }
-function fixture(t: test.TestContext, root: Partial<ResourceEnvelope> = {}, child: Partial<ResourceEnvelope> = {}) {
+function fixture(t: test.TestContext, root: Partial<ResourceEnvelope> = {}, child: Partial<ResourceEnvelope> = {}, ceiling: RequestCeiling = { tokens: 40, costUsd: 0.5, elapsedMs: 1 }) {
   const directory = mkdtempSync(join(tmpdir(), 'aeon-amendment-')), filename = join(directory, 'state.sqlite');
   let now = 0, store = new OperationalStore({ filename });
-  let ledger = new ResourceLedger(store, { tokens: 40, costUsd: 0.5, elapsedMs: 1 }, () => now);
+  let ledger = new ResourceLedger(store, ceiling, () => now);
   const rootEnvelope = { ...envelope, ...root };
   ledger.allocate('root', rootEnvelope);
   ledger.allocate('child', { ...envelope, maxCostUsd: 1.25, maxConcurrency: 4, ...child }, 'root');
@@ -24,7 +24,7 @@ function fixture(t: test.TestContext, root: Partial<ResourceEnvelope> = {}, chil
   t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
   return { get store() { return store; }, get ledger() { return ledger; }, amendment,
     setNow(value: number) { now = value; },
-    reopen() { store.close(); store = new OperationalStore({ filename }); ledger = new ResourceLedger(store, { tokens: 40, costUsd: 0.5, elapsedMs: 1 }, () => now); },
+    reopen() { store.close(); store = new OperationalStore({ filename }); ledger = new ResourceLedger(store, ceiling, () => now); },
     settle(r: PhysicalRequest, status: 'succeeded' | 'uncertain' = 'succeeded') { ledger.reserve(r); ledger.dispatched({ ...r, status: 'dispatched' }); ledger.settle({ ...r, status }); },
   };
 }
@@ -361,3 +361,168 @@ for (const overrun of ['tokens', 'cost', 'elapsed'] as const) {
     assert.throws(() => f.ledger.reserve(request('after-overrun')), BudgetExceeded);
   });
 }
+
+interface StoredReservation { rootId: string; request: PhysicalRequest; ceiling: RequestCeiling; charged: RequestCeiling }
+interface StoredBudget { envelope: ResourceEnvelope; startedAt: number; cancelled: boolean; elapsedFloorMs?: number }
+function recoveryPolicy(f: ReturnType<typeof fixture>, requestId = 'timeout'): AllowanceAmendment {
+  return { ...uncapped(f.amendment), id: 'pilot-11-elapsed-recovery', resumeAfterElapsedOverrun: {
+    requestId, expectedRequestDigest: identity(f.store.get('requests', requestId)?.value),
+  } };
+}
+function timedOut(t: test.TestContext, root: Partial<ResourceEnvelope> = {}) {
+  const f = fixture(t, { maxElapsedMs: 1_000_000, ...root }, { maxElapsedMs: 1_000_000 }, { tokens: 40, costUsd: 0.5, elapsedMs: 180_000 });
+  const r = request('timeout');
+  f.ledger.reserve(r); f.ledger.dispatched({ ...r, status: 'dispatched' });
+  f.setNow(180_008.124762);
+  f.ledger.settle({ ...r, status: 'uncertain', usage: { ...r.usage, elapsedMs: 180_008.124762 } });
+  return f;
+}
+
+test('exact accepted-host recovery clears only the cancelled budget and preserves uncertain timeout charges and audit', t => {
+  const f = timedOut(t, { maxRequests: 1, maxTokens: 40, maxCostUsd: 0.5 });
+  assert.equal(f.ledger.snapshot('root').cancelled, true);
+  f.ledger.applyAllowanceAmendment(uncapped(f.amendment), host);
+  assert.throws(() => f.ledger.reserve(request('blocked')), BudgetExceeded);
+  const priorBudget = f.store.get<StoredBudget>('budgets', 'root')!, requests = f.store.list('requests'), allocations = f.store.list('allocations');
+  const oldHistory = f.store.list('resource.allowance-amendments'), oldEvents = f.store.events('root');
+  const policy = recoveryPolicy(f), cause = f.store.get<StoredReservation>('requests', 'timeout')!;
+  let checked = 0;
+  f.ledger.applyAllowanceAmendment(policy, { ...host, assertAuthority() { checked++; } });
+  assert.equal(checked, 1);
+  assert.deepEqual(f.store.get<StoredBudget>('budgets', 'root')!.value, { ...priorBudget.value, cancelled: false });
+  assert.deepEqual(f.store.list('requests'), requests);
+  assert.deepEqual(f.store.list('allocations'), allocations);
+  assert.deepEqual(f.store.list('resource.allowance-amendments').filter(row => row.key !== policy.id), oldHistory);
+  assert.deepEqual(f.store.events('root').slice(0, oldEvents.length), oldEvents);
+  const audit = f.store.get<{ elapsedOverrunRecovery: { priorBudget: StoredBudget; cause: StoredReservation } }>('resource.allowance-amendments', policy.id)!;
+  assert.deepEqual(audit.value.elapsedOverrunRecovery, { priorBudget: priorBudget.value, cause: cause.value });
+  assert.deepEqual(f.store.events('root').at(-1)!.data, audit.value);
+  assert.equal(f.ledger.snapshot('root').costUsd, 0.5);
+  assert.equal(f.ledger.snapshot('root').tokens, 40);
+  assert.equal(f.ledger.snapshot('root').cancelled, false);
+  const history = f.store.list('resource.allowance-amendments'), events = f.store.events('root');
+  f.reopen();
+  assert.equal(f.ledger.effectiveEnvelope('root').maxRequests, 1);
+  assert.throws(() => f.ledger.reserve(request('unbound')), BudgetExceeded);
+  f.ledger.applyAllowanceAmendment(policy, host);
+  f.settle(request('resumed'));
+  assert.deepEqual(f.store.get('requests', 'timeout'), cause);
+  assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
+  assert.deepEqual(f.store.events('root'), events);
+  assert.equal(f.ledger.snapshot('root').requests, 2);
+});
+
+test('recovery rebinding never clears a subsequent physical overrun or explicit cancellation', t => {
+  const f = timedOut(t), policy = recoveryPolicy(f);
+  f.ledger.applyAllowanceAmendment(policy, host);
+  const later = request('later');
+  f.ledger.reserve(later); f.ledger.dispatched({ ...later, status: 'dispatched' });
+  f.ledger.settle({ ...later, status: 'uncertain', usage: { ...later.usage, elapsedMs: 180_009 } });
+  const cancelledBudget = f.store.get('budgets', 'root'), history = f.store.list('resource.allowance-amendments'), events = f.store.events('root');
+  f.ledger.applyAllowanceAmendment(policy, host);
+  assert.deepEqual(f.store.get('budgets', 'root'), cancelledBudget);
+  assert.throws(() => f.ledger.reserve(request('still-blocked')), BudgetExceeded);
+  assert.throws(() => f.ledger.applyAllowanceAmendment({ ...policy, id: 'new-id-same-old-cause' }, host), /another physical overrun/);
+  f.reopen();
+  f.ledger.applyAllowanceAmendment(policy, host);
+  assert.equal(f.ledger.snapshot('root').cancelled, true);
+  assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
+  assert.deepEqual(f.store.events('root'), events);
+
+  const explicit = timedOut(t), explicitPolicy = recoveryPolicy(explicit);
+  explicit.ledger.applyAllowanceAmendment(explicitPolicy, host);
+  explicit.ledger.cancel('root');
+  explicit.ledger.applyAllowanceAmendment(explicitPolicy, host);
+  assert.throws(() => explicit.ledger.reserve(request('explicit-still-blocked')), BudgetExceeded);
+});
+
+test('repeated uncertain timeout settlement retains physical enforcement after a one-time recovery', t => {
+  const f = timedOut(t), policy = recoveryPolicy(f), original = f.ledger.request('timeout')!;
+  f.ledger.applyAllowanceAmendment(policy, host);
+  assert.equal(f.ledger.snapshot('root').cancelled, false);
+  f.ledger.settle(original);
+  assert.equal(f.ledger.snapshot('root').cancelled, true);
+  assert.deepEqual(f.ledger.request('timeout'), original);
+  f.ledger.applyAllowanceAmendment(policy, host);
+  assert.throws(() => f.ledger.reserve(request('replayed-overrun-still-blocked')), BudgetExceeded);
+});
+
+test('recovery requires exact nested fields, cause digest and synchronous host authority', t => {
+  const f = timedOut(t), policy = recoveryPolicy(f);
+  const invalid = [undefined, null, {}, { requestId: '' , expectedRequestDigest: identity('x') },
+    { requestId: 'timeout', expectedRequestDigest: 'bad' }, { ...policy.resumeAfterElapsedOverrun, refund: true }];
+  const before = ['budgets', 'allocations', 'requests', 'resource.allowance-amendments'].map(namespace => f.store.list(namespace));
+  for (const value of invalid) assert.throws(() => f.ledger.applyAllowanceAmendment({ ...policy, resumeAfterElapsedOverrun: value } as unknown as AllowanceAmendment, host), /Invalid allowance amendment/);
+  for (const resumeAfterElapsedOverrun of [{ ...policy.resumeAfterElapsedOverrun!, expectedRequestDigest: identity('wrong') }, { requestId: 'missing', expectedRequestDigest: identity('missing') }]) {
+    assert.throws(() => f.ledger.applyAllowanceAmendment({ ...policy, resumeAfterElapsedOverrun }, host), /exact cancelled root cause/);
+  }
+  assert.throws(() => f.ledger.applyAllowanceAmendment(policy, { ...host, assertAuthority() { throw Error('authority withdrawn'); } }), /authority withdrawn/);
+  assert.throws(() => f.ledger.applyAllowanceAmendment(policy, { ...host, assertAuthority: (() => Promise.resolve()) as unknown as () => void }), /must be synchronous/);
+  assert.deepEqual(['budgets', 'allocations', 'requests', 'resource.allowance-amendments'].map(namespace => f.store.list(namespace)), before);
+  assert.equal(f.store.events('root').length, 0);
+  f.ledger.applyAllowanceAmendment(uncapped(f.amendment), host);
+  assert.throws(() => f.ledger.applyAllowanceAmendment({ ...policy, id: 'pilot-11' }, host), /identity changed/);
+  assert.equal(f.ledger.snapshot('root').cancelled, true);
+});
+
+for (const level of ['root', 'child'] as const) {
+  test(`recovery rejects explicit ${level} allocation cancellation transactionally`, t => {
+    const f = timedOut(t);
+    f.ledger.cancel(level);
+    const policy = recoveryPolicy(f), before = ['budgets', 'allocations', 'requests'].map(namespace => f.store.list(namespace));
+    assert.throws(() => f.ledger.applyAllowanceAmendment(policy, host), /allocation cancellation/);
+    assert.deepEqual(['budgets', 'allocations', 'requests'].map(namespace => f.store.list(namespace)), before);
+    assert.equal(f.store.list('resource.allowance-amendments').length, 0);
+    assert.equal(f.store.events('root').length, 0);
+  });
+}
+
+for (const invalid of ['measured', 'settled', 'no-elapsed-overrun', 'token-overrun', 'cost-overrun', 'foreign-root', 'not-cancelled'] as const) {
+  test(`recovery rejects ${invalid} cause without changing retained state`, t => {
+    const f = timedOut(t), row = f.store.get<StoredReservation>('requests', 'timeout')!, value = structuredClone(row.value);
+    if (invalid === 'measured') value.request.usage.costUsd = 0.5;
+    if (invalid === 'settled') value.request.status = 'succeeded';
+    if (invalid === 'no-elapsed-overrun') value.charged.elapsedMs = value.ceiling.elapsedMs;
+    if (invalid === 'token-overrun') value.charged.tokens = value.ceiling.tokens + 1;
+    if (invalid === 'cost-overrun') value.charged.costUsd = value.ceiling.costUsd + 1;
+    if (invalid === 'foreign-root') {
+      f.ledger.allocate('other-root', { ...envelope, maxElapsedMs: 1_000_000 });
+      value.request.runId = 'other-root';
+    }
+    if (invalid === 'not-cancelled') {
+      const budget = f.store.get<StoredBudget>('budgets', 'root')!;
+      f.store.put('budgets', 'root', { ...budget.value, cancelled: false }, budget.revision);
+    }
+    f.store.put('requests', 'timeout', value, row.revision);
+    const policy = recoveryPolicy(f), before = ['budgets', 'allocations', 'requests'].map(namespace => f.store.list(namespace));
+    assert.throws(() => f.ledger.applyAllowanceAmendment(policy, host), /Elapsed overrun recovery/);
+    assert.deepEqual(['budgets', 'allocations', 'requests'].map(namespace => f.store.list(namespace)), before);
+    assert.equal(f.store.list('resource.allowance-amendments').length, 0);
+    assert.equal(f.store.events('root').length, 0);
+  });
+}
+
+for (const overrun of ['tokens', 'cost', 'elapsed'] as const) {
+  test(`recovery refuses another root request with ${overrun} overrun`, t => {
+    const f = fixture(t);
+    const cause = request('timeout'), other = request('other', 'root');
+    for (const r of [cause, other]) { f.ledger.reserve(r); f.ledger.dispatched({ ...r, status: 'dispatched' }); }
+    f.ledger.settle({ ...cause, status: 'uncertain', usage: { ...cause.usage, elapsedMs: 2 } });
+    f.ledger.settle({ ...other, status: 'succeeded', usage: { requests: 1, inputTokens: overrun === 'tokens' ? 41 : 40, outputTokens: 0, costUsd: overrun === 'cost' ? 0.6 : 0.5, elapsedMs: overrun === 'elapsed' ? 2 : 1 } });
+    const policy = recoveryPolicy(f), before = ['budgets', 'requests'].map(namespace => f.store.list(namespace));
+    assert.throws(() => f.ledger.applyAllowanceAmendment(policy, host), /another physical overrun/);
+    assert.deepEqual(['budgets', 'requests'].map(namespace => f.store.list(namespace)), before);
+    assert.equal(f.store.list('resource.allowance-amendments').length, 0);
+  });
+}
+
+test('enclosing rollback restores the cancelled budget, charges and missing recovery audit', t => {
+  const f = timedOut(t), policy = recoveryPolicy(f), before = ['budgets', 'allocations', 'requests'].map(namespace => f.store.list(namespace));
+  assert.throws(() => f.store.transaction(() => { f.ledger.applyAllowanceAmendment(policy, host); throw Error('host rollback'); }), /host rollback/);
+  assert.deepEqual(['budgets', 'allocations', 'requests'].map(namespace => f.store.list(namespace)), before);
+  assert.equal(f.store.list('resource.allowance-amendments').length, 0);
+  assert.equal(f.store.events('root').length, 0);
+  assert.throws(() => f.ledger.reserve(request('unrecorded-recovery')), /history unavailable/);
+  f.ledger.applyAllowanceAmendment(policy, host);
+  f.ledger.reserve(request('recorded-recovery'));
+});
