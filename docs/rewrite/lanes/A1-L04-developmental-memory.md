@@ -4,6 +4,8 @@ Status: **reviewing** — ordinary memory/context, consolidation and initiative 
 
 Requirements: [RW06, RW08, RW09, RW19](../../../REQUIREMENTS.md).
 
+2026-10-12 integration finding: root's [journal/forgetting inquiry](../evidence/A1-L04-journal-forgetting.md) reproduces retained raw memory content in opt-in journal events and snapshots after logical forgetting. Ordinary unbound memory passes. Source `b2efacd` in isolated `journal-forgetting` worktree preserves three failing regressions; production source was not changed. Root owns this bounded inquiry and its new evidence/test paths. Journal-backed retention/expiry qualification is open pending an explicit storage/observer retention decision and independently reviewed repair; earlier transaction-focused journal acceptance does not settle that contract.
+
 ```text
 /goal Complete A1-L04 by implementing a developmental memory and self-state system that retrieves relevant experience beyond the recent transcript, consolidates and corrects it with provenance, and demonstrably changes later judgments, interests and conduct across restarted sessions without prescribing a fixed personality.
 ```
