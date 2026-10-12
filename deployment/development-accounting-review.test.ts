@@ -109,3 +109,31 @@ test('known transport usage without retained raw response cannot release origina
   assert.throws(() => a.recordTransport({ requestId: q.id, dispatched: true, status: 'succeeded', httpStatus: 200, responseModel: profile.id, responseDigest: digest('missing'), usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } }), /Raw response unavailable/);
   a.resources.settle({ ...q, status: 'succeeded' }); assert.equal(a.originalRequest(q.id)!.status, 'uncertain'); assert.equal(f.original.snapshot(root).tokens, tokens);
 });
+
+function anchor(f: ReturnType<typeof fixture>, status: 'failed' | 'uncertain') {
+  const q: PhysicalRequest = { id: 'pre-registration', runId: root, purpose: 'reasoning', provider: 'effect-receiver', model: 'read', promptManifestId: 'prior', requestDigest: identity('prior'), reservationId: 'pre-registration', status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 1 } };
+  f.original.reserve(q);
+  if (status === 'uncertain') f.original.dispatched({ ...q, status: 'dispatched' });
+  f.original.settle({ ...q, status });
+  const row = f.originalStore.get<{ request: PhysicalRequest; ceiling: { tokens: number; costUsd: number; elapsedMs: number }; charged: { tokens: number; costUsd: number; elapsedMs: number } }>('requests', q.id)!.value;
+  f.registration.originalRequests.push({ rootId: root, roleId: 'original', configurationDigest: identity('old-config'), closureDigest: identity('old-closure'), allocationPath: [root], observedAt: new Date(epoch).toISOString(), ...row, payload: f.raw.putBytes(Buffer.from('prior')), prompt: null });
+}
+test('pre-registration uncertainty refuses bridge construction instead of manufacturing quiescence', t => {
+  const f = fixture(t); anchor(f, 'uncertain');
+  assert.throws(() => new DevelopmentAccounting(f.options()), /immutable and quiescent/);
+  assert.equal(f.original.request('pre-registration')!.status, 'uncertain');
+});
+test('changed settled original anchor fences immediate entry and keeps prior charge inventory', t => {
+  const f = fixture(t); anchor(f, 'failed'); const { a } = f.adapter(), q = model(a); dispatch(a, q);
+  const row = f.originalStore.get<{ request: PhysicalRequest }>('requests', 'pre-registration')!;
+  f.originalStore.put('requests', 'pre-registration', { ...row.value, request: { ...row.value.request, usage: { ...row.value.request.usage, elapsedMs: 2 } } }, row.revision);
+  assert.throws(() => a.assertEntry(q.id), /immutable|anchor/i); assert.equal(f.original.snapshot(root).requests, 2);
+});
+test('retry and compaction use distinct original identities with mapped parent provenance', t => {
+  const f = fixture(t), { a } = f.adapter(), first = model(a, 'first'); dispatch(a, first);
+  a.resources.settle({ ...first, status: 'uncertain' });
+  const retry = { ...model(a, 'retry'), parentRequestId: first.id }; dispatch(a, retry);
+  assert.equal(a.originalRequest(retry.id)!.parentRequestId, a.requestId(first.id));
+  assert.notEqual(a.requestId(first.id), a.requestId(retry.id)); assert.equal(f.original.snapshot(root).requests, 2);
+  assert.throws(() => a.resources.reserve(first), /already consumed/);
+});
