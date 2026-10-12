@@ -17,6 +17,7 @@ import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { createBrokerShell, captureBrokerTiming } from './broker-shell.ts';
 import { providerGateway, providerResponseRecorder, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
 import { selectedProviderKey, validateConfiguration, type ApplicationConfig, type ApplicationSecrets } from './config.ts';
+import { contextBudget } from './context-budget.ts';
 import { mindDevelopmentTools } from './development-tools.ts';
 import { AccountedConsolidation } from './consolidation.ts';
 import { ConversationObligations } from './obligation-tools.ts';
@@ -215,7 +216,7 @@ export class AutarkApplication {
         protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
-          compaction: { thresholdMessages: 60, thresholdBytes: 60000, retainMessages: 7, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
+          compaction: { ...contextBudget(config), instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
         timeoutMs: Math.min(config.conversationResources.maxElapsedMs, record.target && config.conversationTimeoutMs ? config.conversationTimeoutMs : config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
         retainToolInstructions: source => this.store.putArtifact(source),

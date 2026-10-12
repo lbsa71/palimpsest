@@ -7,18 +7,22 @@ import { digest, emptyUsage } from '../packages/agent-shell/mistral.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import { projectSourceObservation } from './source-observation.ts';
+import { contextBudget } from './context-budget.ts';
+import type { ModelProfile } from './model-grants.ts';
+import type { AllowanceAmendment } from '../packages/runtime/resources/index.ts';
 
 const envelope = { maxRequests: 256, maxTokens: 1000000, maxCostUsd: 5, maxElapsedMs: 604800000, maxConcurrency: 8 };
 const conversation = { ...envelope, maxRequests: 64, maxTokens: 250000, maxCostUsd: 1.25, maxConcurrency: 4 };
 function memoryStore(): OperationalStore {
   const rows = new Map<string, Map<string, { revision: number; value: unknown }>>();
-  return { transaction<T>(operation: () => T) { return operation(); }, get(namespace: string, key: string) { const row = rows.get(namespace)?.get(key); return row && structuredClone(row); },
+  const events: unknown[] = [];
+  return { transaction<T>(operation: () => T) { return operation(); }, append(_stream: string, event: unknown) { events.push(structuredClone(event)); return events.length; }, get(namespace: string, key: string) { const row = rows.get(namespace)?.get(key); return row && structuredClone(row); },
     put(namespace: string, key: string, value: unknown, expected: number | null) { const group = rows.get(namespace) ?? new Map(); rows.set(namespace, group); const old = group.get(key); assert.equal(old?.revision ?? null, expected); group.set(key, { revision: (old?.revision ?? -1) + 1, value: structuredClone(value) }); },
     list(namespace: string) { return [...(rows.get(namespace)?.entries() ?? [])].map(([key, row]) => ({ key, ...structuredClone(row) })); },
   } as unknown as OperationalStore;
 }
 function chargedToRun(store: OperationalStore): number { return store.list<{ request: { runId: string }; charged: { tokens: number } }>('requests').filter(row => row.value.request.runId === 'run').reduce((sum, row) => sum + row.value.charged.tokens, 0); }
-function fixture(thresholdBytes?: number, failedSummary = false, onlySource = false) {
+function fixture(thresholdBytes?: number, failedSummary = false, onlySource = false, amended = false, prefixBytes = 90000) {
   const store = memoryStore(), ledger = new ResourceLedger(store, { tokens: 250000, costUsd: 1, elapsedMs: 180000 }, () => 0);
   ledger.allocate('operating', envelope); ledger.allocate('run', conversation, 'operating');
   function prior(id: string, runId: string, tokens: number) {
@@ -26,13 +30,14 @@ function fixture(thresholdBytes?: number, failedSummary = false, onlySource = fa
     ledger.reserve(request); ledger.dispatched({ ...request, status: 'dispatched' }); ledger.settle({ ...request, status: 'succeeded' });
   }
   prior('other-history', 'operating', 682716); prior('conversation-history', 'run', 101497);
+  if (amended) ledger.applyAllowanceAmendment({ id: 'confirmed-user-policy', authorizationRef: 'fixture:user-selected-usd5', rootId: 'operating', expectedEnvelopeDigest: identity(envelope), cumulativeTokenLimit: null, scope: 'root-and-descendants', descendantCostLimit: 'root' }, { authority: { generation: 'fixture', epoch: 1, controlRevision: 'c1' }, assertAuthority() {} });
   const priorRows = [store.get('requests', 'other-history')!.value, store.get('requests', 'conversation-history')!.value];
   const files = Array.from({ length: 826 }, (_, index) => ({ path: `packages/fixture/accepted-source-with-realistic-long-path-${index}.ts`, sha256: digest(String(index)), bytes: 10 }));
   const sourceReceipt = { exitCode: 0, signal: null, stdout: JSON.stringify({ files, bytes: 8260, source: 'accepted application snapshot', copiedAt: '2026-10-12T00:00:00Z' }), stderr: '', elapsedMs: 1 };
   const assistant = (step: string, name: string) => ({ role: 'assistant', content: [{ type: 'toolCall', id: `call-${step}`, name, arguments: {} }], aeonStepId: step, stopReason: 'toolUse', api: 'mistral-chat-completions', provider: 'mistral', model: 'fixture', usage: emptyUsage(), timestamp: 0 });
   const result = (step: string, name: string, value: unknown, isError = false) => ({ role: 'toolResult', toolCallId: `call-${step}`, toolName: name, content: [{ type: 'text', text: canonicalJson(value) }], aeonStepId: step, isError, timestamp: 0 });
   const user = (content: string) => ({ role: 'user', content, timestamp: 0 });
-  const prefix = [user(onlySource ? 'Initial source request.' : 'p'.repeat(90000)), assistant('source', 'source_checkout'), result('source', 'source_checkout', sourceReceipt), ...Array.from({ length: onlySource ? 7 : 13 }, (_, index) => user(`Recorded input ${index}`))];
+  const prefix = [user(onlySource ? 'Initial source request.' : 'p'.repeat(prefixBytes)), assistant('source', 'source_checkout'), result('source', 'source_checkout', sourceReceipt), ...Array.from({ length: onlySource ? 7 : 13 }, (_, index) => user(`Recorded input ${index}`))];
   const workspaceFiles = Array.from({ length: 826 }, (_, index) => `packages/source/fixture-long-file-name-${index}.ts`);
   const tail = onlySource ? [] : [assistant('discover', 'workspace_discover'), result('discover', 'workspace_discover', { files: workspaceFiles }), assistant('command', 'command_run'), result('command', 'command_run', { error: 'Executable not granted' }, true), user(JSON.stringify({ hostContext: { previousMemory: 'h'.repeat(24533) } })), { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Prior admission refused', aeonStepId: 'refused', api: 'mistral-chat-completions', provider: 'mistral', model: 'fixture', usage: emptyUsage(), timestamp: 0 }, user(JSON.stringify({ hostContext: { boundedMemory: 'h'.repeat(8192) } }))];
   const history = [...prefix, ...tail];
@@ -93,4 +98,27 @@ test('byte trigger measures the projected model context, not the retained full s
 
 test('non-finite or non-positive byte thresholds are rejected before any physical request', () => {
   for (const threshold of [0, -1, 1.5, Infinity, NaN]) assert.throws(() => fixture(threshold), /context byte budget/);
+});
+
+test('confirmed money policy uses advertised model capacity instead of forcing a truncated summary before coding', async () => {
+  const model = { contextWindow: 1000000, maxOutputTokens: 8192 } as ModelProfile;
+  const budget = contextBudget({ model, allowanceAmendment: { id: 'explicit' } as AllowanceAmendment });
+  const old = fixture(60000, true, false, true), failed = await old.run();
+  assert.equal(failed.outcome.status, 'blocked'); assert.deepEqual(old.captured.map(v => v.purpose), ['compaction']);
+  const f = fixture(budget.thresholdBytes, true, false, true), before = structuredClone(f.initial), continued = await f.run();
+  assert.equal(continued.outcome.status, 'completed'); assert.deepEqual(f.captured.map(v => v.purpose), ['reasoning']); assert.equal(f.toolCalls, 0);
+  assert.deepEqual(f.artifacts.get(continued.checkpoint.artifact.sha256), before);
+  assert.ok(f.reservations[0]!.usage.inputTokens! + f.reservations[0]!.usage.outputTokens! + 101497 > 250000);
+  assert.equal(f.ledger.effectiveEnvelope('run').maxCostUsd, 5);
+  assert.deepEqual(f.store.get('requests', 'conversation-history')!.value, f.priorRows[1]);
+  const large = fixture(budget.thresholdBytes, false, false, true, 780000), compacted = await large.run();
+  assert.equal(compacted.outcome.status, 'completed'); assert.deepEqual(large.captured.map(v => v.purpose), ['compaction', 'reasoning']); assert.equal(large.toolCalls, 0);
+});
+
+test('unamended context trigger stays stable and amended bytes remain bounded by model and broker capacity', () => {
+  const model = { contextWindow: 1000000, maxOutputTokens: 8192 } as ModelProfile;
+  assert.deepEqual(contextBudget({ model }), { thresholdMessages: 60, thresholdBytes: 60000, retainMessages: 7 });
+  const amended = (contextWindow: number) => contextBudget({ model: { ...model, contextWindow }, allowanceAmendment: {} as AllowanceAmendment });
+  assert.equal(amended(1000000).thresholdBytes, 743856); assert.equal(amended(128000).thresholdBytes, 89856);
+  assert.equal(amended(10000000).thresholdBytes, 1500000); assert.equal(amended(1000000).thresholdMessages, 1000);
 });
