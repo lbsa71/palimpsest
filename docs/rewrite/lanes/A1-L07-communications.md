@@ -2,6 +2,8 @@
 
 **Scoped pilot handoff, 2026-10-12:** the [Slack pilot](../slack-pilot.md) is live and the user confirms a good reply and visible ingestion reactions. PILOT-05 source `79c5a14` adds deterministic `eyes`; 28 focused checks and strict passed independent review. PILOT-06 source `9f5d898` repairs an observed silent worker deadline with one accounted host notice and an initial conversational speech instruction; 33 focused checks and strict passed independent review. Actual Slack host speech removed the stalled eyes; a fresh natural direct model conversation replied in about 16 seconds and completed. The whole original configuration and grants remain. The broader lane backlog remains paused; historical audit permissions below do not describe this later authorized deployment.
 
+**PILOT-07:** `7fb8f3e` adds the user's exact private DM grant and writable App Home/scope/event manifest. New DM4 plus existing focused33 passed 37/37 and strict, independently repeated against the frozen successor. Runtime support is deployed; actual bot authorization still lacks `im:history`. Owner settings/reinstall and a real DM exchange remain pending; see the pilot handoff before further activation or live claims.
+
 **Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
 
 Status: **reviewing** — ordinary communication/recovery/report paths integrated and fixture-verified with fresh application/offline boundary review; authentic live interaction and full lane acceptance pending. Session owner: **`/root/a1_communications`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
