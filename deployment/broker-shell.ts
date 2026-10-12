@@ -18,7 +18,7 @@ export interface TransportReceipt {
    * request-default inference, never an observation of the served tier. */
   responseServiceTier?: JsonValue;
 }
-type WorkerConfig = Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'endpoint' | 'toolInstructions'>;
+type WorkerConfig = Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'projectToolResult' | 'endpoint' | 'toolInstructions'>;
 /** Host callbacks, invoked without a receiver; never worker/model configuration. */
 export interface BrokerTiming {
   monotonicNow(): number;

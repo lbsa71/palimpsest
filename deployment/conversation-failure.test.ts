@@ -4,13 +4,20 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PhysicalRequest } from '../packages/contracts/index.ts';
+import type { PhysicalRequest, ShellInput } from '../packages/contracts/index.ts';
 import type { SlackApi } from '../packages/communications/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { AutarkApplication, type ApplicationOptions } from './application.ts';
 import type { ApplicationConfig } from './config.ts';
 
 const turns = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const blockedWorker: ApplicationOptions['runWorker'] = async options => {
+  const start = options.initial as unknown as { input: ShellInput };
+  const checkpoint = await options.handle('persistCheckpoint', [start.input.run.id, start.input.run.revision, 'fixture-shell', {
+    schema: 'fixture-shell', status: 'blocked', messages: [], observationIds: [], failure: { stage: 'model', reason: 'private diagnostic must not be published' },
+  }], new AbortController().signal);
+  return { status: 'blocked', checkpoint, observations: [] };
+};
 function fixture(worker: ApplicationOptions['runWorker'] = async () => { throw Error('Worker deadline exceeded'); }, loseReceipt = false) {
   const root = mkdtempSync(join(tmpdir(), 'conversation-failure-'));
   const stateDirectory = join(root, 'state'), workspaceDirectory = join(root, 'work'); mkdirSync(stateDirectory); mkdirSync(workspaceDirectory);
@@ -44,7 +51,7 @@ test('a deadline sends one accounted host interruption, clears eyes, and retains
   const f = fixture();
   try {
     const run = await f.admit();
-    const allocation = f.app.store.get('allocations', run.id)!.value;
+    const allocation = f.app.store.get<{ envelope: unknown; startedAt: number; parentRunId: string; elapsedFloorMs: number }>('allocations', run.id)!.value;
     const grant = f.app.store.get('host.run-grants', run.id)!.value;
     const uncertain: PhysicalRequest = { id: 'prior-model', runId: run.id, purpose: 'reasoning', provider: 'fixture', model: 'fixture-model', promptManifestId: 'prior', requestDigest: '0'.repeat(64), reservationId: 'prior-model', status: 'reserved', usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: 0.1, elapsedMs: 0 } };
     // Keep the synthetic request's ceiling within the original conversation allowance.
@@ -118,5 +125,53 @@ test('startup notifies an old stranded deadline without changing its checkpoint 
     await f.app.tick(); await f.app.tick();
     assert.equal(f.calls.filter(call => call.method === 'chat.postMessage').length, 1); assert.equal(f.workerCalls, 1);
     assert.deepEqual(f.app.store.get('execution', run.id)!.value, state);
+  } finally { await f.close(); }
+});
+
+test('a retained blocked model checkpoint gets one accounted status and clears eyes without inference or history mutation', async () => {
+  const f = fixture(blockedWorker);
+  try {
+    const run = await f.admit();
+    assert.equal((await f.app.runtime.resume(run.id, f.app.prompt)).status, 'blocked');
+    const state = f.app.store.get('execution', run.id)!.value;
+    const allocation = f.app.store.get<{ envelope: unknown; startedAt: number; parentRunId: string; elapsedFloorMs: number }>('allocations', run.id)!.value;
+    await f.app.tick(); await turns(); await f.app.tick();
+    const posts = f.calls.filter(call => call.method === 'chat.postMessage');
+    assert.equal(posts.length, 1); assert.match(posts[0]!.args.text!, /^\[Host status\].*model request/);
+    assert.equal(posts[0]!.args.text!.includes('private diagnostic'), false);
+    assert.ok(f.calls.some(call => call.method === 'reactions.remove'));
+    const effect = f.app.store.list('effects').find(row => row.key.startsWith('host:blocked:'))!;
+    assert.equal(f.app.resources.request(effect.key)!.status, 'succeeded');
+    assert.deepEqual(f.app.store.get('execution', run.id)!.value, state);
+    const retained = f.app.store.get<typeof allocation>('allocations', run.id)!.value;
+    assert.deepEqual(retained.envelope, allocation.envelope); assert.equal(retained.startedAt, allocation.startedAt);
+    assert.equal(retained.parentRunId, allocation.parentRunId); assert.ok(retained.elapsedFloorMs >= allocation.elapsedFloorMs);
+    await f.reopen(); await f.app.tick();
+    assert.equal(f.calls.filter(call => call.method === 'chat.postMessage').length, 1); assert.equal(f.workerCalls, 1);
+  } finally { await f.close(); }
+});
+
+test('blocked notices require real saved failure and exclude steering or cancelled conversations', async () => {
+  for (const mode of ['no-checkpoint', 'steer', 'cancel'] as const) {
+    const f = fixture(mode === 'no-checkpoint' ? async () => ({ status: 'blocked', observations: [] }) : blockedWorker);
+    try {
+      const run = await f.admit(); await f.app.runtime.resume(run.id, f.app.prompt);
+      if (mode === 'steer') f.app.runtime.steer(run.id, { id: 'new', source: 'fixture', externalId: 'new', externalRevision: '1', actorId: 'U1', authenticated: true, scope: run.scope, value: 'new direction' });
+      if (mode === 'cancel') f.app.runtime.cancel(run.id, 'fixture', 'cancel');
+      await f.app.tick();
+      assert.equal(f.calls.filter(call => call.method === 'chat.postMessage').length, 0, mode);
+    } finally { await f.close(); }
+  }
+});
+
+test('unknown blocked status delivery reconciles once without sending twice', async () => {
+  const f = fixture(blockedWorker, true);
+  try {
+    const run = await f.admit(); await f.app.runtime.resume(run.id, f.app.prompt); await f.app.tick();
+    const notice = f.app.store.list('effects').find(row => row.key.startsWith('host:blocked:'))!;
+    assert.equal(f.app.effects.get(notice.key)!.status, 'uncertain');
+    await f.reopen(); await f.app.tick(); await turns();
+    assert.equal(f.calls.filter(call => call.method === 'chat.postMessage').length, 1);
+    assert.equal(f.app.effects.get(notice.key)!.status, 'succeeded'); assert.equal(f.workerCalls, 1);
   } finally { await f.close(); }
 });

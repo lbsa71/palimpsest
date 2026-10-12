@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort } from '../packages/contracts/index.ts';
+import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort, type ShellCheckpoint, type ShellResult } from '../packages/contracts/index.ts';
 import type { Tool } from '../packages/agent-shell/vendor/pi/ai/types.ts';
 import { OperationalStore, type DocumentJournalOptions } from '../packages/storage/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
@@ -354,19 +354,32 @@ export class AutarkApplication {
   }
   /** A host interruption is speech, never a new inference attempt or a grant reset. */
   private async notifyConversationFailures(): Promise<void> {
-    const ids = new Set(this.store.list<Effect>('effects').filter(row => row.key.startsWith('host:deadline:')).map(row => row.key));
+    const ids = new Set(this.store.list<Effect>('effects').filter(row => row.key.startsWith('host:deadline:') || row.key.startsWith('host:blocked:')).map(row => row.key));
     for (const { value: run } of this.store.list<Run>('runs')) {
-      if (run.status !== 'waiting' || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
-      const state = this.store.get<{ failure?: string; failedAttempt?: number; checkpoint?: JsonValue; messageSequence?: number }>('execution', run.id)?.value;
-      if (state?.failure !== 'Worker deadline exceeded') continue;
+      if (!['waiting', 'blocked'].includes(run.status) || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+      const state = this.store.get<{ failure?: string; failedAttempt?: number; checkpoint?: ShellCheckpoint; lastResult?: ShellResult; messageSequence?: number }>('execution', run.id)?.value;
+      let id: string, text: string;
+      if (run.status === 'waiting' && state?.failure === 'Worker deadline exceeded') {
+        // Legacy stranded attempts retain a checkpoint identity across authority adoption.
+        id = `host:deadline:${identity({ runId: run.id, attempt: state.failedAttempt ?? { checkpoint: state.checkpoint ?? null, messageSequence: state.messageSequence ?? 0 } })}`;
+        text = '[Host status] This turn stopped because its execution time limit was reached. No automatic retry has been started. Your message and recorded work are retained.';
+      } else if (run.status === 'blocked' && state?.lastResult?.status === 'blocked' && state.checkpoint && state.lastResult.checkpoint?.artifact.sha256 === state.checkpoint.artifact.sha256) {
+        let snapshot: { status?: string; failure?: { stage?: string; reason?: string } };
+        try { snapshot = this.store.readJsonArtifact(state.checkpoint.artifact); } catch { continue; }
+        if (snapshot.status !== 'blocked' || typeof snapshot.failure?.reason !== 'string') continue;
+        const stages: Record<string, string> = { model: 'model request', tool: 'tool execution', recovery: 'checkpoint recovery', compaction: 'context compaction' };
+        const name = snapshot.failure.stage ?? ''; if (!Object.hasOwn(stages, name)) continue;
+        const stage = stages[name];
+        // Publish a fixed stage description, never private provider diagnostics or context.
+        id = `host:blocked:${identity({ runId: run.id, checkpoint: state.checkpoint.artifact.sha256, messageSequence: state.messageSequence ?? 0 })}`;
+        text = `[Host status] This turn stopped at the ${stage} step. No automatic retry has been started. Your message and recorded work are retained.`;
+      } else continue;
       const target = this.store.get<GrantRecord>('host.run-grants', run.id)?.value.target;
       if (!target || target.transport === 'slack' && !this.config.slack?.allowSpeech) continue;
-      // Legacy stranded attempts retain a checkpoint identity across authority adoption.
-      const id = `host:deadline:${identity({ runId: run.id, attempt: state.failedAttempt ?? { checkpoint: state.checkpoint ?? null, messageSequence: state.messageSequence ?? 0 } })}`;
       ids.add(id);
       if (this.checkedFailureNotices.has(id) || this.effects.get(id)) continue;
       this.checkedFailureNotices.add(id);
-      const payload = { channel: target.channel, ...(target.threadTs ? { threadTs: target.threadTs } : {}), kind: 'message', text: '[Host status] This turn stopped because its execution time limit was reached. No automatic retry has been started. Your message and recorded work are retained.' };
+      const payload = { channel: target.channel, ...(target.threadTs ? { threadTs: target.threadTs } : {}), kind: 'message', text };
       const request: PhysicalRequest = { id, runId: run.id, purpose: 'reasoning', provider: 'effect-receiver', model: 'speech_send', promptManifestId: id, requestDigest: identity(payload), reservationId: id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
       try {
         this.store.transaction(() => {
@@ -386,7 +399,12 @@ export class AutarkApplication {
       try {
         if (effect.status === 'authorized') {
           const run = this.runtime.getRun(effect.runId);
-          if (run?.status !== 'waiting' || this.hasPendingSteering(effect.runId)) continue;
+          if (!run || this.hasPendingSteering(effect.runId) || this.managedElsewhere(run.id) || this.evolution.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+          if (id.startsWith('host:deadline:') && run.status !== 'waiting') continue;
+          if (id.startsWith('host:blocked:')) {
+            const current = this.store.get<{ checkpoint?: ShellCheckpoint; messageSequence?: number }>('execution', run.id)?.value;
+            if (run.status !== 'blocked' || !current?.checkpoint || id !== `host:blocked:${identity({ runId: run.id, checkpoint: current.checkpoint.artifact.sha256, messageSequence: current.messageSequence ?? 0 })}`) continue;
+          }
           const request = this.resources.request(id)!;
           const started = this.noticeElapsedNow();
           effect = await this.effects.dispatch(id, run.authority, this.shutdown.signal, () => this.resources.dispatched({ ...request, status: 'dispatched' }));

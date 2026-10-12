@@ -1,8 +1,9 @@
 import { createInterface } from 'node:readline';
 import { createAgentShell, type ShellOptions } from '../packages/agent-shell/index.ts';
 import type { JsonValue, ShellBridge, ShellInput } from '../packages/contracts/index.ts';
+import { projectSourceObservation } from './source-observation.ts';
 
-interface Startup { input: ShellInput; options: Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate'>; fragments: Record<string, string> }
+interface Startup { input: ShellInput; options: Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'projectToolResult'>; fragments: Record<string, string> }
 const pending = new Map<string, { resolve(value: JsonValue): void; reject(error: Error): void }>();
 let sequence = 0;
 let started = false;
@@ -15,7 +16,7 @@ function rpc<T>(method: string, ...args: unknown[]): Promise<T> {
   });
 }
 async function main(start: Startup): Promise<void> {
-  const shell = createAgentShell({ ...start.options, apiKey: () => 'host-transport-owned',
+  const shell = createAgentShell({ ...start.options, projectToolResult: projectSourceObservation, apiKey: () => 'host-transport-owned',
     async resolveFragment(fragment) {
       const content = start.fragments[fragment.artifact.sha256];
       if (content === undefined) throw new Error('Undeclared worker prompt fragment');

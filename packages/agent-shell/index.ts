@@ -24,6 +24,8 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   steering?: () => Promise<Message[]>;
   /** Explicit conservative host ceiling; unknown defaults require a runtime per-request ceiling. */
   reservationEstimate?: (attempt: Attempt) => ResourceUsage;
+  /** Host-owned model rendering; never replaces durable observations or history. */
+  projectToolResult?: (message: ToolResultMessage) => ToolResultMessage;
   compaction?: { thresholdMessages: number; retainMessages: number; instruction: PromptFragment };
 }
 interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[] }
@@ -72,6 +74,13 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       let failure: Snapshot['failure'];
       let stage = 'recovery';
       let compactions: Snapshot['compactions'] = [];
+      function projectedToolResult(item: ToolResultMessage): ToolResultMessage {
+        if (!options.projectToolResult) return item;
+        const projected = options.projectToolResult(structuredClone(item));
+        invariant(projected.role === 'toolResult' && projected.toolCallId === item.toolCallId && projected.toolName === item.toolName && projected.isError === item.isError && projected.timestamp === item.timestamp, 'Model projection changed tool identity');
+        return projected;
+      }
+      const modelMessages = (messages: Message[]): Message[] => messages.map(item => item.role === 'toolResult' ? projectedToolResult(item) : item);
       if (input.checkpoint) {
         validateCheckpoint(input.checkpoint, input.run);
         invariant(input.checkpoint.shell === SHELL_REVISION, 'Unsupported shell checkpoint revision');
@@ -206,7 +215,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         const model = provider === 'openai' ? openaiModel(options.model!, options.modelProfile) : mistralModel(options.model, options.modelProfile);
         stage = 'model';
         await runAgentLoopContinue({ messages: [system(), ...continuationMessages()], tools: wrapped }, {
-          model, clock: environment, convertToLlm: messages => messages, toolExecution: 'sequential',
+          model, clock: environment, convertToLlm: messages => modelMessages(messages), toolExecution: 'sequential',
           getSteeringMessages: options.steering ? async () => (await options.steering!()).filter(item => item.role !== 'system') : undefined,
           finishTurn: ({ message }) => halted || message.stopReason === 'length' ? { action: 'end' } : undefined,
           async prepareRequest() {
@@ -223,7 +232,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
                 const fragment = options.compaction.instruction; const instruction = await resolve(fragment);
                 currentFragments = [...fragments, { ...fragment, order: Math.max(-1, ...fragments.map(item => item.order)) + 1 }];
                 transport.setPurpose('compaction');
-                const summary = await (await transport.stream(model, normalizeContext({ messages: [{ role: 'system', content: `${basePrompt}\n\n${instruction}`, timestamp: 0 }, { role: 'user', content: canonicalJson(json(prefix)), timestamp: environment.wallNow() }] }), { signal })).result();
+                const summary = await (await transport.stream(model, normalizeContext({ messages: [{ role: 'system', content: `${basePrompt}\n\n${instruction}`, timestamp: 0 }, { role: 'user', content: canonicalJson(json(modelMessages(prefix))), timestamp: environment.wallNow() }] }), { signal })).result();
                 currentFragments = fragments; transport.setPurpose('reasoning');
                 invariant(summary.stopReason === 'stop' && !summary.content.some(block => block.type === 'toolCall'), 'Compaction failed; original context retained');
                 compactions.push({ sourceDigest: identity(json(prefix)), summary: structuredClone(summary) });
