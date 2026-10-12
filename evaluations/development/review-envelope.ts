@@ -28,11 +28,12 @@ export interface DevelopmentRegistration {
   roles: DevelopmentRoleBinding[]; originalRequests: DevelopmentRequestState[];
 }
 /** Signed original bytes plus an explicitly derived behavioral view. No v1 wire reinterpretation. */
+export interface DevelopmentArtifactIndexEntry { artifact: ArtifactRef; bytes: number }
 export interface DevelopmentBehavior {
   version: 2; registrationDigest: string; frozenAt: string;
   manifest: Signed<DevelopmentAttempt>; observations: Signed<DevelopmentObservation>[];
   requests: DevelopmentRequestState[]; transitions: DevelopmentAccountingTransition[]; rootCancelled: boolean; evidence: CollectedDevelopment;
-  artifactIndex: { artifact: ArtifactRef; bytes: number }[];
+  artifactIndex: DevelopmentArtifactIndexEntry[];
 }
 export interface DevelopmentReviewBinding {
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string;
@@ -43,7 +44,7 @@ export interface DevelopmentReviewExecution {
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string;
   requestId: string; requestIdentityDigest: string; settledStateDigest: string; settlementDigest: string;
   input: ArtifactRef; response: ArtifactRef; output: ArtifactRef; derivedAt: string;
-  evidenceReads: { requestId: string; artifact: ArtifactRef }[];
+  evidenceReads: { requestId: string; artifact: ArtifactRef; localToolCallId: string; localRunId: string; stepId: string }[];
   decoder: 'mistral-chat-final.v1' | 'openai-responses-final.v1';
 }
 export interface DevelopmentReviewInput {
@@ -67,7 +68,7 @@ export interface DevelopmentAccountingTransition {
 }
 export interface DevelopmentAccountingTail {
   version: 2; registrationDigest: string; behaviorDigest: string;
-  transitions: DevelopmentAccountingTransition[];
+  transitions: DevelopmentAccountingTransition[]; artifactIndex: DevelopmentArtifactIndexEntry[];
 }
 export interface DevelopmentClosure {
   version: 2; registrationDigest: string; behaviorDigest: string; tailDigest: string;
@@ -113,6 +114,7 @@ function retained(reader: BoundedArtifactReader, limits: DevelopmentAttempt['lim
     exact(ref, 'uri,sha256'); digest(ref.sha256);
     invariant([`sha256:${ref.sha256}`, `aeon:artifact:${ref.sha256}`, `shell:tools:${ref.sha256}`].includes(ref.uri), 'Content-addressed retained bytes required');
     const prior = bytes.get(ref.sha256); if (prior) { invariant(prior.byteLength <= callerBound, 'Cached artifact exceeds caller bound'); return prior; }
+    invariant(bytes.size < limits.maxRecords, 'Retained artifact record allowance exceeded');
     const bound = Math.min(callerBound, limits.maxArtifactBytes, limits.maxEvidenceBytes - total);
     invariant(bound > 0, 'Aggregate evidence allowance exhausted');
     const data = Uint8Array.from(reader(ref, bound)); invariant(data.byteLength <= bound, 'Reader exceeded v2 pre-read bound'); equal(hashBytes(data), ref.sha256, 'Retained artifact digest mismatch');
@@ -120,6 +122,39 @@ function retained(reader: BoundedArtifactReader, limits: DevelopmentAttempt['lim
   };
   return { read, scan: (value: unknown) => refs(value, read), index: () => [...bytes].map(([sha256, data]) => ({ artifact: { uri: `sha256:${sha256}`, sha256 }, bytes: data.byteLength })).sort((a, b) => a.artifact.sha256.localeCompare(b.artifact.sha256)) };
 }
+
+/** Inventories are wire data: aliases, duplicate digests and caller-asserted lengths are not canonical. */
+function validateIndex(index: DevelopmentArtifactIndexEntry[], limits: DevelopmentAttempt['limits']): void {
+  invariant(Array.isArray(index) && index.length <= limits.maxRecords, 'Bounded retained artifact index required');
+  let previous = '';
+  for (const entry of index) {
+    exact(entry, 'artifact,bytes'); exact(entry.artifact, 'uri,sha256'); digest(entry.artifact.sha256);
+    invariant(entry.artifact.uri === `sha256:${entry.artifact.sha256}` && entry.artifact.sha256 > previous, 'Canonical sorted unique artifact index required');
+    integer(entry.bytes, 'retained bytes'); invariant(entry.bytes <= limits.maxArtifactBytes, 'Retained artifact index exceeds artifact allowance'); previous = entry.artifact.sha256;
+  }
+}
+function behaviorRecords(r: DevelopmentRegistration, b: Pick<DevelopmentBehavior, 'observations' | 'requests' | 'transitions' | 'artifactIndex'>): number {
+  return b.observations.length + r.originalRequests.length + b.requests.length + b.transitions.length + b.artifactIndex.length;
+}
+/** Recorder supplies its complete durable extra inventory; no self-authenticating completeness claim. */
+export function collectDevelopmentAccountingTail(registrationDigest: string, behavior: DevelopmentBehavior, transitions: DevelopmentAccountingTransition[], reviews: Signed<DevelopmentReviewBinding>[], retainedArtifacts: readonly ArtifactRef[], reader: BoundedArtifactReader, limits: DevelopmentAttempt['limits']): DevelopmentAccountingTail {
+  const input = inertSnapshot({ registrationDigest, behavior, transitions, reviews, retainedArtifacts, limits });
+  digest(input.registrationDigest); invariant(input.registrationDigest === input.behavior.registrationDigest, 'Tail changed registration/B');
+  equal(input.limits, input.behavior.manifest.value.limits, 'Tail changed original evidence allowance');
+  limits = input.limits; validateIndex(input.behavior.artifactIndex, limits);
+  const storage = retained(reader, limits), original = new Set(input.behavior.artifactIndex.map(e => e.artifact.sha256));
+  for (const entry of input.behavior.artifactIndex) invariant(storage.read(entry.artifact).byteLength === entry.bytes, 'Retained B index byte length changed');
+  storage.scan({ transitions: input.transitions, reviews: input.reviews, retainedArtifacts: input.retainedArtifacts });
+  for (const transition of input.transitions) if (transition.state.prompt) {
+    const captured = JSON.parse(Buffer.from(storage.read(transition.state.prompt)).toString('utf8')); storage.scan(captured);
+  }
+  const tail: DevelopmentAccountingTail = { version: 2, registrationDigest, behaviorDigest: identity(input.behavior), transitions: input.transitions, artifactIndex: storage.index().filter(e => !original.has(e.artifact.sha256)) };
+  const originalCount = input.behavior.manifest.value.grant.originalAccounting.requestIds.length;
+  invariant(input.behavior.observations.length + originalCount + input.behavior.requests.length + input.behavior.transitions.length + input.behavior.artifactIndex.length + tail.transitions.length + input.reviews.length + tail.artifactIndex.length <= limits.maxRecords, 'Joined bounded record allowance exceeded');
+  invariant(Buffer.byteLength(canonicalJson(tail)) + storage.index().reduce((n, e) => n + e.bytes, 0) <= limits.maxEvidenceBytes, 'Tail evidence allowance exceeded');
+  return tail;
+}
+
 /** Identity excludes only mutable status and usage, exactly as ResourceLedger.sameRequest. */
 export function developmentRequestIdentity(request: PhysicalRequest): string { const { status, usage, ...immutable } = request; return identity(immutable); }
 
@@ -297,18 +332,28 @@ function modelExecution(binding: DevelopmentReviewBinding, b: DevelopmentBehavio
   }
   invariant(decoded.judgment.overall === reviewed.overall, 'Signed overall judgment changed model output'); reason(decoded.judgment.reason, reviewed.judgment);
   unique(x.evidenceReads.map(v => v.requestId));
+  const observedReads = transitions.filter(t => t.state.roleId === role.id && t.state.request.provider === 'effect-receiver' && t.state.request.model === 'evidence_read' && t.state.request.status === 'succeeded');
+  equal(x.evidenceReads.map(v => v.requestId).sort(), observedReads.map(t => t.state.request.id).sort(), 'Review evidence read inventory omits/changes observed succeeded reviewer requests');
   for (const access of x.evidenceReads) {
-    exact(access, 'requestId,artifact'); invariant(b.artifactIndex.some(v => v.artifact.sha256 === access.artifact.sha256), 'Model evidence read outside sealed B index');
+    exact(access, 'requestId,artifact,localToolCallId,localRunId,stepId'); id(access.localToolCallId); id(access.localRunId); id(access.stepId); invariant(b.artifactIndex.some(v => v.artifact.sha256 === access.artifact.sha256), 'Model evidence read outside sealed B index');
     const event = transitions.find(t => t.state.request.id === access.requestId && t.state.request.status === 'succeeded');
     invariant(event?.settlement && event.state.roleId === role.id && event.state.request.provider === 'effect-receiver' && event.state.request.model === 'evidence_read' && event.settlement.value.response?.sha256 === access.artifact.sha256 && transitions.indexOf(event) < transitions.indexOf(dispatched) && at(event.state.observedAt) <= at(dispatched.state.observedAt), 'Judgment evidence read lacks prior accounted role/byte provenance');
     const accessPayload = JSON.parse(Buffer.from(read(event.state.payload, 1_000_000)).toString('utf8'));
-    invariant(accessPayload.artifact?.sha256 === access.artifact.sha256, 'Evidence read payload substituted artifact'); read(access.artifact, 1_000_000);
+    exact(accessPayload, 'id,runId,stepId,name,arguments'); exact(accessPayload.arguments, 'artifact');
+    invariant(canonicalJson(accessPayload) === Buffer.from(read(event.state.payload, 1_000_000)).toString('utf8'), 'Evidence read requires canonical actual ToolCall bytes');
+    invariant(accessPayload.id === access.localToolCallId && accessPayload.runId === access.localRunId && accessPayload.stepId === access.stepId && accessPayload.name === 'evidence_read', 'Evidence read changed actual ToolCall identity/name/run/step');
+    const mappedRequest = `development-request:${identity([identity(r), role.id, `tool:${access.localToolCallId}`])}`;
+    const mappedRun = `development-run:${identity([identity(r), role.id, access.localRunId])}`;
+    invariant(event.state.request.id === mappedRequest && event.state.request.reservationId === mappedRequest && event.state.request.promptManifestId === `tool:${access.localToolCallId}` && event.state.request.runId === mappedRun && mappedRun === dispatched.state.request.runId && event.state.request.purpose === 'reasoning', 'Evidence read changed actual local-to-original request/run binding');
+    equal(accessPayload.arguments.artifact, access.artifact, 'Evidence read payload substituted artifact');
+    invariant(b.artifactIndex.some(v => identity(v.artifact) === identity(access.artifact)), 'Evidence read changed accepted B artifact/audience');
+    equal(event.settlement.value.response, access.artifact, 'Evidence read substituted succeeded receipt bytes'); read(access.artifact, 1_000_000);
   }
 }
 
 /** Host collector returns an unsigned B; the qualified observer signs these exact bytes. */
-export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], requests: DevelopmentRequestState[], transitions: DevelopmentAccountingTransition[], frozenAt: string, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now()): DevelopmentBehavior {
-  const input = inertSnapshot({ document, manifest, observations, requests, transitions, frozenAt });
+export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistration>, manifest: Signed<DevelopmentAttempt>, observations: Signed<DevelopmentObservation>[], requests: DevelopmentRequestState[], transitions: DevelopmentAccountingTransition[], frozenAt: string, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now(), retainedArtifacts: readonly ArtifactRef[] = []): DevelopmentBehavior {
+  const input = inertSnapshot({ document, manifest, observations, requests, transitions, frozenAt, retainedArtifacts });
   const { r, m, roles } = registration(input.document, input.manifest, trust, now), storage = retained(reader, m.limits);
   unique([...r.originalRequests, ...input.requests].map(s => s.request.id));
   invariant(input.observations.length + r.originalRequests.length + input.requests.length + input.transitions.length <= m.limits.maxRecords, 'Behavior record allowance exceeded');
@@ -327,8 +372,9 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
   const evidence = collectDevelopmentEvidenceProjection(input.manifest, input.observations, trust.behavior, storage.read, profiles(input.requests, roles), now).evidence;
   const end = input.observations.filter(o => o.value.data.kind === 'end'); invariant(end.length === 1 && at(end[0]!.value.observedAt) === at(input.frozenAt) && at(input.frozenAt) <= at(m.deadlineAt), 'B freeze must equal original behavioral stopping point');
   invariant(evidence.finalAccounting, 'Missing freeze-time A0'); accounting(evidence.finalAccounting, [...r.originalRequests, ...input.requests], m, input.frozenAt);
-  storage.scan({ manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, originalRequests: r.originalRequests });
+  storage.scan({ manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, originalRequests: r.originalRequests, retainedArtifacts: input.retainedArtifacts });
   const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, rootCancelled: history.rootCancelled, evidence, artifactIndex: storage.index() };
+  invariant(behaviorRecords(r, behavior) <= m.limits.maxRecords, 'Behavior record allowance exceeded');
   invariant(Buffer.byteLength(canonicalJson(behavior)) + behavior.artifactIndex.reduce((n, a) => n + a.bytes, 0) <= m.limits.maxEvidenceBytes, 'Behavior evidence allowance exceeded');
   return behavior;
 }
@@ -343,7 +389,8 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     const b = authenticate(reviewEnvelopeDomains.behavior, envelope.behavior, observer); exact(b, 'version,registrationDigest,frozenAt,manifest,observations,requests,transitions,rootCancelled,evidence,artifactIndex'); invariant(b.version === 2, 'Unsupported B version');
     const { r, m, roles } = registration(envelope.registration, b.manifest, trust, now);
     const storage = retained(reader, m.limits, Buffer.byteLength(canonicalJson(envelope)));
-    const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now); equal(b, collected, 'Changed immutable B/evidence/artifact index');
+    validateIndex(b.artifactIndex, m.limits);
+    const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now, b.artifactIndex.map(e => e.artifact)); equal(b, collected, 'Changed immutable B/evidence/artifact index');
     const behaviorDigest = identity(b), reviews: Signed<DevelopmentReview>[] = []; invariant(envelope.reviews.length <= 2, 'At most two independent review bindings'); unique(envelope.reviews.map(v => v.signer));
     for (const signed of envelope.reviews) {
       const reviewer = trust.behavior.reviewers.get(signed.signer); invariant(reviewer, 'Unqualified reviewer'); const v = authenticate(reviewEnvelopeDomains.review, signed, new Map([[signed.signer, reviewer.key]]));
@@ -353,12 +400,15 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     }
     behavioralReview = prepareDevelopmentEvidenceProjection(b.manifest, b.observations, reviews, trust.behavior, storage.read, profiles(b.requests, roles), now).result;
     findings.push(...behavioralReview.findings);
-    const tail = authenticate(reviewEnvelopeDomains.tail, envelope.accountingTail, observer); exact(tail, 'version,registrationDigest,behaviorDigest,transitions');
+    const tail = authenticate(reviewEnvelopeDomains.tail, envelope.accountingTail, observer); exact(tail, 'version,registrationDigest,behaviorDigest,transitions,artifactIndex');
     invariant(tail.version === 2 && tail.registrationDigest === identity(r) && tail.behaviorDigest === behaviorDigest, 'Tail changed registration/B');
-    invariant(b.observations.length + r.originalRequests.length + b.requests.length + b.transitions.length + tail.transitions.length + envelope.reviews.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
+    invariant(behaviorRecords(r, b) + tail.transitions.length + envelope.reviews.length + tail.artifactIndex.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
     const { latest, previousTime, rootCancelled } = replay(tail.transitions, [...r.originalRequests, ...b.requests], b.rootCancelled, 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
     for (const binding of envelope.reviews) modelExecution(binding.value, b, r, roles, tail.transitions, latest, trust, storage.read);
+    validateIndex(tail.artifactIndex, m.limits);
     storage.scan(envelope);
+    const originalDigests = new Set(b.artifactIndex.map(e => e.artifact.sha256));
+    equal(tail.artifactIndex, storage.index().filter(e => !originalDigests.has(e.artifact.sha256)), 'Changed/missing retained T artifact index');
     if (!envelope.closure) findings.push({ code: 'closure', status: 'unavailable', detail: 'Missing final original-grant closure' });
     else {
       const c = authenticate(reviewEnvelopeDomains.closure, envelope.closure, new Map([[trust.closure.id, trust.closure.key]])); exact(c, 'version,registrationDigest,behaviorDigest,tailDigest,reviewDigests,closedAt,rootCancelled,requestStates,accounting');
