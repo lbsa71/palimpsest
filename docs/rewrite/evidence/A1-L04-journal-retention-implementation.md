@@ -53,30 +53,15 @@ diff --git a/packages/storage/test/document-journal-review.test.ts b/packages/st
 index 5739b05..9c1cec6 100644
 --- a/packages/storage/test/document-journal-review.test.ts
 +++ b/packages/storage/test/document-journal-review.test.ts
-@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
- import { dirname, join } from 'node:path';
- import { fileURLToPath } from 'node:url';
- import { DatabaseSync } from 'node:sqlite';
+@@ -8 +8 @@ import { DatabaseSync } from 'node:sqlite';
 -import { OperationalStore, RevisionConflict, DOCUMENT_JOURNAL_NAMESPACE, type DocumentJournalOptions, type EventInput } from '../index.ts';
 +import { OperationalStore, RevisionConflict, DOCUMENT_JOURNAL_NAMESPACE, type DocumentJournalOptions, type EventInput, type JournalRef } from '../index.ts';
- import { AutarkApplication } from '../../../deployment/application.ts';
- import type { ApplicationConfig } from '../../../deployment/config.ts';
- import { AuthorityStore } from '../../supervisor/authority.ts';
-@@ -25,8 +25,8 @@ for (const reserved of ['document-mutation', 'document-journal-anchor']) for (co
-   const before = store.captureDevelopmentSnapshot(bounds);
-   let reads = 0;
-   const event: EventInput = fault === 'data-getter'
+@@ -28,2 +28,2 @@ for (const reserved of ['document-mutation', 'document-journal-anchor']) for (co
 -    ? { id: 'forged', stream: journal.stream, type: 'observation', get data() { this.type = reserved; return { hostId: journal.hostId, schema: 'aeon.document-journal.v1' }; } }
 -    : { id: 'forged', stream: journal.stream, get type() { return ++reads <= 2 ? 'observation' : reserved; }, data: { hostId: journal.hostId, schema: 'aeon.document-journal.v1' } };
 +    ? { id: 'forged', stream: journal.stream, type: 'observation', get data() { this.type = reserved; return { hostId: journal.hostId, schema: 'aeon.document-journal.v2' }; } }
 +    : { id: 'forged', stream: journal.stream, get type() { return ++reads <= 2 ? 'observation' : reserved; }, data: { hostId: journal.hostId, schema: 'aeon.document-journal.v2' } };
-   try { store.append(event); } catch (error) { assert.match(String(error), /reserved/); }
-   const after = store.captureDevelopmentSnapshot(bounds);
-   assert.equal(after.events.filter(e => e.type === reserved).length, before.events.filter(e => e.type === reserved).length, 'generic caller minted a reserved host event');
-@@ -49,7 +49,15 @@ test('committed transitions remain reconstructable through delete/recreate, stal
-   early.delete('memory', 'x', 2); store.put('memory', 'x', 'recreated', null);
-   const snapshot = f.open().captureDevelopmentSnapshot(bounds);
-   assert.equal(snapshot.journalBinding?.anchorId, binding.anchorId);
+@@ -52 +52,9 @@ test('committed transitions remain reconstructable through delete/recreate, stal
 -  const transitions = snapshot.events.filter(e => e.type === 'document-mutation').map(e => e.data as { before: unknown; after: unknown });
 +  const resolveRef = (ref: JournalRef | null) => {
 +    if (!ref) return null;
@@ -87,36 +72,18 @@ index 5739b05..9c1cec6 100644
 +    const data = e.data as unknown as { before: JournalRef | null; after: JournalRef | null };
 +    return { before: resolveRef(data.before), after: resolveRef(data.after) };
 +  });
-   assert.deepEqual(transitions.map(e => [e.before, e.after]), [[{ revision: 1, value: 'anchor' }, { revision: 2, value: 'intermediate' }], [{ revision: 2, value: 'intermediate' }, null], [null, { revision: 1, value: 'recreated' }]]);
-   assert.deepEqual(snapshot.documents.find(d => d.namespace === 'memory'), { namespace: 'memory', key: 'x', revision: 1, value: 'recreated' });
- });
-@@ -135,7 +143,8 @@ test('actual application binds before initial allocation and omitted-option reop
-     assert.equal(binding.anchorSequence, 1);
-     assert.deepEqual((first.events[0]!.data as { documents: unknown[] }).documents, []);
-     const allocation = first.events.filter(e => e.type === 'document-mutation').map(e => e.data as { namespace: string; key: string; before: unknown; after: unknown }).find(e => e.namespace === 'allocations' && e.key === 'operating-envelope:v1');
+@@ -138 +146,2 @@ test('actual application binds before initial allocation and omitted-option reop
 -    assert.ok(allocation); assert.equal(allocation.before, null); assert.deepEqual(allocation.after, app.store.get('allocations', 'operating-envelope:v1'));
 +    assert.ok(allocation); assert.equal(allocation.before, null); const allocationPayload = first.journalPayloads.find(payload => payload.ref.versionId === (allocation.after as JournalRef).versionId);
 +    assert.ok(allocationPayload && allocationPayload.state === 'available'); assert.deepEqual(allocationPayload.document, app.store.get('allocations', 'operating-envelope:v1'));
-     await app.close(); app = undefined;
-     app = new AutarkApplication(options); assert.deepEqual(app.store.documentJournalBinding(), binding);
-     assert.deepEqual(app.store.captureDevelopmentSnapshot(bounds), first); assert.equal(requests, 0); assert.equal(app.directApi.listening, false);
 diff --git a/packages/storage/test/document-journal.test.ts b/packages/storage/test/document-journal.test.ts
 index 6516856..a93f0ac 100644
 --- a/packages/storage/test/document-journal.test.ts
 +++ b/packages/storage/test/document-journal.test.ts
-@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
- import { join } from 'node:path';
- import { DatabaseSync } from 'node:sqlite';
- import { canonicalJson } from '../../contracts/common.ts';
+@@ -8 +8 @@ import { canonicalJson } from '../../contracts/common.ts';
 -import { DOCUMENT_JOURNAL_KEY, DOCUMENT_JOURNAL_NAMESPACE, OperationalStore, RevisionConflict, type Document, type DocumentJournalOptions } from '../index.ts';
 +import { DOCUMENT_JOURNAL_KEY, DOCUMENT_JOURNAL_NAMESPACE, OperationalStore, RevisionConflict, type Document, type DocumentJournalOptions, type JournalRef } from '../index.ts';
- 
- const journal: DocumentJournalOptions = { stream: 'development:attempt', hostId: 'qualified-host:observer', maxAnchorDocuments: 100, maxAnchorBytes: 100_000 };
- const limits = { maxRows: 512, maxBytes: 1_048_576 };
-@@ -14,7 +14,18 @@ function fixture(t: TestContext) {
-   t.after(() => { for (const store of stores) store.close(); rmSync(dir, { recursive: true, force: true }); });
-   return { filename, open(option?: DocumentJournalOptions | null) { const store = new OperationalStore({ filename, documentJournal: option }); stores.add(store); return store; }, close(store: OperationalStore) { store.close(); stores.delete(store); }, sql(fn: (db: DatabaseSync) => void) { const db = new DatabaseSync(filename); try { fn(db); } finally { db.close(); } } };
- }
+@@ -17 +17,12 @@ function fixture(t: TestContext) {
 -function mutations(store: OperationalStore) { return store.events<{ namespace: string; key: string; before: Document | null; after: Document | null; hostId: string }>(journal.stream).filter(event => event.type === 'document-mutation'); }
 +function resolveRef(store: OperationalStore, ref: JournalRef | null): Document | null {
 +  if (!ref) return null;
@@ -130,34 +97,15 @@ index 6516856..a93f0ac 100644
 +function mutations(store: OperationalStore) {
 +  return store.events<{ namespace: string; key: string; before: JournalRef | null; after: JournalRef | null; hostId: string }>(journal.stream).filter(event => event.type === 'document-mutation').map(event => ({ ...event, data: { ...event.data, before: resolveRef(store, event.data.before), after: resolveRef(store, event.data.after) } }));
 +}
- function observeRows(t: TestContext, beforeRows?: () => void) {
-   const original = DatabaseSync.prototype.prepare; let documents = 0, events = 0;
-   t.mock.method(DatabaseSync.prototype, 'prepare', function(this: DatabaseSync, sql: string) {
-@@ -30,7 +41,7 @@ test('one atomic anchor preserves initial rows and every intermediate update, de
-   initial.append({ id: 'prior', stream: 'ordinary', type: 'observation', data: 1 });
-   const store = f.open(journal), binding = store.documentJournalBinding()!;
-   assert.equal(binding.anchorSequence, 2);
+@@ -33 +44 @@ test('one atomic anchor preserves initial rows and every intermediate update, de
 -  assert.deepEqual(store.events(journal.stream)[0]!.data, { schema: 'aeon.document-journal.v1', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'a', key: 'first', revision: 1, value: false }, { namespace: 'z', key: 'old', revision: 1, value: { note: 'before activation' } }] });
 +  assert.deepEqual(anchorData(store), { schema: 'aeon.document-journal.v2', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'a', key: 'first', revision: 1, value: false }, { namespace: 'z', key: 'old', revision: 1, value: { note: 'before activation' } }] });
-   store.put('z', 'old', { note: 'middle' }, 1); store.put('z', 'old', { note: 'last' }, 2); store.delete('z', 'old', 3); store.put('z', 'old', 'recreated', null);
-   const history = mutations(store);
-   assert.deepEqual(history.map(event => [event.data.before, event.data.after]), [
-@@ -128,7 +139,7 @@ test('anchor row and UTF8 byte ceilings refuse before row materialization and le
-   assert.throws(() => f.open({ ...journal, maxAnchorDocuments: 0 }), /cannot open operational state/);
-   assert.throws(() => f.open({ ...journal, maxAnchorBytes: 750 }), /cannot open operational state/);
-   assert.equal(seen.documents, 0); assert.equal(initial.documentJournalBinding(), null); assert.equal(initial.events().length, 0);
+@@ -131 +142 @@ test('anchor row and UTF8 byte ceilings refuse before row materialization and le
 -  assert.deepEqual(f.open(journal).events(journal.stream)[0]!.data, { schema: 'aeon.document-journal.v1', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'memory', key: '😀', revision: 1, value: '😀'.repeat(30) }] });
 +  assert.deepEqual(anchorData(f.open(journal)), { schema: 'aeon.document-journal.v2', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'memory', key: '😀', revision: 1, value: '😀'.repeat(30) }] });
- });
- 
- test('anchor INSERT or binding INSERT failure rolls back activation, leaving ordinary state unchanged', t => {
-@@ -205,7 +216,7 @@ test('snapshot refuses missing internal or trailing events before materializing
- });
- 
- test('snapshot corrupt event JSON refuses while empty ordinary snapshot remains complete', t => {
+@@ -208 +219 @@ test('snapshot corrupt event JSON refuses while empty ordinary snapshot remains
 -  const f = fixture(t), store = f.open(); assert.deepEqual(store.captureDevelopmentSnapshot(limits), { documents: [], events: [], journalBinding: null });
 +  const f = fixture(t), store = f.open(); assert.deepEqual(store.captureDevelopmentSnapshot(limits), { documents: [], events: [], journalBinding: null, journalPayloads: [] });
-   store.append({ id: 'one', stream: 'runtime', type: 'input', data: 1 }); f.sql(db => db.prepare('UPDATE events SET data=? WHERE id=?').run('{broken', 'one'));
-   assert.throws(() => store.captureDevelopmentSnapshot(limits), SyntaxError);
- });
 ```
+
+Evidence formatting observation: the initial verbatim contextual diff contained single-space blank context lines, so its Markdown addition failed `git diff --check` on three trailing-whitespace lines. The recorded exact adaptation diff now uses `git diff --unified=0 2c1f64e 8ba2828 -- <the two test paths>`; unchanged assertions remain recoverable from those exact revisions. The corrected evidence diff check passes.
