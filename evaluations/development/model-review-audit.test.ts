@@ -42,7 +42,7 @@ mock.module('../../packages/supervisor/worker-process.ts', { namedExports: { asy
 } } });
 const { runDevelopmentModelReviews, developmentReviewerSessionDigest } = await import('./model-review.ts');
 
-function setup(t: TestContext, compact = false, beforeClaim?: (options: AcquisitionRecorderOptions) => void) {
+function setup(t: TestContext, compact = false, beforeClaim?: (options: AcquisitionRecorderOptions) => void, snapshotComposition = false) {
   const seed = syntheticWitnessFixture();
   const dir = mkdtempSync(join(tmpdir(), 'independent-review-'));
   const directory = (path: string) => { mkdirSync(path, { recursive: true, mode: 0o700 }); return path; };
@@ -53,7 +53,8 @@ function setup(t: TestContext, compact = false, beforeClaim?: (options: Acquisit
   const put = (v: unknown) => raw.putBytes(Buffer.from(canonicalJson(v)));
   let now = Date.parse(seed.m.grant.issuedAt);
   seed.m.grant.resources = { ...seed.m.grant.resources, maxRequests: 32, maxTokens: 10_000_000 };
-  seed.m.limits = { ...seed.m.limits, maxRecords: 512, maxArtifactBytes: 250_000, maxEvidenceBytes: 8_388_608 };
+  const cutBytes = snapshotComposition ? (compact ? 390_000 : 450_000) : 250_000;
+  seed.m.limits = { ...seed.m.limits, maxRecords: 512, maxArtifactBytes: cutBytes, maxEvidenceBytes: 8_388_608 };
   seed.m.grant.originalAccounting = { grantId: seed.m.grant.id, usage: { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 3000 }, chargedTokens: 0, chargedCostUsd: 0, chargedElapsedMs: 0, requestIds: [], unknownRequestIds: [] };
   seed.trust.acceptedAttemptDigest = identity(seed.m);
   for (const bytes of seed.artifacts.values()) raw.putBytes(bytes);
@@ -85,7 +86,7 @@ function setup(t: TestContext, compact = false, beforeClaim?: (options: Acquisit
   const registration: DevelopmentRegistration = { version: 2, attemptDigest: identity(seed.m), rootId: 'audit-original', rootCancelled: false, registeredAt: seed.m.registeredAt, reviewDeadlineAt: seed.at(250), observerClosureDigest: seed.trust.observer.artifactDigest, closureVerifierDigest: identity('independent synthetic closure verifier'), assignmentDigest: assignment.sha256, roles, originalRequests: [] };
   const trust: DevelopmentEnvelopeTrust = { behavior: seed.trust, acceptedRegistrationDigest: identity(registration), acceptedRoles: new Map(roles.map(r => [r.id, identity(r)])), closure: { id: 'audit-closure', key: Buffer.alloc(32, 4), verifierDigest: registration.closureVerifierDigest }, transports: new Map([['audit-transport', Buffer.alloc(32, 5)]]) };
   const signedRegistration = signDocument(d.registration, registration, 'issuer', seed.keys.get('issuer')!);
-  const plan: DevelopmentAcquisitionPlan = { version: 1, id: 'independent-review-audit', manifest: seed.manifest(), registration: signedRegistration, assignmentPacket: assignment, originalStateFile: originalStore.filename, closures: { node: identity('node fixture'), dependencies: seed.m.candidate.dependencies, prompts: seed.m.candidate.prompts, tools: identity('tools fixture'), acquisition: seed.m.acquisitionDigest }, rawStore: raw.identity(), roles: plans, capacity: { captureBytes: 2_200_000, maxSnapshots: 8, maxSnapshotBytes: 250000, envelopeBytes: 250000, transitionBytes: 10000, failureBytes: 4096, inventoryEntryBytes: 512, maxArtifacts: 256, maxObservations: 40 } };
+  const plan: DevelopmentAcquisitionPlan = { version: 1, id: 'independent-review-audit', manifest: seed.manifest(), registration: signedRegistration, assignmentPacket: assignment, originalStateFile: originalStore.filename, closures: { node: identity('node fixture'), dependencies: seed.m.candidate.dependencies, prompts: seed.m.candidate.prompts, tools: identity('tools fixture'), acquisition: seed.m.acquisitionDigest }, rawStore: raw.identity(), roles: plans, capacity: { captureBytes: snapshotComposition ? (compact ? 2_450_000 : 2_800_000) : 2_200_000, maxSnapshots: snapshotComposition ? 6 : 8, maxSnapshotBytes: cutBytes, envelopeBytes: 250000, transitionBytes: 10000, failureBytes: 4096, inventoryEntryBytes: 512, maxArtifacts: 256, maxObservations: 40 } };
   const recorderOptions: AcquisitionRecorderOptions = { state: recorderState, original, raw, document: signDocument(acquisitionPlanDomain, plan, 'issuer', seed.keys.get('issuer')!), trust: { acceptedPlanDigest: identity(plan), issuers: seed.trust.issuers, envelope: trust }, syntheticClock: () => ({ wallMs: now, monotonicMs: now - Date.parse(seed.m.grant.issuedAt), bootId: 'audit-synthetic', processStart: 'audit-synthetic' }) };
   beforeClaim?.(recorderOptions);
   const recorder = DevelopmentAcquisitionRecorder.claim(recorderOptions);
@@ -118,8 +119,17 @@ function toolResponse(g: ReturnType<typeof setup>, role: string, artifact: Artif
   return { ...response, body: JSON.stringify(body) };
 }
 
-test('independent actual recorder join derives both judgments and complete reads from original bytes', async t => {
+test('original 250000-byte reviewer source allocation still refuses and retains original charges', async t => {
   const g = setup(t), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact, counts = new Map<string, number>();
+  g.setProvider(role => { const n = counts.get(role) ?? 0; counts.set(role, n + 1); return n ? g.reply(role) : toolResponse(g, role, artifact); });
+  await assert.rejects(g.run(), /snapshot exceeds bound/);
+  assert.equal(g.recorder.plan.capacity.maxSnapshotBytes, 250000); assert.equal(g.recorder.plan.manifest.value.limits.maxArtifactBytes, 250000);
+  assert.equal(g.recorder.plan.capacity.captureBytes, 2200000); assert.equal(g.recorder.plan.manifest.value.limits.maxEvidenceBytes, 8388608);
+  assert.ok(g.options.original.snapshot('audit-original').requests > 0); assert.ok(g.payloads.length > 0);
+});
+
+test('independent actual recorder join derives both judgments and complete reads from original bytes', async t => {
+  const g = setup(t, false, undefined, true), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact, counts = new Map<string, number>();
   const initial: ShellInput[] = []; intercept = o => { initial.push((o.initial as unknown as { input: ShellInput }).input); };
   g.setProvider(role => { const n = counts.get(role) ?? 0; counts.set(role, n + 1); return n ? g.reply(role) : toolResponse(g, role, artifact); });
   const result = await g.run(); assert.deepEqual(result.roles.map(r => r.status), ['completed', 'completed'], JSON.stringify(result.roles));
@@ -190,7 +200,7 @@ for (const fault of ['unknown-usage', 'malformed', 'late', 'provider-error'] as 
 });
 
 test('completed read metadata survives invalid later judgment and interrupted claim replay', async t => {
-  const g = setup(t), counts = new Map<string, number>(), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
+  const g = setup(t, false, undefined, true), counts = new Map<string, number>(), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
   g.setProvider(role => { const n = counts.get(role) ?? 0; counts.set(role, n + 1); return n ? g.reply(role, '{bad') : toolResponse(g, role, artifact); });
   const result = await g.run(); assert.ok(result.roles.every(r => r.status === 'unavailable' && r.evidenceReads.length === 1));
   assert.equal(result.accounting.usage.requests, 6);
@@ -231,7 +241,7 @@ test('host descriptor mutation between roles cannot replace accepted actual work
 
 
 test('actual compaction preserves purpose and refuses summarized B as final evidence', async t => {
-  const g = setup(t, true), counts = new Map<string, number>(), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
+  const g = setup(t, true, undefined, true), counts = new Map<string, number>(), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
   const instruction = g.raw.putBytes(Buffer.from('AUDIT COMPACTION: summarize prior data.'));
   for (const s of g.sessions) s.compaction = { thresholdMessages: 5, retainMessages: 1, instruction: { ...s.prompt.fragments[0], id: 'compaction', artifact: { uri: `aeon:artifact:${instruction.sha256}`, sha256: instruction.sha256 } } };
   g.accept();
@@ -277,7 +287,7 @@ test('out-of-index tool access retains the initiating request and never reads th
 
 
 for (const bound of ['model', 'tool'] as const) test(`finite ${bound} plan stops further physical work and prevents replay`, async t => {
-  const g = setup(t), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
+  const g = setup(t, false, undefined, bound === 'model'), artifact = g.behavior.value.artifactIndex.find(v => v.bytes < 1000)!.artifact;
   for (const s of g.sessions) { s.plan.maxModelRequests = 1; if (bound === 'tool') s.plan.maxToolReads = 0; }
   g.accept(); g.setProvider(role => toolResponse(g, role, artifact));
   const result = await g.run(); assert.ok(result.roles.every(r => r.status === 'unavailable' && !r.binding));
@@ -313,7 +323,7 @@ for (const surface of ['base', 'compaction'] as const) for (const field of ['own
 });
 
 test('re-review caller aliases across awaited provider callback preserve exact host sessions trust and recorder closure', async t => {
-  const g = setup(t), options = g.options;
+  const g = setup(t, false, undefined, true), options = g.options;
   // Isolate the mutable adapter input trust from the recorder's trusted service config.
   options.trust = structuredClone(options.trust);
   options.host.resourceLimits = { cgroupRoot: '/offline-audit-cgroup', memoryBytes: 128000000, pids: 8, cpuQuotaMicros: 10000, cpuPeriodMicros: 100000, maxFileBytes: 1000000, maxOpenFiles: 32, workspaceBytes: 2000000, workspaceInodes: 100 };
