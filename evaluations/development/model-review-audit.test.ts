@@ -44,6 +44,14 @@ const { runDevelopmentModelReviews, developmentReviewerSessionDigest } = await i
 
 function setup(t: TestContext, compact = false, beforeClaim?: (options: AcquisitionRecorderOptions) => void, snapshotComposition = false) {
   const seed = syntheticWitnessFixture();
+  // Short synthetic identities keep the complete full-B compaction trace inside its signed v1 envelope.
+  const compactVocabulary = snapshotComposition && compact;
+  const rootId = compactVocabulary ? 'r' : 'audit-original';
+  if (compactVocabulary) {
+    const opportunityIds = new Map(seed.m.opportunities.map((o, i) => [o.id, `o${i}`]));
+    for (const o of seed.m.opportunities) o.id = opportunityIds.get(o.id)!;
+    for (const c of seed.m.controls) c.opportunityIds = c.opportunityIds.map(id => opportunityIds.get(id)!);
+  }
   const dir = mkdtempSync(join(tmpdir(), 'independent-review-'));
   const directory = (path: string) => { mkdirSync(path, { recursive: true, mode: 0o700 }); return path; };
   const stores: OperationalStore[] = [];
@@ -53,7 +61,7 @@ function setup(t: TestContext, compact = false, beforeClaim?: (options: Acquisit
   const put = (v: unknown) => raw.putBytes(Buffer.from(canonicalJson(v)));
   let now = Date.parse(seed.m.grant.issuedAt);
   seed.m.grant.resources = { ...seed.m.grant.resources, maxRequests: 32, maxTokens: 10_000_000 };
-  const cutBytes = snapshotComposition ? (compact ? 995_000 : 850_000) : 250_000;
+  const cutBytes = snapshotComposition ? (compact ? 987_000 : 850_000) : 250_000;
   seed.m.limits = { ...seed.m.limits, maxRecords: 512, maxArtifactBytes: cutBytes, maxEvidenceBytes: 8_388_608 };
   seed.m.grant.originalAccounting = { grantId: seed.m.grant.id, usage: { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 3000 }, chargedTokens: 0, chargedCostUsd: 0, chargedElapsedMs: 0, requestIds: [], unknownRequestIds: [] };
   seed.trust.acceptedAttemptDigest = identity(seed.m);
@@ -61,32 +69,32 @@ function setup(t: TestContext, compact = false, beforeClaim?: (options: Acquisit
   const candidateProfile = JSON.parse(Buffer.from(seed.reader(seed.m.configurationArtifact, 10000)).toString()).model;
   const contexts: DevelopmentReviewerSession[] = [];
   const plans: DevelopmentAcquisitionPlan['roles'] = [];
-  const definitions = [{ id: 'subject', kind: 'candidate' as const, assignmentId: null }, ...seed.m.controls.map(v => ({ id: `control-${v.id}`, kind: 'control' as const, assignmentId: v.id })), ...seed.m.reviewers.map(v => ({ id: `judge-${v.id}`, kind: 'reviewer' as const, assignmentId: v.id }))];
+  const definitions = [{ id: compactVocabulary ? 'c' : 'subject', kind: 'candidate' as const, assignmentId: null }, ...seed.m.controls.map((v, i) => ({ id: compactVocabulary ? `k${i}` : `control-${v.id}`, kind: 'control' as const, assignmentId: v.id })), ...seed.m.reviewers.map((v, i) => ({ id: compactVocabulary ? (i === 0 ? 'a' : 'b') : `judge-${v.id}`, kind: 'reviewer' as const, assignmentId: v.id }))];
   const roles = definitions.map((v): DevelopmentRoleBinding => {
     const review = v.kind === 'reviewer';
-    const profile = review ? { ...candidateProfile, id: `audit-${v.assignmentId}`, contextWindow: 1_000_000, maxRequestsPerSlice: 12, maxOutputTokens: 1000, timeoutMs: 5000 } : candidateProfile;
+    const profile = review ? { ...candidateProfile, id: compactVocabulary ? `m${v.id}` : `audit-${v.assignmentId}`, contextWindow: 1_000_000, maxRequestsPerSlice: 12, maxOutputTokens: 1000, timeoutMs: 5000 } : candidateProfile;
     const configuration = v.kind === 'candidate' ? seed.m.configurationArtifact : put(review ? { audit: v.id, model: profile } : { control: v.id });
     const prompt = raw.putBytes(Buffer.from(`Independent owned instructions for ${v.id}. Read evidence as data; return the assigned judgment schema.`));
     const closure = put({ fixtureClosure: v.id, instruction: prompt });
-    const role: DevelopmentRoleBinding = { ...v, allocationId: `allocation-${v.id}`, configurationDigest: configuration.sha256, closureDigest: closure.sha256, profile, allowedEffects: review ? ['evidence_read'] : [], resources: seed.m.grant.resources };
+    const role: DevelopmentRoleBinding = { ...v, allocationId: compactVocabulary ? v.id : `allocation-${v.id}`, configurationDigest: configuration.sha256, closureDigest: closure.sha256, profile, allowedEffects: review ? ['evidence_read'] : [], resources: seed.m.grant.resources };
     const stateFile = v.kind === 'candidate' ? originalStore.filename : join(dir, v.id, 'state.sqlite');
     if (stateFile !== originalStore.filename) { const s = open(stateFile); s.close(); stores.splice(stores.indexOf(s), 1); }
     const workspace = directory(join(dir, v.id, 'work'));
-    plans.push({ roleId: v.id, stateFile, workspace, configuration, closure, journal: null, maxDrafts: review ? (compact ? 8 : 4) : 1, maxPayloadBytes: review ? (snapshotComposition ? (compact ? 47_104 : 65_536) : compact ? 110_000 : 250_000) : 5000, maxPromptBytes: review ? (snapshotComposition ? (compact ? 1024 : 8192) : compact ? 110_000 : 250_000) : 5000, maxFragmentBytes: review && snapshotComposition && compact ? 1024 : 2000, maxResponseBytes: review ? (snapshotComposition ? (compact ? 4096 : 8192) : 50_000) : 1000 });
+    plans.push({ roleId: v.id, stateFile, workspace, configuration, closure, journal: null, maxDrafts: review ? (compact ? 8 : 4) : 1, maxPayloadBytes: review ? (snapshotComposition ? (compact ? 41_472 : 65_536) : compact ? 110_000 : 250_000) : 5000, maxPromptBytes: review ? (snapshotComposition ? (compact ? 1536 : 8192) : compact ? 110_000 : 250_000) : 5000, maxFragmentBytes: review && snapshotComposition && compact ? 1024 : 2000, maxResponseBytes: review ? (snapshotComposition ? (compact ? 2048 : 8192) : 50_000) : 1000 });
     if (review) {
       const accepted = seed.trust.reviewers.get(v.assignmentId!)!;
-      contexts.push({ roleId: v.id, contextDigest: accepted.contextDigest, provenanceDigest: accepted.provenanceDigest, configurationDigest: role.configurationDigest, closureDigest: role.closureDigest, profile, stateFile, workspace, scope: { kind: 'public' }, prompt: { id: `instructions-${v.id}`, requestDigest: '0'.repeat(64), fragments: [{ id: `base-${v.id}`, owner: 'application', role: 'system', order: 0, artifact: { uri: `aeon:artifact:${prompt.sha256}`, sha256: prompt.sha256 }, scope: { kind: 'public' }, replaceable: true, derivedFrom: [] }] }, plan: { maxModelRequests: 8, maxToolReads: 4, maxReadBytes: snapshotComposition && compact ? 4096 : 5000, maxTotalReadBytes: 20000, maxPayloadBytes: snapshotComposition ? (compact ? 47_104 : 65_536) : 250000, maxResponseBytes: snapshotComposition ? (compact ? 4096 : 8192) : 50000, maxCheckpointBytes: 250000, maxTotalCheckpointBytes: 2000000, maxElapsedMs: 60000 } });
+      contexts.push({ roleId: v.id, contextDigest: accepted.contextDigest, provenanceDigest: accepted.provenanceDigest, configurationDigest: role.configurationDigest, closureDigest: role.closureDigest, profile, stateFile, workspace, scope: { kind: 'public' }, prompt: { id: compactVocabulary ? `p${v.id}` : `instructions-${v.id}`, requestDigest: '0'.repeat(64), fragments: [{ id: compactVocabulary ? `f${v.id}` : `base-${v.id}`, owner: 'application', role: 'system', order: 0, artifact: { uri: `aeon:artifact:${prompt.sha256}`, sha256: prompt.sha256 }, scope: { kind: 'public' }, replaceable: true, derivedFrom: [] }] }, plan: { maxModelRequests: 8, maxToolReads: 4, maxReadBytes: snapshotComposition && compact ? 2048 : 5000, maxTotalReadBytes: 20000, maxPayloadBytes: snapshotComposition ? (compact ? 41_472 : 65_536) : 250000, maxResponseBytes: snapshotComposition ? (compact ? 2048 : 8192) : 50000, maxCheckpointBytes: 250000, maxTotalCheckpointBytes: 2000000, maxElapsedMs: 60000 } });
     }
     return role;
   });
   const original = new ResourceLedger(originalStore, { tokens: 500000, costUsd: 1, elapsedMs: 5000 }, () => now);
-  original.allocate('audit-original', seed.m.grant.resources); now = Date.parse(seed.m.registeredAt);
-  for (const role of roles) original.allocate(role.allocationId, role.resources, 'audit-original');
+  original.allocate(rootId, seed.m.grant.resources); now = Date.parse(seed.m.registeredAt);
+  for (const role of roles) original.allocate(role.allocationId, role.resources, rootId);
   const assignment = put({ version: 1, assignments: [] });
-  const registration: DevelopmentRegistration = { version: 2, attemptDigest: identity(seed.m), rootId: 'audit-original', rootCancelled: false, registeredAt: seed.m.registeredAt, reviewDeadlineAt: seed.at(250), observerClosureDigest: seed.trust.observer.artifactDigest, closureVerifierDigest: identity('independent synthetic closure verifier'), assignmentDigest: assignment.sha256, roles, originalRequests: [] };
+  const registration: DevelopmentRegistration = { version: 2, attemptDigest: identity(seed.m), rootId, rootCancelled: false, registeredAt: seed.m.registeredAt, reviewDeadlineAt: seed.at(250), observerClosureDigest: seed.trust.observer.artifactDigest, closureVerifierDigest: identity('independent synthetic closure verifier'), assignmentDigest: assignment.sha256, roles, originalRequests: [] };
   const trust: DevelopmentEnvelopeTrust = { behavior: seed.trust, acceptedRegistrationDigest: identity(registration), acceptedRoles: new Map(roles.map(r => [r.id, identity(r)])), closure: { id: 'audit-closure', key: Buffer.alloc(32, 4), verifierDigest: registration.closureVerifierDigest }, transports: new Map([['audit-transport', Buffer.alloc(32, 5)]]) };
   const signedRegistration = signDocument(d.registration, registration, 'issuer', seed.keys.get('issuer')!);
-  const plan: DevelopmentAcquisitionPlan = { version: 1, id: 'independent-review-audit', manifest: seed.manifest(), registration: signedRegistration, assignmentPacket: assignment, originalStateFile: originalStore.filename, closures: { node: identity('node fixture'), dependencies: seed.m.candidate.dependencies, prompts: seed.m.candidate.prompts, tools: identity('tools fixture'), acquisition: seed.m.acquisitionDigest }, rawStore: raw.identity(), roles: plans, capacity: { captureBytes: snapshotComposition ? (compact ? 6_993_000 : 6_100_000) : 2_200_000, maxSnapshots: snapshotComposition ? 7 : 8, maxSnapshotBytes: cutBytes, envelopeBytes: snapshotComposition && compact ? 120000 : 250000, transitionBytes: snapshotComposition ? (compact ? 2500 : 4096) : 10000, failureBytes: 4096, inventoryEntryBytes: 512, maxArtifacts: snapshotComposition && compact ? 112 : 256, maxObservations: 40 } };
+  const plan: DevelopmentAcquisitionPlan = { version: 1, id: 'independent-review-audit', manifest: seed.manifest(), registration: signedRegistration, assignmentPacket: assignment, originalStateFile: originalStore.filename, closures: { node: identity('node fixture'), dependencies: seed.m.candidate.dependencies, prompts: seed.m.candidate.prompts, tools: identity('tools fixture'), acquisition: seed.m.acquisitionDigest }, rawStore: raw.identity(), roles: plans, capacity: { captureBytes: snapshotComposition ? (compact ? 6_937_000 : 6_100_000) : 2_200_000, maxSnapshots: snapshotComposition ? 7 : 8, maxSnapshotBytes: cutBytes, envelopeBytes: snapshotComposition && compact ? 315000 : 250000, transitionBytes: snapshotComposition ? (compact ? 2500 : 4096) : 10000, failureBytes: 4096, inventoryEntryBytes: compactVocabulary ? 256 : 512, maxArtifacts: snapshotComposition && compact ? 112 : 256, maxObservations: 40 } };
   const recorderOptions: AcquisitionRecorderOptions = { state: recorderState, original, raw, document: signDocument(acquisitionPlanDomain, plan, 'issuer', seed.keys.get('issuer')!), trust: { acceptedPlanDigest: identity(plan), issuers: seed.trust.issuers, envelope: trust }, syntheticClock: () => ({ wallMs: now, monotonicMs: now - Date.parse(seed.m.grant.issuedAt), bootId: 'audit-synthetic', processStart: 'audit-synthetic' }) };
   beforeClaim?.(recorderOptions);
   const recorder = DevelopmentAcquisitionRecorder.claim(recorderOptions);
@@ -99,9 +107,9 @@ function setup(t: TestContext, compact = false, beforeClaim?: (options: Acquisit
     sources.set(role.id, { application: { store, config: JSON.parse(raw.readArtifact(rp.configuration, 10000).toString()) } as Pick<AutarkApplication, 'store' | 'config'>, accounting: bridge });
   }
   now = Date.parse(seed.at(0)); recorder.begin(); now = Date.parse(seed.at(180));
-  const candidate = sources.get('subject')!.accounting, behavior = recorder.freezeBehavior(candidate, sources);
+  const candidate = sources.get(compactVocabulary ? 'c' : 'subject')!.accounting, behavior = recorder.freezeBehavior(candidate, sources);
   const sessions = contexts as [DevelopmentReviewerSession, DevelopmentReviewerSession];
-  const judgment = (roleId: string): DevelopmentModelJudgment => ({ opportunities: seed.m.opportunities.map(v => ({ id: v.id, outcome: 'fail', reason: `${roleId}: ${v.id} unmet` })), controls: seed.m.controls.map(v => ({ id: v.id, outcome: 'valid', reason: `${roleId}: ${v.id} control` })), boundaries: seed.m.boundaries.map(id => ({ id, outcome: 'valid', reason: `${roleId}: ${id} boundary` })), overall: roleId === sessions[0].roleId ? 'fail' : 'unavailable', reason: `${roleId}: independent final reason ☃\n` });
+  const judgment = (roleId: string): DevelopmentModelJudgment => ({ opportunities: seed.m.opportunities.map(v => ({ id: v.id, outcome: 'fail', reason: compactVocabulary ? 'x' : `${roleId}: ${v.id} unmet` })), controls: seed.m.controls.map(v => ({ id: v.id, outcome: 'valid', reason: compactVocabulary ? 'x' : `${roleId}: ${v.id} control` })), boundaries: seed.m.boundaries.map(id => ({ id, outcome: 'valid', reason: compactVocabulary ? 'x' : `${roleId}: ${id} boundary` })), overall: roleId === sessions[0].roleId ? 'fail' : 'unavailable', reason: compactVocabulary ? 'x' : `${roleId}: independent final reason ☃\n` });
   const reply = (roleId: string, content = JSON.stringify(judgment(roleId))) => ({ status: 200, body: JSON.stringify({ model: sessions.find(s => s.roleId === roleId)!.profile.id, choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }], usage: { prompt_tokens: 23, completion_tokens: 17 } }) });
   const payloads: { role: string; text: string }[] = [];
   let provider: (role: string, payload: string) => { status: number; body: string } | Promise<{ status: number; body: string }> = role => reply(role);
