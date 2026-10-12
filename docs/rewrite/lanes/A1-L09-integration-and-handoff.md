@@ -10,6 +10,8 @@ Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21]
 
 ## Ownership and dependencies
 
+Root's 2026-10-12 shutdown follow-up reserves only `deployment/application.ts` shutdown fields/method, new `deployment/application-shutdown.test.ts` and `docs/rewrite/evidence/A1-L09/application-shutdown-drain.md`. The [precode contract](../evidence/A1-L09/application-shutdown-drain.md) requires shared completion, abort/drain despite preparatory failures, and retained Store/lease on failed closure; existing tests remain unchanged. Independent review follows exact source and local causal checks. This does not authorize a physical process or provider operation.
+
 Own `packages/supervisor/`, `packages/release/`, `deployment/`, this lane file and `docs/rewrite/evidence/A1-L09/`. Coordinate root workspace configuration, lockfiles and final cross-package wiring; serialize those edits rather than claiming all component code. L01 owns shared contracts and L08 owns authoritative evaluation content. New operational data and release artifacts live outside the repository.
 
 Specification work begins immediately with L01, L03 and L06: define effect fencing, workspace isolation, stable recovery inputs and candidate/control upgrade separation early. Component implementation depends on C1 and uses fake candidates/evaluators. Final integration depends on all L01–L08 accepted results. Do not postpone the release/control boundary until the other modules are finished.
