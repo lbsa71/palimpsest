@@ -1,7 +1,7 @@
 import { captureShellEnvironment, nodeShellFetch, readShellJson, shellTimeout, throwShellFailures, type ShellEnvironment } from './environment.ts';
 import { createHash } from 'node:crypto';
 import { AssistantMessageEventStream, collapseSystemMessages, contentText, getCurrentTools, getSystemMessageText } from './vendor/pi/ai/index.ts';
-import type { AssistantMessage, JsonValue, Model, TranscriptContext, Usage } from './vendor/pi/ai/types.ts';
+import type { AssistantMessage, JsonValue, Message, Model, TranscriptContext, Usage } from './vendor/pi/ai/types.ts';
 import type { StreamFn } from './vendor/pi/agent/types.ts';
 
 export const DEFAULT_MISTRAL_MODEL = 'mistral-large-latest';
@@ -61,9 +61,42 @@ function assistantContent(message: AssistantMessage): unknown {
   });
 }
 
+// Recovery appends a settled result after a newer host input. Mistral requires
+// the whole batch immediately after its assistant; only this request view moves.
+function mistralMessageOrder(messages: Message[]): Message[] {
+  const ordered: Message[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    const assistant = messages[index];
+    if (assistant.role === 'toolResult') throw Error('Mistral tool result has no assistant batch');
+    ordered.push(assistant);
+    if (assistant.role !== 'assistant') continue;
+    const calls = assistant.content.filter(block => block.type === 'toolCall');
+    if (!calls.length) continue;
+    if (assistant.stopReason !== 'toolUse') throw Error('Mistral tool batch is truncated or incomplete');
+    const pending = new Map(calls.map(call => [call.id, call]));
+    if (pending.size !== calls.length) throw Error('Mistral tool batch has duplicate call IDs');
+    const results: Message[] = []; const deferredUsers: Message[] = [];
+    const stepId = (assistant as Message & { aeonStepId?: string }).aeonStepId;
+    let next = index + 1;
+    for (; next < messages.length; next++) {
+      const message = messages[next];
+      if (message.role === 'assistant' || message.role === 'system') break;
+      if (message.role === 'user') { deferredUsers.push(message); continue; }
+      const call = pending.get(message.toolCallId);
+      const resultStepId = (message as Message & { aeonStepId?: string }).aeonStepId;
+      if (!call || call.name !== message.toolName || stepId !== resultStepId) throw Error('Mistral tool result does not match its assistant batch');
+      pending.delete(message.toolCallId); results.push(message);
+    }
+    if (pending.size) throw Error('Mistral tool batch lacks complete results');
+    ordered.push(...results, ...deferredUsers);
+    index = next - 1;
+  }
+  return ordered;
+}
+
 export function mistralPayload(context: TranscriptContext, model: string, maxTokens: number, reasoningEffort?: 'none' | 'high'): string {
   const normalized = collapseSystemMessages(context);
-  const messages = normalized.messages.map(message => {
+  const messages = mistralMessageOrder(normalized.messages).map(message => {
     if (message.role === 'system') return { role: 'system', content: getSystemMessageText(message) };
     if (message.role === 'user') {
       if (typeof message.content !== 'string' && message.content.some(block => block.type !== 'text')) throw new Error('Mistral transport currently supports text input only');
