@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { createHash } from 'node:crypto';
-import { canonicalJson, identity, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type ShellPort, type ToolCall } from '../packages/contracts/index.ts';
+import { canonicalJson, identity, type ArtifactRef, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type ShellPort, type ToolCall } from '../packages/contracts/index.ts';
 import { ResourceLedger, DurableRuntime } from '../packages/runtime/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
@@ -330,4 +330,95 @@ test('changed original envelope or clock refuses the next physical reservation',
   const budget = f.originalStore.get<{ envelope: ResourceEnvelope }>('budgets', rootId)!;
   f.originalStore.put('budgets', rootId, { ...budget.value, envelope: { ...f.resources, maxRequests: f.resources.maxRequests + 1 } }, budget.revision);
   assert.throws(() => x.a.resources.reserve(q), /allowance or issued-at changed/); assert.equal(f.original.snapshot(rootId).requests, 0);
+});
+
+for (const boundary of ['prompt', 'tool', 'reserve', 'dispatch', 'entry'] as const) test(`current-use withdrawal refuses ${boundary} without new accounting or raw writes`, t => {
+  const f = fixture(t), o = f.options(); let withdrawn = false;
+  o.assertCurrentUse = () => { if (withdrawn) throw new Error('Attempt use withdrawn'); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = boundary === 'prompt' || boundary === 'tool' ? null : model(a, o.localStore);
+  if (q && (boundary === 'dispatch' || boundary === 'entry')) a.resources.reserve(q);
+  if (q && boundary === 'entry') a.resources.dispatched({ ...q, status: 'dispatched' });
+  const before = a.accounting('grant'), rawBytes = f.raw.usedBytes, transitions = a.transitions(); withdrawn = true;
+  assert.throws(() => {
+    if (boundary === 'prompt') model(a, o.localStore, 'refused');
+    else if (boundary === 'tool') effect(a, 'refused');
+    else if (boundary === 'reserve') a.resources.reserve(q!);
+    else if (boundary === 'dispatch') a.resources.dispatched({ ...q!, status: 'dispatched' });
+    else a.assertEntry(q!.id);
+  }, /Attempt use withdrawn/);
+  assert.deepEqual(a.accounting('grant'), before); assert.equal(f.raw.usedBytes, rawBytes); assert.deepEqual(a.transitions(), transitions);
+});
+
+test('current-use hook rejects asynchronous authorization before capture', t => {
+  const f = fixture(t), o = f.options(); o.assertCurrentUse = async () => {};
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const before = f.raw.usedBytes;
+  assert.throws(() => model(a, o.localStore), /must be synchronous/);
+  assert.equal(f.raw.usedBytes, before); assert.equal(f.original.snapshot(rootId).requests, 0);
+});
+
+test('withdrawn evidence prevents actual receiver entry after original dispatch', async t => {
+  const f = fixture(t), o = f.options(); let withdrawn = false, entries = 0;
+  o.assertCurrentUse = () => { if (withdrawn) throw new Error('Attempt use withdrawn'); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = effect(a); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' });
+  const before = a.states()[0]!;
+  const receiver = a.wrapReceiver({ dispatch: async () => { entries++; return { outcome: 'succeeded' }; }, reconcile: async () => { throw new Error('Unused'); } });
+  withdrawn = true;
+  await assert.rejects(receiver.dispatch({ id: q.id, runId: 'run', stepId: 'step', kind: 'fixture_read', payload: {}, scope: { kind: 'public' }, authority, status: 'dispatched', revision: 2, reservationId: q.id }), /Attempt use withdrawn/);
+  assert.equal(entries, 0); assert.deepEqual(a.states()[0], before);
+});
+
+test('request-scoped response maintenance settles late reply while all evidence reads refuse', t => {
+  const f = fixture(t), o = f.options(); let withdrawn = false, ordinaryReadsAfterWithdrawal = 0;
+  const retained = new Map<string, ArtifactRef>(), reads: { requestId: string; artifact: ArtifactRef; bound: number }[] = [];
+  o.assertCurrentUse = () => { if (withdrawn) throw new Error('Attempt use withdrawn'); };
+  o.rawStore = { putBytes: bytes => { if (withdrawn) throw new Error('Ordinary evidence writes withdrawn'); return f.raw.putBytes(bytes); }, readArtifact: (ref, bound) => { if (withdrawn) { ordinaryReadsAfterWithdrawal++; throw new Error('Ordinary evidence reads withdrawn'); } return f.raw.readArtifact(ref, bound); } };
+  o.retainResponse = (id, bytes) => { const ref = f.raw.putBytes(bytes); retained.set(id, ref); return ref; };
+  o.readRetainedResponse = (id, ref, bound) => { assert.deepEqual(ref, retained.get(id)); reads.push({ requestId: id, artifact: ref, bound }); return f.raw.readArtifact(ref, bound); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = model(a, o.localStore); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' });
+  withdrawn = true; f.original.cancel(rootId); f.time(issued + f.resources.maxElapsedMs + 1);
+  success(a, q, 'Late authentic reply');
+  assert.equal(ordinaryReadsAfterWithdrawal, 0); assert.equal(reads.length, 2);
+  assert.ok(reads.every(read => read.requestId === a.requestId(q.id) && read.requestId !== q.id && read.bound === o.maxResponseBytes && read.artifact.sha256 === hash('Late authentic reply')));
+  assert.equal(a.originalRequest(q.id)!.status, 'succeeded'); assert.equal(a.accounting('grant').chargedTokens, 3);
+  assert.throws(() => model(a, o.localStore, 'another'), /Attempt use withdrawn/);
+});
+
+for (const bad of ['throws', 'substitutes', 'oversized'] as const) test(`response maintenance ${bad} cannot fall back or release original charge`, t => {
+  const f = fixture(t), o = f.options(); let ordinaryReads = 0, maintenance = false;
+  o.rawStore = { putBytes: bytes => f.raw.putBytes(bytes), readArtifact: (ref, bound) => { if (maintenance) ordinaryReads++; return f.raw.readArtifact(ref, bound); } };
+  o.retainResponse = (_id, bytes) => f.raw.putBytes(bytes);
+  o.readRetainedResponse = () => { if (bad === 'throws') throw new Error('Reserved response unavailable'); return Buffer.from(bad === 'oversized' ? 'x'.repeat(o.maxResponseBytes + 1) : 'substitute'); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = model(a, o.localStore); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' });
+  const prior = a.states()[0]!; maintenance = true;
+  assert.throws(() => a.recordResponse(q.id, { status: 200, body: 'actual reply' }), /Reserved response unavailable|Response retention/);
+  assert.equal(ordinaryReads, 0); a.resources.settle({ ...q, status: 'uncertain' });
+  const after = a.states()[0]!; assert.equal(after.request.status, 'uncertain'); assert.deepEqual(after.charged, prior.charged);
+});
+
+test('response hook cannot mutate its retained-reference alias during verification', t => {
+  const f = fixture(t), o = f.options(); let returned: ArtifactRef | undefined;
+  const substitute = f.raw.putBytes(Buffer.from('substitute'));
+  o.retainResponse = (_id, bytes) => returned = f.raw.putBytes(bytes);
+  o.readRetainedResponse = (_id, ref, bound) => { returned!.uri = substitute.uri; returned!.sha256 = substitute.sha256; ref.uri = substitute.uri; ref.sha256 = substitute.sha256; return f.raw.readArtifact(substitute, bound); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = model(a, o.localStore); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' });
+  assert.throws(() => a.recordResponse(q.id, { status: 200, body: 'actual reply' }), /Response retention/);
+  a.resources.settle({ ...q, status: 'uncertain' }); assert.equal(a.originalRequest(q.id)!.status, 'uncertain');
+});
+
+test('withdrawal refuses a new physical reconciliation before retaining its draft', async t => {
+  const f = fixture(t), o = f.options(); let withdrawn = false, entries = 0;
+  o.assertCurrentUse = () => { if (withdrawn) throw new Error('Attempt use withdrawn'); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = effect(a); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' }); a.resources.settle({ ...q, status: 'uncertain' });
+  const before = a.accounting('grant'), bytes = f.raw.usedBytes;
+  const receiver = a.wrapReceiver({ dispatch: async () => { throw new Error('Unused'); }, reconcile: async () => { entries++; return { outcome: 'succeeded', receipt: o.localStore.putArtifact('unexpected reconciliation') }; } });
+  withdrawn = true;
+  await assert.rejects(receiver.reconcile({ id: q.id, runId: 'run', stepId: 'step', kind: 'fixture_read', payload: {}, scope: { kind: 'public' }, authority, status: 'uncertain', revision: 3, reservationId: q.id }), /Attempt use withdrawn/);
+  assert.equal(entries, 0); assert.equal(f.raw.usedBytes, bytes); assert.deepEqual(a.accounting('grant'), before);
 });
