@@ -148,3 +148,10 @@ test('UTF8 binary ordering agrees across activation, target sorting and replay f
   assert.equal(bound.withdrawDocumentJournalContent({ id: 'unicode', reason: 'forget', targets }).withdrawnVersionIds.length, 4);
   assert.equal(f.open().captureDevelopmentSnapshot(limits).journalPayloads.filter(p => p.state === 'withdrawn').length, 4);
 });
+
+test('withdrawal input serialization failure rolls back its document side effects inside the store transaction', t => {
+  const store = fixture(t).open(); store.put('memory', 'one', 'current', null);
+  const before = store.captureDevelopmentSnapshot(limits);
+  assert.throws(() => store.withdrawDocumentJournalContent({ ...request(), get targets(): JournalWithdrawalInput['targets'] { store.put('sibling', 'uncommitted', 'temporary', null); throw Error('withdrawal serialization fault'); } }), /withdrawal serialization fault/);
+  assert.deepEqual(store.captureDevelopmentSnapshot(limits), before);
+});

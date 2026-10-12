@@ -28,7 +28,7 @@ function reservedJournalNamespace(namespace: string): boolean { return namespace
 function ownedJournalNamespace(namespace: string): boolean { return namespace === DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE || namespace === DOCUMENT_JOURNAL_HEAD_NAMESPACE; }
 function documentDigest(document: Document): string { return createHash('sha256').update(canonicalJson(document)).digest('hex'); }
 function documentKey(namespace: string, key: string): string { return canonicalJson([namespace, key]); }
-function compareKeys(a: { namespace: string; key: string }, b: { namespace: string; key: string }): number { return a.namespace < b.namespace ? -1 : a.namespace > b.namespace ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0; }
+function compareKeys(a: { namespace: string; key: string }, b: { namespace: string; key: string }): number { return Buffer.compare(Buffer.from(a.namespace), Buffer.from(b.namespace)) || Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)); }
 
 export interface StoreOptions { filename: string; checkoutRoot?: string; documentJournal?: DocumentJournalOptions | null }
 /** One engine for operational and developmental state. Transactions are synchronous and cannot cross await. */
@@ -221,19 +221,19 @@ export class OperationalStore {
     this.insertEvent({ id: randomUUID(), stream: binding.stream, type: JOURNAL_MUTATION, data: { schema: JOURNAL_SCHEMA, hostId: binding.hostId, namespace, key, before, after: next } });
   }
   withdrawDocumentJournalContent(input: JournalWithdrawalInput): { withdrawalId: string | null; withdrawnVersionIds: string[] } {
-    // Canonicalize caller-controlled fields before using them more than once.
-    const request = JSON.parse(canonicalJson(input)) as JournalWithdrawalInput;
-    nonempty(request.id, 'withdrawal.id'); invariant(request.reason === 'forget' || request.reason === 'expiry', 'invalid withdrawal reason');
-    invariant(Array.isArray(request.targets), 'invalid withdrawal targets');
-    for (const target of request.targets) {
-      nonempty(target.namespace, 'withdrawal.namespace'); nonempty(target.key, 'withdrawal.key');
-      invariant(!reservedJournalNamespace(target.namespace) && (target.expectedRevision === null || Number.isSafeInteger(target.expectedRevision) && target.expectedRevision > 0), 'invalid withdrawal target');
-      invariant(canonicalJson(target) === canonicalJson({ namespace: target.namespace, key: target.key, expectedRevision: target.expectedRevision }), 'invalid withdrawal target fields');
-    }
-    request.targets.sort(compareKeys);
-    invariant(new Set(request.targets.map(target => documentKey(target.namespace, target.key))).size === request.targets.length, 'duplicate withdrawal target');
-    invariant(canonicalJson(request) === canonicalJson({ id: request.id, reason: request.reason, targets: request.targets }), 'invalid withdrawal request fields');
     return this.transaction(() => {
+      // Canonicalize caller-controlled fields inside the transaction so serialization side effects roll back.
+      const request = JSON.parse(canonicalJson(input)) as JournalWithdrawalInput;
+      nonempty(request.id, 'withdrawal.id'); invariant(request.reason === 'forget' || request.reason === 'expiry', 'invalid withdrawal reason');
+      invariant(Array.isArray(request.targets), 'invalid withdrawal targets');
+      for (const target of request.targets) {
+        nonempty(target.namespace, 'withdrawal.namespace'); nonempty(target.key, 'withdrawal.key');
+        invariant(!reservedJournalNamespace(target.namespace) && (target.expectedRevision === null || Number.isSafeInteger(target.expectedRevision) && target.expectedRevision > 0), 'invalid withdrawal target');
+        invariant(canonicalJson(target) === canonicalJson({ namespace: target.namespace, key: target.key, expectedRevision: target.expectedRevision }), 'invalid withdrawal target fields');
+      }
+      request.targets.sort(compareKeys);
+      invariant(new Set(request.targets.map(target => documentKey(target.namespace, target.key))).size === request.targets.length, 'duplicate withdrawal target');
+      invariant(canonicalJson(request) === canonicalJson({ id: request.id, reason: request.reason, targets: request.targets }), 'invalid withdrawal request fields');
       const binding = this.readJournalBinding();
       const previous = this.db.prepare('SELECT stream,type,data FROM events WHERE id=?').get(request.id) as { stream: string; type: string; data: string } | undefined;
       if (previous) {
