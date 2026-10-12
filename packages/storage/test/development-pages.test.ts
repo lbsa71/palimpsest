@@ -323,7 +323,8 @@ for (const mode of ['separate-conversations', 'same-message-revisions'] as const
       f.app.communications.receive({ source: 'direct', externalId: mode === 'same-message-revisions' ? 'assignment' : `assignment-${i}`, revision: String(i), conversation: mode === 'same-message-revisions' ? 'one-conversation' : `conversation-${i}`, text: `Synthetic bounded observation ${i}.`, actor: { id: 'synthetic-observer', scope: { kind: 'public' }, modificationEligible: false } });
       await new Promise<void>(resolve => setImmediate(resolve)); await f.app.tick(); assert.equal(f.app.store.list('requests').length, 0); assert.equal(f.app.directApi.listening, false); capture(i);
     }
-    assert.equal(samples.length, 13); if (mode === 'separate-conversations') { assert.equal(samples.at(-1)!.physicalRows, 546); assert.equal(samples.find(sample => !sample.fullCaptured)?.admissions, 8); } else assert.ok(samples.every(sample => sample.fullCaptured));
+    // The ordinary mode seal adds its document, payload, head, mutation and anchor event (five rows).
+    assert.equal(samples.length, 13); if (mode === 'separate-conversations') { assert.equal(samples.at(-1)!.physicalRows, 551); assert.equal(samples.find(sample => !sample.fullCaptured)?.admissions, 8); } else assert.ok(samples.every(sample => sample.fullCaptured));
   } finally {
     t.diagnostic(JSON.stringify({ mode, applicationBounds, samples, uniquePageArtifactBytes: [...retained.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0), uniquePageArtifactCount: retained.size }));
     await f.app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true });
