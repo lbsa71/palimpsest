@@ -33,7 +33,7 @@ function fixture(t: TestContext, options: { slack?: boolean; externalLease?: boo
   const config: ApplicationConfig = { stateDirectory, workspaceDirectory, applicationRoot: dirname(dirname(fileURLToPath(import.meta.url))), nodeBinary: process.execPath, workerEntrypoint: 'deployment/shell-worker.ts', artifactId: 'shutdown-fixture', controlRevision: 'fixture-controls', promptFile, compactionPromptFile,
     model: { id: 'mistral-fixture-v1', contextWindow: 128000, reasoning: false, effort: 'none', maxOutputTokens: 100, maxRequestsPerSlice: 4, timeoutMs: 10000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
     bootstrapInitiative: false, scheduler: { windowMs: 60000, maxSlicesPerWindow: 8, maxLifetimeSlices: 32, quantumMs: 30000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 2, pollMs: 100, commands: [], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'operator', scope: { kind: 'public' }, modificationEligible: false },
-    ...(options.slack ? { slack: { teamId: 'fixture-team', botUserId: 'fixture-bot', channels: [], eligibleHumanIds: [], coverageStart: '1.000000', lookbackSeconds: 10, allowSpeech: false } } : {}) };
+    ...(options.slack ? { slack: { teamId: 'fixture-team', botUserId: 'fixture-bot', channels: [{ channel: 'fixture-channel', scope: { kind: 'public' } }], eligibleHumanIds: [], coverageStart: '1.000000', lookbackSeconds: 10, allowSpeech: false } } : {}) };
   const authorityStore = new AuthorityStore(join(stateDirectory, 'authority.sqlite')), authority = authorityStore.bootstrap('fixture-instance', config.controlRevision, config.artifactId);
   const lease = options.externalLease ? new ProcessLease(join(stateDirectory, 'process-lease.sqlite')) : undefined;
   const entered = deferred(), aborted = deferred(), release = deferred(); let requests = 0;
@@ -76,7 +76,7 @@ for (const failure of ['pending-write', 'slack-stop'] as const) test(`${failure}
   const closing = f.app.close(); let completed = false; const result = closing.then(() => { completed = true; return undefined; }, error => { completed = true; return error; });
   await turn(); assert.equal(completed, false, 'Preparatory failure must still await active work');
   await f.aborted.promise; f.release.resolve(); const error = await result;
-  assert.ok(error instanceof AggregateError); assert.ok(error.errors.includes(injected)); assert.strictEqual(f.app.close(), closing); assert.strictEqual(await f.app.close().catch(value => value), error);
+  assert.ok(error instanceof AggregateError); assert.ok(error.errors.includes(injected), error.errors.map(String).join('; ')); assert.strictEqual(f.app.close(), closing); assert.strictEqual(await f.app.close().catch(value => value), error);
   f.app.lease.assertHeld(); assert.deepEqual(f.app.store.get('allocations', 'operating-envelope:v1'), grant); assert.notEqual(f.app.runtime.getRun(run.id)!.status, 'running');
   assert.equal(f.app.store.list('requests').length, 1); assert.equal(f.app.store.list<any>('requests')[0]!.value.request.status, 'uncertain');
   assert.throws(() => new ProcessLease(join(f.config.stateDirectory, 'process-lease.sqlite')), /Another supervisor/); await f.app.tick(); assert.equal(f.requests, 1);
