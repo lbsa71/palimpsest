@@ -8,14 +8,16 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 **User requirement, 2026-10-12:** all environmental dependencies must be injectable for mocking; [AGENTS.md](../../AGENTS.md) now makes this an engineering requirement for the whole rewrite. Root will replace its pending-transport fixture's interim global clock mock with an explicit host-injected clock through application/broker composition. Other discovered ambient dependencies need finite ownable refactoring tasks; this does not authorize a broad concurrent rewrite of sibling-owned files.
 
-### Current finite ownership — 04:04 UTC
+### Current finite ownership — 04:25 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
 |---|---|
-| `/root/a1_development_control_proof_rereview`, `development-control-proof-rereview` | Fresh review of exact repaired DC2 source `21ab531` imported at `478b57f`; new independent tests/evidence only. |
+| `/root/a1_development_control_payload_repair`, `development-control-payload-repair` | Repair preserved independent R3: complete current original bridge identity under actual journaled mutation; prior tests read-only. |
 | `/root/a1_environment_di_plan`, `environment-di-plan` | Finite read-only inventory and parallel refactoring plan for the user's whole-rewrite environmental DI requirement; new evidence/design document only. |
-| `/root/a1_development_source_admission_recorder`, `development-source-admission-recorder` | OD2-b2a mechanical recorder integration under adopted `c48f0b5`; exact precode/API `7d0c684`. |
-| `/root` | Exact integration, central planning and OD2-b3a driver forwarding/causal regressions in its isolated tree; final qualification/H1 remain open. |
+| `/root/a1_development_recorder_admission_review`, `development-recorder-admission-review` | Fresh mechanical recorder review of exact `a919d98` / final handoff `0f7b5b2`; new tests/evidence only. |
+| `/root` | Timing/worker DI integrated `c253c61`,57/57 focused/strict pass. Exact b3a host-adapter forwarding and global-clock fixture replacement are under joined driver checks; final qualification/H1 remain open. |
+
+Independent compact/consumer fixture review `115f816` accepted174/174 with old642 assertion expressions preserved, integrated `969dd1b`. Control-proof re-review `166bb6a` returns old28/28 and new6/7, preserving R3's actual payload mutation failure; integrated `9d52e77`, then assigned a finite repair. Recorder author final `0f7b5b2` passes32 new,167 source/projector and223 recorder/storage checks with strict, integrated `b64ea9a`; fresh acceptance remains pending. These component results do not close the semantic signing, boundary, qualification, live or H1 gates.
 
 Compact finite author goal completes at `4c4fcda`: unchanged compact predicate1/1, full independent audit33/33 and authored53/53, strict pass. Its exact three-path handoff is integrated at `12ccda2`; all old assertion bodies are unchanged. DC2 finite repair goal completes at `21ab531`: final joined27/27 plus separate larger-metadata provider case1/1, strict pass, four original failures retained. Its exact three-path handoff is integrated at `478b57f`. Neither author receipt substitutes for the fresh reviews now claimed.
 
