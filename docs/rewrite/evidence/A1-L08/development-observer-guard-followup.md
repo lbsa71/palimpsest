@@ -13,3 +13,5 @@ git diff --check
 ```
 
 The test log is `/tmp/aeon-root-observer-guard-followup.log`. Timing reflects this selected concurrent engineering run, not a controlled before/after latency experiment. Fresh post-change joined source review remains required; all original final-release and source-withdrawal predicates pass unchanged.
+
+Fresh post-change review is accepted at `93a7743`: exact line inspection confirms all three reader gates at version resolution, actual recorder whole-attempt fencing, event/original/page/manifest/prefix gates and final release remain. All 85 unchanged observer tests pass within its 119-case joined driver/observer regression receipt, zero failures/skips. This closes the narrow follow-up's independent component review; measured full-profile guard performance remains unqualified.
