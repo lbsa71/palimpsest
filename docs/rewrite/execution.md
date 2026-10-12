@@ -15,7 +15,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 | Current owner | Finite work and handoff |
 |---|---|
 | `/root/a1_development_acquisition`, NEW `development-acquisition-retention` worktree | NEW finite JR2 goal: join accepted recorder `8e89ce1` and adapter `4296bbd` onto current v2 source; enforce current withdrawal/custody under the adopted retention design; fresh review and page integration follow |
-| `/root/a1_development_pages`, `development-pages` worktree | New finite CP1 storage implementation goal under the [adopted complete-page design](evidence/A1-L08/development-incremental-capture-design.md); bounded physical inventory, v2 graph validation and distinct current-cut/historical-use fences; old full-capture predicates remain unchanged |
+| `/root/a1_development_pages_review`, NEW `development-pages-review` worktree | NEW fresh independent CP1 review of clean author `65f6709`, source `7d9e1a`; 207 authored/joined passes and strict, actual 12-conversation page capture passes while old full-snapshot refusal remains; signed recorder feasibility is still separate |
 | `/root/a1_development_controls`, `development-controls` worktree | New finite DC1 implementation of adopted design `617a56f`: configuration-bound ordinary ablations and accounted deterministic negatives; exclusive application/config/helper/initiative-context changes with fresh review required |
 | `/root` | Integration, source-bound checks, later ordinary acquisition composition, remaining native inquiry and H1 |
 
