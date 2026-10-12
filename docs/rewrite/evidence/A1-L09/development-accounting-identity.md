@@ -1,0 +1,7 @@
+# Actual original-ledger association
+
+2026-10-12. Root owns this narrow L09 bridge refinement requested by recorder R3 repair (`7bd6b8a` / `c454f1a`). The registered role and configuration identify accepted metadata; they do not prove that an actual DevelopmentAccounting object uses the recorder's original ResourceLedger. The bridge already retains that object privately. Public application/runtime/communications identities suffice for the remaining source association.
+
+Pre-code specification: add only `get originalResources(): ResourceLedger { return this.options.original; }` to DevelopmentAccounting. It exposes the exact existing trusted host object, has no setter, creates no ledger/allocation and supplies no model tool or resource authority. Recorder owns assertions of object identity before ingress, capture, freeze and close. A separate ledger bearing identical metadata must not satisfy those assertions. This is an integration identity accessor, not a source-closure or trusted-host proof.
+
+Root changes only the bridge getter and this evidence. Strict compilation and existing bridge causal checks verify no accounting behavior changed; the recorder author's unchanged independent source/foreign-association regressions provide the meaningful consumer verification. No native/provider/host acquisition or credential access. Fresh recorder re-review includes the composed assertion; this accessor alone cannot close R3.
