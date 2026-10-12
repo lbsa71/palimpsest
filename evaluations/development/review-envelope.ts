@@ -5,6 +5,8 @@ import { hashBytes } from '../../packages/release/artifacts.ts';
 import { authenticate, inertSnapshot, type Signed } from '../qualification/manifest.ts';
 import { collectDevelopmentEvidenceProjection, prepareDevelopmentEvidenceProjection, developmentCapacityLimits, developmentCapacityProfile, developmentOperationalArtifactBytes, verifyDevelopmentAttempt, DevelopmentArtifactUnavailable, type Accounting, type BoundedArtifactReader, type CollectedDevelopment, type DevelopmentAttempt, type DevelopmentObservation, type DevelopmentReview, type DevelopmentTrust, type Finding, type ProposedDevelopment } from './witness.ts';
 
+import { boundedDevelopmentReviewInput, projectDevelopmentReviewRead, type BoundedDevelopmentEvidenceRead, type BoundedDevelopmentReviewInput } from './review-projection.ts';
+
 export const reviewEnvelopeDomains = Object.freeze({
   registration: 'aeon.development.registration.v2', behavior: 'aeon.development.behavior.v2',
   review: 'aeon.development.review-binding.v2', tail: 'aeon.development.accounting-tail.v2',
@@ -35,18 +37,23 @@ export interface DevelopmentBehavior {
   requests: DevelopmentRequestState[]; transitions: DevelopmentAccountingTransition[]; rootCancelled: boolean; evidence: CollectedDevelopment;
   artifactIndex: DevelopmentArtifactIndexEntry[];
 }
-export interface DevelopmentReviewBinding {
+export interface DevelopmentReviewBinding<Execution extends AnyDevelopmentReviewExecution = DevelopmentReviewExecution> {
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string;
-  review: Signed<DevelopmentReview>; execution: Signed<DevelopmentReviewExecution>;
+  review: Signed<DevelopmentReview>; execution: Signed<Execution>;
 }
 /** Qualified host derivation of a model judgment, never a caller-filled execution assertion. */
 export interface DevelopmentReviewExecution {
+  inputMode?: never;
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string;
   requestId: string; requestIdentityDigest: string; settledStateDigest: string; settlementDigest: string;
   input: ArtifactRef; response: ArtifactRef; output: ArtifactRef; derivedAt: string;
   evidenceReads: { requestId: string; artifact: ArtifactRef; localToolCallId: string; localRunId: string; stepId: string }[];
   decoder: 'mistral-chat-final.v1' | 'openai-responses-final.v1';
 }
+export interface BoundedDevelopmentReviewExecution extends Omit<DevelopmentReviewExecution, 'inputMode' | 'evidenceReads'> {
+  inputMode: 'bounded-sections-v1'; evidenceReads: BoundedDevelopmentEvidenceRead[];
+}
+export type AnyDevelopmentReviewExecution = DevelopmentReviewExecution | BoundedDevelopmentReviewExecution;
 export interface DevelopmentReviewInput {
   version: 2; registrationDigest: string; behaviorDigest: string; roleId: string; behavior: DevelopmentBehavior;
 }
@@ -82,13 +89,13 @@ export interface DevelopmentEnvelopeTrust {
   closure: { id: string; key: Uint8Array; verifierDigest: string };
   transports: ReadonlyMap<string, Uint8Array>;
 }
-export interface DevelopmentReviewEnvelope {
+export interface DevelopmentReviewEnvelope<Execution extends AnyDevelopmentReviewExecution = DevelopmentReviewExecution> {
   version: 2; registration: Signed<DevelopmentRegistration>; behavior: Signed<DevelopmentBehavior>;
-  reviews: Signed<DevelopmentReviewBinding>[]; accountingTail: Signed<DevelopmentAccountingTail>;
+  reviews: Signed<DevelopmentReviewBinding<Execution>>[]; accountingTail: Signed<DevelopmentAccountingTail>;
   closure: Signed<DevelopmentClosure> | null;
 }
 export interface ProposedDevelopmentEnvelope {
-  kind: 'proposed-development-review-envelope'; version: 2; envelope: DevelopmentReviewEnvelope;
+  kind: 'proposed-development-review-envelope'; version: 2; envelope: DevelopmentReviewEnvelope<AnyDevelopmentReviewExecution>;
   behaviorDigest: string; behavioralReview: ProposedDevelopment | null; finalAccounting: Accounting | null;
   findings: Finding[]; status: ProposedDevelopment['status'];
   automaticReleaseEligible: false; h1Eligible: false;
@@ -148,7 +155,7 @@ function behaviorRecords(r: DevelopmentRegistration, b: Pick<DevelopmentBehavior
   return b.observations.length + r.originalRequests.length + b.requests.length + b.transitions.length + b.artifactIndex.length;
 }
 /** Recorder supplies its complete durable extra inventory; no self-authenticating completeness claim. */
-export function collectDevelopmentAccountingTail(registrationDigest: string, behavior: DevelopmentBehavior, transitions: DevelopmentAccountingTransition[], reviews: Signed<DevelopmentReviewBinding>[], retainedArtifacts: readonly ArtifactRef[], reader: BoundedArtifactReader, limits: DevelopmentAttempt['limits']): DevelopmentAccountingTail {
+export function collectDevelopmentAccountingTail(registrationDigest: string, behavior: DevelopmentBehavior, transitions: DevelopmentAccountingTransition[], reviews: Signed<DevelopmentReviewBinding<AnyDevelopmentReviewExecution>>[], retainedArtifacts: readonly ArtifactRef[], reader: BoundedArtifactReader, limits: DevelopmentAttempt['limits']): DevelopmentAccountingTail {
   const input = inertSnapshot({ registrationDigest, behavior, transitions, reviews, retainedArtifacts, limits });
   digest(input.registrationDigest); invariant(input.registrationDigest === input.behavior.registrationDigest, 'Tail changed registration/B');
   equal(input.limits, input.behavior.manifest.value.limits, 'Tail changed original evidence allowance');
@@ -299,7 +306,9 @@ function replay(transitions: readonly DevelopmentAccountingTransition[], initial
 }
 
 /** Exact owned input packet; private raw artifacts remain available through bounded accounted reads. */
-export function developmentReviewInput(behavior: DevelopmentBehavior, roleId: string): DevelopmentReviewInput {
+export function developmentReviewInput(behavior: DevelopmentBehavior, roleId: string): DevelopmentReviewInput | BoundedDevelopmentReviewInput {
+  invariant(behavior.manifest.value.version === 1 || behavior.manifest.value.version === 2 && behavior.manifest.value.capacityProfile === developmentCapacityProfile, 'Unsupported review input attempt/profile');
+  if (behavior.manifest.value.version === 2) return boundedDevelopmentReviewInput(behavior, roleId);
   return { version: 2, registrationDigest: behavior.registrationDigest, behaviorDigest: identity(behavior), roleId, behavior };
 }
 /** Fixed provider wire decoders. An unfinished/tool/refusal response cannot become a judgment. */
@@ -325,9 +334,11 @@ export function decodeDevelopmentModelJudgment(responseBytes: Uint8Array, provid
   invariant(typeof judgment.reason === 'string' && judgment.reason.length > 0, 'Model overall reason required');
   return { text, judgment };
 }
-function modelExecution(binding: DevelopmentReviewBinding, b: DevelopmentBehavior, r: DevelopmentRegistration, roles: ReadonlyMap<string, DevelopmentRoleBinding>, transitions: readonly DevelopmentAccountingTransition[], latest: ReadonlyMap<string, DevelopmentRequestState>, trust: DevelopmentEnvelopeTrust, read: BoundedArtifactReader): void {
+function modelExecution(binding: DevelopmentReviewBinding<AnyDevelopmentReviewExecution>, b: DevelopmentBehavior, r: DevelopmentRegistration, roles: ReadonlyMap<string, DevelopmentRoleBinding>, transitions: readonly DevelopmentAccountingTransition[], latest: ReadonlyMap<string, DevelopmentRequestState>, trust: DevelopmentEnvelopeTrust, read: BoundedArtifactReader): void {
   const x = authenticate(reviewEnvelopeDomains.execution, binding.execution, new Map([[trust.behavior.observer.id, trust.behavior.observer.key]]));
-  exact(x, 'version,registrationDigest,behaviorDigest,roleId,requestId,requestIdentityDigest,settledStateDigest,settlementDigest,input,response,output,derivedAt,decoder,evidenceReads');
+  const bounded = b.manifest.value.version === 2;
+  exact(x, `version,registrationDigest,behaviorDigest,roleId,requestId,requestIdentityDigest,settledStateDigest,settlementDigest,input,response,output,derivedAt,decoder,evidenceReads${bounded ? ',inputMode' : ''}`);
+  invariant(bounded ? x.inputMode === 'bounded-sections-v1' : x.inputMode === undefined, 'Review execution changed profile input mode');
   const role = roles.get(binding.roleId)!;
   invariant(x.version === 2 && x.registrationDigest === identity(r) && x.behaviorDigest === identity(b) && x.roleId === role.id && role.kind === 'reviewer' && role.profile, 'Review execution changed B/assigned model role');
   const provider = role.profile.provider ?? 'mistral'; invariant(x.decoder === (provider === 'mistral' ? 'mistral-chat-final.v1' : 'openai-responses-final.v1'), 'Unqualified review decoder');
@@ -358,19 +369,29 @@ function modelExecution(binding: DevelopmentReviewBinding, b: DevelopmentBehavio
   const observedReads = transitions.filter(t => t.state.roleId === role.id && t.state.request.provider === 'effect-receiver' && t.state.request.model === 'evidence_read' && t.state.request.status === 'succeeded');
   equal(x.evidenceReads.map(v => v.requestId).sort(), observedReads.map(t => t.state.request.id).sort(), 'Review evidence read inventory omits/changes observed succeeded reviewer requests');
   for (const access of x.evidenceReads) {
-    exact(access, 'requestId,artifact,localToolCallId,localRunId,stepId'); id(access.localToolCallId); id(access.localRunId); id(access.stepId); invariant(b.artifactIndex.some(v => v.artifact.sha256 === access.artifact.sha256), 'Model evidence read outside sealed B index');
+    exact(access, bounded ? 'requestId,selector,cursor,receipt,localToolCallId,localRunId,stepId' : 'requestId,artifact,localToolCallId,localRunId,stepId'); id(access.localToolCallId); id(access.localRunId); id(access.stepId);
+    if ('artifact' in access) invariant(b.artifactIndex.some(v => v.artifact.sha256 === access.artifact.sha256), 'Model evidence read outside sealed B index');
+    const response = 'receipt' in access ? access.receipt : access.artifact;
     const event = transitions.find(t => t.state.request.id === access.requestId && t.state.request.status === 'succeeded');
-    invariant(event?.settlement && event.state.roleId === role.id && event.state.request.provider === 'effect-receiver' && event.state.request.model === 'evidence_read' && event.settlement.value.response?.sha256 === access.artifact.sha256 && transitions.indexOf(event) < transitions.indexOf(dispatched) && at(event.state.observedAt) <= at(dispatched.state.observedAt), 'Judgment evidence read lacks prior accounted role/byte provenance');
+    invariant(event?.settlement && event.state.roleId === role.id && event.state.request.provider === 'effect-receiver' && event.state.request.model === 'evidence_read' && event.settlement.value.response?.sha256 === response.sha256 && transitions.indexOf(event) < transitions.indexOf(dispatched) && at(event.state.observedAt) <= at(dispatched.state.observedAt), 'Judgment evidence read lacks prior accounted role/byte provenance');
     const accessPayload = JSON.parse(Buffer.from(read(event.state.payload, 1_000_000)).toString('utf8'));
-    exact(accessPayload, 'id,runId,stepId,name,arguments'); exact(accessPayload.arguments, 'artifact');
+    exact(accessPayload, 'id,runId,stepId,name,arguments'); exact(accessPayload.arguments, bounded ? 'version,behaviorDigest,selector,cursor' : 'artifact');
     invariant(canonicalJson(accessPayload) === Buffer.from(read(event.state.payload, 1_000_000)).toString('utf8'), 'Evidence read requires canonical actual ToolCall bytes');
     invariant(accessPayload.id === access.localToolCallId && accessPayload.runId === access.localRunId && accessPayload.stepId === access.stepId && accessPayload.name === 'evidence_read', 'Evidence read changed actual ToolCall identity/name/run/step');
     const mappedRequest = `development-request:${identity([identity(r), role.id, `tool:${access.localToolCallId}`])}`;
     const mappedRun = `development-run:${identity([identity(r), role.id, access.localRunId])}`;
     invariant(event.state.request.id === mappedRequest && event.state.request.reservationId === mappedRequest && event.state.request.promptManifestId === `tool:${access.localToolCallId}` && event.state.request.runId === mappedRun && mappedRun === dispatched.state.request.runId && event.state.request.purpose === 'reasoning', 'Evidence read changed actual local-to-original request/run binding');
-    equal(accessPayload.arguments.artifact, access.artifact, 'Evidence read payload substituted artifact');
-    invariant(b.artifactIndex.some(v => identity(v.artifact) === identity(access.artifact)), 'Evidence read changed accepted B artifact/audience');
-    equal(event.settlement.value.response, access.artifact, 'Evidence read substituted succeeded receipt bytes'); read(access.artifact, 1_000_000);
+    equal(event.settlement.value.response, response, 'Evidence read substituted succeeded receipt bytes');
+    if ('receipt' in access) {
+      equal(accessPayload.arguments, { version: 1, behaviorDigest: identity(b), selector: access.selector, cursor: access.cursor }, 'Evidence read payload substituted selector/cursor/B');
+      const derived = projectDevelopmentReviewRead(b, accessPayload.arguments, read, { maxReceiptBytes: 2048, remainingReadBytes: 2048 + developmentOperationalArtifactBytes });
+      equal(derived.artifact, access.receipt, 'Evidence read forged derived receipt');
+      invariant(Buffer.from(read(access.receipt, 2048)).equals(Buffer.from(derived.bytes)), 'Evidence read changed canonical receipt bytes');
+    } else {
+      equal(accessPayload.arguments.artifact, access.artifact, 'Evidence read payload substituted artifact');
+      invariant(b.artifactIndex.some(v => identity(v.artifact) === identity(access.artifact)), 'Evidence read changed accepted B artifact/audience');
+      read(access.artifact, 1_000_000);
+    }
   }
 }
 
@@ -405,7 +426,7 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
 }
 
 /** Offline deterministic join; semantic judgments still come only from the frozen witness rules. */
-export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelope, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now()): ProposedDevelopmentEnvelope {
+export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelope<AnyDevelopmentReviewExecution>, trust: DevelopmentEnvelopeTrust, reader: BoundedArtifactReader, now = Date.now()): ProposedDevelopmentEnvelope {
   const envelope = inertSnapshot(input), findings: Finding[] = []; let behavioralReview: ProposedDevelopment | null = null, finalAccounting: Accounting | null = null;
   const fail = (code: string, error: unknown) => findings.push({ code, status: error instanceof DevelopmentArtifactUnavailable ? 'unavailable' as const : 'failed' as const, detail: String(error) });
   try {
