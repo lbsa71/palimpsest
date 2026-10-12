@@ -40,3 +40,24 @@ test('a provider receipt settles after restart without repeating the physical re
     assert.equal(reconcileProviderReceipts(store, ledger), 0);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('an identical uncertain timeout receipt is idempotent while a changed receipt still settles', () => {
+  const root = mkdtempSync(join(tmpdir(), 'aeon-provider-uncertain-'));
+  const store = new OperationalStore({ filename: join(root, 'state.sqlite') });
+  try {
+    const ledger = new ResourceLedger(store, { tokens: 100, costUsd: 1, elapsedMs: 1000 });
+    ledger.allocate('run', { maxRequests: 4, maxTokens: 400, maxCostUsd: 4, maxElapsedMs: 10000, maxConcurrency: 2 });
+    const request: PhysicalRequest = { id: 'timeout', runId: 'run', purpose: 'reasoning', provider: 'mistral', model: 'fixture', promptManifestId: 'prompt', requestDigest: '1'.repeat(64), reservationId: 'timeout', status: 'reserved', usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
+    ledger.reserve(request); ledger.dispatched({ ...request, status: 'dispatched' });
+    const receipt = { requestId: request.id, dispatched: true, status: 'uncertain' as const, httpStatus: null, responseModel: null, responseDigest: null, usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 1008 } };
+    transportRecorder(store)(receipt);
+    assert.equal(reconcileProviderReceipts(store, ledger), 1);
+    const before = ['requests','budgets'].map(namespace => store.list(namespace));
+    assert.equal(reconcileProviderReceipts(store, ledger), 0);
+    assert.deepEqual(['requests','budgets'].map(namespace => store.list(namespace)), before);
+    transportRecorder(store)({ ...receipt, usage: { ...receipt.usage, elapsedMs: 1009 } });
+    assert.equal(reconcileProviderReceipts(store, ledger), 1);
+    assert.equal(ledger.request(request.id)!.usage.elapsedMs, 1009);
+    assert.equal(ledger.snapshot('run').cancelled, true);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});

@@ -8,6 +8,7 @@ import {identity} from '../packages/contracts/index.ts';
 import {AuthorityStore} from '../packages/supervisor/authority.ts';
 import {AutarkApplication} from './application.ts';
 import {validateConfiguration,type ApplicationConfig} from './config.ts';
+import {transportRecorder} from './provider-gateway.ts';
 function fixture() {
  const root=mkdtempSync(join(tmpdir(),'aeon-coding-policy-')), stateDirectory=join(root,'state'),workspaceDirectory=join(root,'work');mkdirSync(stateDirectory);mkdirSync(workspaceDirectory);
  const promptFile=join(root,'mind'),compactionPromptFile=join(root,'compact');writeFileSync(promptFile,'Fixture: answer a question.');writeFileSync(compactionPromptFile,'Summarize.');
@@ -55,4 +56,39 @@ test('uncapped operator policy retains charges and permits real composition work
   assert.ok(app.resources.snapshot('operating-envelope:v1').costUsd>5.5);
   assert.equal(app.resources.effectiveEnvelope(run.id).maxCostUsd,null);assert.equal(app.resources.effectiveEnvelope(run.id).maxRequests,null);
  }finally{await app.close();f.authorityStore.close();rmSync(f.root,{recursive:true,force:true});}
+});
+
+test('explicit elapsed-only recovery survives application receipt reconciliation and a second startup',async()=>{
+ const f=fixture();let app:AutarkApplication|undefined;
+ const base={id:'old-money-policy',authorizationRef:'fixture:chosen-$5',rootId:'operating-envelope:v1',expectedEnvelopeDigest:identity(f.config.resources),cumulativeTokenLimit:null,scope:'root-and-descendants' as const,descendantCostLimit:'root' as const};
+ f.config.allowanceAmendment=base;f.config.conversationTimeoutMs=10000;
+ const options={...f,secrets:{mistralApiKey:'fixture',directToken:'fixture'},performRequest:async()=>response};
+ try{
+  app=new AutarkApplication(options);
+  const r={id:'old-timeout',runId:'operating-envelope:v1',purpose:'reasoning' as const,provider:'mistral',model:'fixture',promptManifestId:'fixture',requestDigest:identity('old-timeout'),reservationId:'old-timeout',status:'reserved' as const,usage:{requests:1,inputTokens:null,outputTokens:null,costUsd:null,elapsedMs:0}};
+  app.resources.reserve(r);app.resources.dispatched({...r,status:'dispatched'});
+  const usage={...r.usage,elapsedMs:10008};
+  transportRecorder(app.store)({requestId:r.id,dispatched:true,status:'uncertain',httpStatus:null,responseModel:null,responseDigest:null,usage});
+  app.resources.settle({...r,status:'uncertain',usage});
+  assert.equal(app.resources.snapshot('operating-envelope:v1').cancelled,true);
+  const cause=app.store.get('requests',r.id)!,beforeRequests=app.store.list('requests'),beforeAllocation=app.store.get<{envelope:unknown;startedAt:number}>('allocations','operating-envelope:v1')!.value;
+  await app.close();app=undefined;
+  f.config.allowanceAmendment={...base,id:'explicit-timeout-recovery',cumulativeCostLimit:null,cumulativeRequestLimit:null,resumeAfterElapsedOverrun:{requestId:r.id,expectedRequestDigest:identity(cause.value)}};
+  app=new AutarkApplication(options);
+  assert.equal(app.resources.snapshot('operating-envelope:v1').cancelled,false);
+  assert.deepEqual(app.store.list('requests'),beforeRequests);
+  await app.close();app=undefined;
+  app=new AutarkApplication(options);
+  assert.equal(app.resources.snapshot('operating-envelope:v1').cancelled,false);
+  assert.deepEqual(app.store.list('requests'),beforeRequests);
+  const afterAllocation=app.store.get<{envelope:unknown;startedAt:number}>('allocations','operating-envelope:v1')!.value;
+  assert.deepEqual(afterAllocation.envelope,beforeAllocation.envelope);assert.equal(afterAllocation.startedAt,beforeAllocation.startedAt);
+  const run=app.communications.receive({source:'direct',externalId:'recovered-coding',revision:'1',conversation:'recovered-coding',text:'Verify execution after recovery.',actor:{id:'operator',scope:f.config.direct.scope,modificationEligible:true}}).run;
+  assert.equal((await app.resume(run.id)).status,'completed');
+  const newOverrun={...r,id:'new-overrun',reservationId:'new-overrun',requestDigest:identity('new-overrun')};
+  app.resources.reserve(newOverrun);app.resources.dispatched({...newOverrun,status:'dispatched'});app.resources.settle({...newOverrun,status:'uncertain',usage});
+  await app.close();app=undefined;
+  app=new AutarkApplication(options);
+  assert.equal(app.resources.snapshot('operating-envelope:v1').cancelled,true);
+ }finally{await app?.close();f.authorityStore.close();rmSync(f.root,{recursive:true,force:true});}
 });

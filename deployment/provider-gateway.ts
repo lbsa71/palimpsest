@@ -65,7 +65,9 @@ export function reconcileProviderReceipts(store: OperationalStore, ledger: Resou
     if (!request || !['dispatched', 'uncertain'].includes(request.status)) continue;
     const receipt = row.value;
     if (receipt.status === 'reserved' || receipt.status === 'dispatched') continue;
-    ledger.settle({ ...request, status: receipt.status, usage: receipt.usage });
+    const settled = { ...request, status: receipt.status, usage: receipt.usage };
+    if (identity(request) === identity(settled)) continue;
+    ledger.settle(settled);
     reconciled++;
   }
   return reconciled;
