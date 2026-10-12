@@ -17,3 +17,18 @@ Add an explicit original-allocation negative asserting the 300,000-byte source r
 The independent R4 diagnostic has 100 rows / 346,758 conservative bytes; its original failure remains in `/tmp/aeon-snapshot-independent-capacity-probe.log` (3.771 seconds). The first changed-fixture join is **81/83 pass, two failures, no skips**, 121.696 seconds, strict pass. Seven prior capacity failures now pass. The late-response authored positive proceeds further and refuses a later 155-row / 547,612-byte current source cut against 500,000; read-only follow-up preserves that refusal in `/tmp/aeon-snapshot-late-capacity-probe.log` (2.549 seconds). The new original-allocation negative itself correctly refuses reuse, but its test expects the duplicate-claim error after advancing beyond the original claim window; the earlier clock refusal is correct. No source defect follows from that new fixture mistake.
 
 Before the next edit, root explicitly narrows a second unclaimed fixture allocation to **only** that late-response positive: eight captures / 750,000 bytes per cut / the same 6,600,000-byte capture pool and 7,165,632-byte aggregate declaration. Eight exceeds its mandatory seven cuts while reserving 6,000,000 snapshot bytes. The unchanged test will still settle the actual pending response, retain cancellation, and refuse a false final closure. The new duplicate-claim negative will reset only the injected test clock to the original registration instant before probing durable duplicate admission, so it reaches the intended predicate. Other old assertions and allocations remain unchanged.
+
+## Authored result
+
+The two refined cases pass unchanged behavioral predicates, **2/2**, no skips/cancellations, 5.011 seconds. The earlier run's other 81 cases were not changed. This establishes coverage of all 83 cases across the two receipts, not a claim that the first full run was green. Exact first changed-fixture source is preserved at `61f1b80`; the original eight capacity failures remain at `02ce31b` and earlier. No production source change was required. The newly introduced negative preserves the original 300,000-byte failure as a passing refusal test; its duplicate-claim probe explicitly rolls back only the synthetic clock and still cannot erase durable claim state. Fresh independent fixture review remains pending.
+
+Commands, using pinned Node 24.13.0:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 evaluations/development/acquire.test.ts evaluations/development/acquire-review.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-name-pattern='^manual cancellation during T|^original 300000-byte' evaluations/development/acquire.test.ts
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+git diff --check
+```
+
+Temporary logs are `/tmp/aeon-root-recorder-rebase.log` and `/tmp/aeon-root-recorder-rebase-refinement.log`. The scalar diagnostic reproduced the storage preflight's `count(*)` and six-times-UTF8-length-plus-256-per-row formula through `DatabaseSync(filename,{readOnly:true})`, adding the same 512 plus six-times binding bytes. It rethrew each original exception, never replaced a source result or changed the accepted cut limits. No raw private input was involved.

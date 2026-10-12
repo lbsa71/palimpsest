@@ -35,10 +35,10 @@ function syntheticAcquisitionPlanFixture() {
 }
 
 
-function fixture(t: TestContext, journal = false, assignments = false, journalComposition = false) {
+function fixture(t: TestContext, journal = false, assignments = false, journalComposition: boolean | 'late-response' = false) {
   const f = syntheticAcquisitionPlanFixture(), directory = mkdtempSync(join(tmpdir(), 'aeon-recorder-'));
   // Explicit new unclaimed allocation; old-plan refusal remains a separate regression.
-  if (journalComposition) Object.assign(f.plan.capacity, { maxSnapshots: 13, maxSnapshotBytes: 500000, captureBytes: 6600000 });
+  if (journalComposition) Object.assign(f.plan.capacity, { maxSnapshots: journalComposition === 'late-response' ? 8 : 13, maxSnapshotBytes: journalComposition === 'late-response' ? 750000 : 500000, captureBytes: 6600000 });
   if (assignments) { f.plan.assignmentPacket = f.f.put({ version: 1, assignments: f.roles.filter(r => r.kind !== 'reviewer').map(r => ({ roleId: r.id, id: 'opportunity', message: { source: 'synthetic-assignment', externalId: 'opportunity', revision: '1', conversation: 'opportunity', text: 'Public synthetic assignment', actor: { id: 'synthetic-host', scope: { kind: 'public' }, modificationEligible: false } } })) }); f.registration.assignmentDigest = f.plan.assignmentPacket.sha256; }
   const rawDirectory = join(directory, 'raw'); mkdirSync(rawDirectory, { mode: 0o700 });
   const raw = new QualificationStore(rawDirectory, 32 * 1024 * 1024);
@@ -208,7 +208,7 @@ test('manual original cancellation before B is retained as unavailable and never
   assert.throws(() => r.freezeBehavior(sources.get('candidate')!.accounting, sources), /cancellation.*unavailable/); assert.equal(r.status().behavior, null); assert.equal(r.status().frozen?.rootCancelled, true); assert.equal(r.status().phase, 'failed'); assert.equal(f.original.snapshot(f.registration.rootId).cancelled, true);
 });
 test('manual cancellation during T retains no false C while real late response can still settle', t => {
-  const f = fixture(t, true, false, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r), x = { a: sources.get('no-memory')!.accounting, store: sources.get('no-memory')!.application.store, role: f.roles.find(r => r.id === 'no-memory')!, rp: f.plan.roles.find(r => r.roleId === 'no-memory')! };
+  const f = fixture(t, true, false, 'late-response'), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r), x = { a: sources.get('no-memory')!.accounting, store: sources.get('no-memory')!.application.store, role: f.roles.find(r => r.id === 'no-memory')!, rp: f.plan.roles.find(r => r.roleId === 'no-memory')! };
   const q = f.model(x); x.a.resources.reserve(q); x.a.resources.dispatched({ ...q, status: 'dispatched' }); f.setTime(180); const candidate = sources.get('candidate')!.accounting; r.freezeBehavior(candidate, sources);
   f.original.cancel(f.registration.rootId); f.setTime(181); const body = '{"model":"synthetic-model","late":true}'; x.a.recordResponse(q.id, { status: 200, body }); x.a.recordTransport({ requestId: q.id, dispatched: true, status: 'succeeded', httpStatus: 200, usage: { requests: 1, inputTokens: 2, outputTokens: 1, costUsd: 0.000004, elapsedMs: 1000 }, responseModel: 'synthetic-model', responseDigest: hashBytes(body) }); x.a.resources.settle({ ...q, status: 'succeeded', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
   const result = r.close(candidate, []); assert.equal(result.envelope.closure, null); assert.notEqual(result.status, 'mechanically-prepared'); assert.equal(f.original.request(x.a.requestId(q.id))?.status, 'succeeded'); assert.ok(r.status().inventory.some(i => i.pool === 'response')); assert.equal(f.original.snapshot(f.registration.rootId).cancelled, true);
@@ -246,6 +246,7 @@ test('original 300000-byte journal allocation remains unavailable and cannot exp
   assert.equal(r.plan.capacity.maxSnapshotBytes, 300000); assert.equal(r.status().behavior, null);
   assert.equal(r.status().phase, 'failed'); assert.ok(r.status().failure);
   assert.throws(() => { r.plan.capacity.maxSnapshotBytes = 500000; }, /read only|readonly/);
+  f.setTime(-2); // Even the injected fixture clock returning to registration cannot erase the claim.
   assert.throws(f.recorder, /already claimed/);
 });
 test('foreign communications, runtime resources and original ledger identity refuse before intent or ingress', t => {
