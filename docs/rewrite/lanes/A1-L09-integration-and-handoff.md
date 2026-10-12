@@ -1,6 +1,6 @@
 # A1-L09 — integration, whole-system evolution and handoff
 
-**Scoped pilot handoff, 2026-10-12:** the [first live Slack pilot](../slack-pilot.md) is deployed from `debadd9` on `codex/aeon-slack-pilot-20261012`. The user confirms a successful Slack reply. Deterministic ingestion reactions (A1-L07 / PILOT-05, source `79c5a14`) are also deployed and accepted as engineering source; their live visual check awaits the next user message. Current service, accepted candidate, continuity evidence and operational limits are in the pilot record. Earlier backlog claims remain inactive. All delegates use Sol.
+**Scoped pilot handoff, 2026-10-12:** the [live Slack pilot](../slack-pilot.md) runs on `codex/aeon-slack-pilot-20261012`. User-confirmed Slack speech and eyes, authorized private DM ingestion and deterministic terminal-status delivery are established. Later scoped source/context repair is `0218e52` / `5f1569d`: one saved-thread compaction attempt failed safely with history retained and eyes cleared; a fresh natural direct model conversation completed. The pilot owns exact active/accepted candidate and live engineering evidence. Slack-search completion and successful live compaction remain open. Earlier backlog claims remain inactive; all current delegates use Sol.
 
 **Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
 
