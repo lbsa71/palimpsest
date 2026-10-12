@@ -15,7 +15,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 | Current owner | Finite work and handoff |
 |---|---|
 | `/root/a1_development_acquisition`, NEW `development-acquisition-retention` worktree | NEW finite JR2 goal: join accepted recorder `8e89ce1` and adapter `4296bbd` onto current v2 source; enforce current withdrawal/custody under the adopted retention design; fresh review and page integration follow |
-| `/root/a1_development_pages_review`, `development-pages-review` worktree | NEW exact-source re-review of CP1 repair `b9d17f0`/`656f862`:218 supported passes; unchanged probes41pass/3outside-contract diagnostics. Complete marker preflight needs independent disposition |
+| `/root/a1_development_composition_design`, NEW `development-composition-design` worktree | NEW finite CP2 design: prove full-protocol capacity and ordinary-runtime transaction/fence composition; CP1 is integrated after independent237-pass acceptance, three stronger raw-SQL diagnostics remain separately red |
 | `/root/a1_development_controls`, `development-controls` worktree | NEW DC1-R1 repair of two independent caller-alias/getter extension leaks from review `2efc20f`; accepted option choices must stay stable throughout execution. Matched-control validity remains separate |
 | `/root` | Integration, source-bound checks, later ordinary acquisition composition, remaining native inquiry and H1 |
 
