@@ -196,6 +196,7 @@ function output(kind: DevelopmentControlKind, input: InboundInput): JsonValue {
   invariant(proposition, 'Stance control requires explicit public proposition');
   return { propositionId: proposition.id as string, stance: kind === 'always-agree' ? 'agree' : 'oppose', text: kind === 'always-agree' ? 'I agree.' : 'I disagree.' };
 }
+export { algorithm as developmentControlAlgorithm, algorithmDigest as developmentControlAlgorithmDigest, output as developmentControlOutput };
 export function createScriptedControlReceiver(control: BoundDevelopmentControl): EffectReceiver {
   invariant(control.isScripted, 'Script receiver requires verified scripted binding');
   return {
