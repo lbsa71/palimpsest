@@ -77,3 +77,8 @@ Root assigned `/root/a1_real_screen` a finite T04/L08 implementation goal at `86
 Root reserves the shell/broker/application tool-instruction wiring and focused tests for `/root/a1_tool_instruction_retention`, isolated worktree `tool-instruction-retention` from `6085f1f`, `gpt-6.1-sol` / high, finite actual goal under the [fixed specification](../evidence/A1-L02/tool-instruction-retention-specification.md). Root also permits only the necessary consumer fixture adaptations in `packages/runtime/test/{shell-joined,crash-worker,recovery-composition-fixture}.ts` and `packages/initiative/test/initiative.test.ts`. C1 and runtime bridge changes still require coordination. No legacy fallback or paid execution; fresh independent review follows.
 
 Author and independent review goals are complete, integrated through `7478df1`. [Fresh evidence](../evidence/A1-L02/tool-instruction-review.md) records 14 adversarial cases, 67 focused passes and exact retained-byte audits; root's joined strict/build and 93 focused checks also pass. The canonical artifact now records ordinary and compaction tool surfaces before dispatch, preserving scope, purpose and projection binding. This closes the retention defect without making unavailable historical bytes recoverable or accepting Q3/H1.
+
+
+### Environmental DI06 coordination
+
+Root owns the exact DI06 shell/transport/retained-loop paths listed in the execution record, isolated `environment-di-06` / `codex/a1-environment-di-06-20261012`, from the claim revision. New tests/evidence are scoped to DI06; existing schema sources and all previous tests are read-only. Exact Pi source-manifest changes require the separate DI26 owner before acceptance.
