@@ -14,7 +14,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 | Current owner | Finite work and handoff |
 |---|---|
-| `/root/a1_development_acquisition`, `development-acquisition` worktree | NEW finite escaped-terminal-record repair after review `7429b8d`: 260 joined cases, 259 pass/one failure, B/final pressure checks green. Preserve all 32 independent predicates; fix serialized raw failure and owner terminal headroom before claim/admission |
+| `/root/a1_development_acquisition_review`, `development-acquisition-review` worktree | NEW finite independent terminal re-review of clean author `dcaf8d2`, source `5753ff1`: 265 author-joined passes/strict, unchanged 32 independent predicates; canonical raw failure and owner headroom plus late response guarantees need exact-source disposition |
 | `/root/a1_development_pages`, `development-pages` worktree | New finite CP1 storage implementation goal under the [adopted complete-page design](evidence/A1-L08/development-incremental-capture-design.md); bounded physical inventory, v2 graph validation and distinct current-cut/historical-use fences; old full-capture predicates remain unchanged |
 | `/root/a1_development_controls`, `development-controls` worktree | New finite DC1 implementation of adopted design `617a56f`: configuration-bound ordinary ablations and accounted deterministic negatives; exclusive application/config/helper/initiative-context changes with fresh review required |
 | `/root` | Integration, source-bound checks, later ordinary acquisition composition, remaining native inquiry and H1 |
