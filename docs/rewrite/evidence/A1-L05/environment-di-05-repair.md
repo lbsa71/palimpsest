@@ -1,0 +1,11 @@
+# Initiative body and cleanup failure composition
+
+2026-10-12. Root finite repair, owning only runner.ts, new repair tests and this evidence; exact prior review is required read-only input before final join.
+
+```text
+/goal Preserve both the initiative operation failure and timer cleanup failure without losing either thrown value, retain single-failure identity and unconditional listener/latch cleanup, and hand off exact causal regression evidence for fresh review.
+```
+
+Precode: use an outer error-capture boundary around the complete existing tick body/catch behavior. If that operation rejects, retain the actual outgoing value regardless of whether it is an Error, null or undefined. A sole cleanup failure throws unchanged; a sole operation failure propagates unchanged. Simultaneous failure produces AggregateError with errors=[operation,cleanup] and cause=operation. Inner StartDeferred handling remains a successful idle result, so it is not reported as a failure. Preserve cleanup finally's listener removal/latch reset even when cancel throws; cancel called once. No swallowed cleanup or appended properties on caller Error objects. Test falsy thrown values and a failing obligation delivery after actual backoff persistence; subsequent tick must remain usable.
+
+Exact fresh review114f42c imported unchanged as1fb5a70. Initial repair-only plus35 prior passes42/42,3.326seconds. Final joined unchanged35 + independent10 + new7 passes **52/52**, zero failures/skips/cancellations,3.079seconds. Command `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 deployment/environment-di-05.test.ts deployment/environment-di-05-review.test.ts deployment/environment-di-05-repair.test.ts packages/initiative/test/initiative.test.ts`; log `/tmp/aeon-initiative-di-repair-final.log`. Strict passes `/tmp/aeon-initiative-di-repair-strict.log`; diff checked. Both original independent error identities remain observable, falsy/undefined thrown values remain exact, delivery backoff remains durable and every subsequent tick remains usable. The separately reported driver elapsedFloorMs integration finding is not repaired or claimed passed here; root owns a distinct field-specific inquiry. Fresh DI05 repair review remains required.

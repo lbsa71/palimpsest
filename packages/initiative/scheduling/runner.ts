@@ -54,6 +54,8 @@ export class InitiativeRunner {
     const controller = new AbortController(); const abort = () => controller.abort(signal?.reason); signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
     let selectedGoalId: string | undefined;
     let cancelTimer: (() => void) | undefined, timerOpen = true;
+    let operationFailed = false, operationError: unknown;
+    try {
     try {
       controller.signal.throwIfAborted();
       let settingUp = true, firedInline = false;
@@ -129,9 +131,15 @@ export class InitiativeRunner {
       const goal = selectedGoalId ? scheduler.goals.goal(selectedGoalId) : undefined;
       if (goal?.status === 'running') scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, `initiative slice failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
-    } finally {
+    }
+    } catch (error) { operationFailed = true; operationError = error; throw error; }
+    finally {
       timerOpen = false;
-      try { cancelTimer?.(); } finally { signal?.removeEventListener('abort', abort); this.active = false; }
+      try { cancelTimer?.(); }
+      catch (cleanupError) {
+        if (operationFailed) throw new AggregateError([operationError, cleanupError], 'Initiative operation and timer cleanup failed', { cause: operationError });
+        throw cleanupError;
+      } finally { signal?.removeEventListener('abort', abort); this.active = false; }
     }
   }
 }
