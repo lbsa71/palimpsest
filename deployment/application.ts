@@ -9,6 +9,7 @@ import { DurableRuntime, ResourceLedger } from '../packages/runtime/index.ts';
 import { DevelopmentalMemory } from '../packages/development/index.ts';
 import { DriveRegistry, FairScheduler, InitiativeRegistry, InitiativeRunner, ObligationRegistry, PlanRegistry, initiativeTools } from '../packages/initiative/index.ts';
 import { CommunicationsCore, SlackClient, SlackIngress, SlackRecovery, SlackSocketMode, bearerAuthenticator, createDirectApi, createSpeechHandler, type SlackApi } from '../packages/communications/index.ts';
+import { SlackActivity } from '../packages/communications/slack/activity.ts';
 import { DelegationCoordinator } from '../packages/delegation/index.ts';
 import { ToolEffectReceiver, toolDefinitions, type ToolGrant } from '../packages/tools/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
@@ -29,7 +30,7 @@ import type { DevelopmentAccounting } from './development-accounting.ts';
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 interface Target { channel: string; threadTs?: string; transport: 'direct' | 'slack'; scope: DataScope }
 interface GrantRecord { scope: DataScope; workspace: string; target?: Target }
-interface CommunicationRecord { input: InboundInput; runId: string; conversation: string }
+interface CommunicationRecord { input: InboundInput; runId: string; conversation: string; operation?: string }
 export interface ApplicationTool { name: string; description: string; inputSchema: object; execute(args: JsonValue, signal?: AbortSignal): unknown | Promise<unknown> }
 export interface ApplicationOptions {
   config: ApplicationConfig; secrets: ApplicationSecrets;
@@ -61,6 +62,7 @@ export class AutarkApplication {
   readonly controls: ControlAuthorContinuations;
   readonly directApi: ReturnType<typeof createDirectApi>;
   readonly slackIngress?: SlackIngress; readonly slackRecovery?: SlackRecovery; readonly slackSocket?: SlackSocketMode;
+  readonly slackActivity?: SlackActivity;
   private bootstrapPrompt?: PromptManifest;
   private active = new Map<string, Promise<Run>>();
   private shutdown = new AbortController();
@@ -103,6 +105,7 @@ export class AutarkApplication {
     const compaction = this.store.putArtifact(readFileSync(config.compactionPromptFile, 'utf8'));
     this.prompt = { id: `application:${base.sha256}`, requestDigest: '0'.repeat(64), fragments: [{ id: 'application.mind', owner: 'application', role: 'system', order: 0, artifact: base, scope: { kind: 'public' }, replaceable: true, derivedFrom: [] }] };
     const botApi = options.slackBotApi ?? (options.secrets.slackBotToken ? new SlackClient({ token: options.secrets.slackBotToken }) : undefined);
+    if (config.slack?.allowSpeech && botApi) this.slackActivity = new SlackActivity({ store: this.store, api: botApi, fence: options.authorityStore, authority: options.authority });
     const speech: EffectReceiver = {
       dispatch: async (effect, signal) => {
         const target = this.grant(effect.runId).target; invariant(target, 'No conversational destination for this run');
@@ -112,7 +115,10 @@ export class AutarkApplication {
         this.conversationObligations.beforeSpeech(effect, target);
         if (target.transport === 'slack') {
           invariant(config.slack?.allowSpeech && botApi, 'Slack speech is not enabled in host configuration');
-          return createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi, botUserId: config.slack.botUserId, grants: [target] }).dispatch(effect, signal);
+          this.activity(() => this.slackActivity?.capture(effect.id, effect.runId));
+          const result = await createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi, botUserId: config.slack.botUserId, grants: [target] }).dispatch(effect, signal);
+          if (result.outcome === 'succeeded') this.activity(() => this.slackActivity?.delivered(effect.id));
+          return result;
         }
         const receipt = json({ ...p, kind: p.kind ?? 'message', transport: 'direct', delivered: true, clientMsgId: identity(effect.id), messageTs: new Date().toISOString() });
         const artifact = this.store.putJsonArtifact(receipt);
@@ -121,7 +127,11 @@ export class AutarkApplication {
       },
       reconcile: async effect => {
         const target = this.grant(effect.runId).target;
-        if (target?.transport === 'slack' && botApi && config.slack) return createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi, botUserId: config.slack.botUserId, grants: [target] }).reconcile(effect);
+        if (target?.transport === 'slack' && botApi && config.slack) {
+          const result = await createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi, botUserId: config.slack.botUserId, grants: [target] }).reconcile(effect);
+          if (result.outcome === 'succeeded') this.activity(() => this.slackActivity?.delivered(effect.id));
+          return result;
+        }
         const row = this.store.get<{ receipt: JsonValue }>('communications.direct-outbox', effect.id);
         return row ? { outcome: 'succeeded', receipt: this.store.putJsonArtifact(row.value.receipt) } : { outcome: 'unresolved', receipt: this.store.putJsonArtifact({ effectId: effect.id, reason: 'No durable output receipt' }) };
       },
@@ -326,6 +336,16 @@ export class AutarkApplication {
         if (channel && threadTs && this.config.slack.channels.some(grant => grant.channel === channel && scopeAllows(run.scope, grant.scope))) target = { channel, threadTs, transport: 'slack', scope: run.scope };
       }
       if (target) { const grant = this.grant(run.id), row = this.store.get('host.run-grants', run.id)!; if (grant.target) invariant(identity(grant.target) === identity(target), 'Conversation destination changed'); else this.store.put('host.run-grants', run.id, { ...grant, target }, row.revision); }
+      if (target?.transport === 'slack' && record.input.authenticated && record.operation && JSON.parse(record.operation).control === null) {
+        const [channel, timestamp] = record.input.externalId.split(':');
+        if (channel === target.channel && timestamp) this.activity(() => this.slackActivity?.observe(run.id, channel, timestamp));
+      }
+    }
+  }
+  private activity(operation: () => unknown): void {
+    try { operation(); } catch {
+      // The deterministic indicator is supplementary; intake and speech retain their own outcomes.
+      try { this.store.put('communications.slack.activity-status', 'storage', { error: 'activity_state_unavailable' }, this.store.get('communications.slack.activity-status', 'storage')?.revision ?? null); } catch {}
     }
   }
   output(runId: string): JsonValue[] { return this.store.list<{ runId: string; receipt: JsonValue }>('communications.direct-outbox').filter(row => row.value.runId === runId).map(row => row.value.receipt); }
@@ -351,7 +371,7 @@ export class AutarkApplication {
     return { alive: true, execution: { admission: reasons.length ? 'held' : 'available', reasons,
       meaning: 'Local authority and allowance check; each physical request still requires its full reservation.', providerConnectivity: 'not-probed' },
       kernelLimitsConfigured: !!this.config.resourceLimits, slack: { configured: !!this.config.slack,
-        connectivity: this.config.slack ? 'not-probed' : 'disabled' } };
+        connectivity: this.config.slack ? 'not-probed' : 'disabled', ...(this.slackActivity ? { activity: this.slackActivity.diagnosis() } : {}) } };
   }
   private async deliverObligation(id: string, signal: AbortSignal): Promise<void> {
     const owed = this.obligations.obligation(id), target = this.conversationObligations.target(id);
@@ -412,6 +432,7 @@ export class AutarkApplication {
     try {
       this.developmentControl.assertRestoredState();
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
+      this.activity(() => this.slackActivity?.tick());
       // Offline recovery retains intake and known local reconciliation. Missing credentials
       // must not consume scheduler slices or physical reservations on repeated polling.
       if (!this.providerAvailable()) return;
@@ -435,7 +456,7 @@ export class AutarkApplication {
       this.directApi.listen(this.config.direct.port, this.config.direct.host, () => { cleanup(); resolve(); });
     });
     if (this.closing) { if (this.directApi.listening) await new Promise<void>(resolve => this.directApi.close(() => resolve())); throw new Error('Application stopped during startup'); }
-    this.slackSocket?.start();
+    this.activity(() => this.slackActivity?.start()); this.slackSocket?.start();
     this.loop = setInterval(() => { void this.tick().catch(error => this.store.append({ id: randomUUID(), stream: 'host', type: 'scheduler-error', data: { reason: error instanceof Error ? error.message : 'Unknown scheduler error' } })); }, this.config.pollMs);
     await this.tick();
   }
@@ -454,6 +475,7 @@ export class AutarkApplication {
       } catch (error) { errors.push(error); }
       try { this.shutdown.abort(); } catch (error) { errors.push(error); }
       try { await this.slackSocket?.stop(); } catch (error) { errors.push(error); }
+      try { await this.slackActivity?.close(); } catch (error) { errors.push(error); }
       try {
         if (this.directApi.listening) await new Promise<void>((resolve, reject) => this.directApi.close(error => error ? reject(error) : resolve()));
       } catch (error) { errors.push(error); }

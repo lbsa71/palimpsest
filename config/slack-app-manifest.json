@@ -8,7 +8,7 @@
     "bot_user": { "display_name": "Palimpsest", "always_online": false }
   },
   "oauth_config": {
-    "scopes": { "bot": ["app_mentions:read", "chat:write", "channels:history", "groups:history"] }
+    "scopes": { "bot": ["app_mentions:read", "chat:write", "channels:history", "groups:history", "reactions:write"] }
   },
   "settings": {
     "event_subscriptions": { "bot_events": ["app_mention", "message.channels", "message.groups"] },
