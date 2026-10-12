@@ -199,3 +199,9 @@ writeFileSync(destination, JSON.stringify({ freeze }, null, 2), { flag: 'wx', mo
 untouched(); process.on('exit', untouched);
 NODE
 ```
+
+### Root Claude-only execution window
+
+Root selects one separate Claude acquisition after the completed full aggregate and the passing joined check at `2225cf9`. Freeze the exact clean root revision containing this declaration, using the preparation above. Preserve the consumed Codex marker/failure and all its original charges. Create a new exclusive clearance from that exact freeze, reviewer revision **`5accad6ef2803c46b82f3b9d6e6e9b5be3db8e18`**, and window ID `claude-native-recovery-lifetime-1`. Execute the existing physical driver once with only `AEON_NATIVE_RECOVERY_ACQUIRE=claude`, the absolute clearance path, pinned Node, module mocks and file concurrency one. No paid transport, credentials, native help, profile/binary change, metadata normalization or fallback is introduced.
+
+Retain the 75-second physical test deadline, original 60-second grant, two requests per phase, eight-request original envelope and all existing byte/context limits. Root's outer wrapper allows 120 seconds for the entire file, then records failure and terminates/drains its process group; an outer allowance does not extend any runtime grant. Preserve exact command/environment, source/runtime identities, start/end, exit/timeout, raw log hash, attempt marker, checkpoints, original ledger, process/cleanup receipts, and final source status outside the checkout. Check cleanup and lease state read-only afterward. Any refusal consumes Claude's fixed attempt, remains failed, and does not authorize retry. Source authoring and small causal checks continue in isolated worktrees; broad materialization, native execution and large hash sweeps wait for this window to drain. Root keeps the checkout unchanged until completion, then requests fresh audit of the actual result.
