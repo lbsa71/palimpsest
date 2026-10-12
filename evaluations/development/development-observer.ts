@@ -258,7 +258,7 @@ function projectSources(given: DevelopmentSourceInput, open?: DevelopmentPageSou
     const proof = (): DevelopmentSourceProof => ({ events: [], versions: [], artifacts: [] });
     const addEvent = (p: DevelopmentSourceProof, e: StoredEvent) => { if (!p.events.some(v => v.sequence === e.sequence)) p.events.push(position(e)); };
     const value = <T>(v: Version | undefined, p: DevelopmentSourceProof): T => {
-      invariant(v, 'intermediate source version unavailable'); recheck(); const payload = current.payloads.get(v.ref.versionId);
+      invariant(v, 'intermediate source version unavailable'); const payload = current.payloads.get(v.ref.versionId);
       invariant(payload && equal(payload.ref, v.ref) && payload.state === 'available', 'source version missing/withdrawn at current capture');
       if (!p.versions.some(r => r.versionId === v.ref.versionId)) p.versions.push(v.ref);
       const document = current.resolveVersion(v.ref);
