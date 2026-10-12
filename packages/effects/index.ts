@@ -1,14 +1,19 @@
-import { randomUUID } from 'node:crypto';
-import { assertAuthority, canonicalJson, invariant } from '../contracts/common.ts';
+import { assertAuthority, canonicalJson, invariant, nonempty } from '../contracts/common.ts';
 import type { Authority, ArtifactRef } from '../contracts/common.ts';
 import { transitionEffect, validateEffect } from '../contracts/execution/index.ts';
 import type { Effect, EffectReceiver, EffectTransition } from '../contracts/execution/index.ts';
 import { OperationalStore } from '../storage/index.ts';
+import { createProductionIdSupplier } from '../runtime/environment.ts';
 export interface AuthorityFence { assert(authority: Authority): void }
 /** Persist dispatch intent before crossing the receiver. No retry is inferred from a lost receipt. */
 export class EffectJournal {
   readonly store: OperationalStore; readonly fence: AuthorityFence; readonly receiver: EffectReceiver;
-  constructor(store: OperationalStore, fence: AuthorityFence, receiver: EffectReceiver) { this.store=store; this.fence=fence; this.receiver=receiver; }
+  private readonly newId: () => string;
+  /** Thin host production composition facade; the fourth argument supplies synthetic/test IDs. */
+  constructor(store: OperationalStore, fence: AuthorityFence, receiver: EffectReceiver, newId?: () => string) {
+    this.store=store; this.fence=fence; this.receiver=receiver;
+    const id=newId??createProductionIdSupplier();this.newId=()=>{const value=id();nonempty(value,'event.id');return value;};
+  }
   get(id: string): Effect | undefined { return this.store.get<Effect>('effects', id)?.value; }
   create(effect: Effect): Effect {
     validateEffect(effect); invariant(effect.status === 'pending', 'new effect must be pending');
@@ -25,7 +30,7 @@ export class EffectJournal {
     for (const key of ['runId','stepId','kind','payload','scope','authority','idempotencyKey'] as const) invariant(canonicalJson(existing[key] ?? null) === canonicalJson(effect[key] ?? null), `conflicting effect ${key}`);
     return existing;
   }
-  private event(effect: Effect, type: string): void { this.store.append({ id: randomUUID(), stream: `effect:${effect.id}`, type, data: effect }); }
+  private event(effect: Effect, type: string): void { this.store.append({ id: this.newId(), stream: `effect:${effect.id}`, type, data: effect }); }
   private transition(id: string, event: EffectTransition, authority: Authority): Effect {
     return this.store.transaction(() => { const row = this.store.get<Effect>('effects',id); invariant(row,'missing effect'); const next = transitionEffect(row.value,event,authority); this.store.put('effects',id,next,row.revision); this.event(next,event.kind); return next; });
   }

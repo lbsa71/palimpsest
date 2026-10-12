@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { assertAuthority, canonicalJson, identity, invariant } from '../../contracts/common.ts';
+import { assertAuthority, canonicalJson, identity, invariant, nonempty } from '../../contracts/common.ts';
 import type { Authority, JsonValue, ResourceEnvelope } from '../../contracts/common.ts';
 import { inputIdentity, transitionRun, validateObservation, validateRun, validateCheckpoint } from '../../contracts/execution/index.ts';
 import type { Effect, InboundInput, Observation, Run, ShellBridge, ShellCheckpoint, ShellPort, ShellResult, ToolCall } from '../../contracts/execution/index.ts';
@@ -8,10 +7,12 @@ import type { PhysicalRequest, PromptManifest } from '../../contracts/control/in
 import { OperationalStore } from '../../storage/index.ts';
 import { EffectJournal } from '../../effects/index.ts';
 import { BudgetExceeded, ResourceLedger } from '../resources/index.ts';
+import { createProductionElapsedClock, createProductionIdSupplier, createProductionWallClock } from '../environment.ts';
 export class UncertainEffect extends Error { override name='UncertainEffect'; }
 interface InboxEntry { input: InboundInput; runId: string }
 interface ExecutionState { checkpoint?: ShellCheckpoint; lastResult?: ShellResult; failure?: string; messageSequence?: number }
 export interface RuntimeOptions { store: OperationalStore; shell: ShellPort; effects: EffectJournal; resources: ResourceLedger; now?: ()=>number;
+  elapsedNow?: () => number; newId?: () => string;
   /** Host eligibility, checked under the same operational write lock as the running claim. */
   canResume?: (run: Run) => boolean;
 }
@@ -25,7 +26,17 @@ export class DurableRuntime {
   readonly store: OperationalStore; readonly shell: ShellPort; readonly effects: EffectJournal; readonly resources: ResourceLedger; readonly now: ()=>number;
   private active = new Map<string,AbortController>();
   readonly canResume?: (run: Run) => boolean;
-  constructor(options: RuntimeOptions) { this.store=options.store;this.shell=options.shell;this.effects=options.effects;this.resources=options.resources;this.now=options.now??Date.now;this.canResume=options.canResume; }
+  private readonly elapsedNow: () => number;
+  private readonly newId: () => string;
+  /** Thin host production composition facade; supplied ports replace every clock/ID callback. */
+  constructor(options: RuntimeOptions) {
+    this.store=options.store;this.shell=options.shell;this.effects=options.effects;this.resources=options.resources;this.canResume=options.canResume;
+    const wall=options.now??createProductionWallClock(), elapsed=options.elapsedNow??createProductionElapsedClock(), id=options.newId??createProductionIdSupplier();
+    this.now=()=>{const value=wall();invariant(Number.isFinite(value),'invalid wall clock reading');return value;};
+    let previous:number|undefined;
+    this.elapsedNow=()=>{const value=elapsed();invariant(Number.isFinite(value)&&value>=0,'invalid elapsed clock reading');invariant(previous===undefined||value>=previous,'elapsed clock regressed');previous=value;return value;};
+    this.newId=()=>{const value=id();nonempty(value,'event.id');return value;};
+  }
   getRun(id: string): Run | undefined { return this.store.get<Run>('runs',id)?.value; }
   admit(input: InboundInput, authority: Authority, envelope: ResourceEnvelope, parentRunId?: string): Run {
     invariant(input.authenticated,'input requires authenticated principal');
@@ -46,11 +57,11 @@ export class DurableRuntime {
     this.active.get(runId)?.abort(new Error('durable steering received'));
   }
   private status(runId:string,status:Run['status']):Run {
-    return this.store.transaction(()=> {const row=this.store.get<Run>('runs',runId);invariant(row,'missing run');const next=transitionRun(row.value,status);this.store.put('runs',runId,next,row.revision);this.store.append({id:randomUUID(),stream:runId,type:'status',data:next});return next;});
+    return this.store.transaction(()=> {const row=this.store.get<Run>('runs',runId);invariant(row,'missing run');const next=transitionRun(row.value,status);this.store.put('runs',runId,next,row.revision);this.store.append({id:this.newId(),stream:runId,type:'status',data:next});return next;});
   }
   cancel(runId: string, requestedBy: string, reason: string): void {
     this.store.transaction(()=> {const run=this.getRun(runId);invariant(run,'missing run');if(['completed','cancelled'].includes(run.status))return;
-      this.store.append({id:randomUUID(),stream:runId,type:'cancelled',data:{requestedBy,reason,requestedAt:new Date(this.now()).toISOString()}});this.status(runId,'cancelled');this.resources.cancel(runId);
+      this.store.append({id:this.newId(),stream:runId,type:'cancelled',data:{requestedBy,reason,requestedAt:new Date(this.now()).toISOString()}});this.status(runId,'cancelled');this.resources.cancel(runId);
     });this.active.get(runId)?.abort(new Error(reason));
     for(const childId of this.resources.descendants(runId)) {const child=this.getRun(childId);if(child && !['completed','cancelled'].includes(child.status))this.cancel(childId,requestedBy,reason);}
   }
@@ -63,7 +74,7 @@ export class DurableRuntime {
   /** Explicit takeover changes the worker grant, retaining all observations and uncertain effects. */
   adopt(runId:string,authority:Authority):void {
     this.effects.fence.assert(authority);
-    this.store.transaction(()=>{const row=this.store.get<Run>('runs',runId);invariant(row && row.value.status!=='running','cannot adopt active run');invariant(!['completed','cancelled'].includes(row.value.status),'cannot adopt terminal run');this.effects.adoptUndispatched(runId,authority);const next={...row.value,authority,revision:row.value.revision+1};this.store.put('runs',runId,next,row.revision);this.store.append({id:randomUUID(),stream:runId,type:'adopted',data:next});});
+    this.store.transaction(()=>{const row=this.store.get<Run>('runs',runId);invariant(row && row.value.status!=='running','cannot adopt active run');invariant(!['completed','cancelled'].includes(row.value.status),'cannot adopt terminal run');this.effects.adoptUndispatched(runId,authority);const next={...row.value,authority,revision:row.value.revision+1};this.store.put('runs',runId,next,row.revision);this.store.append({id:this.newId(),stream:runId,type:'adopted',data:next});});
   }
   observations(runId:string):Observation[] {return this.store.list<Observation>('observations').map(r=>r.value).filter(o=>o.runId===runId);}
   private execution(runId:string):ExecutionState {return this.store.get<ExecutionState>('execution',runId)?.value??{};}
@@ -86,20 +97,20 @@ export class DurableRuntime {
         }
         if(current.status==='authorized') {
           const request=runtime.resources.request(current.reservationId!)!;
-          const started=runtime.now();current=await runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));
-          runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:Math.max(0,runtime.now()-started)}});
+          const started=runtime.elapsedNow();current=await runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));
+          runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:runtime.elapsedNow()-started}});
         }
         if(current.status==='uncertain'||current.status==='dispatched')throw new UncertainEffect('tool outcome unknown; reconcile before another effect');
         let value:JsonValue={effectId:current.id,status:current.status};
         if(current.receipt) {try {value=runtime.store.readJsonArtifact(current.receipt);}catch {value={receipt:current.receipt.uri,sha256:current.receipt.sha256,status:current.status};}}
         const observation:Observation={id:current.id,runId,stepId:call.stepId,sourceId:call.id,kind:current.status==='succeeded'?'result':'error',value,provenance:{sourceIds:[current.id],actorId:'effect-receiver',recordedAt:new Date(runtime.now()).toISOString(),derivation:'observed'}};validateObservation(observation);
-        runtime.store.transaction(()=>{runtime.store.put('observations',observation.id,observation,null);runtime.store.append({id:randomUUID(),stream:runId,type:'observation',data:observation});});return observation;
+        runtime.store.transaction(()=>{runtime.store.put('observations',observation.id,observation,null);runtime.store.append({id:runtime.newId(),stream:runId,type:'observation',data:observation});});return observation;
       },
       async capturePrompt(manifest:PromptManifest,payload:string):Promise<void> {allowed();validateCapturedPrompt(manifest,payload);runtime.store.transaction(()=>{const artifact=runtime.store.putArtifact(payload);const row=runtime.store.get('prompts',manifest.id);const value={manifest,artifact};if(row)invariant(canonicalJson(row.value)===canonicalJson(value),'prompt id reused');else runtime.store.put('prompts',manifest.id,value,null);});},
       async reserve(request:PhysicalRequest):Promise<void> {allowed();invariant(request.runId===runId,'foreign physical request');const prompt=runtime.store.get<{manifest:PromptManifest}>('prompts',request.promptManifestId);invariant(prompt?.value.manifest.requestDigest===request.requestDigest,'uncaptured physical payload');runtime.resources.reserve(request);},
       async dispatched(request:PhysicalRequest):Promise<void> {allowed();invariant(request.runId===runId,'foreign physical request');runtime.resources.dispatched(request);},
       async settle(receipt:PhysicalRequest):Promise<void> {invariant(receipt.runId===runId,'foreign physical receipt');runtime.resources.settle(receipt);},
-      async persistCheckpoint(id:string,revision:number,shell:string,content:JsonValue):Promise<ShellCheckpoint> {allowed();invariant(id===runId,'foreign checkpoint');const run=runtime.getRun(id);invariant(run && revision===run.revision,'checkpoint revision changed');const index=typeof content==='object' && content!==null && !Array.isArray(content) ? content.observationIds : undefined;const ids=Array.isArray(index)?index:runtime.observations(id).map(o=>o.id);invariant(ids.every(o=>typeof o==='string' && runtime.store.get<Observation>('observations',o)?.value.runId===id),'checkpoint cites missing observation');invariant(new Set(ids).size===ids.length,'duplicate checkpoint observation');const checkpoint:ShellCheckpoint={runId:id,revision,shell,artifact:runtime.store.putJsonArtifact(content),observationIds:ids as string[]};runtime.store.transaction(()=>{runtime.saveExecution(id,{...runtime.execution(id),checkpoint,...(messageSequence!==undefined?{messageSequence}:{})});runtime.store.append({id:randomUUID(),stream:id,type:'checkpoint',data:checkpoint});});return checkpoint;},
+      async persistCheckpoint(id:string,revision:number,shell:string,content:JsonValue):Promise<ShellCheckpoint> {allowed();invariant(id===runId,'foreign checkpoint');const run=runtime.getRun(id);invariant(run && revision===run.revision,'checkpoint revision changed');const index=typeof content==='object' && content!==null && !Array.isArray(content) ? content.observationIds : undefined;const ids=Array.isArray(index)?index:runtime.observations(id).map(o=>o.id);invariant(ids.every(o=>typeof o==='string' && runtime.store.get<Observation>('observations',o)?.value.runId===id),'checkpoint cites missing observation');invariant(new Set(ids).size===ids.length,'duplicate checkpoint observation');return runtime.store.transaction(()=>{const checkpoint:ShellCheckpoint={runId:id,revision,shell,artifact:runtime.store.putJsonArtifact(content),observationIds:ids as string[]};runtime.saveExecution(id,{...runtime.execution(id),checkpoint,...(messageSequence!==undefined?{messageSequence}:{})});runtime.store.append({id:runtime.newId(),stream:id,type:'checkpoint',data:checkpoint});return checkpoint;});},
       async readCheckpoint(checkpoint:ShellCheckpoint):Promise<JsonValue> {allowed();invariant(checkpoint.runId===runId,'foreign checkpoint');const saved=runtime.execution(runId).checkpoint;invariant(saved && canonicalJson(saved.artifact)===canonicalJson(checkpoint.artifact) && saved.shell===checkpoint.shell && canonicalJson(saved.observationIds)===canonicalJson(checkpoint.observationIds),'checkpoint is not assigned to this run');return runtime.store.readJsonArtifact(checkpoint.artifact);},
     };
   }
