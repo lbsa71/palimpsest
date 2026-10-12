@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalJson } from '../../contracts/common.ts';
-import { DOCUMENT_JOURNAL_KEY, DOCUMENT_JOURNAL_NAMESPACE, OperationalStore, RevisionConflict, type Document, type DocumentJournalOptions } from '../index.ts';
+import { DOCUMENT_JOURNAL_KEY, DOCUMENT_JOURNAL_NAMESPACE, OperationalStore, RevisionConflict, type Document, type DocumentJournalOptions, type JournalRef } from '../index.ts';
 
 const journal: DocumentJournalOptions = { stream: 'development:attempt', hostId: 'qualified-host:observer', maxAnchorDocuments: 100, maxAnchorBytes: 100_000 };
 const limits = { maxRows: 512, maxBytes: 1_048_576 };
@@ -14,7 +14,18 @@ function fixture(t: TestContext) {
   t.after(() => { for (const store of stores) store.close(); rmSync(dir, { recursive: true, force: true }); });
   return { filename, open(option?: DocumentJournalOptions | null) { const store = new OperationalStore({ filename, documentJournal: option }); stores.add(store); return store; }, close(store: OperationalStore) { store.close(); stores.delete(store); }, sql(fn: (db: DatabaseSync) => void) { const db = new DatabaseSync(filename); try { fn(db); } finally { db.close(); } } };
 }
-function mutations(store: OperationalStore) { return store.events<{ namespace: string; key: string; before: Document | null; after: Document | null; hostId: string }>(journal.stream).filter(event => event.type === 'document-mutation'); }
+function resolveRef(store: OperationalStore, ref: JournalRef | null): Document | null {
+  if (!ref) return null;
+  const payload = store.captureDevelopmentSnapshot(limits).journalPayloads.find(payload => payload.ref.versionId === ref.versionId);
+  assert.ok(payload && payload.state === 'available'); return payload.document;
+}
+function anchorData(store: OperationalStore) {
+  const data = store.events(journal.stream)[0]!.data as unknown as { documents: JournalRef[] };
+  return { ...data, documents: data.documents.map(ref => ({ namespace: ref.namespace, key: ref.key, ...resolveRef(store, ref)! })) };
+}
+function mutations(store: OperationalStore) {
+  return store.events<{ namespace: string; key: string; before: JournalRef | null; after: JournalRef | null; hostId: string }>(journal.stream).filter(event => event.type === 'document-mutation').map(event => ({ ...event, data: { ...event.data, before: resolveRef(store, event.data.before), after: resolveRef(store, event.data.after) } }));
+}
 function observeRows(t: TestContext, beforeRows?: () => void) {
   const original = DatabaseSync.prototype.prepare; let documents = 0, events = 0;
   t.mock.method(DatabaseSync.prototype, 'prepare', function(this: DatabaseSync, sql: string) {
@@ -30,7 +41,7 @@ test('one atomic anchor preserves initial rows and every intermediate update, de
   initial.append({ id: 'prior', stream: 'ordinary', type: 'observation', data: 1 });
   const store = f.open(journal), binding = store.documentJournalBinding()!;
   assert.equal(binding.anchorSequence, 2);
-  assert.deepEqual(store.events(journal.stream)[0]!.data, { schema: 'aeon.document-journal.v1', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'a', key: 'first', revision: 1, value: false }, { namespace: 'z', key: 'old', revision: 1, value: { note: 'before activation' } }] });
+  assert.deepEqual(anchorData(store), { schema: 'aeon.document-journal.v2', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'a', key: 'first', revision: 1, value: false }, { namespace: 'z', key: 'old', revision: 1, value: { note: 'before activation' } }] });
   store.put('z', 'old', { note: 'middle' }, 1); store.put('z', 'old', { note: 'last' }, 2); store.delete('z', 'old', 3); store.put('z', 'old', 'recreated', null);
   const history = mutations(store);
   assert.deepEqual(history.map(event => [event.data.before, event.data.after]), [
@@ -128,7 +139,7 @@ test('anchor row and UTF8 byte ceilings refuse before row materialization and le
   assert.throws(() => f.open({ ...journal, maxAnchorDocuments: 0 }), /cannot open operational state/);
   assert.throws(() => f.open({ ...journal, maxAnchorBytes: 750 }), /cannot open operational state/);
   assert.equal(seen.documents, 0); assert.equal(initial.documentJournalBinding(), null); assert.equal(initial.events().length, 0);
-  assert.deepEqual(f.open(journal).events(journal.stream)[0]!.data, { schema: 'aeon.document-journal.v1', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'memory', key: '😀', revision: 1, value: '😀'.repeat(30) }] });
+  assert.deepEqual(anchorData(f.open(journal)), { schema: 'aeon.document-journal.v2', hostId: journal.hostId, maxAnchorDocuments: journal.maxAnchorDocuments, maxAnchorBytes: journal.maxAnchorBytes, documents: [{ namespace: 'memory', key: '😀', revision: 1, value: '😀'.repeat(30) }] });
 });
 
 test('anchor INSERT or binding INSERT failure rolls back activation, leaving ordinary state unchanged', t => {
@@ -205,7 +216,7 @@ test('snapshot refuses missing internal or trailing events before materializing 
 });
 
 test('snapshot corrupt event JSON refuses while empty ordinary snapshot remains complete', t => {
-  const f = fixture(t), store = f.open(); assert.deepEqual(store.captureDevelopmentSnapshot(limits), { documents: [], events: [], journalBinding: null });
+  const f = fixture(t), store = f.open(); assert.deepEqual(store.captureDevelopmentSnapshot(limits), { documents: [], events: [], journalBinding: null, journalPayloads: [] });
   store.append({ id: 'one', stream: 'runtime', type: 'input', data: 1 }); f.sql(db => db.prepare('UPDATE events SET data=? WHERE id=?').run('{broken', 'one'));
   assert.throws(() => store.captureDevelopmentSnapshot(limits), SyntaxError);
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { assertDerivationScope, canonicalJson, identity, integer, invariant, nonempty, scopeAllows, validateMemory, validateScope } from '../contracts/index.ts';
 import type { DataScope, JsonValue, MemoryPort, MemoryRecord } from '../contracts/index.ts';
@@ -133,27 +134,40 @@ export class DevelopmentalMemory implements MemoryPort {
   }
   /** Erase content and all descendants atomically, including self history and queued jobs. No raw payload is copied into audit events. */
   forget(ids: string[], resultAudience?: DataScope): string[] {
+    return this.forgetOwned(ids, 'forget', resultAudience);
+  }
+  private forgetOwned(ids: string[], reason: 'forget' | 'expiry', resultAudience?: DataScope): string[] {
     unique(ids); if (resultAudience) validateScope(resultAudience);
     return this.store.transaction(() => {
       const entries = this.store.list<MemoryEntry>(MEMORIES); const forgotten = new Set(ids);
       for (const id of ids) invariant(entries.some(entry => entry.key === id), 'unknown memory to forget');
       let changed = true;
       while (changed) { changed = false; for (const entry of entries) if (!forgotten.has(entry.key) && entry.value.record.provenance.sourceIds.some(id => forgotten.has(id))) { forgotten.add(entry.key); changed = true; } }
+      const self = this.store.list<AdoptedSelf>(SELF).filter(entry => entry.value.memoryIds.some(id => forgotten.has(id)));
+      const history = this.store.list<AdoptedSelf>(HISTORY).filter(entry => entry.value.memoryIds.some(id => forgotten.has(id)));
+      const jobs = this.store.list<ConsolidationJob>(JOBS).filter(entry => entry.value.sourceIds.some(id => forgotten.has(id)));
+      const targets = new Map<string, { namespace: string; key: string }>();
+      const select = (namespace: string, key: string) => targets.set(canonicalJson([namespace, key]), { namespace, key });
+      for (const id of forgotten) select(MEMORIES, id);
+      for (const entry of self) select(SELF, entry.key);
+      for (const entry of history) { select(HISTORY, entry.key); select(SELF, entry.value.id); }
+      for (const entry of jobs) select(JOBS, entry.key);
       for (const entry of entries) if (forgotten.has(entry.key) && entry.value.record.status !== 'forgotten') {
         const record = { ...entry.value.record, revision: entry.revision + 1, status: 'forgotten' as const, content: null, confidence: null };
         this.store.put(MEMORIES, entry.key, { record, expiresAt: null }, entry.revision);
       }
-      for (const entry of this.store.list<AdoptedSelf>(SELF)) if (entry.value.memoryIds.some(id => forgotten.has(id))) {
+      for (const entry of self) {
         this.store.put(SELF, entry.key, { ...entry.value, revision: entry.revision + 1, status: 'forgotten', memoryIds: [], preferences: { category: entry.value.preferences.category, value: null, reason: 'evidence forgotten' } }, entry.revision);
       }
-      for (const entry of this.store.list<AdoptedSelf>(HISTORY)) if (entry.value.memoryIds.some(id => forgotten.has(id))) this.store.delete(HISTORY, entry.key, entry.revision);
-      for (const entry of this.store.list<ConsolidationJob>(JOBS)) if (entry.value.sourceIds.some(id => forgotten.has(id))) this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source forgotten', outputIds: [] }, entry.revision);
+      for (const entry of history) this.store.delete(HISTORY, entry.key, entry.revision);
+      for (const entry of jobs) this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source forgotten', outputIds: [] }, entry.revision);
+      this.store.withdrawDocumentJournalContent({ id: randomUUID(), reason, targets: [...targets.values()].map(target => ({ ...target, expectedRevision: this.store.get(target.namespace, target.key)?.revision ?? null })) });
       return [...forgotten].filter(id => !resultAudience || scopeAllows(entries.find(entry => entry.key === id)!.value.record.scope, resultAudience));
     });
   }
   expire(at = this.clock()): string[] {
     timestamp(at); const ids = this.store.list<MemoryEntry>(MEMORIES).filter(entry => entry.value.record.status === 'active' && entry.value.expiresAt !== null && Date.parse(entry.value.expiresAt) <= Date.parse(at)).map(entry => entry.key);
-    return ids.length ? this.forget(ids) : [];
+    return ids.length ? this.forgetOwned(ids, 'expiry') : [];
   }
   private writeJob(job: ConsolidationJob, expected: number | null): ConsolidationJob {
     const next = { ...job, revision: (expected ?? 0) + 1 }; this.store.put(JOBS, job.id, next, expected); return next;

@@ -10,13 +10,26 @@ export interface StoredEvent<T = JsonValue> { sequence: number; id: string; stre
 export interface EventInput { id: string; stream: string; type: string; data: unknown }
 export class RevisionConflict extends Error { override name = 'RevisionConflict'; }
 export interface DocumentJournalOptions { stream: string; hostId: string; maxAnchorDocuments: number; maxAnchorBytes: number }
-export interface DocumentJournalBinding extends DocumentJournalOptions { schema: 'aeon.document-journal.v1'; anchorId: string; anchorSequence: number }
-export interface DevelopmentSnapshot { documents: { namespace: string; key: string; revision: number; value: JsonValue }[]; events: StoredEvent[]; journalBinding: DocumentJournalBinding | null }
+export interface DocumentJournalBinding extends DocumentJournalOptions { schema: 'aeon.document-journal.v2'; anchorId: string; anchorSequence: number }
+export interface DevelopmentSnapshot { documents: { namespace: string; key: string; revision: number; value: JsonValue }[]; events: StoredEvent[]; journalBinding: DocumentJournalBinding | null; journalPayloads: JournalPayload[] }
 export const DOCUMENT_JOURNAL_NAMESPACE = 'system.document-journal';
 export const DOCUMENT_JOURNAL_KEY = 'binding';
-const JOURNAL_SCHEMA = 'aeon.document-journal.v1' as const;
+const JOURNAL_SCHEMA = 'aeon.document-journal.v2' as const;
 const JOURNAL_ANCHOR = 'document-journal-anchor';
 const JOURNAL_MUTATION = 'document-mutation';
+const JOURNAL_WITHDRAWAL = 'document-journal-withdrawal';
+export const DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE = `${DOCUMENT_JOURNAL_NAMESPACE}.payloads`;
+export const DOCUMENT_JOURNAL_HEAD_NAMESPACE = `${DOCUMENT_JOURNAL_NAMESPACE}.heads`;
+export interface JournalRef { versionId: string; namespace: string; key: string; revision: number; sha256: string }
+export type JournalPayload = { ref: JournalRef; state: 'available'; document: Document } | { ref: JournalRef; state: 'withdrawn'; withdrawalId: string };
+export interface JournalWithdrawalInput { id: string; reason: 'forget' | 'expiry'; targets: { namespace: string; key: string; expectedRevision: number | null }[] }
+interface JournalWithdrawalData { schema: string; hostId: string; withdrawalId: string; reason: 'forget' | 'expiry'; targets: JournalWithdrawalInput['targets']; refs: JournalRef[] }
+function reservedJournalNamespace(namespace: string): boolean { return namespace === DOCUMENT_JOURNAL_NAMESPACE || namespace.startsWith(`${DOCUMENT_JOURNAL_NAMESPACE}.`); }
+function ownedJournalNamespace(namespace: string): boolean { return namespace === DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE || namespace === DOCUMENT_JOURNAL_HEAD_NAMESPACE; }
+function documentDigest(document: Document): string { return createHash('sha256').update(canonicalJson(document)).digest('hex'); }
+function documentKey(namespace: string, key: string): string { return canonicalJson([namespace, key]); }
+function compareKeys(a: { namespace: string; key: string }, b: { namespace: string; key: string }): number { return Buffer.compare(Buffer.from(a.namespace), Buffer.from(b.namespace)) || Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)); }
+
 export interface StoreOptions { filename: string; checkoutRoot?: string; documentJournal?: DocumentJournalOptions | null }
 /** One engine for operational and developmental state. Transactions are synchronous and cannot cross await. */
 function physicalPath(path: string): string {
@@ -68,10 +81,10 @@ export class OperationalStore {
         const existing = this.readJournalBinding();
         if (existing || !this.journalOption) return existing;
         const limits = this.journalOption;
-        // JSON escaping can consume six bytes per stored byte. Bound before allocating rows.
-        const size = this.db.prepare('SELECT count(*) AS rows, coalesce(sum(6*(length(CAST(namespace AS BLOB))+length(CAST(key AS BLOB))+length(CAST(value AS BLOB)))+128),0) AS bytes FROM documents').get() as { rows: number; bytes: number };
-        invariant(size.rows <= limits.maxAnchorDocuments && size.bytes + 512 + 6 * Buffer.byteLength(limits.hostId) <= limits.maxAnchorBytes, 'document journal anchor exceeds bound');
-        const documents = this.documentRows();
+        // Charge current documents and all prospective payload/head/reference metadata before materialization.
+        const size = this.db.prepare('SELECT count(*) AS rows, coalesce(sum(48*(length(CAST(namespace AS BLOB))+length(CAST(key AS BLOB)))+12*length(CAST(value AS BLOB))+4096),0) AS bytes FROM documents').get() as { rows: number; bytes: number };
+        invariant(3 * size.rows + 1 <= limits.maxAnchorDocuments && size.bytes + 2048 + 12 * Buffer.byteLength(limits.hostId) <= limits.maxAnchorBytes, 'document journal anchor exceeds bound');
+        const documents = this.documentRows().map(row => this.createJournalVersion(row.namespace, row.key, { revision: row.revision, value: row.value }));
         const data = { schema: JOURNAL_SCHEMA, hostId: limits.hostId, maxAnchorDocuments: limits.maxAnchorDocuments, maxAnchorBytes: limits.maxAnchorBytes, documents };
         invariant(Buffer.byteLength(canonicalJson(data)) <= limits.maxAnchorBytes, 'document journal anchor exceeds bound');
         const anchor = this.insertEvent({ id: randomUUID(), stream: limits.stream, type: JOURNAL_ANCHOR, data });
@@ -100,6 +113,7 @@ export class OperationalStore {
   }
   list<T = JsonValue>(namespace: string): (Document<T> & { key: string })[] {
     nonempty(namespace, 'namespace');
+    if (ownedJournalNamespace(namespace)) return [];
     return (this.db.prepare('SELECT key,revision,value FROM documents WHERE namespace=? ORDER BY key').all(namespace) as { key: string; revision: number; value: string }[]).map(r => ({ key: r.key, revision: r.revision, value: JSON.parse(r.value) as T }));
   }
   private validateJournalOptions(options: DocumentJournalOptions): void {
@@ -107,16 +121,20 @@ export class OperationalStore {
     invariant(Number.isSafeInteger(options.maxAnchorDocuments) && options.maxAnchorDocuments >= 0 && Number.isSafeInteger(options.maxAnchorBytes) && options.maxAnchorBytes >= 0, 'invalid document journal anchor bounds');
   }
   private documentRows(): { namespace: string; key: string; revision: number; value: JsonValue }[] {
-    return (this.db.prepare('SELECT namespace,key,revision,value FROM documents ORDER BY namespace,key').all() as { namespace: string; key: string; revision: number; value: string }[]).map(row => ({ ...row, value: JSON.parse(row.value) as JsonValue }));
+    return (this.db.prepare('SELECT namespace,key,revision,value FROM documents ORDER BY namespace,key').all() as { namespace: string; key: string; revision: number; value: string }[]).filter(row => !ownedJournalNamespace(row.namespace)).map(row => ({ ...row, value: JSON.parse(row.value) as JsonValue }));
   }
   private readJournalBinding(): DocumentJournalBinding | null {
+    const prefix = `${DOCUMENT_JOURNAL_NAMESPACE}.`;
+    invariant(!this.db.prepare('SELECT 1 FROM documents WHERE substr(namespace,1,?)=? AND namespace NOT IN (?,?) LIMIT 1').get(prefix.length, prefix, DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, DOCUMENT_JOURNAL_HEAD_NAMESPACE), 'unknown reserved document journal namespace');
     const rows = this.db.prepare('SELECT key,revision,value FROM documents WHERE namespace=? LIMIT 2').all(DOCUMENT_JOURNAL_NAMESPACE) as { key: string; revision: number; value: string }[];
     if (rows.length === 0) {
-      invariant(!this.observedJournal && !this.db.prepare('SELECT 1 FROM events WHERE type IN (?,?) LIMIT 1').get(JOURNAL_ANCHOR, JOURNAL_MUTATION), 'document journal binding missing');
+      invariant(!this.observedJournal && !this.db.prepare('SELECT 1 FROM events WHERE type IN (?,?,?) LIMIT 1').get(JOURNAL_ANCHOR, JOURNAL_MUTATION, JOURNAL_WITHDRAWAL), 'document journal binding missing');
+      invariant(!this.db.prepare('SELECT 1 FROM documents WHERE namespace IN (?,?) LIMIT 1').get(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, DOCUMENT_JOURNAL_HEAD_NAMESPACE), 'unbound document journal internal rows');
       return null;
     }
     invariant(rows.length === 1 && rows[0]!.key === DOCUMENT_JOURNAL_KEY && rows[0]!.revision === 1, 'invalid document journal binding');
     const binding = JSON.parse(rows[0]!.value) as DocumentJournalBinding;
+    invariant(binding.schema === JOURNAL_SCHEMA, `unsupported document journal schema ${binding.schema}`);
     this.validateJournalOptions(binding); nonempty(binding.anchorId, 'journal.anchorId');
     invariant(binding.schema === JOURNAL_SCHEMA && Number.isSafeInteger(binding.anchorSequence) && binding.anchorSequence > 0, 'invalid document journal binding');
     const exact: DocumentJournalBinding = { schema: JOURNAL_SCHEMA, stream: binding.stream, hostId: binding.hostId, maxAnchorDocuments: binding.maxAnchorDocuments, maxAnchorBytes: binding.maxAnchorBytes, anchorId: binding.anchorId, anchorSequence: binding.anchorSequence };
@@ -144,34 +162,190 @@ export class OperationalStore {
       const highWater = this.db.prepare("SELECT seq FROM sqlite_sequence WHERE name='events'").get() as { seq: number } | undefined;
       invariant(events.rows === events.last && (events.first === null || events.first === 1) && events.last === (highWater?.seq ?? 0), 'development snapshot event prefix incomplete');
       const journalBinding = this.readJournalBinding();
-      const snapshot: DevelopmentSnapshot = { documents: this.documentRows(), events: this.events(), journalBinding };
+      const journalPayloads = (this.db.prepare('SELECT key,revision,value FROM documents WHERE namespace=? ORDER BY key').all(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE) as { key: string; revision: number; value: string }[]).map(row => {
+        const payload = JSON.parse(row.value) as JournalPayload;
+        invariant(payload.ref?.versionId === row.key && row.revision === (payload.state === 'available' ? 1 : 2), 'invalid document journal payload row');
+        return payload;
+      });
+      const snapshot: DevelopmentSnapshot = { documents: this.documentRows(), events: this.events(), journalBinding, journalPayloads };
+      this.validateJournalSnapshot(snapshot);
       invariant(Buffer.byteLength(canonicalJson(snapshot)) <= limits.maxBytes, 'development snapshot exceeds bound');
       return snapshot;
     });
   }
-  private journalMutation(binding: DocumentJournalBinding | null, namespace: string, key: string, before: Document | null, after: Document | null): void {
-    if (binding) this.insertEvent({ id: randomUUID(), stream: binding.stream, type: JOURNAL_MUTATION, data: { schema: JOURNAL_SCHEMA, hostId: binding.hostId, namespace, key, before, after } });
+  private internalWrite(namespace: string, key: string, value: unknown): void {
+    const previous = this.get(namespace, key);
+    this.db.prepare('INSERT INTO documents VALUES(?,?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET revision=excluded.revision,value=excluded.value').run(namespace, key, (previous?.revision ?? 0) + 1, canonicalJson(value));
+  }
+  private validateRef(ref: JournalRef): void {
+    invariant(ref && typeof ref === 'object', 'invalid document journal ref');
+    nonempty(ref.versionId, 'journal.versionId'); nonempty(ref.namespace, 'journal.namespace'); nonempty(ref.key, 'journal.key');
+    invariant(!reservedJournalNamespace(ref.namespace) && Number.isSafeInteger(ref.revision) && ref.revision > 0 && typeof ref.sha256 === 'string' && /^[a-f0-9]{64}$/.test(ref.sha256), 'invalid document journal ref');
+    invariant(canonicalJson(ref) === canonicalJson({ versionId: ref.versionId, namespace: ref.namespace, key: ref.key, revision: ref.revision, sha256: ref.sha256 }), 'invalid document journal ref fields');
+  }
+  private createJournalVersion(namespace: string, key: string, document: Document): JournalRef {
+    const ref: JournalRef = { versionId: randomUUID(), namespace, key, revision: document.revision, sha256: documentDigest(document) };
+    this.internalWrite(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, ref.versionId, { ref, state: 'available', document });
+    this.internalWrite(DOCUMENT_JOURNAL_HEAD_NAMESPACE, documentKey(namespace, key), ref);
+    return ref;
+  }
+  private journalBefore(binding: DocumentJournalBinding | null, namespace: string, key: string, before: Document | null): JournalRef | null {
+    if (!binding) return null;
+    const head = this.get<JournalRef>(DOCUMENT_JOURNAL_HEAD_NAMESPACE, documentKey(namespace, key));
+    invariant(Boolean(head) === Boolean(before), 'document journal head missing or unexpected');
+    if (!before) return null;
+    const ref = head!.value; this.validateRef(ref);
+    invariant(ref.namespace === namespace && ref.key === key && ref.revision === before.revision && ref.sha256 === documentDigest(before), 'document journal head differs from current document');
+    const payload = this.get<JournalPayload>(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, ref.versionId);
+    invariant(payload && payload.revision === (payload.value.state === 'available' ? 1 : 2) && canonicalJson(payload.value.ref) === canonicalJson(ref), 'document journal payload missing or changed');
+    this.validatePayload(payload.value, binding);
+    return ref;
+  }
+  private validatePayload(payload: JournalPayload, binding: DocumentJournalBinding): void {
+    this.validateRef(payload.ref);
+    if (payload.state === 'available') {
+      invariant(payload.document?.revision === payload.ref.revision && canonicalJson(payload.document) === canonicalJson({ revision: payload.document.revision, value: payload.document.value }) && documentDigest(payload.document) === payload.ref.sha256, 'document journal payload commitment mismatch');
+      invariant(canonicalJson(payload) === canonicalJson({ ref: payload.ref, state: 'available', document: payload.document }), 'invalid document journal payload fields');
+    } else {
+      invariant(payload.state === 'withdrawn', 'invalid document journal payload state');
+      nonempty(payload.withdrawalId, 'journal.withdrawalId');
+      invariant(canonicalJson(payload) === canonicalJson({ ref: payload.ref, state: 'withdrawn', withdrawalId: payload.withdrawalId }), 'invalid document journal withdrawn fields');
+      const marker = this.db.prepare('SELECT stream,type,data FROM events WHERE id=?').get(payload.withdrawalId) as { stream: string; type: string; data: string } | undefined;
+      invariant(marker && marker.stream === binding.stream && marker.type === JOURNAL_WITHDRAWAL, 'document journal withdrawal marker missing');
+      const data = JSON.parse(marker.data) as JournalWithdrawalData;
+      invariant(data.schema === JOURNAL_SCHEMA && data.hostId === binding.hostId && data.withdrawalId === payload.withdrawalId && (data.reason === 'forget' || data.reason === 'expiry') && Array.isArray(data.refs) && data.refs.some(ref => canonicalJson(ref) === canonicalJson(payload.ref)), 'document journal withdrawal marker differs');
+    }
+  }
+  private journalMutation(binding: DocumentJournalBinding | null, namespace: string, key: string, before: JournalRef | null, after: Document | null): void {
+    if (!binding) return;
+    const next = after ? this.createJournalVersion(namespace, key, after) : null;
+    if (!after) this.db.prepare('DELETE FROM documents WHERE namespace=? AND key=?').run(DOCUMENT_JOURNAL_HEAD_NAMESPACE, documentKey(namespace, key));
+    this.insertEvent({ id: randomUUID(), stream: binding.stream, type: JOURNAL_MUTATION, data: { schema: JOURNAL_SCHEMA, hostId: binding.hostId, namespace, key, before, after: next } });
+  }
+  withdrawDocumentJournalContent(input: JournalWithdrawalInput): { withdrawalId: string | null; withdrawnVersionIds: string[] } {
+    return this.transaction(() => {
+      // Canonicalize caller-controlled fields inside the transaction so serialization side effects roll back.
+      const request = JSON.parse(canonicalJson(input)) as JournalWithdrawalInput;
+      nonempty(request.id, 'withdrawal.id'); invariant(request.reason === 'forget' || request.reason === 'expiry', 'invalid withdrawal reason');
+      invariant(Array.isArray(request.targets), 'invalid withdrawal targets');
+      for (const target of request.targets) {
+        nonempty(target.namespace, 'withdrawal.namespace'); nonempty(target.key, 'withdrawal.key');
+        invariant(!reservedJournalNamespace(target.namespace) && (target.expectedRevision === null || Number.isSafeInteger(target.expectedRevision) && target.expectedRevision > 0), 'invalid withdrawal target');
+        invariant(canonicalJson(target) === canonicalJson({ namespace: target.namespace, key: target.key, expectedRevision: target.expectedRevision }), 'invalid withdrawal target fields');
+      }
+      request.targets.sort(compareKeys);
+      invariant(new Set(request.targets.map(target => documentKey(target.namespace, target.key))).size === request.targets.length, 'duplicate withdrawal target');
+      invariant(canonicalJson(request) === canonicalJson({ id: request.id, reason: request.reason, targets: request.targets }), 'invalid withdrawal request fields');
+      const binding = this.readJournalBinding();
+      const previous = this.db.prepare('SELECT stream,type,data FROM events WHERE id=?').get(request.id) as { stream: string; type: string; data: string } | undefined;
+      if (previous) {
+        invariant(binding && previous.stream === binding.stream && previous.type === JOURNAL_WITHDRAWAL, 'conflicting withdrawal identity');
+        const data = JSON.parse(previous.data) as JournalWithdrawalData;
+        invariant(data.schema === JOURNAL_SCHEMA && data.hostId === binding.hostId && data.withdrawalId === request.id && data.reason === request.reason && canonicalJson(data.targets) === canonicalJson(request.targets), 'conflicting withdrawal identity');
+        this.validateJournalSnapshot(this.snapshotForJournalValidation(binding));
+        return { withdrawalId: request.id, withdrawnVersionIds: data.refs.map(ref => ref.versionId) };
+      }
+      for (const target of request.targets) if ((this.get(target.namespace, target.key)?.revision ?? null) !== target.expectedRevision) throw new RevisionConflict('withdrawal revision conflict');
+      if (!binding) return { withdrawalId: null, withdrawnVersionIds: [] };
+      // Bounded capture checks every owned ref/marker/head before selecting a cutoff.
+      const snapshot = this.snapshotForJournalValidation(binding); this.validateJournalSnapshot(snapshot);
+      const selected = new Set(request.targets.map(target => documentKey(target.namespace, target.key)));
+      const refs = snapshot.journalPayloads.filter(payload => payload.state === 'available' && selected.has(documentKey(payload.ref.namespace, payload.ref.key))).map(payload => payload.ref);
+      for (const ref of refs) this.internalWrite(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, ref.versionId, { ref, state: 'withdrawn', withdrawalId: request.id });
+      this.insertEvent({ id: request.id, stream: binding.stream, type: JOURNAL_WITHDRAWAL, data: { schema: JOURNAL_SCHEMA, hostId: binding.hostId, withdrawalId: request.id, reason: request.reason, targets: request.targets, refs } });
+      return { withdrawalId: request.id, withdrawnVersionIds: refs.map(ref => ref.versionId) };
+    });
+  }
+  private snapshotForJournalValidation(binding: DocumentJournalBinding): DevelopmentSnapshot {
+    // Mutation/withdrawal validation must not inherit the observer's finite capture allowance.
+    const journalPayloads = (this.db.prepare('SELECT key,revision,value FROM documents WHERE namespace=? ORDER BY key').all(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE) as { key: string; revision: number; value: string }[]).map(row => {
+      const payload = JSON.parse(row.value) as JournalPayload;
+      invariant(payload.ref?.versionId === row.key && row.revision === (payload.state === 'available' ? 1 : 2), 'invalid document journal payload row'); return payload;
+    });
+    return { documents: this.documentRows(), events: this.events(), journalBinding: binding, journalPayloads };
+  }
+  private validateJournalSnapshot(snapshot: DevelopmentSnapshot): void {
+    const binding = snapshot.journalBinding;
+    const heads = this.db.prepare('SELECT key,value FROM documents WHERE namespace=? ORDER BY key').all(DOCUMENT_JOURNAL_HEAD_NAMESPACE) as { key: string; value: string }[];
+    if (!binding) { invariant(snapshot.journalPayloads.length === 0 && heads.length === 0, 'unbound document journal internal rows'); return; }
+    const highWater = this.db.prepare("SELECT seq FROM sqlite_sequence WHERE name='events'").get() as { seq: number } | undefined;
+    invariant(snapshot.events.length === (highWater?.seq ?? 0), 'document journal event prefix incomplete');
+    const payloads = new Map(snapshot.journalPayloads.map(payload => [payload.ref.versionId, payload]));
+    invariant(payloads.size === snapshot.journalPayloads.length, 'duplicate document journal payload');
+    for (const payload of payloads.values()) this.validatePayload(payload, binding);
+    const known = new Map<string, JournalRef>(), current = new Map<string, JournalRef>(), withdrawn = new Map<string, string>();
+    const register = (ref: JournalRef) => {
+      this.validateRef(ref); invariant(!known.has(ref.versionId), 'duplicate document journal version');
+      invariant(payloads.has(ref.versionId) && canonicalJson(payloads.get(ref.versionId)!.ref) === canonicalJson(ref), 'document journal payload missing or changed');
+      known.set(ref.versionId, ref);
+    };
+    let anchored = false;
+    for (let index = 0; index < snapshot.events.length; index++) {
+      const event = snapshot.events[index]!; invariant(event.sequence === index + 1, 'document journal event prefix incomplete');
+      if (![JOURNAL_ANCHOR, JOURNAL_MUTATION, JOURNAL_WITHDRAWAL].includes(event.type)) continue;
+      invariant(event.stream === binding.stream, 'document journal stream differs');
+      const data = event.data as unknown as Record<string, unknown>;
+      invariant(data.schema === JOURNAL_SCHEMA && data.hostId === binding.hostId, 'document journal event binding differs');
+      if (event.type === JOURNAL_ANCHOR) {
+        invariant(!anchored && event.id === binding.anchorId && event.sequence === binding.anchorSequence && Array.isArray(data.documents), 'invalid document journal anchor');
+        const refs = data.documents as JournalRef[];
+        invariant(canonicalJson(data) === canonicalJson({ schema: JOURNAL_SCHEMA, hostId: binding.hostId, maxAnchorDocuments: binding.maxAnchorDocuments, maxAnchorBytes: binding.maxAnchorBytes, documents: refs }), 'invalid document journal anchor fields');
+        for (let i = 0; i < refs.length; i++) { const ref = refs[i]!; invariant(i === 0 || compareKeys(refs[i - 1]!, ref) < 0, 'unordered document journal anchor'); register(ref); current.set(documentKey(ref.namespace, ref.key), ref); }
+        anchored = true;
+      } else if (event.type === JOURNAL_MUTATION) {
+        invariant(anchored && typeof data.namespace === 'string' && typeof data.key === 'string', 'invalid document journal mutation');
+        const { namespace, key } = data, before = data.before as JournalRef | null, after = data.after as JournalRef | null;
+        invariant(canonicalJson(data) === canonicalJson({ schema: JOURNAL_SCHEMA, hostId: binding.hostId, namespace, key, before, after }), 'invalid document journal mutation fields');
+        const name = documentKey(namespace, key);
+        invariant(canonicalJson(current.get(name) ?? null) === canonicalJson(before), 'document journal before ref differs');
+        invariant(before !== null || after !== null, 'empty document journal mutation');
+        if (after) { invariant(after.namespace === namespace && after.key === key && after.revision === (before?.revision ?? 0) + 1, 'invalid document journal after revision'); register(after); current.set(name, after); }
+        else current.delete(name);
+      } else {
+        invariant(anchored, 'withdrawal precedes document journal anchor');
+        const marker = data as unknown as JournalWithdrawalData;
+        invariant(marker.withdrawalId === event.id && (marker.reason === 'forget' || marker.reason === 'expiry') && Array.isArray(marker.targets) && Array.isArray(marker.refs), 'invalid document journal withdrawal');
+        invariant(canonicalJson(marker) === canonicalJson({ schema: JOURNAL_SCHEMA, hostId: binding.hostId, withdrawalId: event.id, reason: marker.reason, targets: marker.targets, refs: marker.refs }), 'invalid document journal withdrawal fields');
+        const selected = new Set<string>();
+        for (let i = 0; i < marker.targets.length; i++) {
+          const target = marker.targets[i]!;
+          nonempty(target.namespace, 'withdrawal.namespace'); nonempty(target.key, 'withdrawal.key');
+          invariant(!reservedJournalNamespace(target.namespace) && canonicalJson(target) === canonicalJson({ namespace: target.namespace, key: target.key, expectedRevision: target.expectedRevision }) && (i === 0 || compareKeys(marker.targets[i - 1]!, target) < 0) && (current.get(documentKey(target.namespace, target.key))?.revision ?? null) === target.expectedRevision, 'invalid document journal withdrawal target');
+          selected.add(documentKey(target.namespace, target.key));
+        }
+        const expected = [...known.values()].filter(ref => !withdrawn.has(ref.versionId) && selected.has(documentKey(ref.namespace, ref.key))).sort((a, b) => a.versionId < b.versionId ? -1 : a.versionId > b.versionId ? 1 : 0);
+        invariant(canonicalJson(marker.refs) === canonicalJson(expected), 'document journal withdrawal refs differ');
+        for (const ref of marker.refs) withdrawn.set(ref.versionId, event.id);
+      }
+    }
+    invariant(anchored && known.size === payloads.size, 'document journal anchor missing or orphan payload');
+    for (const [id, payload] of payloads) invariant(withdrawn.has(id) ? payload.state === 'withdrawn' && payload.withdrawalId === withdrawn.get(id) : payload.state === 'available', 'document journal withdrawal disposition differs');
+    const documents = snapshot.documents.filter(row => row.namespace !== DOCUMENT_JOURNAL_NAMESPACE);
+    invariant(documents.length === current.size && heads.length === current.size, 'document journal current inventory differs');
+    for (const row of documents) { const ref = current.get(documentKey(row.namespace, row.key)); invariant(ref && ref.revision === row.revision && ref.sha256 === documentDigest({ revision: row.revision, value: row.value }), 'document journal current document differs'); }
+    for (const head of heads) invariant(canonicalJson(current.get(head.key) ?? null) === canonicalJson(JSON.parse(head.value)), 'document journal current head differs');
   }
   put(namespace: string, key: string, value: unknown, expectedRevision: number | null): number {
     nonempty(namespace, 'namespace'); nonempty(key, 'key'); const encoded = canonicalJson(value);
-    invariant(namespace !== DOCUMENT_JOURNAL_NAMESPACE, 'reserved document journal namespace');
+    invariant(!reservedJournalNamespace(namespace), 'reserved document journal namespace');
     return this.transaction(() => {
       const binding = this.readJournalBinding();
       const previous = this.get(namespace, key);
       if ((previous?.revision ?? null) !== expectedRevision) throw new RevisionConflict(`${namespace}/${key}: expected ${expectedRevision}, found ${previous?.revision ?? null}`);
+      const before = this.journalBefore(binding, namespace, key, previous ?? null);
       const revision = (previous?.revision ?? 0) + 1;
       this.db.prepare('INSERT INTO documents VALUES(?,?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET revision=excluded.revision,value=excluded.value').run(namespace, key, revision, encoded);
-      this.journalMutation(binding, namespace, key, previous ?? null, { revision, value: JSON.parse(encoded) as JsonValue });
+      this.journalMutation(binding, namespace, key, before, { revision, value: JSON.parse(encoded) as JsonValue });
       return revision;
     });
   }
   delete(namespace: string, key: string, expectedRevision: number): void {
-    nonempty(namespace, 'namespace'); nonempty(key, 'key'); invariant(namespace !== DOCUMENT_JOURNAL_NAMESPACE, 'reserved document journal namespace');
-    this.transaction(() => { const binding = this.readJournalBinding(); const existing = this.get(namespace, key); if (existing?.revision !== expectedRevision) throw new RevisionConflict('delete revision conflict'); this.db.prepare('DELETE FROM documents WHERE namespace=? AND key=?').run(namespace, key); this.journalMutation(binding, namespace, key, existing, null); });
+    nonempty(namespace, 'namespace'); nonempty(key, 'key'); invariant(!reservedJournalNamespace(namespace), 'reserved document journal namespace');
+    this.transaction(() => { const binding = this.readJournalBinding(); const existing = this.get(namespace, key); if (existing?.revision !== expectedRevision) throw new RevisionConflict('delete revision conflict'); const before = this.journalBefore(binding, namespace, key, existing); this.db.prepare('DELETE FROM documents WHERE namespace=? AND key=?').run(namespace, key); this.journalMutation(binding, namespace, key, before, null); });
   }
   append(input: EventInput): StoredEvent {
     const { id, stream, type } = input;
-    invariant(type !== JOURNAL_ANCHOR && type !== JOURNAL_MUTATION, 'reserved document journal event type');
+    invariant(type !== JOURNAL_ANCHOR && type !== JOURNAL_MUTATION && type !== JOURNAL_WITHDRAWAL, 'reserved document journal event type');
     return this.transaction(() => this.insertEvent({ id, stream, type, data: input.data }));
   }
   private insertEvent(input: EventInput): StoredEvent {
