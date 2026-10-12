@@ -13,6 +13,8 @@ The three dimensions are **Aeon → Lane → Task**: who carries the responsibil
 
 Primary model selected by the user on2026-10-12: **Mistral Large4 with high reasoning**, `mistral-large-4-0`. [ADR0034](docs/adr/0034-select-mistral-large-4-reasoning.md) and the [selection record](docs/rewrite/model-selection.json) supersede the earlier Medium3.5 proposal. Exact runtime profile, account/context/tokenizer and competence qualification remain open; Pi remains the shell.
 
+The user's2026-10-12 requirement makes **all environmental access injectable for mocking**, including evaluation and deployment. The adopted [DI workstream](docs/rewrite/evidence/A1-L09/environment-di-plan.md) adds29 finite, independently ownable tasks to the baseline lanes; [DI01](docs/rewrite/evidence/A1-L01/environment-di-01.md) freezes local port and trusted-composition semantics. Execution claims remain mandatory. The final DI closure review is an Aeon1 engineering gate; the initial clock/worker slice does not complete it.
+
 ## Aeon 1 — Codex bootstraps the evolving mind-self
 
 The [technical overview](docs/rewrite/aeon-1.md) defines contract gate C1, parallel waves W0–W3 and capability handoff H1. Nine independently ownable lanes contain **48 delegable tasks**.

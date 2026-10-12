@@ -8,9 +8,7 @@ Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21]
 /goal Complete A1-L09 by integrating the rewrite into a recoverable installation, demonstrating an independently evaluated autonomous change through the whole-system release path and a failed-successor recovery that preserves current work, then delivering and verifying the H1 handoff package required for the Autark to own Aeon 2.
 ```
 
-Current additional root claim: environmental timing DI in isolated `environment-clock-injection`, narrow application/broker source, new broker timing tests and evidence; see the current execution record. User requires all environmental boundaries injectable. This finite clock/timeout slice replaces the interim driver global mock; broader ambient coupling must receive separate ownable tasks.
-
-Additional finite design claim: `/root/a1_environment_di_plan`, isolated `environment-di-plan`, owns only new `A1-L09/environment-di-plan.md` evidence for the whole-rewrite environmental dependency inventory and parallel tasks. Source remains read-only; root's timing slice and active recorder ownership remain exclusive. Exact inputs/routing/acceptance are in execution.
+The user requires every environmental boundary injectable. The adopted [DI plan](../evidence/A1-L09/environment-di-plan.md) covers29 finite tasks across all lanes; [DI01](../evidence/A1-L01/environment-di-01.md) releases their local port/trust design prerequisite. The application/broker clock and worker slice is integrated with57 focused passes, and the exact driver join with56 passes; fresh `/root/a1_driver_timing_review` owns only its new tests/evidence. Broader runtime DI and its final closure gate remain open. Exact current ownership is in [execution](../execution.md); no future task has implicit permission to edit active b2/b3/control files.
 
 ## Ownership and dependencies
 
