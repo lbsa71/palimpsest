@@ -4,6 +4,8 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 ## Current disposition — developmental acquisition and native recovery
 
+**User steering, 2026-10-12:** select reasoning Mistral Large4 if available. Official model/reasoning documentation confirms public preview `mistral-large-4-0` with high effort. Root reserves ADR0034, `docs/rewrite/model-selection.json`, updates to the tokenizer/readiness/boundary planning artifacts and L02 lane. This changes the chosen future Autark profile; it does not rewrite frozen synthetic fixtures, consumed attempts or original grants. The existing transport already supports explicit high effort and native thinking replay. Account access, exact context/tokenizer relationship and live qualification remain distinct from selecting the model.
+
 ### Current finite ownership — 04:04 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
