@@ -10,6 +10,8 @@ Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21]
 
 Current additional root claim: environmental timing DI in isolated `environment-clock-injection`, narrow application/broker source, new broker timing tests and evidence; see the current execution record. User requires all environmental boundaries injectable. This finite clock/timeout slice replaces the interim driver global mock; broader ambient coupling must receive separate ownable tasks.
 
+Additional finite design claim: `/root/a1_environment_di_plan`, isolated `environment-di-plan`, owns only new `A1-L09/environment-di-plan.md` evidence for the whole-rewrite environmental dependency inventory and parallel tasks. Source remains read-only; root's timing slice and active recorder ownership remain exclusive. Exact inputs/routing/acceptance are in execution.
+
 ## Ownership and dependencies
 
 Root's 2026-10-12 shutdown follow-up reserves only `deployment/application.ts` shutdown fields/method, new `deployment/application-shutdown.test.ts` and `docs/rewrite/evidence/A1-L09/application-shutdown-drain.md`. The [precode contract](../evidence/A1-L09/application-shutdown-drain.md) requires shared completion, abort/drain despite preparatory failures, and retained Store/lease on failed closure; existing tests remain unchanged. Independent review follows exact source and local causal checks. This does not authorize a physical process or provider operation.
