@@ -46,7 +46,9 @@ export class DevelopmentAccounting {
   get originalResources(): ResourceLedger { return this.options.original; }
   /** Exact private grant/window binding for host control seals; detached on every read. */
   get controlBinding(): Readonly<Pick<DevelopmentAccountingOptions, 'originalGrant' | 'behaviorWindow'> & { localRootId: string }> {
-    return inertSnapshot({ originalGrant: this.options.originalGrant, behaviorWindow: this.options.behaviorWindow, localRootId: this.localRoot });
+    const binding = inertSnapshot({ originalGrant: this.options.originalGrant, behaviorWindow: this.options.behaviorWindow, localRootId: this.localRoot });
+    Object.freeze(binding.originalGrant.resources); Object.freeze(binding.originalGrant); Object.freeze(binding.behaviorWindow);
+    return Object.freeze(binding);
   }
   readonly registration: DevelopmentRegistration;
   readonly role: DevelopmentRoleBinding;
