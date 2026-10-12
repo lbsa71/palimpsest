@@ -10,6 +10,8 @@ Requirements: [RW02, RW03, RW04, RW11, RW17, RW18, RW19, RW20](../../../REQUIREM
 
 ## Ownership and dependencies
 
+Current finite claims are maintained in the [execution record](../execution.md). At the 2026-10-12 02:46 UTC checkpoint, root reserves the new design-only `docs/rewrite/evidence/A1-L08/development-source-admission-design.md` for `/root/a1_development_source_admission_design`, branch/worktree `codex/a1-development-source-admission-design-20261012` / `development-source-admission-design`, from the claim revision. Its actual finite goal supplies exact OD2-b/DC2 recorder admission and checker/proof contracts, implementation ownership and causal acceptance; all source/tests/existing plans are read-only. Active P2 owns recorder/plan/adapter and its authored fixture extraction; OD1 owns only its new driver/test/evidence. Earlier ownership tables below are preserved checkpoints, superseded by this claim and the current execution table.
+
 Own `evaluations/`, `docs/rewrite/evaluation/`, this lane file and `docs/rewrite/evidence/A1-L08/`. Own authoritative workload definitions, held-out cases, rubrics, evaluation runners and comparison reports. Component lanes retain their own engineering tests. L09 consumes this lane's frozen acceptance evidence and enforces admission; a candidate cannot modify its own authoritative evaluation in the same release.
 
 Specification dependency: none to start task design and baseline availability checks; C1 for final evidence envelopes. Implementation dependencies: comparator installations/accounts where authorized; L02–L07 for actual candidate runs. Do not wait for the rewrite to exist before designing its falsifiable acceptance.

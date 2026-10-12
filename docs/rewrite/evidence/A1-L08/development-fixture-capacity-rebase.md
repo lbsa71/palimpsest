@@ -32,3 +32,5 @@ git diff --check
 ```
 
 Temporary logs are `/tmp/aeon-root-recorder-rebase.log` and `/tmp/aeon-root-recorder-rebase-refinement.log`. The scalar diagnostic reproduced the storage preflight's `count(*)` and six-times-UTF8-length-plus-256-per-row formula through `DatabaseSync(filename,{readOnly:true})`, adding the same 512 plus six-times binding bytes. It rethrew each original exception, never replaced a source result or changed the accepted cut limits. No raw private input was involved.
+
+Fresh independent review is now complete at `9843817`: all final 83 recorder cases pass together within its 153-case regression receipt, with strict compilation. Exact whole-file normalization confirms every old positive assertion and substantive predicate is unchanged; only the declared preclaim fixture allocations and the new original-allocation refusal differ. The [review](development-controls-journal-review.md) accepts this bounded rebase while preserving both historical failed runs and the six separate model-adapter failures. It does not establish full-profile feasibility.
