@@ -29,12 +29,16 @@ export interface BrokerShellOptions {
   worker: WorkerConfig;
   timeoutMs: number;
   maxPayloadBytes: number;
+  maxResponseBytes?: number;
   pricesPerMillion: { input: number; output: number };
   resolveFragment(fragment: PromptFragment): Promise<string>;
   retainToolInstructions(source: string): ArtifactRef;
   assertAuthority(input: ShellInput): void;
   performRequest(payload: string, signal: AbortSignal): Promise<{ status: number; body: string }>;
   recordTransport(receipt: TransportReceipt): void;
+  /** Host raw retention before interpreting usage or replying to the worker. */
+  recordResponse?(requestId: string, response: { status: number; body: string }): void;
+  beforeRequest?(requestId: string): void;
 }
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
@@ -187,8 +191,10 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               options.recordTransport(receipt);
               const operation = (async () => { try {
                 const bounded = AbortSignal.any([workerSignal, AbortSignal.timeout(worker.timeoutMs ?? 60_000)]);
+                options.beforeRequest?.(record.request.id);
                 const response = await options.performRequest(payload, bounded);
-                invariant(Buffer.byteLength(response.body) <= options.maxPayloadBytes, 'Provider response too large');
+                invariant(Buffer.byteLength(response.body) <= (options.maxResponseBytes ?? options.maxPayloadBytes), 'Provider response too large');
+                options.recordResponse?.(record.request.id, response);
                 receipt.httpStatus = response.status; receipt.responseDigest = hash(response.body);
                 if (response.status >= 200 && response.status < 300) {
                   const body = JSON.parse(response.body) as { usage?: Record<string, unknown>; model?: string; id?: string; status?: string; output?: unknown };
