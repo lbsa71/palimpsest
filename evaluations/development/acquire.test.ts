@@ -35,8 +35,10 @@ function syntheticAcquisitionPlanFixture() {
 }
 
 
-function fixture(t: TestContext, journal = false, assignments = false) {
+function fixture(t: TestContext, journal = false, assignments = false, journalComposition = false) {
   const f = syntheticAcquisitionPlanFixture(), directory = mkdtempSync(join(tmpdir(), 'aeon-recorder-'));
+  // Explicit new unclaimed allocation; old-plan refusal remains a separate regression.
+  if (journalComposition) Object.assign(f.plan.capacity, { maxSnapshots: 13, maxSnapshotBytes: 500000, captureBytes: 6600000 });
   if (assignments) { f.plan.assignmentPacket = f.f.put({ version: 1, assignments: f.roles.filter(r => r.kind !== 'reviewer').map(r => ({ roleId: r.id, id: 'opportunity', message: { source: 'synthetic-assignment', externalId: 'opportunity', revision: '1', conversation: 'opportunity', text: 'Public synthetic assignment', actor: { id: 'synthetic-host', scope: { kind: 'public' }, modificationEligible: false } } })) }); f.registration.assignmentDigest = f.plan.assignmentPacket.sha256; }
   const rawDirectory = join(directory, 'raw'); mkdirSync(rawDirectory, { mode: 0o700 });
   const raw = new QualificationStore(rawDirectory, 32 * 1024 * 1024);
@@ -160,7 +162,7 @@ test('insufficient transition/signature headroom stops before original ledger re
   const f = fixture(t); f.plan.capacity.transitionBytes = 100; f.accept(); f.options.document = f.sign(); const r = f.recorder(); f.setTime(0); const x = f.bridge(r), q = f.model(x); assert.throws(() => x.a.resources.reserve(q), /Transition\/signature headroom/); assert.equal(f.original.snapshot(f.registration.rootId).requests, 0); assert.ok(r.status().draftBytes['no-memory']! > 0);
 });
 test('admitted small metadata pool stops optional bytes before pending intent and still closes complete B and final inventory', t => {
-  const f = fixture(t, true); f.plan.capacity.transitionBytes = 100; f.accept(); f.options.document = f.sign();
+  const f = fixture(t, true, false, true); f.plan.capacity.transitionBytes = 100; f.accept(); f.options.document = f.sign();
   const r = f.recorder(); f.setTime(0); r.begin(); const raw = r.rawStoreForRole('candidate'), drafts = [];
   let refusal: unknown;
   for (let n = 0; n < f.plan.capacity.maxArtifacts; n++) {
@@ -196,23 +198,23 @@ test('missing candidate/control final sources refuse freeze before bridge phase 
   const f = fixture(t, true), r = f.recorder(), x = f.bridge(r); f.setTime(0); r.begin(); assert.throws(() => r.freezeBehavior(x.a), /source missing/); assert.equal(f.originalStore.get('development.accounting.freeze', identity(f.registration)), undefined); assert.equal(r.status().phase, 'acquiring');
 });
 test('one immutable negative B retains actual source capture without fabricated development boundaries', t => {
-  const f = fixture(t, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r); f.setTime(180); const candidate = sources.get('candidate')!.accounting;
+  const f = fixture(t, true, false, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r); f.setTime(180); const candidate = sources.get('candidate')!.accounting;
   const b = r.freezeBehavior(candidate, sources); assert.equal(b.value.frozenAt, f.f.at(180)); assert.equal(r.status().phase, 'reviewing'); assert.equal(r.status().snapshots.length, 6); assert.equal(r.status().findings.filter(f => f.code.startsWith('boundary-')).length, 6); assert.ok(b.value.evidence.findings.length > 0);
   assert.throws(() => r.freezeBehavior(candidate, sources), /start missing|already frozen/); assert.throws(() => r.rawStoreForRole('candidate').putBytes(Buffer.from('late behavioral draft')), /registered phase/);
   const result = r.close(candidate, []); assert.notEqual(result.status, 'mechanically-prepared'); assert.equal(result.automaticReleaseEligible, false); assert.equal(result.h1Eligible, false); assert.equal(result.envelope.reviews.length, 0); assert.equal(r.status().phase, 'closed');
 });
 test('manual original cancellation before B is retained as unavailable and never false cancellation anchor', t => {
-  const f = fixture(t, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r); f.setTime(180); f.original.cancel(f.registration.rootId);
+  const f = fixture(t, true, false, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r); f.setTime(180); f.original.cancel(f.registration.rootId);
   assert.throws(() => r.freezeBehavior(sources.get('candidate')!.accounting, sources), /cancellation.*unavailable/); assert.equal(r.status().behavior, null); assert.equal(r.status().frozen?.rootCancelled, true); assert.equal(r.status().phase, 'failed'); assert.equal(f.original.snapshot(f.registration.rootId).cancelled, true);
 });
 test('manual cancellation during T retains no false C while real late response can still settle', t => {
-  const f = fixture(t, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r), x = { a: sources.get('no-memory')!.accounting, store: sources.get('no-memory')!.application.store, role: f.roles.find(r => r.id === 'no-memory')!, rp: f.plan.roles.find(r => r.roleId === 'no-memory')! };
+  const f = fixture(t, true, false, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r), x = { a: sources.get('no-memory')!.accounting, store: sources.get('no-memory')!.application.store, role: f.roles.find(r => r.id === 'no-memory')!, rp: f.plan.roles.find(r => r.roleId === 'no-memory')! };
   const q = f.model(x); x.a.resources.reserve(q); x.a.resources.dispatched({ ...q, status: 'dispatched' }); f.setTime(180); const candidate = sources.get('candidate')!.accounting; r.freezeBehavior(candidate, sources);
   f.original.cancel(f.registration.rootId); f.setTime(181); const body = '{"model":"synthetic-model","late":true}'; x.a.recordResponse(q.id, { status: 200, body }); x.a.recordTransport({ requestId: q.id, dispatched: true, status: 'succeeded', httpStatus: 200, usage: { requests: 1, inputTokens: 2, outputTokens: 1, costUsd: 0.000004, elapsedMs: 1000 }, responseModel: 'synthetic-model', responseDigest: hashBytes(body) }); x.a.resources.settle({ ...q, status: 'succeeded', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
   const result = r.close(candidate, []); assert.equal(result.envelope.closure, null); assert.notEqual(result.status, 'mechanically-prepared'); assert.equal(f.original.request(x.a.requestId(q.id))?.status, 'succeeded'); assert.ok(r.status().inventory.some(i => i.pool === 'response')); assert.equal(f.original.snapshot(f.registration.rootId).cancelled, true);
 });
 test('B indexes complete durable inventory including an aborted draft and actual source snapshots', t => {
-  const f = fixture(t, true), r = f.recorder(); f.setTime(0); r.begin();
+  const f = fixture(t, true, false, true), r = f.recorder(); f.setTime(0); r.begin();
   const draft = r.rawStoreForRole('no-memory').putBytes(Buffer.from('aborted pre-reservation raw draft'));
   const sources = f.freezeSources(r); f.setTime(180); const b = r.freezeBehavior(sources.get('candidate')!.accounting, sources);
   const index = new Map(b.value.artifactIndex.map(e => [e.artifact.sha256, e.bytes]));
@@ -221,7 +223,7 @@ test('B indexes complete durable inventory including an aborted draft and actual
   for (const retained of r.status().inventory.filter(i => i.pool !== 'metadata')) assert.equal(index.get(retained.artifact.sha256), retained.bytes);
 });
 test('T indexes rejected reviewer drafts and retained B bytes once without overlapping B index', t => {
-  const f = fixture(t, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r); f.setTime(180);
+  const f = fixture(t, true, false, true), r = f.recorder(); f.setTime(0); r.begin(); const sources = f.freezeSources(r); f.setTime(180);
   const candidate = sources.get('candidate')!.accounting, b = r.freezeBehavior(candidate, sources);
   const reviewer = f.roles.find(role => role.kind === 'reviewer')!;
   const draft = r.rawStoreForRole(reviewer.id).putBytes(Buffer.from('review draft rejected before ledger reserve'));
@@ -232,10 +234,19 @@ test('T indexes rejected reviewer drafts and retained B bytes once without overl
   assert.ok(tail.artifactIndex.every(e => !original.has(e.artifact.sha256))); assert.equal(result.automaticReleaseEligible, false); assert.equal(result.h1Eligible, false);
 });
 test('real candidate and control assignments share opportunity ID with distinct one-use deliveries and actual captures', t => {
-  const f = fixture(t, true, true), r = f.recorder(); f.setTime(0); const candidate = f.ingress(r), control = f.ingress(r, 'no-memory');
+  const f = fixture(t, true, true, true), r = f.recorder(); f.setTime(0); const candidate = f.ingress(r), control = f.ingress(r, 'no-memory');
   const first = r.deliverAssignment('candidate', 'opportunity', candidate.application, candidate.a), second = r.deliverAssignment('no-memory', 'opportunity', control.application, control.a);
   assert.ok(candidate.runtime.getRun(first)); assert.ok(control.runtime.getRun(second)); assert.equal(r.status().deliveries.length, 2); assert.equal(r.status().snapshots.length, 2);
   assert.throws(() => r.deliverAssignment('no-memory', 'opportunity', control.application, control.a), /already attempted/); assert.equal(control.store.list('communications.inputs').length, 1);
+});
+test('original 300000-byte journal allocation remains unavailable and cannot expand after claim', t => {
+  const f = fixture(t, true), r = f.recorder(); f.setTime(0); r.begin();
+  const sources = f.freezeSources(r); f.setTime(180);
+  assert.throws(() => r.freezeBehavior(sources.get('candidate')!.accounting, sources), /development snapshot exceeds bound/);
+  assert.equal(r.plan.capacity.maxSnapshotBytes, 300000); assert.equal(r.status().behavior, null);
+  assert.equal(r.status().phase, 'failed'); assert.ok(r.status().failure);
+  assert.throws(() => { r.plan.capacity.maxSnapshotBytes = 500000; }, /read only|readonly/);
+  assert.throws(f.recorder, /already claimed/);
 });
 test('foreign communications, runtime resources and original ledger identity refuse before intent or ingress', t => {
   const f = fixture(t, true, true), r = f.recorder(); f.setTime(0); const candidate = f.ingress(r), foreign = f.ingress(r, 'no-memory');

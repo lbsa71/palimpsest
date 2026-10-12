@@ -19,7 +19,7 @@ import { reviewEnvelopeDomains, type DevelopmentRegistration, type DevelopmentRo
 import { DevelopmentAcquisitionRecorder, type AcquisitionRecorderOptions, type AcquisitionAssignmentPacket } from './acquire.ts';
 
 // Public synthetic witness inputs, independent host/ingress composition. No sibling tests imported.
-function fixture(t: TestContext) {
+function fixture(t: TestContext, journalComposition = false) {
   const f = syntheticWitnessFixture(), m = f.m, directory = mkdtempSync(join(tmpdir(), 'aeon-acquire-review-'));
   m.limits = { maxRecords: 512, maxArtifactBytes: 1_000_000, maxEvidenceBytes: 8 * 1024 * 1024 };
   m.grant.originalAccounting = { grantId: m.grant.id, usage: { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 3000 }, chargedTokens: 0, chargedCostUsd: 0, chargedElapsedMs: 0, requestIds: [], unknownRequestIds: [] };
@@ -41,6 +41,8 @@ function fixture(t: TestContext) {
     roles: roles.map(r => ({ roleId: r.id, stateFile: join(directory, `${r.id}.sqlite`), workspace: join(directory, `workspace-${r.id}`), configuration: m.configurationArtifact, closure: f.put({ role: r.id }), journal: { stream: `journal:${r.id}`, hostId: 'review-host', maxAnchorDocuments: 512, maxAnchorBytes: 1_000_000 }, maxDrafts: 1, maxPayloadBytes: 5000, maxPromptBytes: 5000, maxFragmentBytes: 1000, maxResponseBytes: 1000 })),
     capacity: { captureBytes: 6_100_000, maxSnapshots: 20, maxSnapshotBytes: 300_000, envelopeBytes: 200_000, transitionBytes: 5000, failureBytes: 4096, inventoryEntryBytes: 256, maxArtifacts: 256, maxObservations: 128 },
   };
+  // Root-predeclared unclaimed allocation for the one physical-promise positive only.
+  if (journalComposition) Object.assign(plan.capacity, { maxSnapshots: 13, maxSnapshotBytes: 500000, captureBytes: 6600000 });
   for (const bytes of f.artifacts.values()) raw.putBytes(bytes);
   const stateFile = join(directory, 'recorder.sqlite'); writeFileSync(stateFile, '', { mode: 0o600 });
   const state = new OperationalStore({ filename: stateFile }), originalStore = new OperationalStore({ filename: plan.originalStateFile, documentJournal: plan.roles[0]!.journal });
@@ -307,7 +309,7 @@ test('R4 arithmetic review: admitted metadata pressure preserves serialized B/fi
 });
 
 test('R4 arithmetic review: admitted physical promise preserves pending response and B/T/final after optional metadata pressure', t => {
-  const f = fixture(t), r = f.claim(); f.time(0); const source = reserveModel(f, r);
+  const f = fixture(t, true), r = f.claim(); f.time(0); const source = reserveModel(f, r);
   const pressure = pressureOptionalDrafts(f, r, 'after-dispatch-pressure'); assert.match(String(pressure.refusal), /serialized|artifact inventory/);
   assert.equal(f.original.request(source.accounting.requestId(source.q.id))?.status, 'dispatched');
   const sources = f.freezeSources(r); f.time(180); const a = sources.get('candidate')!.accounting; r.freezeBehavior(a, sources);
