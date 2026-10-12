@@ -44,6 +44,10 @@ const pending = (q: PhysicalRequest) => ['reserved', 'dispatched', 'uncertain'].
 export class DevelopmentAccounting {
   readonly resources: ResourceLedger;
   get originalResources(): ResourceLedger { return this.options.original; }
+  /** Exact private grant/window binding for host control seals; detached on every read. */
+  get controlBinding(): Readonly<Pick<DevelopmentAccountingOptions, 'originalGrant' | 'behaviorWindow'> & { localRootId: string }> {
+    return inertSnapshot({ originalGrant: this.options.originalGrant, behaviorWindow: this.options.behaviorWindow, localRootId: this.localRoot });
+  }
   readonly registration: DevelopmentRegistration;
   readonly role: DevelopmentRoleBinding;
   readonly registrationDigest: string;
