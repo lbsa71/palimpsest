@@ -1,5 +1,7 @@
 # Concrete developmental controls
 
+Root adoption, 2026-10-12: adopt design `617a56f` for the first explicitly matched developmental profile, with DC1 assigned under the current execution claim. Preserve the distinction between developmental-memory access and retained operational mediators. This initial fresh-role binding is a qualification profile, not authority to reset lived production state or a permanent restriction on later evaluation; JR5/new-window integration must separately resolve continued-state candidate binding without changing an active attempt's mode or grant. Application/schema changes remain unpublished until source checks and fresh review. The implementation checkpoint must make the preliminary freshness check and post-accounting seal ordering explicit before code.
+
 2026-10-12. **DC0: specified, not implemented or qualified.** Finite A1-L08 design under root claim `ee6993c`, branch `codex/a1-development-controls-design-20261012`, worktree `/home/palimpsest/migration/aeon-1-20261011/development-controls-design`. Exclusive output is this new document; source, tests, central plans and historical evidence are read-only. Root adopts the handoff and reserves implementation paths separately. Requirements RW04, RW07–10, RW16, RW18–20 apply.
 
 ```text
