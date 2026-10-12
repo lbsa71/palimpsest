@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { identity, type ResourceEnvelope } from '../../contracts/common.ts';
 import type { PhysicalRequest } from '../../contracts/control/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
-import { BudgetExceeded, ResourceLedger, type AllowanceAmendment } from '../resources/index.ts';
+import { BudgetExceeded, ResourceLedger, validateAllowanceAmendment, type AllowanceAmendment } from '../resources/index.ts';
 
 const envelope: ResourceEnvelope = { maxRequests: 20, maxTokens: 160, maxCostUsd: 5, maxElapsedMs: 1000, maxConcurrency: 8 };
 const host = { authority: { generation: 'accepted', epoch: 1, controlRevision: 'incumbent-reviewed' }, assertAuthority: () => {} };
@@ -146,4 +146,67 @@ test('cancellation and physical over-ceiling usage still stop work under an amen
   assert.equal(f.ledger.snapshot('root').tokens, 41);
   assert.equal(f.ledger.snapshot('root').cancelled, true);
   assert.throws(() => f.ledger.reserve(request('after-overrun', 'root')), BudgetExceeded);
+});
+
+test('explicit request sharing admits the retained conversation after 64 requests and still exhausts at 256 across descendants', t => {
+  const f = fixture(t, { maxRequests: 256 }, { maxRequests: 64 });
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  let providerCalls = 0;
+  function perform(id: string, runId = 'child') {
+    const r = { ...request(id, runId, 0), usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
+    f.ledger.reserve(r);
+    providerCalls++;
+    f.ledger.dispatched({ ...r, status: 'dispatched' });
+    f.ledger.settle({ ...r, status: 'succeeded' });
+  }
+  for (let i = 0; i < 64; i++) perform(`retained-${i}`);
+  assert.throws(() => perform('coding-65'), /bounded allocation exhausted/);
+  assert.equal(providerCalls, 64);
+  const originalRows = ['allocations', 'budgets', 'requests'].map(namespace => f.store.list(namespace));
+  const oldHistory = f.store.get('resource.allowance-amendments', f.amendment.id);
+  const shared = { ...f.amendment, id: 'pilot-10-shared-requests', descendantRequestLimit: 'root' } as AllowanceAmendment;
+  f.ledger.applyAllowanceAmendment(shared, host);
+  assert.deepEqual(['allocations', 'budgets', 'requests'].map(namespace => f.store.list(namespace)), originalRows);
+  assert.deepEqual(f.store.get('resource.allowance-amendments', f.amendment.id), oldHistory);
+  assert.deepEqual(f.ledger.effectiveEnvelope('child'), { ...envelope, maxRequests: 256, maxTokens: null, maxConcurrency: 4 });
+  perform('coding-65');
+  for (let i = 0; i < 3; i++) f.ledger.allocate(`sibling-${i}`, { ...envelope, maxRequests: 64 }, 'root');
+  f.ledger.allocate('grandchild', { ...envelope, maxRequests: 1 }, 'child');
+  const descendants = ['sibling-0', 'sibling-1', 'sibling-2', 'grandchild'];
+  for (let i = 65; i < 256; i++) perform(`shared-${i}`, descendants[i % descendants.length]);
+  assert.equal(providerCalls, 256);
+  assert.equal(f.ledger.snapshot('root').requests, 256);
+  for (const runId of ['root', 'child', ...descendants]) assert.throws(() => perform(`over-root-${runId}`, runId), /shared physical request budget exhausted/);
+  assert.equal(providerCalls, 256);
+  assert.equal(f.ledger.snapshot('root').requests, 256);
+  assert.deepEqual(f.store.get('resource.allowance-amendments', f.amendment.id), oldHistory);
+});
+
+test('optional request sharing requires valid explicit policy, a distinct immutable ID and trusted rebinding after reopen', t => {
+  const f = fixture(t, {}, { maxRequests: 1 });
+  validateAllowanceAmendment(f.amendment);
+  for (const value of [undefined, null, 'unlimited']) {
+    assert.throws(() => validateAllowanceAmendment({ ...f.amendment, descendantRequestLimit: value } as unknown as AllowanceAmendment), /Invalid allowance amendment/);
+  }
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  f.settle(request('original'));
+  assert.throws(() => f.ledger.applyAllowanceAmendment({ ...f.amendment, descendantRequestLimit: 'root' } as AllowanceAmendment, host), /identity changed/);
+  assert.equal(f.ledger.effectiveEnvelope('child').maxRequests, 1);
+  const shared = { ...f.amendment, id: 'shared-requests', descendantRequestLimit: 'root' } as AllowanceAmendment;
+  validateAllowanceAmendment(shared);
+  f.ledger.applyAllowanceAmendment(shared, host);
+  const history = f.store.list('resource.allowance-amendments'), events = f.store.events('root');
+  f.ledger.applyAllowanceAmendment(shared, host);
+  assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
+  assert.deepEqual(f.store.events('root'), events);
+  f.reopen();
+  assert.equal(f.ledger.effectiveEnvelope('child').maxRequests, 1);
+  assert.throws(() => f.ledger.reserve(request('unbound')), BudgetExceeded);
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  assert.equal(f.ledger.effectiveEnvelope('child').maxRequests, 1);
+  assert.throws(() => f.ledger.reserve(request('old-policy')), BudgetExceeded);
+  f.ledger.applyAllowanceAmendment(shared, host);
+  f.ledger.reserve(request('bound'));
+  assert.equal(f.ledger.snapshot('root').requests, 2);
+  assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
 });

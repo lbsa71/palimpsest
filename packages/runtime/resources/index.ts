@@ -10,9 +10,15 @@ export interface RequestCeiling { tokens: number; costUsd: number; elapsedMs: nu
 export interface AllowanceAmendment {
   id: string; authorizationRef: string; rootId: string; expectedEnvelopeDigest: string;
   cumulativeTokenLimit: null; scope: 'root-and-descendants'; descendantCostLimit: 'root';
+  descendantRequestLimit?: 'root';
 }
 export function validateAllowanceAmendment(amendment: AllowanceAmendment): void {
-  invariant(amendment && Object.keys(amendment).sort().join(',') === 'authorizationRef,cumulativeTokenLimit,descendantCostLimit,expectedEnvelopeDigest,id,rootId,scope', 'Invalid allowance amendment');
+  invariant(amendment, 'Invalid allowance amendment');
+  const sharesRequests = Object.hasOwn(amendment, 'descendantRequestLimit');
+  const expectedKeys = sharesRequests
+    ? 'authorizationRef,cumulativeTokenLimit,descendantCostLimit,descendantRequestLimit,expectedEnvelopeDigest,id,rootId,scope'
+    : 'authorizationRef,cumulativeTokenLimit,descendantCostLimit,expectedEnvelopeDigest,id,rootId,scope';
+  invariant(Object.keys(amendment).sort().join(',') === expectedKeys && (!sharesRequests || amendment.descendantRequestLimit === 'root'), 'Invalid allowance amendment');
   invariant([amendment.id, amendment.authorizationRef, amendment.rootId].every(value => typeof value === 'string' && value.trim().length > 0)
     && typeof amendment.expectedEnvelopeDigest === 'string' && /^[a-f0-9]{64}$/.test(amendment.expectedEnvelopeDigest)
     && amendment.cumulativeTokenLimit === null && amendment.scope === 'root-and-descendants' && amendment.descendantCostLimit === 'root', 'Invalid allowance amendment');
@@ -63,7 +69,8 @@ export class ResourceLedger {
     const retained = this.store.get<AmendmentRecord>('resource.allowance-amendments', amendment.id);
     invariant(retained && canonicalJson(retained.value.amendment) === canonicalJson(amendment), 'Bound allowance amendment history unavailable');
     const budget = this.store.get<Budget>('budgets', allocation.value.rootId); invariant(budget, 'missing root budget');
-    return { ...allocation.value.envelope, maxTokens: null, maxCostUsd: budget.value.envelope.maxCostUsd };
+    return { ...allocation.value.envelope, maxTokens: null, maxCostUsd: budget.value.envelope.maxCostUsd,
+      ...(amendment.descendantRequestLimit === 'root' ? { maxRequests: budget.value.envelope.maxRequests } : {}) };
   }
   private elapsed(key: string, value: { startedAt: number; elapsedFloorMs?: number }, now: number): number {
     const elapsed=Math.max(0,now-value.startedAt,value.elapsedFloorMs??0,this.observedElapsed.get(key)??0);
