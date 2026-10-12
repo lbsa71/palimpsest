@@ -10,7 +10,7 @@ import { collectDevelopmentBehavior, developmentRequestIdentity, developmentRevi
 /** All keys, transport attestations, clocks and judgments are deterministic synthetic fixtures. */
 function fixture(unknown = false, control = false, roleConcurrency = 2, priorUnknown = false, effect = false) {
   const f = syntheticWitnessFixture(), transportKey = Buffer.alloc(32, 11), closureKey = Buffer.alloc(32, 12);
-  f.m.limits.maxArtifactBytes = 200000; f.trust.acceptedAttemptDigest = identity(f.m); f.observations.forEach(o => o.attemptDigest = identity(f.m));
+  f.m.limits.maxArtifactBytes = 200000; f.m.limits.maxRecords = 512; f.trust.acceptedAttemptDigest = identity(f.m); f.observations.forEach(o => o.attemptDigest = identity(f.m));
   const responses = new Map<string, DevelopmentRequestState['payload']>();
   const observed = f.observations.find(o => o.data.kind === 'request')!, end = f.observations.find(o => o.data.kind === 'end')!;
   assert(observed.data.kind === 'request' && end.data.kind === 'end');
@@ -85,16 +85,33 @@ function fixture(unknown = false, control = false, roleConcurrency = 2, priorUnk
     const execution = signDocument<DevelopmentReviewExecution>(d.execution, { version: 2, registrationDigest: identity(registered), behaviorDigest: identity(behaviorValue), roleId: `reviewer:${inner.signer}`, requestId: completed.state.request.id, requestIdentityDigest: developmentRequestIdentity(completed.state.request), settledStateDigest: identity(completed.state), settlementDigest: identity(completed.settlement!.value), input: f.put(developmentReviewInput(behaviorValue, `reviewer:${inner.signer}`)), response, output: { uri: `sha256:${outputDigest}`, sha256: outputDigest }, derivedAt: inner.value.reviewedAt, decoder: 'mistral-chat-final.v1', evidenceReads: [] }, 'observer', f.keys.get('observer')!);
     return signDocument(d.review, { version: 2 as const, registrationDigest: identity(registered), behaviorDigest: identity(behaviorValue), roleId: `reviewer:${inner.signer}`, review: inner, execution }, inner.signer, f.keys.get(inner.signer)!);
   });
-  const tailValue = { version: 2 as const, registrationDigest: identity(registered), behaviorDigest: identity(behaviorValue), transitions };
+  const tailValue = { version: 2 as const, registrationDigest: identity(registered), behaviorDigest: identity(behaviorValue), transitions, artifactIndex: [] as { artifact: DevelopmentRequestState['payload']; bytes: number }[] };
   const latest = new Map([original, s].map(v => [v.request.id, v])); transitions.forEach(t => latest.set(t.state.request.id, t.state));
   const final: Accounting = { grantId: f.m.grant.id, usage: { requests: 4, inputTokens: 9, outputTokens: 5, costUsd: 0.32, elapsedMs: 200000 }, chargedTokens: 14, chargedCostUsd: 0.32, chargedElapsedMs: 4000, requestIds: [...latest.keys()], unknownRequestIds: [] };
   const closureValue: DevelopmentClosure = { version: 2, registrationDigest: identity(registered), behaviorDigest: identity(behaviorValue), tailDigest: identity(tailValue), reviewDigests: reviews.map(v => identity(v.value)), closedAt: f.at(195), rootCancelled: false, requestStates: [...latest].map(([id, value]) => ({ id, stateDigest: identity(value) })), accounting: final };
   const envelope: DevelopmentReviewEnvelope = { version: 2, registration, behavior, reviews, accountingTail: signDocument(d.tail, tailValue, 'observer', f.keys.get('observer')!), closure: signDocument(d.closure, closureValue, 'closure', closureKey) };
+  const refreshTailIndex = () => {
+    const oldTailDigest = identity(envelope.accountingTail.value), oldIndex = envelope.accountingTail.value.artifactIndex;
+    const entries = new Map(oldIndex.map(e => [e.artifact.sha256, e]));
+    const bDigests = new Set(envelope.behavior.value.artifactIndex.map(e => e.artifact.sha256));
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      if ('uri' in value && 'sha256' in value) {
+        const artifact = value as DevelopmentRequestState['payload'];
+        if (!bDigests.has(artifact.sha256)) entries.set(artifact.sha256, { artifact: { uri: `sha256:${artifact.sha256}`, sha256: artifact.sha256 }, bytes: f.artifacts.get(artifact.sha256)?.byteLength ?? entries.get(artifact.sha256)?.bytes ?? 0 });
+      } else Object.values(value).forEach(visit);
+    };
+    visit({ transitions: envelope.accountingTail.value.transitions, reviews: envelope.reviews });
+    envelope.accountingTail.value.artifactIndex = [...entries.values()].filter(e => !bDigests.has(e.artifact.sha256)).sort((a,b) => a.artifact.sha256.localeCompare(b.artifact.sha256));
+    if (envelope.closure?.value.tailDigest === oldTailDigest) envelope.closure.value.tailDigest = identity(envelope.accountingTail.value);
+  };
   const resign = () => {
+    refreshTailIndex();
     envelope.behavior = signDocument(d.behavior, envelope.behavior.value, 'observer', f.keys.get('observer')!);
     envelope.accountingTail = signDocument(d.tail, envelope.accountingTail.value, 'observer', f.keys.get('observer')!);
     if (envelope.closure) envelope.closure = signDocument(d.closure, envelope.closure.value, 'closure', closureKey);
   };
+  resign();
   const prepare = () => prepareDevelopmentReviewEnvelope(envelope, trust, f.reader, f.now);
   return { f, registered, trust, s, original, envelope, get transitions() { return envelope.accountingTail.value.transitions; }, receipt, resign, prepare };
 }
