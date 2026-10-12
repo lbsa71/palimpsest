@@ -14,7 +14,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 | Current owner | Finite work and handoff |
 |---|---|
-| `/root/a1_development_acquisition_review`, `development-acquisition-review` worktree | NEW finite independent R4 re-review of authored handoff `8463af7`, source `2c76be2`; unchanged 26 independent predicates plus focused metadata-pressure cases. Author reports 254 joined passes and strict; component acceptance awaits this review |
+| `/root/a1_development_acquisition`, `development-acquisition` worktree | NEW finite escaped-terminal-record repair after review `7429b8d`: 260 joined cases, 259 pass/one failure, B/final pressure checks green. Preserve all 32 independent predicates; fix serialized raw failure and owner terminal headroom before claim/admission |
 | `/root/a1_development_pages`, `development-pages` worktree | New finite CP1 storage implementation goal under the [adopted complete-page design](evidence/A1-L08/development-incremental-capture-design.md); bounded physical inventory, v2 graph validation and distinct current-cut/historical-use fences; old full-capture predicates remain unchanged |
 | `/root/a1_development_controls_design`, `development-controls-design` worktree | New finite architecture goal for actual matched no-memory/no-standing-goals and scripted negative controls; own only the concrete control specification, preserve existing comparison and resource requirements |
 | `/root` | Integration, source-bound checks, later ordinary acquisition composition, remaining native inquiry and H1 |
