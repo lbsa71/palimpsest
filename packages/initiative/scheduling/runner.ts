@@ -7,6 +7,7 @@ import { applyProgress } from '../planning/index.ts';
 import type { ProgressDecision } from '../planning/index.ts';
 import { FairScheduler } from './index.ts';
 import type { SchedulingDecision } from './index.ts';
+import { nodeInitiativeTimer, type ScheduleTimeout } from '../environment.ts';
 class StartDeferred extends Error {}
 interface GoalExecution { runId: string; step: number; observationIds: string[]; stalls: number }
 export interface InitiativeRunnerOptions {
@@ -16,13 +17,17 @@ export interface InitiativeRunnerOptions {
   /** Judgment is run under the executing mind, not an unaccounted second model request. */
   decide(goal: Goal, observations: Observation[], context: DevelopmentContext): ProgressDecision;
   deliver?: (obligationId: string, signal: AbortSignal) => Promise<void>;
+  scheduleTimeout?: ScheduleTimeout;
 }
 /** Host wakeup entrypoint. It performs one bounded slice; host registers returned deadlines or waits for input. */
 export class InitiativeRunner {
   readonly options: InitiativeRunnerOptions; readonly rootAllocation: string;
   private active = false;
+  private readonly scheduleTimeout: ScheduleTimeout;
   constructor(options: InitiativeRunnerOptions) {
     this.options = options; this.rootAllocation = `initiative:${options.scheduler.id}`;
+    const schedule = options.scheduleTimeout ?? nodeInitiativeTimer();
+    this.scheduleTimeout = (delay, callback) => schedule(delay, callback);
     invariant(options.runtime.store === options.scheduler.store, 'runtime and scheduler must share operational store');
     const row = options.runtime.store.get('allocations', this.rootAllocation);
     if (!row) options.runtime.resources.allocate(this.rootAllocation, options.scheduler.policy.resources);
@@ -48,8 +53,19 @@ export class InitiativeRunner {
     const { scheduler, runtime, memory, authority } = this.options;
     const controller = new AbortController(); const abort = () => controller.abort(signal?.reason); signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
     let selectedGoalId: string | undefined;
-    const timer = setTimeout(() => controller.abort(new Error('scheduler quantum elapsed')), scheduler.policy.quantumMs);
+    let cancelTimer: (() => void) | undefined, timerOpen = true;
     try {
+      controller.signal.throwIfAborted();
+      let settingUp = true, firedInline = false;
+      const cancel = this.scheduleTimeout(scheduler.policy.quantumMs, () => {
+        if (settingUp) { firedInline = true; return; }
+        if (timerOpen) controller.abort(new Error('scheduler quantum elapsed'));
+      });
+      settingUp = false;
+      invariant(typeof cancel === 'function', 'scheduler timer must return cancellation');
+      let cancelled = false;
+      cancelTimer = () => { if (!cancelled) { cancelled = true; cancel(); } };
+      invariant(!firedInline, 'scheduler timer must enqueue callback');
       const at = new Date(runtime.now()).toISOString(); memory.expire(at);
       const prepared = runtime.store.transaction(() => {
         const selected = scheduler.select(at, this.options.deliver !== undefined);
@@ -113,6 +129,9 @@ export class InitiativeRunner {
       const goal = selectedGoalId ? scheduler.goals.goal(selectedGoalId) : undefined;
       if (goal?.status === 'running') scheduler.goals.revise(goal.id, goal.revision, { status: 'blocked' }, `initiative slice failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
-    } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); this.active = false; }
+    } finally {
+      timerOpen = false;
+      try { cancelTimer?.(); } finally { signal?.removeEventListener('abort', abort); this.active = false; }
+    }
   }
 }

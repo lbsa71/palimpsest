@@ -3,6 +3,7 @@ import type { DataScope, Drive, Goal, JsonValue, Provenance } from '../../contra
 import type { DevelopmentalMemory } from '../../development/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 import { InitiativeRegistry } from '../goals/index.ts';
+import { nodeInitiativeCollation } from '../environment.ts';
 export const growthDimensions = ['judgment', 'curiosity', 'code-quality', 'capability'] as const;
 export type GrowthDimension = typeof growthDimensions[number];
 export interface AdoptedDrive extends Drive { scope: DataScope; reason: string; weight: number }
@@ -10,7 +11,11 @@ export interface InquiryOpportunity { id: string; driveId: string; scope: DataSc
 /** The four dimensions orient choice; no interests, preferences or inquiry questions are seeded. */
 export class DriveRegistry {
   readonly store: OperationalStore; readonly memory: DevelopmentalMemory;
-  constructor(store: OperationalStore, memory: DevelopmentalMemory) { this.store = store; this.memory = memory; }
+  private readonly compareIds: (left: string, right: string) => number;
+  constructor(store: OperationalStore, memory: DevelopmentalMemory, compareIds?: (left: string, right: string) => number) {
+    this.store = store; this.memory = memory; const compare = compareIds ?? nodeInitiativeCollation();
+    this.compareIds = (left, right) => { const value = compare(left, right); invariant(Number.isFinite(value), 'invalid initiative collation'); return value; };
+  }
   adopt(input: Omit<AdoptedDrive, 'revision'>, expected: number | null): AdoptedDrive {
     return this.store.transaction(() => {
     invariant(growthDimensions.includes(input.dimension as GrowthDimension), 'standing drive must use growth dimension');
@@ -35,7 +40,7 @@ export class DriveRegistry {
   opportunities(audience: DataScope): InquiryOpportunity[] {
     const drives = new Map(this.adopted(audience).map(drive => [drive.id, drive]));
     return this.store.list<InquiryOpportunity>('initiative.opportunities').map(row => row.value).filter(o => o.status === 'available' && scopeAllows(o.scope, audience) && drives.has(o.driveId) && o.sourceIds.every(id => this.memory.get(id, audience)))
-      .sort((a, b) => (b.priority * drives.get(b.driveId)!.weight) - (a.priority * drives.get(a.driveId)!.weight) || a.id.localeCompare(b.id));
+      .sort((a, b) => (b.priority * drives.get(b.driveId)!.weight) - (a.priority * drives.get(a.driveId)!.weight) || this.compareIds(a.id,b.id));
   }
   select(id: string, registry: InitiativeRegistry, goal: Omit<Goal, 'revision' | 'status' | 'origin' | 'purpose' | 'scope' | 'successCriteria' | 'evidenceIds' | 'nextAction'>, actorId: string, at: string): Goal {
     return this.store.transaction(() => {

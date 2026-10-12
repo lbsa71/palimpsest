@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { canonicalJson, invariant } from '../../contracts/index.ts';
+import { canonicalJson, invariant, nonempty } from '../../contracts/index.ts';
 import type { Goal, Obligation, ResourceEnvelope } from '../../contracts/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 import { InitiativeRegistry } from '../goals/index.ts';
 import { ObligationRegistry } from '../obligations/index.ts';
+import { nodeInitiativeId, nodeInitiativeCollation, type SchedulerEnvironment } from '../environment.ts';
 export type ServiceClass = 'commitment' | 'conversation' | 'inquiry';
 export interface SchedulerPolicy { windowMs: number; maxSlicesPerWindow: number; maxLifetimeSlices: number; quantumMs: number; idleRetryMs: number; maxStalls: number; resources: ResourceEnvelope }
 interface SchedulerState { policy: SchedulerPolicy; startedAt: number; windowStartedAt: number; windowSlices: number; lifetimeSlices: number; cursor: number; queue: Record<ServiceClass, string[]> }
@@ -13,8 +13,13 @@ const classes: ServiceClass[] = ['commitment', 'conversation', 'inquiry'];
 /** Durable cyclic service, including an inquiry turn even under continuous conversation admission. */
 export class FairScheduler {
   readonly store: OperationalStore; readonly goals: InitiativeRegistry; readonly obligations: ObligationRegistry; readonly id: string; readonly policy: SchedulerPolicy; readonly eligibleGoal?: (goal: Goal) => boolean;
-  constructor(store: OperationalStore, goals: InitiativeRegistry, obligations: ObligationRegistry, id: string, policy: SchedulerPolicy, at: number, eligibleGoal?: (goal: Goal) => boolean) {
+  private readonly newId: () => string;
+  private readonly compareIds: (left: string, right: string) => number;
+  constructor(store: OperationalStore, goals: InitiativeRegistry, obligations: ObligationRegistry, id: string, policy: SchedulerPolicy, at: number, eligibleGoal?: (goal: Goal) => boolean, environment?: SchedulerEnvironment) {
     this.store = store; this.goals = goals; this.obligations = obligations; this.id = id; this.policy = structuredClone(policy); this.eligibleGoal = eligibleGoal;
+    const newId = environment?.newId ?? nodeInitiativeId(), compare = environment?.compareIds ?? nodeInitiativeCollation();
+    this.newId = () => { const value = newId(); nonempty(value, 'selection event id'); return value; };
+    this.compareIds = (left, right) => { const value = compare(left,right); invariant(Number.isFinite(value), 'invalid initiative collation'); return value; };
     for (const key of ['windowMs', 'maxSlicesPerWindow', 'maxLifetimeSlices', 'quantumMs', 'idleRetryMs', 'maxStalls'] as const) invariant(Number.isSafeInteger(policy[key]) && policy[key] > 0, `invalid scheduler ${key}`);
     invariant(Number.isFinite(at), 'invalid scheduler clock');
     const existing = store.get<SchedulerState>('initiative.schedulers', id);
@@ -26,10 +31,10 @@ export class FairScheduler {
     const ready = this.goals.readyNow(at).filter(goal => !this.eligibleGoal || this.eligibleGoal(goal)), candidates = new Map<string, Selection>();
     const due = this.obligations.all().filter(o => o.status === 'owed' && (o.dueAt === null || Date.parse(o.dueAt) <= Date.parse(at)));
     const dueGoals = new Set(due.flatMap(o => o.goalId ? [o.goalId] : []));
-    for (const goal of ready.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))) {
+    for (const goal of ready.sort((a, b) => b.priority - a.priority || this.compareIds(a.id,b.id))) {
       const service: ServiceClass = dueGoals.has(goal.id) ? 'commitment' : goal.origin.kind === 'request' ? 'conversation' : 'inquiry'; candidates.set(`goal:${goal.id}`, { kind: 'goal', service, goal });
     }
-    if (deliveries) for (const obligation of due.sort((a, b) => Date.parse(a.dueAt ?? at) - Date.parse(b.dueAt ?? at) || a.id.localeCompare(b.id))) {
+    if (deliveries) for (const obligation of due.sort((a, b) => Date.parse(a.dueAt ?? at) - Date.parse(b.dueAt ?? at) || this.compareIds(a.id,b.id))) {
       const retryAt = this.store.get<{ at: number }>('initiative.delivery-backoff', obligation.id)?.value.at ?? 0;
       if (retryAt <= Date.parse(at) && (!obligation.goalId || ['completed', 'abandoned'].includes(this.goals.goal(obligation.goalId)?.status ?? ''))) candidates.set(`obligation:${obligation.id}`, { kind: 'obligation', service: 'commitment', obligation });
     }
@@ -66,7 +71,7 @@ export class FairScheduler {
         }
       }
       this.store.put('initiative.schedulers', this.id, state, row.revision);
-      this.store.append({ id: randomUUID(), stream: `scheduler:${this.id}`, type: 'selection', data: decision }); return decision;
+      this.store.append({ id: this.newId(), stream: `scheduler:${this.id}`, type: 'selection', data: decision }); return decision;
     });
   }
 }

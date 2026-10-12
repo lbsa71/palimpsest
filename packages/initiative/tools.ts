@@ -6,6 +6,7 @@ import type { GrowthDimension } from './drives/index.ts';
 import { PlanRegistry, applyProgress } from './planning/index.ts';
 import type { ProgressDecision } from './planning/index.ts';
 import type { DurablePlan } from './planning/index.ts';
+import { nodeInitiativeWallClock } from './environment.ts';
 export interface InitiativeTool { name: string; description: string; inputSchema: object; execute(args: JsonValue): unknown }
 function argsObject(args: JsonValue, allowed: string[]): { [key: string]: JsonValue } { invariant(args !== null && typeof args === 'object' && !Array.isArray(args), 'expected object'); invariant(Object.keys(args).every(key => allowed.includes(key)), 'unknown initiative argument'); return args; }
 function stringArray(value: JsonValue | undefined): string[] { invariant(Array.isArray(value) && value.every(v => typeof v === 'string'), 'expected string array'); return value as string[]; }
@@ -14,7 +15,13 @@ function count(value: JsonValue | undefined): number { invariant(typeof value ==
 const string = { type: 'string', minLength: 1 }, strings = { type: 'array', items: string }, revision = { type: 'integer', minimum: 0 };
 function schema(properties: object, required: string[]): object { return { type: 'object', properties, required, additionalProperties: false }; }
 /** Auditable shell descriptors. Audience, actor and maximum grant are authenticated host inputs. */
-export function initiativeTools(goals: InitiativeRegistry, drives: DriveRegistry, plans: PlanRegistry, audience: DataScope, actorId: string, maximum: ResourceEnvelope, runId: string, clock: () => string = () => new Date().toISOString()): InitiativeTool[] {
+export function initiativeTools(goals: InitiativeRegistry, drives: DriveRegistry, plans: PlanRegistry, audience: DataScope, actorId: string, maximum: ResourceEnvelope, runId: string, wallClock?: () => string): InitiativeTool[] {
+  const supplier = wallClock ?? nodeInitiativeWallClock();
+  const clock = () => {
+    const value = supplier();
+    invariant(typeof value === 'string' && /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value)), 'invalid initiative wall timestamp: explicit ISO timezone required');
+    return value;
+  };
   const boundAudience = structuredClone(audience);
   const sources = (value: JsonValue | undefined): string[] => { const ids = stringArray(value); invariant(ids.length > 0, 'experience sources required'); ids.forEach(id => invariant(drives.memory.get(id, boundAudience), 'source unavailable')); return ids; };
   const visibleGoal = (id: string): Goal => { const goal = goals.all(boundAudience).find(g => g.id === id); invariant(goal, 'goal unavailable'); return goal; };

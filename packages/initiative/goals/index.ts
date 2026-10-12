@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
 import { invariant, nonempty, scopeAllows, validateGoal, validateProvenance } from '../../contracts/index.ts';
 import type { DataScope, Goal, GoalPort, GoalStatus, Provenance } from '../../contracts/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
+import { nodeInitiativeId } from '../environment.ts';
 
 const NS = 'initiative.goals';
 const transitions: Record<GoalStatus, GoalStatus[]> = {
@@ -12,7 +12,11 @@ const transitions: Record<GoalStatus, GoalStatus[]> = {
 };
 export class InitiativeRegistry implements GoalPort {
   readonly store: OperationalStore;
-  constructor(store: OperationalStore) { this.store = store; }
+  private readonly newId: () => string;
+  constructor(store: OperationalStore, newId?: () => string) {
+    this.store = store; const supplier = newId ?? nodeInitiativeId();
+    this.newId = () => { const id = supplier(); nonempty(id, 'goal event id'); return id; };
+  }
   goal(id: string): Goal | undefined { return this.store.get<Goal>(NS, id)?.value; }
   async get(id: string): Promise<Goal | undefined> { return this.goal(id); }
   all(audience?: DataScope): Goal[] { return this.store.list<Goal>(NS).map(row => row.value).filter(goal => !audience || scopeAllows(goal.scope, audience)); }
@@ -36,7 +40,7 @@ export class InitiativeRegistry implements GoalPort {
       }
       this.store.put(NS, goal.id, goal, expectedRevision);
       this.store.put('initiative.goal-history', `${goal.id}:${goal.revision}`, goal, null);
-      this.store.append({ id: randomUUID(), stream: `goal:${goal.id}`, type: 'goal-revised', data: { revision: goal.revision, status: goal.status, evidenceIds: goal.evidenceIds, reason: goal.reason ?? null } });
+      this.store.append({ id: this.newId(), stream: `goal:${goal.id}`, type: 'goal-revised', data: { revision: goal.revision, status: goal.status, evidenceIds: goal.evidenceIds, reason: goal.reason ?? null } });
       return goal;
     });
   }
