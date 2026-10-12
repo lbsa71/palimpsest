@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { performance } from 'node:perf_hooks';
+import { nodeMemoryEnvironment, nodeMemoryWallClock, type MemoryEnvironment } from './environment.ts';
 import { assertDerivationScope, canonicalJson, identity, integer, invariant, nonempty, scopeAllows, validateMemory, validateScope } from '../contracts/index.ts';
 import type { DataScope, JsonValue, MemoryPort, MemoryRecord } from '../contracts/index.ts';
 import type { OperationalStore } from '../storage/index.ts';
@@ -21,7 +20,20 @@ function unique(ids: string[]): void { invariant(ids.length > 0 && new Set(ids).
 export class DevelopmentalMemory implements MemoryPort {
   private store: OperationalStore;
   private clock: () => string;
-  constructor(store: OperationalStore, clock: () => string = () => new Date().toISOString()) { this.store = store; this.clock = clock; }
+  private readonly environment: Readonly<MemoryEnvironment>;
+  constructor(store: OperationalStore, clock?: () => string, environment: MemoryEnvironment = nodeMemoryEnvironment()) {
+    this.store = store;
+    const wallClock = clock ?? nodeMemoryWallClock();
+    const { monotonicNow, withdrawalId, compareIds } = environment;
+    invariant([wallClock, monotonicNow, withdrawalId, compareIds].every(f => typeof f === 'function'), 'Memory environmental callbacks required');
+    this.environment = Object.freeze({ monotonicNow: () => monotonicNow(), withdrawalId: () => withdrawalId(),
+      compareIds: (left: string, right: string) => { const value = compareIds(left, right); invariant(Number.isFinite(value), 'Invalid memory collation result'); return value; } });
+    this.clock = () => { const value = wallClock(); invariant(typeof value === 'string', 'Memory wall clock must return an ISO timestamp'); timestamp(value); return value; };
+  }
+  private monotonicTime(): number {
+    const value = this.environment.monotonicNow();
+    invariant(Number.isFinite(value) && value >= 0, 'Invalid memory monotonic time'); return value;
+  }
 
   private raw(id: string): MemoryEntry | undefined { return this.store.get<MemoryEntry>(MEMORIES, id)?.value; }
   private activeSources(ids: string[], scope: DataScope): MemoryRecord[] {
@@ -90,17 +102,17 @@ export class DevelopmentalMemory implements MemoryPort {
     });
   }
   context(request: ContextRequest): DevelopmentContext {
-    const start = performance.now(); validateScope(request.audience); validateBudget(request);
+    const start = this.monotonicTime(); validateScope(request.audience); validateBudget(request);
     const queryTerms = terms([request.query, ...(request.expand ?? [])].join(' '));
     const visible = this.store.list<MemoryEntry>(MEMORIES).map(entry => this.get(entry.key, request.audience)).filter((record): record is MemoryRecord => record !== undefined);
     // Suppression only uses visible corrections: a hidden correction cannot disclose its existence.
     const superseded = new Set(visible.flatMap(record => record.supersedes));
     const candidates = visible.filter(record => !superseded.has(record.id) && (queryTerms.size === 0 || relevance(record, queryTerms) > 0))
-      .sort((a, b) => relevance(b, queryTerms) - relevance(a, queryTerms) || Date.parse(b.provenance.recordedAt) - Date.parse(a.provenance.recordedAt) || a.id.localeCompare(b.id));
+      .sort((a, b) => relevance(b, queryTerms) - relevance(a, queryTerms) || Date.parse(b.provenance.recordedAt) - Date.parse(a.provenance.recordedAt) || this.environment.compareIds(a.id, b.id));
     const self = request.includeSelf === false ? [] : this.store.list<AdoptedSelf>(SELF).map(entry => entry.value).filter(facet => facet.status === 'active' && scopeAllows(facet.scope, request.audience) && facet.memoryIds.every(id => this.get(id, request.audience)));
     // Whole records only. The budget covers canonical serialized memories + self, including provenance.
     const payload: { memories: MemoryRecord[]; self: AdoptedSelf[] } = { memories: [], self: [] }; let omitted = 0;
-    for (const facet of self.sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const facet of self.sort((a, b) => this.environment.compareIds(a.id, b.id))) {
       const next = { memories: payload.memories, self: [...payload.self, facet] };
       if (Buffer.byteLength(canonicalJson(next)) <= request.maxBytes && payload.memories.length + payload.self.length < request.maxRecords) payload.self.push(facet); else omitted++;
     }
@@ -108,7 +120,8 @@ export class DevelopmentalMemory implements MemoryPort {
       const next = { memories: [...payload.memories, record], self: payload.self };
       if (Buffer.byteLength(canonicalJson(next)) <= request.maxBytes && payload.memories.length + payload.self.length < request.maxRecords) payload.memories.push(record); else omitted++;
     }
-    return { ...payload, selection: { policy: 'adopted-self-then-lexical-relevance-recency-whole-records-v1', omittedForBudget: omitted, bytes: Buffer.byteLength(canonicalJson(payload)), elapsedMs: performance.now() - start } };
+    const end = this.monotonicTime(); invariant(end >= start, 'Memory monotonic time regressed');
+    return { ...payload, selection: { policy: 'adopted-self-then-lexical-relevance-recency-whole-records-v1', omittedForBudget: omitted, bytes: Buffer.byteLength(canonicalJson(payload)), elapsedMs: end - start } };
   }
   async retrieve(scope: DataScope, query: string, limit: number): Promise<MemoryRecord[]> {
     return this.context({ audience: scope, query, maxRecords: limit, maxBytes: 64 * 1024, includeSelf: false }).memories;
@@ -161,7 +174,8 @@ export class DevelopmentalMemory implements MemoryPort {
       }
       for (const entry of history) this.store.delete(HISTORY, entry.key, entry.revision);
       for (const entry of jobs) this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source forgotten', outputIds: [] }, entry.revision);
-      this.store.withdrawDocumentJournalContent({ id: randomUUID(), reason, targets: [...targets.values()].map(target => ({ ...target, expectedRevision: this.store.get(target.namespace, target.key)?.revision ?? null })) });
+      const withdrawalId = this.environment.withdrawalId(); nonempty(withdrawalId, 'withdrawal id');
+      this.store.withdrawDocumentJournalContent({ id: withdrawalId, reason, targets: [...targets.values()].map(target => ({ ...target, expectedRevision: this.store.get(target.namespace, target.key)?.revision ?? null })) });
       return [...forgotten].filter(id => !resultAudience || scopeAllows(entries.find(entry => entry.key === id)!.value.record.scope, resultAudience));
     });
   }
@@ -182,7 +196,7 @@ export class DevelopmentalMemory implements MemoryPort {
     nonempty(owner, 'worker owner'); integer(leaseMs, 'leaseMs'); invariant(leaseMs > 0, 'lease must be positive'); timestamp(at);
     return this.store.transaction(() => {
       const candidates = this.store.list<ConsolidationJob>(JOBS).filter(entry => Date.parse(entry.value.dueAt) <= Date.parse(at) && (entry.value.state === 'pending' || (entry.value.state === 'running' && entry.value.lease !== null && Date.parse(entry.value.lease.until) <= Date.parse(at))));
-      for (const entry of candidates.sort((a, b) => Date.parse(a.value.dueAt) - Date.parse(b.value.dueAt) || a.key.localeCompare(b.key))) {
+      for (const entry of candidates.sort((a, b) => Date.parse(a.value.dueAt) - Date.parse(b.value.dueAt) || this.environment.compareIds(a.key, b.key))) {
         try { const sources = this.activeSources(entry.value.sourceIds, entry.value.scope); invariant(sources.every((source, i) => source.revision === entry.value.sourceRevisions[i]), 'source changed'); }
         catch { this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source unavailable or revised' }, entry.revision); continue; }
         return { job: this.writeJob({ ...entry.value, state: 'running', attempts: entry.value.attempts + 1, lease: { owner, until: new Date(Date.parse(at) + leaseMs).toISOString() }, error: null }, entry.revision) };
