@@ -61,6 +61,8 @@ Non-goals: reviving the old systemd process, old database migration, permanent h
 
 ## Coordination
 
+PILOT-10 focused coding unit at `23ee59a`: root retains central planning/private admissions/integration/releases. Autark alone owns two new feature paths `packages/communications/slack/search.ts` and `packages/communications/test/slack-search.test.ts` in its ordinarily granted source checkout. Finite objective, behavioral requirements and evidence gates are recorded in [slack-pilot](../slack-pilot.md); actual code/tests under the remaining original USD5 budget are required. `/root/coding_finish_review` (fresh Sol/high) owns only private admission/actual-output reviews. No additional host-repair source is claimed and historical broader claims remain inactive.
+
 PILOT-09 scoped continuation at `0218e52`: root retains application composition, releases and docs; the Sol runtime author owns only shell byte-triggered existing compaction and focused tests, as specified in [slack-pilot](../slack-pilot.md). It follows a genuine new-input failure; no old-checkpoint operator retry was executed. No broad backlog claim is revived.
 
 2026-10-12 scoped PILOT-08 reclaim: `/root` owns only the observed oversized source-checkout DM continuation and silent blocked status, as specified in [slack-pilot](../slack-pilot.md). Branch/base `codex/aeon-slack-pilot-20261012` / `5b7d582`. Runtime author `/root/runtime_readiness` (Sol/high) has the exact shell/worker/projection/test paths reserved there; root retains application/notices/deployment/docs. Independent Sol investigation is read-only. Historical broad claims remain inactive.
