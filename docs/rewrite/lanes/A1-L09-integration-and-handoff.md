@@ -1,6 +1,6 @@
 # A1-L09 — integration, whole-system evolution and handoff
 
-**Scoped active claim, 2026-10-12:** `/root` owns the [first live Slack pilot](../slack-pilot.md) from `debadd9` on `codex/aeon-slack-pilot-20261012`. Only ordinary startup, conversation and continuity are in scope; earlier backlog claims remain inactive. Root owns pilot documentation and private host artifacts; source changes require exact observed-blocker claims. All delegates use Sol.
+**Scoped pilot handoff, 2026-10-12:** the [first live Slack pilot](../slack-pilot.md) is deployed from `debadd9` on `codex/aeon-slack-pilot-20261012`. The user confirms a successful Slack reply. Deterministic ingestion reactions (A1-L07 / PILOT-05, source `79c5a14`) are also deployed and accepted as engineering source; their live visual check awaits the next user message. Current service, accepted candidate, continuity evidence and operational limits are in the pilot record. Earlier backlog claims remain inactive. All delegates use Sol.
 
 **Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
 

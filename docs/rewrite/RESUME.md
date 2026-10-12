@@ -1,6 +1,6 @@
 # Resume Aeon 1 after the 2026-10-12 hibernation
 
-**Later user instruction, 2026-10-12:** the [Slack pilot](slack-pilot.md) is resumed as a narrow task. Get an ordinary live instance working; fix only actual launch/conversation blockers. Sol-only delegates. The remaining broad Aeon 1 work is still hibernated; the historical restart sequence below is not a prerequisite for this pilot.
+**Later user instruction, 2026-10-12:** the narrow [Slack pilot](slack-pilot.md) is deployed as `aeon-pilot.service`. Read its current operational record before touching the service, state, grants or manual supervisor drop-in. Actual model/tool/direct-conversation completion and a user-confirmed live Slack reply are established. Sol-only delegates. The remaining broad Aeon 1 work is still hibernated; the historical restart sequence below is not a prerequisite for this pilot and does not authorize automatic repair work.
 
 **Work is hibernated at the user's request. Aeon 1 is unfinished; no agent is authorized to continue automatically.** The user asked every agent to finalize only its current item, deactivate its goal, preserve current work and stop. All three remaining child goals finished their finite handoffs, and all child agents were stopped/completed. The overall unfinished goal is paused at final shutdown. The available goal API supports pause/completion, not deleting goal history; completed child goals are inactive. Historical owner names and `/goal` examples elsewhere are not active assignments.
 

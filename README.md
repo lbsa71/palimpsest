@@ -2,7 +2,7 @@
 
 Palimpsest is intended to become a continuing Autark with its own developing identity, judgment, interests and agenda, capable of sustained reasoning and action at least comparable to Claude Code and Codex. That is an engineering and evaluation target, not a claim about the existing implementation or subjective experience.
 
-**2026-10-11: Aeon 1 implementation is active. The previous systemd service is stopped and uninstalled; no replacement is deployed yet.** The [execution record](docs/rewrite/execution.md) tracks owned goals and evidence. Historical source, lived state and release evidence are preserved. There is no legacy API, data-schema, package, or deployment compatibility requirement.
+**2026-10-12: a bounded engineering [Slack pilot](docs/rewrite/slack-pilot.md) of the rewrite is deployed as `aeon-pilot.service`.** The remaining Aeon 1 backlog is hibernated. The previous service remains decommissioned; historical source, lived state and release evidence are preserved. The [execution record](docs/rewrite/execution.md) tracks owned work and evidence. There is no legacy API, data-schema, package, or deployment compatibility requirement.
 
 Start with the [Aeon plan](PLAN.md). It organizes work into two Aeons, independently ownable lanes and concrete delegable tasks:
 

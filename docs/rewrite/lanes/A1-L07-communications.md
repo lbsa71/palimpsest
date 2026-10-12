@@ -1,5 +1,7 @@
 # A1-L07 — responsive communication and durable follow-through
 
+**Scoped pilot handoff, 2026-10-12:** the [Slack pilot](../slack-pilot.md) is live and the user confirms a good reply. PILOT-05 source `79c5a14` adds deterministic `eyes` on intake and removal after confirmed speech; 28 focused checks and strict compilation passed independent review, the required scope was granted and the candidate is deployed. Live visual confirmation awaits the next user message. The broader lane backlog remains paused; historical audit permissions below do not describe this later authorized deployment.
+
 **Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
 
 Status: **reviewing** — ordinary communication/recovery/report paths integrated and fixture-verified with fresh application/offline boundary review; authentic live interaction and full lane acceptance pending. Session owner: **`/root/a1_communications`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
