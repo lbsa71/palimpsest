@@ -168,10 +168,10 @@ test('Socket Mode authenticates tokens, commits before ACK, reconnects and invok
   try{socket.start();for(let i=0;i<100 && (opens<2||acks<2||recovered<1);i++)await delay(2);await socket.stop();assert(opens>=2);assert(acks>=2);assert(recovered>=1);assert.equal(f.store.list('runs').length,1);}finally{await socket.stop();f.close();}
 });
 test('Socket Mode rejects foreign token identity and does not ACK malformed event intake',async()=>{
-  const f=fixture();let opens=0,acks=0,rejections=0;
+  const f=fixture();let opens=0,acks=0,rejections=0,identityRejected=false;
   const r=recovery(f,{async call<T>(){return {messages:[]} as T;}},4);
-  const foreign=new SlackSocketMode({botApi:{async call<T>(){return {team_id:'OTHER',user_id:'BOT'} as T;}},appApi:{async call<T>(){opens++;return {url:'wss://wss.slack.com/link'} as T;}},ingress:f.ingress,recovery:r,reconnectMinMs:1,reconnectMaxMs:2,recoveryIntervalMs:2});
-  try{let identityRejected=false;foreign.options.onError=()=>{identityRejected=true;};foreign.start();for(let i=0;i<200&&!identityRejected;i++)await delay(5);assert(identityRejected,'foreign identity rejection did not occur');await foreign.stop();assert.equal(opens,0);
+  const foreign=new SlackSocketMode({botApi:{async call<T>(){return {team_id:'OTHER',user_id:'BOT'} as T;}},appApi:{async call<T>(){opens++;return {url:'wss://wss.slack.com/link'} as T;}},ingress:f.ingress,recovery:r,reconnectMinMs:1,reconnectMaxMs:2,recoveryIntervalMs:2,onError:()=>{identityRejected=true;}});
+  try{foreign.start();for(let i=0;i<200&&!identityRejected;i++)await delay(5);assert(identityRejected,'foreign identity rejection did not occur');await foreign.stop();assert.equal(opens,0);
     const malformed=new SlackSocketMode({...foreign.options,botApi:{async call<T>(){return {team_id:'T1',user_id:'BOT'} as T;}},onError(){rejections++;},socket:()=>{const listeners=new Map<string,(e:any)=>void>();const s:SocketLike={addEventListener(type,fn){listeners.set(type,fn);},send(){acks++;},close(){}};setTimeout(()=>{listeners.get('message')?.({data:JSON.stringify({type:'events_api',envelope_id:'malformed'})});listeners.get('close')?.({});},1);return s;}});
     malformed.start();for(let i=0;i<200&&rejections===0;i++)await delay(5);assert(rejections>0,'malformed intake rejection did not occur');await malformed.stop();assert.equal(acks,0);
   }finally{await foreign.stop();f.close();}

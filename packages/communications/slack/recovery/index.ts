@@ -3,6 +3,7 @@ import { OperationalStore } from '../../../storage/index.ts';
 import { SlackError } from '../client.ts';
 import type { SlackApi, SlackPage } from '../client.ts';
 import { SlackIngress } from '../ingress/index.ts';
+import { captureWallClock, createNodeCommunicationsEnvironment } from '../../environment.ts';
 
 interface Scan {channel:string;threadTs?:string;oldest:string;latest:string;cursor:string;seenCursors:string[]}
 export interface RecoveryGap {id:string;channel:string;threadTs?:string;kind:'permission'|'retention'|'coverage'|'protocol';detail:string;at:string}
@@ -10,9 +11,9 @@ export interface RecoveryState {cycle?:{latest:string;oldest:string;queue:Scan[]
 export interface RecoveryOptions {store:OperationalStore;api:SlackApi;ingress:SlackIngress;coverageStart:string;lookbackSeconds:number;retentionFloor?:string;maxPagesPerTick?:number;pageSize?:number;now?:()=>number}
 /** Every page's admissions and cursor advance share the same SQLite transaction. */
 export class SlackRecovery {
-  readonly options:RecoveryOptions; private ticking=false;
+  readonly options:RecoveryOptions; private ticking=false;private readonly now:()=>number;private readonly call:SlackApi['call'];
   constructor(options:RecoveryOptions){
-    this.options=options;
+    this.options=options;this.now=captureWallClock(options.now??createNodeCommunicationsEnvironment().now);this.call=options.api.call.bind(options.api);
     invariant(Number.isFinite(Number(options.coverageStart))&&Number(options.coverageStart)>=0&&Number.isFinite(options.lookbackSeconds)&&options.lookbackSeconds>0,'explicit bounded recovery coverage required');
     invariant(Number.isSafeInteger(options.maxPagesPerTick??4)&&(options.maxPagesPerTick??4)>0,'positive recovery page bound required');
     invariant(Number.isSafeInteger(options.pageSize??100)&&(options.pageSize??100)>0&&(options.pageSize??100)<=1000,'invalid recovery page size');
@@ -23,7 +24,7 @@ export class SlackRecovery {
   private gap(state:RecoveryState,scan:Scan,kind:RecoveryGap['kind'],detail:string):void {
     const id=identity({channel:scan.channel,threadTs:scan.threadTs??null,kind,detail});
     if(!state.gaps.some(g=>g.id===id)){
-      const gap={id,channel:scan.channel,...(scan.threadTs?{threadTs:scan.threadTs}:{}),kind,detail,at:new Date((this.options.now??Date.now)()).toISOString()};state.gaps.push(gap);
+      const gap={id,channel:scan.channel,...(scan.threadTs?{threadTs:scan.threadTs}:{}),kind,detail,at:new Date(this.now()).toISOString()};state.gaps.push(gap);
       const scope=this.options.ingress.options.channels.find(c=>c.channel===scan.channel)?.scope;
       invariant(scope,'recovery channel grant absent');
       const eventId=`slack-gap:${this.options.ingress.options.teamId}:${id}`;
@@ -35,8 +36,9 @@ export class SlackRecovery {
   async tick(signal?:AbortSignal):Promise<{pages:number;complete:boolean;retryAt?:number}> {
     invariant(!this.ticking,'recovery tick already active');this.ticking=true;
     try {
-      const now=(this.options.now??Date.now)();let state=this.state();
+      signal?.throwIfAborted();const now=this.now();let state=this.state();
       if(state.retryAt && state.retryAt>now)return {pages:0,complete:false,retryAt:state.retryAt};
+      this.options.store.transaction(()=>{
       if(state.retryAt!==undefined){delete state.retryAt;this.save(state);}
       if(!state.cycle){
         const latest=String(now/1000),oldest=String(Math.max(Number(this.options.coverageStart),now/1000-this.options.lookbackSeconds));
@@ -51,20 +53,21 @@ export class SlackRecovery {
         if(Number(oldest)>Number(state.lastCompleted??this.options.coverageStart))for(const scan of queue.filter(s=>!s.threadTs))this.gap(state,scan,'coverage',`history before ${oldest} is outside the configured lookback; first offline mentions in older threads are not guaranteed`);
         this.save(state);
       }
+      });
       let pages=0;
       while(pages<(this.options.maxPagesPerTick??4)){
         signal?.throwIfAborted();state=this.state();const cycle=state.cycle!;
         const scan=cycle.current??cycle.queue.shift();if(!scan){state.lastCompleted=cycle.latest;delete state.cycle;this.save(state);return {pages,complete:true};}
         cycle.current=scan;this.save(state);
         let page:SlackPage;
-        try {page=await this.options.api.call<SlackPage>(scan.threadTs?'conversations.replies':'conversations.history',{channel:scan.channel,...(scan.threadTs?{ts:scan.threadTs}:{}),oldest:scan.oldest,latest:scan.latest,inclusive:'true',limit:String(this.options.pageSize??100),...(scan.cursor?{cursor:scan.cursor}:{})},signal);}
-        catch(error){state=this.state();const current=state.cycle!.current!;
+        try {page=await this.call<SlackPage>(scan.threadTs?'conversations.replies':'conversations.history',{channel:scan.channel,...(scan.threadTs?{ts:scan.threadTs}:{}),oldest:scan.oldest,latest:scan.latest,inclusive:'true',limit:String(this.options.pageSize??100),...(scan.cursor?{cursor:scan.cursor}:{})},signal);}
+        catch(error){signal?.throwIfAborted();state=this.state();const current=state.cycle!.current!;
           if(error instanceof SlackError && error.code==='ratelimited'){state.retryAt=now+(error.retryAfterMs??1000);this.save(state);return {pages,complete:false,retryAt:state.retryAt};}
           if(error instanceof SlackError && error.code==='invalid_cursor'){current.cursor='';current.seenCursors=[];this.gap(state,current,'protocol','invalid cursor; restarting the same bounded window');this.save(state);return {pages,complete:false};}
           if(error instanceof SlackError && ['missing_scope','not_in_channel','channel_not_found','thread_not_found','access_denied'].includes(error.code)){this.gap(state,current,'permission',error.code);delete state.cycle!.current;this.save(state);pages++;continue;}
           this.gap(state,current,'protocol',error instanceof SlackError?error.code:'history request failed');state.retryAt=now+1000;this.save(state);return {pages,complete:false,retryAt:state.retryAt};
         }
-        pages++;
+        signal?.throwIfAborted();pages++;
         this.options.store.transaction(()=>{
           state=this.state();const c=state.cycle!,current=c.current!;
           invariant(Array.isArray(page.messages),'Slack history messages missing');

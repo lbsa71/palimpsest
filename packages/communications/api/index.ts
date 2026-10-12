@@ -1,5 +1,6 @@
-import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import { createNodeCommunicationsEnvironment } from '../environment.ts';
+import type { HttpListenerFactory } from '../environment.ts';
 import { timingSafeEqual } from 'node:crypto';
 import { invariant, nonempty } from '../../contracts/common.ts';
 import { CommunicationsCore } from '../core/index.ts';
@@ -16,13 +17,15 @@ async function body(request: IncomingMessage, maxBytes: number): Promise<Record<
   const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8')); invariant(typeof value==='object' && value!==null && !Array.isArray(value),'JSON object required');return value as Record<string,unknown>;
 }
 function respond(response: ServerResponse, status: number, value: unknown): void {response.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});response.end(JSON.stringify(value));}
-export function createDirectApi(options: {core: CommunicationsCore; authenticate: (request:IncomingMessage)=>Principal|undefined; maxBodyBytes?:number;outputForRun?:(runId:string)=>unknown|Promise<unknown>;health?:()=>unknown}): Server {
-  return createServer((request,response)=>{void (async()=>{
-    const actor=options.authenticate(request);if(!actor){respond(response,401,{error:'authentication required'});return;}
+export function createDirectApi(options: {core: CommunicationsCore; authenticate: (request:IncomingMessage)=>Principal|undefined; maxBodyBytes?:number;createListener?:HttpListenerFactory;outputForRun?:(runId:string)=>unknown|Promise<unknown>;health?:()=>unknown}): Server {
+  const createListener=options.createListener??createNodeCommunicationsEnvironment().createListener;
+  const authenticate=options.authenticate,outputForRun=options.outputForRun,health=options.health;
+  return createListener((request,response)=>{void (async()=>{
+    const actor=authenticate(request);if(!actor){respond(response,401,{error:'authentication required'});return;}
     const path=new URL(request.url ?? '/', 'http://localhost').pathname;
-    if(request.method==='GET' && path==='/health' && options.health){respond(response,200,options.health());return;}
+    if(request.method==='GET' && path==='/health' && health){respond(response,200,health());return;}
     const output=/^\/runs\/([^/]+)\/output$/.exec(path);
-    if(request.method==='GET' && output && options.outputForRun){const runId=decodeURIComponent(output[1]!);options.core.status(runId,actor);respond(response,200,await options.outputForRun(runId));return;}
+    if(request.method==='GET' && output && outputForRun){const runId=decodeURIComponent(output[1]!);options.core.status(runId,actor);respond(response,200,await outputForRun(runId));return;}
     const status=/^\/runs\/([^/]+)$/.exec(path);
     if(request.method==='GET' && status){respond(response,200,options.core.status(decodeURIComponent(status[1]!),actor));return;}
     if(request.method!=='POST' || path!=='/inputs'){respond(response,404,{error:'unknown route'});return;}

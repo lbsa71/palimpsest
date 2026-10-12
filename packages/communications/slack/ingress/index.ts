@@ -4,6 +4,7 @@ import type { DataScope } from '../../../contracts/common.ts';
 import { CommunicationsCore } from '../../core/index.ts';
 import type { Admission } from '../../core/index.ts';
 import type { SlackMessage } from '../client.ts';
+import { captureWallClock, createNodeCommunicationsEnvironment } from '../../environment.ts';
 
 export interface SlackChannelGrant { channel:string; scope:DataScope }
 export interface SlackIngressOptions { core:CommunicationsCore; teamId:string; botUserId:string; channels:readonly SlackChannelGrant[]; eligibleHumanIds:readonly string[] }
@@ -39,9 +40,11 @@ export class SlackIngress {
   acceptHistory(channel:string,message:SlackMessage):Admission|undefined {return this.acceptAuthenticated(this.options.teamId,{...message,type:'message',channel});}
 }
 
-export function verifySlackSignature(options:{secret:string;timestamp:string;signature:string;body:string;nowMs?:number}):boolean {
+export function verifySlackSignature(options:{secret:string;timestamp:string;signature:string;body:string;nowMs?:number;now?:()=>number}):boolean {
   if(!options.secret)return false;
-  const time=Number(options.timestamp);if(!Number.isFinite(time)||Math.abs((options.nowMs??Date.now())/1000-time)>300)return false;
+  const now=options.nowMs??captureWallClock(options.now??createNodeCommunicationsEnvironment().now)();
+  invariant(Number.isFinite(now),'invalid communications wall clock');
+  const time=Number(options.timestamp);if(!Number.isFinite(time)||Math.abs(now/1000-time)>300)return false;
   const expected=Buffer.from(`v0=${createHmac('sha256',options.secret).update(`v0:${options.timestamp}:${options.body}`).digest('hex')}`);
   const actual=Buffer.from(options.signature);return actual.length===expected.length&&timingSafeEqual(actual,expected);
 }

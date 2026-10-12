@@ -1,0 +1,80 @@
+# DI07 communications environmental injection
+
+Author `/root/a1_environment_communications`; branch `codex/a1-environment-di-07-20261012`, worktree `/home/palimpsest/migration/aeon-1-20261011/environment-di-07`, base `3570785831122d4d75c41c41824555adb78247a2`. Claim is the final DI07 section of `docs/rewrite/execution.md`. Actual ingress/recovery paths include `slack/`; the claim's abbreviated paths denote those existing files.
+
+```text
+/goal Implement DI07 in the eight exclusively claimed files, verify deterministic in-process communications behavior and strict compilation, retain all failures and exact DI14 wiring needs, and deliver a clean scoped author revision for fresh review.
+```
+
+## Frozen precode API and causal criteria
+
+DI01 local structural semantics apply. New `environment.ts` exports a timer `schedule(delayMs, callback) -> { cancel() }`, named `createNodeCommunicationsEnvironment()` composition factory, and cancelable delay/timeout helpers constructed from a captured schedule callback. Production composition alone reads `fetch`, `Date.now`, `performance.now`, `WebSocket`, Node timers and `createServer`. No general container enters model configuration.
+
+SlackClient retains its fetch option and adds schedule. SocketOptions retains socket and adds schedule/monotonicNow. Recovery retains now, captured once with finite wall-clock validation; Slack signature verification retains explicit nowMs and adds now. Direct API adds a createListener callback typed like Node createServer's request-handler overload, and captures authentication/output/health callbacks before listener construction. Native receivers bind only in composition; caller clock/fetch/timer/factory callbacks are receiver-free and never reread. SocketLike adds optional removeEventListener because unchanged historical fixtures omit it; production removes listeners, and finished callbacks become inert even for minimal sockets.
+
+Before code, freeze these predicates: two adapters have independent transport/clock/timeouts; rate limits retain exact cursor/window/deadline and original page/byte budgets; reconnect delay doubles to its existing cap and resets only after 30 seconds on injected monotonic time; recovered mention precedes ordinary reply; authenticated ingress commits before ACK and failed persistence never ACKs; pre-aborted calls never dispatch; success, read/transport failure and abort dispose timeout/delay timers and abort listeners exactly once; shutdown/disconnect/socket-registration failure closes once and removes attached listeners; callback/clock/timer setup/cleanup failures are observable and drain the other background loop; a lost send remains uncertain and is reconciled without another send; injected HTTP request dispatch uses the same authentication/privileged-field/audience checks. No global/module monkeypatching in new tests.
+
+Existing tests stay read-only. In-process old communications cases will be explicitly selected by name, excluding four loopback tests (`production Slack client`, `direct output view`, `real HTTP server`, `paginated network history`). `deployment/slack-proposal.test.ts` is inspected and wholly in-process. Application test files contain actual listener/process paths and are excluded. Existing Socket Mode identity fixture mutates options.onError after construction, conflicting with DI01 captured callbacks; retain any resulting failure and report the root-owned fixture adaptation.
+
+Results, final API details, exact commands and remaining integration gates follow in the authored completion revision. This precode establishes no executed behavior or live qualification.
+
+
+## Implemented author handoff
+
+Precode is `2fbe563`; exact production source is `31e4a61`; final explicitly composed test fixture is `1ea8de4`. The final evidence commit contains this document; root records that exact handoff revision. Eight paths differ from base, exactly the claimed set. Original tests, root execution/status documents, application and all other source remain unchanged.
+
+`createNodeCommunicationsEnvironment()` is the only owned adapter factory calling Node/global fetch, timers, wall/elapsed clocks, WebSocket or HTTP construction. Fully supplied client/socket paths never construct defaults. Callbacks are captured before user callbacks; fetch/socket/schedule/clock/listener/authentication/output/health/onError functions are called without a receiver. SlackApi and native socket methods are bound at composition. Returned timer cancellation methods are captured immediately. Signature verification accepts `now` or an explicit `nowMs`, with replay and HMAC behavior retained.
+
+Client timeouts now span response-body reading and dispose on success, API rejection, transport/read failure, cancellation and cleanup failure. No retry was added. Cancellation cannot manufacture successful response processing even if a supplied transport ignores the signal. Read and cancellation failure causes, and transport and timer-cleanup causes, remain observable together. Socket shutdown has one terminal close owner; `stop()` aborts and drains both loops without a second close. Every attached socket listener is removed when supported, cleanup attempts continue after removal errors, minimal SocketLike callbacks become inert, and failures reject the completion observed by `stop()`. Ordinary connection/history failures retain existing retry/report behavior; clock regression and timer/cleanup/callback failures drain the sibling loop. Reconnect defaults remain 250/30000ms; reset threshold remains 30000 elapsed milliseconds; recovery interval remains 1000ms.
+
+Recovery captures wall time and API call identity, checks pre/post-transport cancellation, and keeps durable page/cursor/window state when aborted. Retry-deadline removal, initial cycle setup and its gap events now share a synchronous Store transaction: a supplier failure after the first of multiple gaps rolls back all setup writes. Existing per-page admission/cursor transactions remain intact. Page bounds remain 4 pages/tick, 100 messages/page (maximum1000); byte bound remains4MiB and request body bound65536 unless explicitly configured. Authenticated workspace/bot identity, grants, eligible authors, original scope fences and resource envelopes remain ordinary host/domain checks. ACK still follows durable successful intake; failed intake never ACKs. Speech/EffectJournal code remains unchanged, and an injected SlackClient lost receipt yields uncertainty followed by trusted receipt reconciliation without resending.
+
+## Check inventory and observed results
+
+New in-process file: `deployment/environment-di-07.test.ts` (28 cases). Its runtime/effect IDs and wall/elapsed clocks are explicitly synthetic; transports, sockets, listener construction and timers are manual adapters. Store/temp-directory APIs are explicitly controlled real local fixture composition, with closed Store and removed directories in `finally`. No listener/socket is created by these new tests. Existing in-process file: `deployment/slack-proposal.test.ts` (one authenticated provenance/admission case, inspected before execution). Selected old in-process cases: the19 named cases in the positive pattern below from `packages/communications/test/communications.test.ts`. The four loopback cases were inspected and excluded from the corrected command. No application test file was run: those inspected files include actual listeners and physical process/command integration.
+
+All commands used `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node`, serial `--test-concurrency=1`, worktree above, and ignored `node_modules -> /home/palimpsest/src/palimpsest/node_modules` with no installation. Final receipts:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 deployment/environment-di-07.test.ts deployment/slack-proposal.test.ts
+# 29/29 pass (28 new + 1 unchanged), 0 failures/cancelled/skips/todo.
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+# exit0; strict project compilation.
+git diff --check
+# exit0.
+```
+
+The exact corrected old-test command:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 --test-name-pattern='^(?:unbounded recovery or reconciliation configuration is rejected|distinct conversation runs share the trusted host parent resource envelope|same runtime admission is durable, authenticated, conflicting duplicates rejected and author eligibility separate|mention joins thread, ordinary follow-up steers same run and edited input reaches original run|reordered recovered revisions cannot steer newer input backwards; controls and target bound to dedup|control of an old completed run preserves the thread current run mapping|revised input interrupts its running run and persists correction for resumed execution|Slack live/history delivery race and restart deduplicate into same durable run|rate-limit preserves cursor and retry deadline; permission and retention gaps remain visible|atomic cursor/admission rollback retains current page after conflicting history|known joined threads are scanned even if channel history contains no parent, with explicit coverage gap|signature authentication rejects altered body and replay timestamp|Socket Mode authenticates tokens, commits before ACK, reconnects and invokes recovery automatically|Socket Mode rejects foreign token identity and does not ACK malformed event intake|explicit speech creates actual receipt; unregistered targets and forged authority/scope cannot send|lost send receipt reconciles durable effect using paginated client_msg_id without resending|missing receipt remains uncertain through bounded scans or missing permission; no automatic retry|matching client ID from another author never confirms delivery; matching bot survives Slack text sanitization|joined actual runtime speech and obligation registry hold unknown delivery until bot receipt reconciles)$' packages/communications/test/communications.test.ts
+# tests19; pass18; fail1; exit1. Output confirms none of the four loopback cases ran.
+```
+
+The sole retained old failure is `Socket Mode rejects foreign token identity and does not ACK malformed event intake` at lines170/174: `foreign identity rejection did not occur`. The fixture installs `foreign.options.onError` after construction; the new DI01-compliant instance retains the initially absent callback. Authentication itself still rejects the foreign identity (new independent causal case proves no app link/socket dispatch). The unchanged combined fixture never reaches its malformed-intake half. New malformed/durable-intake tests cover that behavior separately. Root owns the narrow fixture correction: create the callback and latch before constructing `foreign`, pass `onError` in that constructor, retain every original identity/ACK predicate. Original old file is unchanged. Fresh review must inspect root's separate joined correction before accepting all affected regressions.
+
+Preserved earlier failures: initial compiler invocation failed `MODULE_NOT_FOUND` because the guessed main worktree path did not exist; the symlink target was corrected without installation. First new-test strict check reported TS7006 on two untyped fake API parameters and TS2339 on the fake response receiver; explicit fixture types fixed them. Initial new run was20/21: independent socket clock fixture expected a second long-duration reset without advancing its clock for that second connection (`0 !== 1`, line155). Advancing that instance again made the intended predicate valid; source was unchanged for that correction. Subsequent21/21,27/27 and final29/29 receipts pass. Corrected explicit old runs both retain18/19 and the same unmodified fixture failure. SQLite emitted its normal experimental warning.
+
+### Scope incident: unintended local loopback checks
+
+The first old-test command was:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 --test-name-pattern='^(?!production Slack client|direct output view|real HTTP server|paginated network history)' packages/communications/test/communications.test.ts deployment/slack-proposal.test.ts
+```
+
+Node's selection matched the filename parent, so all24 registered cases ran, including four previously inspected127.0.0.1 HTTP listener/fetch cases. This violated the assigned no-network/listen check scope. The observed result was23pass/1fail, with the same callback-mutation failure above. The four unintended tests passed their assertions and awaited `closeServer` in `finally` (closeAllConnections + Server.close), and the test process exited; their temporary Stores/directories also closed/removed in `finally`. No external endpoint, Slack message, provider/native inference, physical subprocess, credentials, deployment or benchmark was used. The incident was immediately reported to root and retained here. The command was replaced by the exact positively enumerated anchored selection above; no loopback test was repeated. These accidental passes confer no live or controlled-mechanism qualification claim.
+
+## Exact DI14 and dependent propagation needs
+
+DI14 must add explicit trusted host port values to `deployment/application.ts:34` ApplicationOptions and retain them in its constructor snapshot at75–84. Do not put executable adapters into ApplicationConfig, signed wire data, model tools, prompts or serialized service messages. A local communications shape can consume the relevant structural fields of the named factory; no general container is needed. Capture once before callbacks, select production adapters at trusted host composition, and propagate:
+
+- `application.ts:105`: bot SlackClient receives captured fetch/schedule.
+- `application.ts:234`: createDirectApi receives captured createListener; the returned ordinary Server remains subject to existing startup/close/error handling at430–438 and456–459. This author controls construction and the authenticated handler; application listener lifecycle is DI14.
+- `application.ts:238`: SlackRecovery receives captured wall-clock `now`.
+- `application.ts:239`: app-token SlackClient receives fetch/schedule; SlackSocketMode receives socket/schedule/monotonicNow. The onError closure at240 also needs DI14's own event ID and wall-clock ports for its durable host error event; passing transport ports alone does not replace those calls.
+- `packages/communications/index.ts` can re-export environmental types/factory if DI14's preferred package entry requires it; currently consumers can import `packages/communications/environment.ts` directly. This unowned barrel was untouched.
+- `evaluations/development/development-driver.ts:79–84` explicitly copies ApplicationOptions: DI24 must capture/forward the newly released trusted fields, preserving live override restrictions. `evaluations/product/adapter.ts:88–95` forwards/spreads the application object, and `evaluations/product/screen.ts:220` forwards it directly; DI22 must govern whether synthetic versus authentic composition permits any adapter override, and preserve public live-caller refusal gates.
+- `deployment/service-child.ts:33` and `evaluations/product/lifecycle-child.ts:43–44` are fresh process composition roots. DI13/DI21/DI25 must select native production adapters inside those roots rather than serializing callbacks; fixture roots may explicitly compose synthetic adapters only within their established trust mode. Authentic qualification observation remains governed by DI17/DI22's private factory and exact implementation binding.
+
+No application/evaluation/entrypoint path above was edited or executed. Component injection is implemented and fixture-verified, with one explicitly tracked fixture integration conflict. Fresh independent review, root fixture join, DI14 propagation, DI09 Store internals, DI28 whole-system closure and live Slack/HTTP/recovery qualification remain open. This finite author task completes independently of those gates.
