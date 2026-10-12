@@ -210,3 +210,154 @@ test('optional request sharing requires valid explicit policy, a distinct immuta
   assert.equal(f.ledger.snapshot('root').requests, 2);
   assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
 });
+
+function uncapped(amendment: AllowanceAmendment): AllowanceAmendment {
+  return { ...amendment, id: 'pilot-11', authorizationRef: 'user-disables-local-cumulative-caps', cumulativeCostLimit: null, cumulativeRequestLimit: null };
+}
+
+test('explicit null caps admit beyond retained root usage and future descendants without rewriting history', t => {
+  const f = fixture(t, { maxRequests: 1, maxTokens: 40, maxCostUsd: 0.5 }, { maxRequests: 1, maxTokens: 40, maxCostUsd: 0.5 });
+  f.settle(request('original-unknown'), 'uncertain');
+  assert.throws(() => f.ledger.reserve(request('next')), BudgetExceeded);
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  assert.throws(() => f.ledger.reserve(request('next')), BudgetExceeded);
+  const original = ['allocations', 'budgets', 'requests'].map(namespace => f.store.list(namespace));
+  const originalUnknown = f.store.get('requests', 'original-unknown');
+  const oldHistory = f.store.get('resource.allowance-amendments', f.amendment.id), oldEvents = f.store.events('root');
+  const policy = uncapped(f.amendment);
+  f.ledger.applyAllowanceAmendment(policy, host);
+  assert.deepEqual(['allocations', 'budgets', 'requests'].map(namespace => f.store.list(namespace)), original);
+  assert.deepEqual(f.store.get('resource.allowance-amendments', f.amendment.id), oldHistory);
+  assert.deepEqual(f.store.events('root').slice(0, oldEvents.length), oldEvents);
+  for (const runId of ['root', 'child']) {
+    const effective = f.ledger.effectiveEnvelope(runId);
+    assert.equal(effective.maxRequests, null);
+    assert.equal(effective.maxTokens, null);
+    assert.equal(effective.maxCostUsd, null);
+    effective.maxCostUsd = 0;
+    assert.equal(f.ledger.effectiveEnvelope(runId).maxCostUsd, null);
+  }
+  f.settle(request('next'));
+  f.ledger.allocate('grandchild', { ...envelope, maxRequests: 0, maxTokens: 0, maxCostUsd: 0 }, 'child');
+  f.settle(request('future-work', 'grandchild'));
+  f.settle(request('root-work', 'root'));
+  assert.deepEqual(f.ledger.snapshot('root'), { requests: 4, tokens: 160, costUsd: 2, elapsedMs: 1, concurrent: 1, cancelled: false });
+  assert.deepEqual(f.store.get('requests', 'original-unknown'), originalUnknown);
+  assert.deepEqual(f.store.get('resource.allowance-amendments', f.amendment.id), oldHistory);
+  f.ledger.allocate('unamended-root', { ...envelope, maxRequests: 0, maxTokens: 0, maxCostUsd: 0 });
+  assert.throws(() => f.ledger.reserve(request('separate-work', 'unamended-root')), BudgetExceeded);
+});
+
+test('cost and request nulls are independent and omission retains the other cumulative cap', t => {
+  const cost = fixture(t, { maxRequests: 2, maxCostUsd: 0.5 });
+  cost.settle(request('first', 'root'));
+  cost.ledger.applyAllowanceAmendment(cost.amendment, host);
+  assert.throws(() => cost.ledger.reserve(request('second', 'root')), BudgetExceeded);
+  cost.ledger.applyAllowanceAmendment({ ...cost.amendment, id: 'cost-only', cumulativeCostLimit: null }, host);
+  assert.equal(cost.ledger.effectiveEnvelope('root').maxRequests, 2);
+  cost.settle(request('second', 'root'));
+  assert.throws(() => cost.ledger.reserve(request('third', 'root')), BudgetExceeded);
+
+  const count = fixture(t, { maxRequests: 1, maxCostUsd: 1 });
+  count.settle(request('first', 'root'));
+  count.ledger.applyAllowanceAmendment(count.amendment, host);
+  assert.throws(() => count.ledger.reserve(request('second', 'root')), BudgetExceeded);
+  count.ledger.applyAllowanceAmendment({ ...count.amendment, id: 'requests-only', cumulativeRequestLimit: null }, host);
+  assert.equal(count.ledger.effectiveEnvelope('root').maxCostUsd, 1);
+  count.settle(request('second', 'root'));
+  assert.throws(() => count.ledger.reserve(request('third', 'root')), BudgetExceeded);
+});
+
+test('explicit null request policy overrides descendant sharing and descendant caps', t => {
+  const f = fixture(t, { maxRequests: 20 }, { maxRequests: 1 });
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  f.settle(request('original'));
+  assert.throws(() => f.ledger.reserve(request('next')), /bounded allocation exhausted/);
+  f.ledger.applyAllowanceAmendment({ ...uncapped(f.amendment), descendantRequestLimit: 'root' }, host);
+  f.settle(request('next'));
+  assert.equal(f.ledger.effectiveEnvelope('child').maxRequests, null);
+  assert.equal(f.ledger.snapshot('root').requests, 2);
+});
+
+test('uncapped history requires trusted rebinding and cannot change a prior amendment identity', t => {
+  const f = fixture(t, { maxRequests: 1, maxCostUsd: 0.5 });
+  f.settle(request('unknown', 'root'), 'uncertain');
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  assert.throws(() => f.ledger.applyAllowanceAmendment({ ...uncapped(f.amendment), id: f.amendment.id }, host), /identity changed/);
+  const policy = uncapped(f.amendment);
+  let checked = 0;
+  const acceptedHost = { ...host, assertAuthority() { checked++; } };
+  f.ledger.applyAllowanceAmendment(policy, acceptedHost);
+  const history = f.store.list('resource.allowance-amendments'), events = f.store.events('root');
+  f.ledger.applyAllowanceAmendment(policy, acceptedHost);
+  assert.equal(checked, 2);
+  assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
+  assert.deepEqual(f.store.events('root'), events);
+  f.reopen();
+  assert.equal(f.ledger.effectiveEnvelope('root').maxCostUsd, 0.5);
+  assert.equal(f.ledger.effectiveEnvelope('root').maxRequests, 1);
+  assert.throws(() => f.ledger.reserve(request('unbound', 'root')), BudgetExceeded);
+  assert.throws(() => f.ledger.applyAllowanceAmendment(policy, { ...host, assertAuthority() { throw Error('authority withdrawn'); } }), /authority withdrawn/);
+  assert.throws(() => f.ledger.reserve(request('withdrawn', 'root')), BudgetExceeded);
+  assert.throws(() => f.ledger.applyAllowanceAmendment(policy, { ...host, assertAuthority: (() => Promise.resolve()) as unknown as () => void }), /must be synchronous/);
+  f.ledger.applyAllowanceAmendment(f.amendment, host);
+  assert.throws(() => f.ledger.reserve(request('old-policy', 'root')), BudgetExceeded);
+  f.ledger.applyAllowanceAmendment(policy, host);
+  f.ledger.reserve(request('rebound', 'root'));
+  assert.deepEqual(f.store.list('resource.allowance-amendments'), history);
+  assert.deepEqual(f.store.events('root'), events);
+  assert.equal(f.ledger.request('unknown')?.status, 'uncertain');
+});
+
+test('optional cumulative fields require explicit null and exact validated policy fields', t => {
+  const f = fixture(t);
+  for (const field of ['cumulativeCostLimit', 'cumulativeRequestLimit'] as const) {
+    validateAllowanceAmendment({ ...f.amendment, [field]: null });
+    for (const value of [undefined, 0, -1, 5, NaN, Infinity, 'null', false, {}]) {
+      assert.throws(() => f.ledger.applyAllowanceAmendment({ ...f.amendment, [field]: value } as unknown as AllowanceAmendment, host), /Invalid allowance amendment/);
+    }
+  }
+  assert.throws(() => validateAllowanceAmendment({ ...uncapped(f.amendment), unknownLimit: null } as unknown as AllowanceAmendment), /Invalid allowance amendment/);
+  assert.throws(() => f.ledger.applyAllowanceAmendment({ ...uncapped(f.amendment), expectedEnvelopeDigest: identity('wrong') }, host), /envelope changed/);
+  assert.equal(f.store.list('resource.allowance-amendments').length, 0);
+  assert.equal(f.store.events('root').length, 0);
+  assert.deepEqual(f.ledger.effectiveEnvelope('root'), envelope);
+});
+
+for (const level of ['root', 'child'] as const) {
+  test(`${level} concurrency, deadlines and cancellation still refuse work with all cumulative caps disabled`, t => {
+    const concurrent = fixture(t, level === 'root' ? { maxConcurrency: 1 } : {}, level === 'child' ? { maxConcurrency: 1 } : {});
+    concurrent.ledger.applyAllowanceAmendment(uncapped(concurrent.amendment), host);
+    concurrent.ledger.reserve(request('first'));
+    assert.throws(() => concurrent.ledger.reserve(request('second')), BudgetExceeded);
+
+    const timed = fixture(t, level === 'root' ? { maxElapsedMs: 10 } : {}, level === 'child' ? { maxElapsedMs: 10 } : {});
+    timed.ledger.applyAllowanceAmendment(uncapped(timed.amendment), host);
+    timed.ledger.reserve(request('reserved'));
+    timed.setNow(11);
+    assert.throws(() => timed.ledger.dispatched({ ...request('reserved'), status: 'dispatched' }), BudgetExceeded);
+    assert.throws(() => timed.ledger.reserve(request('late')), BudgetExceeded);
+
+    const cancelled = fixture(t);
+    cancelled.ledger.cancel(level);
+    cancelled.ledger.applyAllowanceAmendment(uncapped(cancelled.amendment), host);
+    assert.throws(() => cancelled.ledger.reserve(request('cancelled')), BudgetExceeded);
+    assert.throws(() => cancelled.ledger.allocate('future', envelope, 'child'), /parent cancelled/);
+  });
+}
+
+for (const overrun of ['tokens', 'cost', 'elapsed'] as const) {
+  test(`physical ${overrun} overrun preserves actual charges and cancels even with cumulative caps disabled`, t => {
+    const f = fixture(t);
+    f.ledger.applyAllowanceAmendment(uncapped(f.amendment), host);
+    const r = request('overrun');
+    f.ledger.reserve(r); f.ledger.dispatched({ ...r, status: 'dispatched' });
+    f.ledger.settle({ ...r, status: 'succeeded', usage: { requests: 1, inputTokens: overrun === 'tokens' ? 41 : 40, outputTokens: 0, costUsd: overrun === 'cost' ? 0.6 : 0.5, elapsedMs: overrun === 'elapsed' ? 2 : 1 } });
+    const usage = f.ledger.snapshot('root');
+    assert.equal(usage.tokens, overrun === 'tokens' ? 41 : 40);
+    assert.equal(usage.costUsd, overrun === 'cost' ? 0.6 : 0.5);
+    assert.equal(usage.elapsedMs, overrun === 'elapsed' ? 2 : 1);
+    assert.equal(usage.cancelled, true);
+    assert.throws(() => f.ledger.reserve(request('after-overrun')), BudgetExceeded);
+  });
+}

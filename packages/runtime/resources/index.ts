@@ -11,19 +11,27 @@ export interface AllowanceAmendment {
   id: string; authorizationRef: string; rootId: string; expectedEnvelopeDigest: string;
   cumulativeTokenLimit: null; scope: 'root-and-descendants'; descendantCostLimit: 'root';
   descendantRequestLimit?: 'root';
+  cumulativeCostLimit?: null; cumulativeRequestLimit?: null;
 }
 export function validateAllowanceAmendment(amendment: AllowanceAmendment): void {
   invariant(amendment, 'Invalid allowance amendment');
   const sharesRequests = Object.hasOwn(amendment, 'descendantRequestLimit');
-  const expectedKeys = sharesRequests
-    ? 'authorizationRef,cumulativeTokenLimit,descendantCostLimit,descendantRequestLimit,expectedEnvelopeDigest,id,rootId,scope'
-    : 'authorizationRef,cumulativeTokenLimit,descendantCostLimit,expectedEnvelopeDigest,id,rootId,scope';
-  invariant(Object.keys(amendment).sort().join(',') === expectedKeys && (!sharesRequests || amendment.descendantRequestLimit === 'root'), 'Invalid allowance amendment');
+  const expectedKeys = ['authorizationRef', 'cumulativeTokenLimit', 'descendantCostLimit', 'expectedEnvelopeDigest', 'id', 'rootId', 'scope'];
+  if (sharesRequests) expectedKeys.push('descendantRequestLimit');
+  for (const field of ['cumulativeCostLimit', 'cumulativeRequestLimit'] as const) {
+    if (Object.hasOwn(amendment, field)) {
+      expectedKeys.push(field);
+      invariant(amendment[field] === null, 'Invalid allowance amendment');
+    }
+  }
+  invariant(Object.keys(amendment).sort().join(',') === expectedKeys.sort().join(',') && (!sharesRequests || amendment.descendantRequestLimit === 'root'), 'Invalid allowance amendment');
   invariant([amendment.id, amendment.authorizationRef, amendment.rootId].every(value => typeof value === 'string' && value.trim().length > 0)
     && typeof amendment.expectedEnvelopeDigest === 'string' && /^[a-f0-9]{64}$/.test(amendment.expectedEnvelopeDigest)
     && amendment.cumulativeTokenLimit === null && amendment.scope === 'root-and-descendants' && amendment.descendantCostLimit === 'root', 'Invalid allowance amendment');
 }
-export type EffectiveResourceEnvelope = Omit<ResourceEnvelope, 'maxTokens'> & { maxTokens: number | null };
+export type EffectiveResourceEnvelope = Omit<ResourceEnvelope, 'maxTokens' | 'maxCostUsd' | 'maxRequests'> & {
+  maxTokens: number | null; maxCostUsd: number | null; maxRequests: number | null;
+};
 interface AmendmentRecord { amendment: AllowanceAmendment; originalEnvelope: ResourceEnvelope; authority: Authority; appliedAt: number }
 interface Budget { envelope: ResourceEnvelope; startedAt: number; cancelled: boolean; elapsedFloorMs?: number }
 interface Allocation { rootId: string; parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt:number; elapsedFloorMs?: number }
@@ -69,8 +77,10 @@ export class ResourceLedger {
     const retained = this.store.get<AmendmentRecord>('resource.allowance-amendments', amendment.id);
     invariant(retained && canonicalJson(retained.value.amendment) === canonicalJson(amendment), 'Bound allowance amendment history unavailable');
     const budget = this.store.get<Budget>('budgets', allocation.value.rootId); invariant(budget, 'missing root budget');
-    return { ...allocation.value.envelope, maxTokens: null, maxCostUsd: budget.value.envelope.maxCostUsd,
-      ...(amendment.descendantRequestLimit === 'root' ? { maxRequests: budget.value.envelope.maxRequests } : {}) };
+    return { ...allocation.value.envelope, maxTokens: null,
+      maxCostUsd: amendment.cumulativeCostLimit === null ? null : budget.value.envelope.maxCostUsd,
+      maxRequests: amendment.cumulativeRequestLimit === null ? null
+        : amendment.descendantRequestLimit === 'root' ? budget.value.envelope.maxRequests : allocation.value.envelope.maxRequests };
   }
   private elapsed(key: string, value: { startedAt: number; elapsedFloorMs?: number }, now: number): number {
     const elapsed=Math.max(0,now-value.startedAt,value.elapsedFloorMs??0,this.observedElapsed.get(key)??0);
@@ -127,8 +137,8 @@ export class ResourceLedger {
       const rootId=this.root(request.runId),limit=this.effectiveEnvelope(rootId),snapshot=this.usage(request.runId,elapsed);
       if(request.parentRequestId) { const parent=this.store.get<Reservation>('requests',request.parentRequestId); invariant(parent?.value.rootId===rootId,'foreign parent request'); }
       const ceiling: RequestCeiling={ tokens:request.usage.inputTokens===null || request.usage.outputTokens===null ? this.defaultCeiling.tokens : request.usage.inputTokens+request.usage.outputTokens,costUsd:request.usage.costUsd??this.defaultCeiling.costUsd,elapsedMs:Math.max(request.usage.elapsedMs,this.defaultCeiling.elapsedMs) }; this.validateCeiling(ceiling);
-      if(snapshot.cancelled || snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || snapshot.concurrent+1>limit.maxConcurrency) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
-      for(const allocationId of this.lineage(request.runId)) {const used=this.allocationUsage(allocationId),limit=this.effectiveEnvelope(allocationId);if(used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || used.concurrent+1>limit.maxConcurrency)throw new BudgetExceeded('bounded allocation exhausted');}
+      if(snapshot.cancelled || limit.maxRequests!==null && snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || snapshot.concurrent+1>limit.maxConcurrency) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
+      for(const allocationId of this.lineage(request.runId)) {const used=this.allocationUsage(allocationId),limit=this.effectiveEnvelope(allocationId);if(limit.maxRequests!==null && used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || used.concurrent+1>limit.maxConcurrency)throw new BudgetExceeded('bounded allocation exhausted');}
       this.store.put('requests',request.id,{rootId,request,ceiling,charged:ceiling},null);
     });
   }
