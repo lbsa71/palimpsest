@@ -1,5 +1,7 @@
 # Journal payload withdrawal and developmental forgetting
 
+Root adoption, 2026-10-12: the design below is adopted as the JR1/JR2 repair specification after inspection of the reproduced forgetting conflict. Implementation is separately claimed in L04/L08. JR5 remains a specified follow-up, requiring its exact checkpoint wire and fresh acceptance before use. No real private capture or retention authority is conferred by adoption.
+
 2026-10-12. **Proposed repair; design only.** A1-L04, with L03 storage and L08/L09 integration dependencies; requirements RW08, RW09, RW10, RW18–RW20. Owner `/root/a1_journal_retention_design`; root claim `47c54c9`; isolated branch `codex/a1-journal-retention-design-20261012`, base `9b0c477bd39817786ce255257cc43a0ec8bfd065`. Exclusive writes: this new document. An actual finite tool goal was created before investigation. Root must adopt the proposal and assign source ownership before implementation; this document grants no acquisition or host authority.
 
 ```text
