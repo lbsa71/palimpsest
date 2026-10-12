@@ -6,6 +6,7 @@ import { validateModelProfile, type ModelProfile } from './model-grants.ts';
 import { validateDevelopmentControl, type DevelopmentControlConfig } from './development-controls.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 import { validateSlackDirectGrant, type SlackChannelGrant } from '../packages/communications/slack/ingress/index.ts';
+import { validateAllowanceAmendment, type AllowanceAmendment } from '../packages/runtime/resources/index.ts';
 
 export interface ApplicationConfig {
   developmentControl?: DevelopmentControlConfig;
@@ -22,6 +23,10 @@ export interface ApplicationConfig {
   resources: ResourceEnvelope;
   resourceLimits?: ResourceLimits;
   conversationResources: ResourceEnvelope;
+  /** Explicit operator policy; original grants and charges remain immutable. */
+  allowanceAmendment?: AllowanceAmendment;
+  /** Conversation work may span several provider calls, independently of initiative quantum. */
+  conversationTimeoutMs?: number;
   scheduler: SchedulerPolicy;
   /** Default true: one accounted first-development opportunity per lived-state store. */
   bootstrapInitiative?: boolean;
@@ -52,6 +57,11 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   if (config.developmentControl !== undefined) validateDevelopmentControl(config.developmentControl);
   invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');
   validateEnvelope(config.resources); validateEnvelope(config.conversationResources); validateEnvelope(config.scheduler.resources);
+  if (config.allowanceAmendment !== undefined) {
+    validateAllowanceAmendment(config.allowanceAmendment);
+    invariant(!config.developmentControl && config.allowanceAmendment.rootId === 'operating-envelope:v1', 'Operator allowance policy is unavailable to matched evaluation');
+  }
+  if (config.conversationTimeoutMs !== undefined) invariant(!config.developmentControl && Number.isSafeInteger(config.conversationTimeoutMs) && config.conversationTimeoutMs > 0 && config.conversationTimeoutMs <= config.conversationResources.maxElapsedMs, 'Invalid conversation worker deadline');
   if (config.resourceLimits) {
     invariant(isAbsolute(config.resourceLimits.cgroupRoot) && resolve(config.resourceLimits.cgroupRoot) === config.resourceLimits.cgroupRoot, 'Canonical host resource delegation required');
     invariant(Object.keys(config.resourceLimits).sort().join(',') === 'cgroupRoot,cpuPeriodMicros,cpuQuotaMicros,maxFileBytes,maxOpenFiles,memoryBytes,pids,workspaceBytes,workspaceInodes', 'Exact kernel resource profile required');

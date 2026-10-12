@@ -42,7 +42,7 @@ function checked(name, expected) {
   return content;
 }
 function bounded(text) { if (typeof text !== 'string' || Buffer.byteLength(text) > limit) fail('content exceeds limit'); return text; }
-function files() {
+function files(scope) {
   const result = [];
   function walk(dir, prefix) {
     for (const name of fs.readdirSync(dir).sort()) {
@@ -54,7 +54,12 @@ function files() {
       if (result.length > packet.maxFiles) fail('workspace file count exceeds limit');
     }
   }
-  walk('/work', '');
+  if (scope === undefined) walk('/work', '');
+  else {
+    const selected = target(scope);
+    if (fs.lstatSync(selected).isDirectory()) walk(selected, scope);
+    else result.push(scope);
+  }
   return result;
 }
 let mutating = false;
@@ -63,14 +68,31 @@ let value;
 if (operation === 'discover') value = { files: files() };
 else if (operation === 'search') {
   if (typeof args.text !== 'string' || !args.text) fail('search text required');
-  const matches = [];
-  for (const file of files()) {
-    // Whole search is bounded, rather than silently skipping large files.
+  const matches = [], omitted = [];
+  let omissionCount = 0;
+  const result = () => ({ matches, ...(omissionCount ? { omissions: {
+    reason: 'file exceeds byte limit', count: omissionCount, files: omitted,
+    omittedDetails: omissionCount - omitted.length,
+  } } : {}) });
+  for (const file of files(args.path)) {
+    const bytes = fs.lstatSync(target(file)).size;
+    if (bytes > limit) {
+      omissionCount++;
+      const detail = { path: file, bytes };
+      if (omitted.length < 32 && Buffer.byteLength(JSON.stringify([...omitted, detail])) <= Math.min(4096, Math.floor(limit / 4))) omitted.push(detail);
+      if (Buffer.byteLength(JSON.stringify(result())) > limit) fail('search results exceed limit');
+      continue;
+    }
     const content = read(file);
-    content.split('\\n').forEach((line, index) => { if (line.includes(args.text)) matches.push({ path: file, line: index + 1, text: line }); });
-    if (Buffer.byteLength(JSON.stringify(matches)) > limit) fail('search results exceed limit');
+    content.split('\\n').forEach((line, index) => {
+      if (line.includes(args.text)) {
+        matches.push({ path: file, line: index + 1, text: line });
+        if (Buffer.byteLength(JSON.stringify(result())) > limit) fail('search results exceed limit');
+      }
+    });
   }
-  value = { matches };
+  if (Buffer.byteLength(JSON.stringify(result())) > limit) fail('search results exceed limit');
+  value = result();
 } else if (operation === 'read') {
   const content = read(args.path);
   const start = args.startLine ?? 1, end = args.endLine ?? content.split('\\n').length;

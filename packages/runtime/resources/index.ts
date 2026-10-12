@@ -1,11 +1,24 @@
-import { invariant, validateUsage, canonicalJson } from '../../contracts/common.ts';
-import type { ResourceEnvelope } from '../../contracts/common.ts';
+import { invariant, validateUsage, validateAuthority, canonicalJson, identity } from '../../contracts/common.ts';
+import type { Authority, ResourceEnvelope } from '../../contracts/common.ts';
 import { validatePhysicalRequest } from '../../contracts/control/index.ts';
 import type { PhysicalRequest } from '../../contracts/control/index.ts';
 import type { Effect } from '../../contracts/execution/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 import { createProductionWallClock } from '../environment.ts';
 export interface RequestCeiling { tokens: number; costUsd: number; elapsedMs: number }
+/** An explicit accepted host policy; original numeric envelopes remain recovery inputs. */
+export interface AllowanceAmendment {
+  id: string; authorizationRef: string; rootId: string; expectedEnvelopeDigest: string;
+  cumulativeTokenLimit: null; scope: 'root-and-descendants'; descendantCostLimit: 'root';
+}
+export function validateAllowanceAmendment(amendment: AllowanceAmendment): void {
+  invariant(amendment && Object.keys(amendment).sort().join(',') === 'authorizationRef,cumulativeTokenLimit,descendantCostLimit,expectedEnvelopeDigest,id,rootId,scope', 'Invalid allowance amendment');
+  invariant([amendment.id, amendment.authorizationRef, amendment.rootId].every(value => typeof value === 'string' && value.trim().length > 0)
+    && typeof amendment.expectedEnvelopeDigest === 'string' && /^[a-f0-9]{64}$/.test(amendment.expectedEnvelopeDigest)
+    && amendment.cumulativeTokenLimit === null && amendment.scope === 'root-and-descendants' && amendment.descendantCostLimit === 'root', 'Invalid allowance amendment');
+}
+export type EffectiveResourceEnvelope = Omit<ResourceEnvelope, 'maxTokens'> & { maxTokens: number | null };
+interface AmendmentRecord { amendment: AllowanceAmendment; originalEnvelope: ResourceEnvelope; authority: Authority; appliedAt: number }
 interface Budget { envelope: ResourceEnvelope; startedAt: number; cancelled: boolean; elapsedFloorMs?: number }
 interface Allocation { rootId: string; parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt:number; elapsedFloorMs?: number }
 interface Reservation { rootId: string; request: PhysicalRequest; ceiling: RequestCeiling; charged: RequestCeiling }
@@ -13,10 +26,44 @@ export class BudgetExceeded extends Error { override name = 'BudgetExceeded'; }
 export class ResourceLedger {
   readonly store: OperationalStore; readonly defaultCeiling: RequestCeiling; readonly now: () => number;
   private readonly observedElapsed = new Map<string, number>();
+  private readonly boundAmendments = new Map<string, AllowanceAmendment>();
   /** Thin host production composition facade; the existing third argument replaces wall time. */
   constructor(store: OperationalStore, defaultCeiling: RequestCeiling, now?: () => number) {
     this.store=store; this.defaultCeiling=defaultCeiling; this.validateCeiling(defaultCeiling);
     const clock=now??createProductionWallClock();this.now=()=>{const value=clock();invariant(Number.isFinite(value),'invalid wall clock reading');return value;};
+  }
+  /** Binding requires accepted host authority on every startup. History alone never
+   * relaxes enforcement. This method is deliberately absent from model tools. */
+  applyAllowanceAmendment(amendment: AllowanceAmendment, host: { authority: Authority; assertAuthority: () => void }): void {
+    validateAllowanceAmendment(amendment);
+    invariant(host && typeof host.assertAuthority === 'function', 'Allowance amendment requires host authority');
+    const accepted = structuredClone(amendment), authority = structuredClone(host.authority), assertAuthority = host.assertAuthority;
+    validateAuthority(authority);
+    this.store.transaction(() => {
+      invariant(assertAuthority() === undefined, 'Allowance authority validation must be synchronous');
+      const allocation = this.store.get<Allocation>('allocations', accepted.rootId), budget = this.store.get<Budget>('budgets', accepted.rootId);
+      invariant(allocation && allocation.value.rootId === accepted.rootId && !allocation.value.parentRunId && budget, 'Allowance amendment requires original root allocation');
+      invariant(identity(allocation.value.envelope) === accepted.expectedEnvelopeDigest && identity(budget.value.envelope) === accepted.expectedEnvelopeDigest, 'Allowance amendment original envelope changed');
+      const existing = this.store.get<AmendmentRecord>('resource.allowance-amendments', accepted.id);
+      if (existing) invariant(canonicalJson(existing.value.amendment) === canonicalJson(accepted) && identity(existing.value.originalEnvelope) === accepted.expectedEnvelopeDigest, 'Allowance amendment identity changed');
+      else {
+        const record: AmendmentRecord = { amendment: accepted, originalEnvelope: allocation.value.envelope, authority, appliedAt: this.now() };
+        this.store.put('resource.allowance-amendments', accepted.id, record, null);
+        this.store.append({ id: `allowance-amendment:${accepted.id}`, stream: accepted.rootId, type: 'allowance-amended', data: record });
+      }
+    });
+    this.boundAmendments.set(accepted.rootId, accepted);
+  }
+  /** Effective policy is a detached view. Requests, starts, original envelopes and
+   * uncertain charges are never rewritten by an allowance amendment. */
+  effectiveEnvelope(runId: string): EffectiveResourceEnvelope {
+    const allocation = this.store.get<Allocation>('allocations', runId); invariant(allocation, 'missing resource allocation');
+    const amendment = this.boundAmendments.get(allocation.value.rootId);
+    if (!amendment) return { ...allocation.value.envelope };
+    const retained = this.store.get<AmendmentRecord>('resource.allowance-amendments', amendment.id);
+    invariant(retained && canonicalJson(retained.value.amendment) === canonicalJson(amendment), 'Bound allowance amendment history unavailable');
+    const budget = this.store.get<Budget>('budgets', allocation.value.rootId); invariant(budget, 'missing root budget');
+    return { ...allocation.value.envelope, maxTokens: null, maxCostUsd: budget.value.envelope.maxCostUsd };
   }
   private elapsed(key: string, value: { startedAt: number; elapsedFloorMs?: number }, now: number): number {
     const elapsed=Math.max(0,now-value.startedAt,value.elapsedFloorMs??0,this.observedElapsed.get(key)??0);
@@ -70,11 +117,11 @@ export class ResourceLedger {
     const elapsed=this.observeElapsed(request.runId,true);
     this.store.transaction(()=>{
       invariant(!this.store.get('requests',request.id),'physical request identity already used');
-      const rootId=this.root(request.runId),budget=this.store.get<Budget>('budgets',rootId)!.value,snapshot=this.usage(request.runId,elapsed);
+      const rootId=this.root(request.runId),limit=this.effectiveEnvelope(rootId),snapshot=this.usage(request.runId,elapsed);
       if(request.parentRequestId) { const parent=this.store.get<Reservation>('requests',request.parentRequestId); invariant(parent?.value.rootId===rootId,'foreign parent request'); }
       const ceiling: RequestCeiling={ tokens:request.usage.inputTokens===null || request.usage.outputTokens===null ? this.defaultCeiling.tokens : request.usage.inputTokens+request.usage.outputTokens,costUsd:request.usage.costUsd??this.defaultCeiling.costUsd,elapsedMs:Math.max(request.usage.elapsedMs,this.defaultCeiling.elapsedMs) }; this.validateCeiling(ceiling);
-      if(snapshot.cancelled || snapshot.requests+1>budget.envelope.maxRequests || snapshot.tokens+ceiling.tokens>budget.envelope.maxTokens || snapshot.costUsd+ceiling.costUsd>budget.envelope.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>budget.envelope.maxElapsedMs || snapshot.concurrent+1>budget.envelope.maxConcurrency) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
-      for(const allocationId of this.lineage(request.runId)) {const allocation=this.store.get<Allocation>('allocations',allocationId)!.value,used=this.allocationUsage(allocationId),limit=allocation.envelope;if(used.requests+1>limit.maxRequests || used.tokens+ceiling.tokens>limit.maxTokens || used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || used.concurrent+1>limit.maxConcurrency)throw new BudgetExceeded('bounded allocation exhausted');}
+      if(snapshot.cancelled || snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || snapshot.concurrent+1>limit.maxConcurrency) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
+      for(const allocationId of this.lineage(request.runId)) {const used=this.allocationUsage(allocationId),limit=this.effectiveEnvelope(allocationId);if(used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || used.concurrent+1>limit.maxConcurrency)throw new BudgetExceeded('bounded allocation exhausted');}
       this.store.put('requests',request.id,{rootId,request,ceiling,charged:ceiling},null);
     });
   }

@@ -28,7 +28,7 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   projectToolResult?: (message: ToolResultMessage) => ToolResultMessage;
   compaction?: { thresholdMessages: number; thresholdBytes?: number; retainMessages: number; instruction: PromptFragment };
 }
-interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[] }
+interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[]; rejectedCompactions?: { sourceDigest: string; summary: AssistantMessage }[] }
 function json(value: unknown): JsonValue { return asJson(value) as JsonValue; }
 function message(value: JsonValue): Message {
   invariant(typeof value === 'object' && value !== null && !Array.isArray(value), 'Invalid shell message');
@@ -75,6 +75,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       let failure: Snapshot['failure'];
       let stage = 'recovery';
       let compactions: Snapshot['compactions'] = [];
+      let rejectedCompactions: NonNullable<Snapshot['rejectedCompactions']> = [];
       function projectedToolResult(item: ToolResultMessage): ToolResultMessage {
         if (!options.projectToolResult) return item;
         const projected = options.projectToolResult(structuredClone(item));
@@ -96,6 +97,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         observationIds = [...snapshot.observationIds];
         status = snapshot.status;
         compactions = snapshot.compactions ?? [];
+        rejectedCompactions = snapshot.rejectedCompactions ?? [];
       }
       transcript.push(...input.messages.map(message));
       // Replace every historical application system layer; reintroduce only the current manifest.
@@ -110,7 +112,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         });
       }
       async function save(): Promise<void> {
-        const content = json({ schema: SHELL_REVISION, provider, messages: transcript, observationIds, status, compactions, ...(failure ? { failure } : {}) });
+        const content = json({ schema: SHELL_REVISION, provider, messages: transcript, observationIds, status, compactions, ...(rejectedCompactions.length ? { rejectedCompactions } : {}), ...(failure ? { failure } : {}) });
         checkpoint = await bridge.persistCheckpoint(input.run.id, input.run.revision, SHELL_REVISION, content);
         validateCheckpoint(checkpoint, input.run);
         invariant(checkpoint.shell === SHELL_REVISION && checkpoint.artifact.sha256 === identity(content), 'Checkpoint receiver returned another artifact');
@@ -235,7 +237,10 @@ export function createAgentShell(options: ShellOptions): ShellPort {
                 transport.setPurpose('compaction');
                 const summary = await (await transport.stream(model, normalizeContext({ messages: [{ role: 'system', content: `${basePrompt}\n\n${instruction}`, timestamp: 0 }, { role: 'user', content: canonicalJson(json(modelMessages(prefix))), timestamp: environment.wallNow() }] }), { signal })).result();
                 currentFragments = fragments; transport.setPurpose('reasoning');
-                invariant(summary.stopReason === 'stop' && !summary.content.some(block => block.type === 'toolCall'), 'Compaction failed; original context retained');
+                if (summary.stopReason !== 'stop' || summary.content.some(block => block.type === 'toolCall')) {
+                  rejectedCompactions.push({ sourceDigest: identity(json(prefix)), summary: structuredClone(summary) });
+                  throw new Error('Compaction failed; original context retained');
+                }
                 compactions.push({ sourceDigest: identity(json(prefix)), summary: structuredClone(summary) });
                 transcript = [{ role: 'user', content: summary.content.filter(block => block.type === 'text'), timestamp: environment.wallNow() }, ...retainedNative, ...suffix];
                 await save();

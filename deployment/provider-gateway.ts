@@ -1,4 +1,4 @@
-import { invariant } from '../packages/contracts/index.ts';
+import { invariant, identity, validateScope, type DataScope } from '../packages/contracts/index.ts';
 import type { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import type { ShellProvider } from '../packages/agent-shell/index.ts';
@@ -37,6 +37,23 @@ export function transportRecorder(store: OperationalStore): (receipt: TransportR
   return receipt => {
     const row = store.get<TransportReceipt>('host-transport', receipt.requestId);
     store.put('host-transport', receipt.requestId, receipt, row?.revision ?? null);
+  };
+}
+
+/** Keep received provider evidence private, including responses rejected by the shell. */
+export function providerResponseRecorder(options: { store: OperationalStore; ledger: Pick<ResourceLedger, 'request'>; runId: string; scope: DataScope; maxBytes: number }) {
+  const { store, ledger, runId, maxBytes } = options, scope = structuredClone(options.scope);
+  validateScope(scope); invariant(Number.isSafeInteger(maxBytes) && maxBytes > 0, 'Finite response retention bound required');
+  return (requestId: string, response: { status: number; body: string }): void => {
+    invariant(Number.isSafeInteger(response.status) && response.status >= 100 && response.status <= 599 && typeof response.body === 'string' && Buffer.byteLength(response.body) <= maxBytes, 'Invalid bounded provider response');
+    store.transaction(() => {
+      const request = ledger.request(requestId);
+      invariant(request?.runId === runId && ['dispatched', 'uncertain'].includes(request.status) && ['mistral', 'openai'].includes(request.provider), 'Response lacks dispatched model request');
+      const artifact = store.putArtifact(response.body), value = { requestId, runId, scope, httpStatus: response.status, response: artifact };
+      const prior = store.get('host.model-responses', requestId);
+      invariant(!prior || identity(prior.value) === identity(value), 'Provider response identity changed');
+      if (!prior) store.put('host.model-responses', requestId, value, null);
+    });
   };
 }
 

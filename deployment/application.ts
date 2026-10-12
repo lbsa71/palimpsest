@@ -15,7 +15,7 @@ import { ToolEffectReceiver, toolDefinitions, type ToolGrant } from '../packages
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { createBrokerShell, captureBrokerTiming } from './broker-shell.ts';
-import { providerGateway, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
+import { providerGateway, providerResponseRecorder, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
 import { selectedProviderKey, validateConfiguration, type ApplicationConfig, type ApplicationSecrets } from './config.ts';
 import { mindDevelopmentTools } from './development-tools.ts';
 import { AccountedConsolidation } from './consolidation.ts';
@@ -103,6 +103,7 @@ export class AutarkApplication {
     if (!allocation) this.resources.allocate(this.rootAllocation, config.resources);
     // The ledger itself keeps consumed resources and rejects contradictory repeat allocations.
     else invariant(identity(allocation.value.envelope) === identity(config.resources), 'Operating allowance cannot reset on restart');
+    if (config.allowanceAmendment) this.resources.applyAllowanceAmendment(config.allowanceAmendment, { authority: options.authority, assertAuthority: () => options.authorityStore.assert(options.authority) });
     this.goals = new InitiativeRegistry(this.store); this.drives = new DriveRegistry(this.store, this.memory);
     this.plans = new PlanRegistry(this.store); this.obligations = new ObligationRegistry(this.store); this.conversationObligations = new ConversationObligations(this.obligations);
     const base = this.store.putArtifact(readFileSync(config.promptFile, 'utf8'));
@@ -215,12 +216,12 @@ export class AutarkApplication {
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
           compaction: { thresholdMessages: 60, thresholdBytes: 60000, retainMessages: 7, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
-        timeoutMs: Math.min(config.conversationResources.maxElapsedMs, config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
+        timeoutMs: Math.min(config.conversationResources.maxElapsedMs, record.target && config.conversationTimeoutMs ? config.conversationTimeoutMs : config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
         retainToolInstructions: source => this.store.putArtifact(source),
         assertAuthority: () => options.authorityStore.assert(input.run.authority),
         performRequest: options.performRequest ?? providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, options.secrets), maxResponseBytes: developmentAccounting?.maxResponseBytes ?? 2_000_000 }),
-        recordResponse: developmentAccounting ? (id, response) => developmentAccounting.recordResponse(id, response) : undefined,
+        recordResponse: developmentAccounting ? (id, response) => developmentAccounting.recordResponse(id, response) : providerResponseRecorder({ store: this.store, ledger: this.resources, runId: input.run.id, scope: input.run.scope, maxBytes: 2_000_000 }),
         beforeRequest: developmentAccounting ? id => developmentAccounting.assertEntry(id) : undefined,
         recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
@@ -434,9 +435,9 @@ export class AutarkApplication {
     try { this.options.authorityStore.assert(this.options.authority); this.lease.assertHeld(); }
     catch { reasons.push('authority-unavailable'); }
     try {
-      const usage = this.resources.snapshot(this.rootAllocation), limit = this.config.resources;
+      const usage = this.resources.snapshot(this.rootAllocation), limit = this.resources.effectiveEnvelope(this.rootAllocation);
       if (usage.cancelled) reasons.push('allowance-cancelled');
-      if (usage.requests >= limit.maxRequests || usage.tokens >= limit.maxTokens || usage.costUsd >= limit.maxCostUsd || usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
+      if (usage.requests >= limit.maxRequests || limit.maxTokens !== null && usage.tokens >= limit.maxTokens || usage.costUsd >= limit.maxCostUsd || usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
       if (usage.concurrent >= limit.maxConcurrency || this.occupied() >= this.config.maxConcurrentRuns) reasons.push('capacity-occupied');
     } catch { reasons.push('accounting-unavailable'); }
     return { alive: true, execution: { admission: reasons.length ? 'held' : 'available', reasons,

@@ -78,9 +78,10 @@ test('byte-triggered accounted compaction fits the same spent conversation/root 
 test('failed byte compaction retains all original context and charged work, and performs no automatic reasoning retry', async () => {
   const f = fixture(60000, true), { checkpoint, outcome } = await f.run();
   assert.equal(outcome.status, 'blocked'); assert.equal(f.providerCalls, 1); assert.equal(f.toolCalls, 0); assert.deepEqual(f.captured.map(item => item.purpose), ['compaction']);
-  const saved = f.artifacts.get(outcome.checkpoint!.artifact.sha256) as unknown as { messages: JsonValue[]; compactions: unknown[]; failure: { reason: string } };
+  const saved = f.artifacts.get(outcome.checkpoint!.artifact.sha256) as unknown as { messages: JsonValue[]; compactions: unknown[]; rejectedCompactions: { sourceDigest: string; summary: { stopReason: string } }[]; failure: { reason: string } };
   assert.deepEqual(saved.messages, (f.initial as { messages: JsonValue[] }).messages); assert.deepEqual(saved.compactions, []); assert.match(saved.failure.reason, /Compaction failed/);
   assert.deepEqual(f.artifacts.get(checkpoint.artifact.sha256), f.initial); assert.equal(chargedToRun(f.store), 131997);
+  assert.equal(saved.rejectedCompactions[0]!.sourceDigest, identity(f.prefix)); assert.equal(saved.rejectedCompactions[0]!.summary.stopReason, 'length');
 });
 
 test('byte trigger measures the projected model context, not the retained full source inventory', async () => {
