@@ -1,3 +1,4 @@
+import { types } from 'node:util';
 import { canonicalJson, digest, identity, invariant, validateMemory, type ArtifactRef, type Observation } from '../../packages/contracts/index.ts';
 import type { Document, JournalRef } from '../../packages/storage/index.ts';
 import type { MemoryEntry } from '../../packages/development/index.ts';
@@ -74,13 +75,38 @@ const time = (s: string) => { const n = Date.parse(s); invariant(Number.isFinite
 const ref = (r: ArtifactRef) => { exact(r, 'uri,sha256'); digest(r.sha256); invariant(r.uri === `sha256:${r.sha256}`, 'Retained content reference required'); };
 const bytes = (v: unknown) => Buffer.from(canonicalJson(v));
 const reference = (b: Uint8Array): ArtifactRef => { const sha256 = hashBytes(b); return { uri: `sha256:${sha256}`, sha256 }; };
-function read(c: SourceAdmissionContext, r: ArtifactRef, limit: number): Uint8Array { ref(r); positive(limit); const b = Uint8Array.from(c.readArtifact(inertSnapshot(r), limit)); invariant(b.byteLength <= limit && hashBytes(b) === r.sha256, 'Retained source bytes differ or exceed bound'); return b; }
+function read(c: SourceAdmissionContext, r: ArtifactRef, limit: number): Uint8Array { r = inertSnapshot(r); ref(r); positive(limit); const b = Uint8Array.from(c.readArtifact(inertSnapshot(r), limit)); invariant(b.byteLength <= limit && hashBytes(b) === r.sha256, 'Retained source bytes differ or exceed bound'); return b; }
 function json<T>(c: SourceAdmissionContext, r: ArtifactRef, limit: number): T { const b = read(c, r, limit), v = JSON.parse(Buffer.from(b).toString()) as T; invariant(Buffer.from(b).equals(bytes(v)), 'Canonical retained source required'); return inertSnapshot(v); }
 function guarded<T>(f: () => T): SourceAdmissionResult<T> { try { return { status: 'derived', proof: f() }; } catch (e) { return { status: e instanceof Unavailable ? 'unavailable' : 'failed', code: String(e instanceof Error ? e.message : e).slice(0, 256) }; } }
 class Unavailable extends Error {}
 function required<T>(v: T | null | undefined, message: string): T { if (v === null || v === undefined) throw new Unavailable(message); return v; }
+/** Descriptor seam only for the existing callback-bearing records and checker key. */
+function dataFields(value: unknown): Record<string, unknown> {
+  invariant(value !== null && typeof value === 'object' && !types.isProxy(value), 'Source input must be inert');
+  invariant(Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null, 'Source input must be plain');
+  const descriptors = Object.getOwnPropertyDescriptors(value), facts: Record<string, unknown> = Object.create(null);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    invariant(typeof key === 'string', 'Source input symbols forbidden');
+    const d = descriptors[key]!; invariant('value' in d && d.enumerable, 'Source input accessors/hidden fields forbidden'); facts[key] = d.value;
+  }
+  return facts;
+}
+function readerFunction(value: unknown): void { invariant(typeof value === 'function' && !types.isProxy(value), 'Bounded synchronous source reader required'); }
+function detachedKey(value: unknown): Uint8Array {
+  invariant(value !== null && typeof value === 'object' && !types.isProxy(value) && types.isUint8Array(value), 'Native checker key required');
+  invariant(Object.getPrototypeOf(value) === Uint8Array.prototype || Object.getPrototypeOf(value) === Buffer.prototype, 'Plain checker key required');
+  for (const key of Reflect.ownKeys(value)) invariant(typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key), 'Checker key extra properties forbidden');
+  const length = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'length')!.get!.call(value) as number;
+  const copy = new Uint8Array(length); Uint8Array.prototype.set.call(copy, value as Uint8Array); return copy;
+}
 function detachContext(c: SourceAdmissionContext): SourceAdmissionContext {
-  return { plan: inertSnapshot(c.plan), policy: inertSnapshot(c.policy), trust: { acceptedPolicyDigest: c.trust.acceptedPolicyDigest, acceptedQualificationDigest: c.trust.acceptedQualificationDigest, acceptedClockQualificationDigest: c.trust.acceptedClockQualificationDigest, checker: c.trust.checker ? { ...inertSnapshot({ id: c.trust.checker.id, principalId: c.trust.checker.principalId, independenceGroup: c.trust.checker.independenceGroup }), key: Uint8Array.from(c.trust.checker.key) } : null }, readArtifact: c.readArtifact };
+  const { readArtifact, ...facts } = dataFields(c); readerFunction(readArtifact);
+  const { checker, ...trust } = dataFields(facts.trust);
+  let acceptedChecker: SourceAdmissionTrust['checker'] = null;
+  if (checker !== null) { const { key, ...metadata } = dataFields(checker); acceptedChecker = { ...inertSnapshot(metadata), key: detachedKey(key) } as NonNullable<SourceAdmissionTrust['checker']>; }
+  const snapshot = inertSnapshot({ ...facts, trust: { ...trust, checker: null } });
+  const read = readArtifact as SourceAdmissionContext['readArtifact'];
+  return { ...snapshot, trust: { ...snapshot.trust, checker: acceptedChecker }, readArtifact: (r: ArtifactRef, limit: number) => read(inertSnapshot(r), limit) } as SourceAdmissionContext;
 }
 /** Validates the detached host policy. It neither claims capacity nor authenticates a plan. */
 export function validateSourceAdmissionPolicy(context: SourceAdmissionContext): SourceAdmissionPolicy {
@@ -152,10 +178,17 @@ function qualify(c: SourceAdmissionContext): void {
   invariant(q.version === 1 && q.disposition === 'accepted' && q.checkerId === checker.id && q.principalId === checker.principalId && q.independenceGroup === checker.independenceGroup && q.checkerSourceDigest === p.checkerSourceDigest && q.extractorSourceDigest === p.extractorSourceDigest && q.rubricDigest === p.rubricDigest && q.workloadDigest === p.workload?.sha256, 'Public qualification bindings differ');
 }
 function detachedSource(input: DevelopmentPageSourceInput): DevelopmentPageSourceInput {
-  const d = Object.getOwnPropertyDescriptors(input), facts: Record<string, unknown> = {};
-  for (const k of ['before', 'after', 'current', 'assignmentPacket', 'roleId', 'configurationDigest', 'pathIdentity', 'journal', 'bounds', 'metadataBounds']) { const descriptor = d[k]; invariant(descriptor && 'value' in descriptor, 'Source input accessors forbidden'); facts[k] = descriptor.value; }
-  for (const k of ['readArtifact', 'openAcquiredCapture']) invariant(d[k] && 'value' in d[k]! && typeof d[k]!.value === 'function', 'Bounded synchronous source reader required');
-  return { ...inertSnapshot(facts), readArtifact: d.readArtifact!.value, openAcquiredCapture: d.openAcquiredCapture!.value } as DevelopmentPageSourceInput;
+  const { readArtifact, openAcquiredCapture, ...facts } = dataFields(input); readerFunction(readArtifact); readerFunction(openAcquiredCapture);
+  const read = readArtifact as DevelopmentPageSourceInput['readArtifact'], open = openAcquiredCapture as DevelopmentPageSourceInput['openAcquiredCapture'];
+  return { ...inertSnapshot(facts), readArtifact: (r: ArtifactRef, limit: number) => read(inertSnapshot(r), limit), openAcquiredCapture: (r: ArtifactRef) => open(inertSnapshot(r)) } as DevelopmentPageSourceInput;
+}
+function detachedSources(inputs: DevelopmentPageSourceInput[]): DevelopmentPageSourceInput[] {
+  invariant(!types.isProxy(inputs) && Array.isArray(inputs) && Object.getPrototypeOf(inputs) === Array.prototype, 'Plain source array required');
+  const d: Record<string, PropertyDescriptor> = Object.getOwnPropertyDescriptors(inputs), keys = Reflect.ownKeys(d), length = d.length!.value as number;
+  invariant(keys.length === length + 1 && keys.includes('length'), 'Dense source array required');
+  const result: DevelopmentPageSourceInput[] = [];
+  for (let i = 0; i < length; i++) { const item = d[String(i)]; invariant(item && 'value' in item && item.enumerable, 'Source array accessors forbidden'); result.push(detachedSource(item.value)); }
+  return result;
 }
 function finalUse(input: DevelopmentPageSourceInput): void { for (const r of [input.before, input.after, input.current]) input.openAcquiredCapture(r).assertUsableNow(); }
 function projection(c: SourceAdmissionContext, original: DevelopmentPageSourceInput) {
@@ -241,7 +274,7 @@ export function inspectDevelopmentLearning(context: SourceAdmissionContext, inpu
   return guarded(() => { input = detachedSource(input); const c = detachContext(context), map = mapped(c, input.roleId, opportunityId); invariant(map.learningAssignmentId === assignmentId, 'Learning delivery differs'); const a = assignment(c, input, assignmentId), out = checkedInput(c, opportunityId, a, [], a.input); finalUse(input); return out; });
 }
 function opportunitySources(c: SourceAdmissionContext, input: DevelopmentPageSourceInput, selector: OpportunitySelector, sources: DevelopmentPageSourceInput[]) {
-  input = detachedSource(input); sources = sources.map(detachedSource); selector = inertSnapshot(selector); invariant(selector.roleId === input.roleId && equal(selector.before, input.before) && equal(selector.after, input.after), 'Opportunity bracket differs');
+  input = detachedSource(input); sources = detachedSources(sources); selector = inertSnapshot(selector); invariant(selector.roleId === input.roleId && equal(selector.before, input.before) && equal(selector.after, input.after), 'Opportunity bracket differs');
   const map = mapped(c, input.roleId, selector.opportunityId); invariant(map.assignmentId === selector.assignmentId, 'Opportunity assignment differs');
   const expected = [...(map.learningAssignmentId ? [map.learningAssignmentId] : []), ...map.interferenceAssignmentIds, map.feedbackAssignmentId];
   invariant(selector.related.length === expected.length && sources.length === expected.length && selector.related.every((x, i) => x.roleId === input.roleId && x.assignmentId === expected[i] && sources[i]!.roleId === x.roleId && equal(sources[i]!.before, x.before) && equal(sources[i]!.after, x.after)), 'Exact related exposure set/brackets required');
@@ -251,7 +284,7 @@ function opportunitySources(c: SourceAdmissionContext, input: DevelopmentPageSou
 export function inspectDevelopmentOpportunity(context: SourceAdmissionContext, input: DevelopmentPageSourceInput, selector: OpportunitySelector, related: DevelopmentPageSourceInput[]): SourceAdmissionResult<DevelopmentCheckInput> { return guarded(() => opportunitySources(detachContext(context), input, selector, related).checkInput); }
 /** Authenticating a checker record confers no observation, signing or release authority. */
 export function verifyDevelopmentSourceCheck(context: SourceAdmissionContext, receipt: ArtifactRef, binding: SourceCheckBinding): SourceAdmissionResult<Signed<DevelopmentSourceCheck>> {
-  return guarded(() => { const c = detachContext(context); validateSourceAdmissionPolicy(c); qualify(c); const b = inertSnapshot(binding), workload = validateDevelopmentWorkload(c);
+  return guarded(() => { const c = detachContext(context); receipt = inertSnapshot(receipt); const b = inertSnapshot(binding); validateSourceAdmissionPolicy(c); qualify(c); const workload = validateDevelopmentWorkload(c);
     const opportunity = workload.opportunities.find(o => o.id === b.subjectId)?.roles.find(r => r.roleId === b.roleId);
     const script = workload.scripts.find(s => s.roleId === b.roleId)?.cases.find(a => a.assignmentId === b.subjectId);
     invariant(opportunity ? equal(b.assignmentIds, [opportunity.assignmentId, ...(opportunity.learningAssignmentId ? [opportunity.learningAssignmentId] : []), ...opportunity.interferenceAssignmentIds, opportunity.feedbackAssignmentId]) || (opportunity.learningAssignmentId !== null && equal(b.assignmentIds, [opportunity.learningAssignmentId])) : script !== undefined && equal(b.assignmentIds, [script.assignmentId, script.feedbackAssignmentId]), 'Checker subject is not the exact registered delivery set');
@@ -272,25 +305,26 @@ function checked<T>(result: SourceAdmissionResult<T>): T { if (result.status ===
 function checkBinding(i: DevelopmentCheckInput, acquisition: DevelopmentSourceCheck['acquisition'], completeAt: number, hostNow: number, judgmentSlots: ArtifactRef[]): SourceCheckBinding { return { roleId: i.roleId, subjectId: i.subjectId, assignmentIds: i.assignmentIds, sourceDigest: i.sourceDigest, output: i.output, feedback: i.feedback, acquisition, completeAt, hostNow, judgmentSlots }; }
 function axes(v: Pick<DevelopmentSourceCheck, 'acquisition' | 'behavior' | 'disclosure' | 'matching'>) { return { acquisition: v.acquisition, behavior: v.behavior, disclosure: v.disclosure, matching: v.matching }; }
 export function deriveDevelopmentLearning(context: SourceAdmissionContext, input: DevelopmentPageSourceInput, assignmentId: string, opportunityId: string, receipt: ArtifactRef, hostNow: number, judgmentSlots: ArtifactRef[] = []): SourceAdmissionResult<DevelopmentLearningProof> {
-  return guarded(() => { input = detachedSource(input); const c = detachContext(context), a = assignment(c, input, assignmentId), checkInput = checked(inspectDevelopmentLearning(c, input, assignmentId, opportunityId));
+  return guarded(() => { input = detachedSource(input); const c = detachContext(context); receipt = inertSnapshot(receipt); judgmentSlots = inertSnapshot(judgmentSlots); const a = assignment(c, input, assignmentId), checkInput = checked(inspectDevelopmentLearning(c, input, assignmentId, opportunityId));
     const check = checked(verifyDevelopmentSourceCheck(c, receipt, checkBinding(checkInput, a.acquisition, a.interval.upperWallMs, hostNow, judgmentSlots)));
     const proof: DevelopmentLearningProof = { ...common(c, input, 'learning', opportunityId, { configurationDigest: input.configurationDigest, assignmentPacket: input.assignmentPacket, assignment: a }), checks: [inertSnapshot(receipt)], check, ...axes(check.value) };
     encodeDevelopmentSourceProof(proof, c.policy.bounds.maxProofBytes); finalUse(input); return inertSnapshot(proof); });
 }
 export function deriveDevelopmentOpportunity(context: SourceAdmissionContext, input: DevelopmentPageSourceInput, selector: OpportunitySelector, relatedInputs: DevelopmentPageSourceInput[], receipt: ArtifactRef, hostNow: number, judgmentSlots: ArtifactRef[] = []): SourceAdmissionResult<DevelopmentOpportunityProof> {
-  return guarded(() => { input = detachedSource(input); relatedInputs = relatedInputs.map(detachedSource); const c = detachContext(context), { a, related, checkInput } = opportunitySources(c, input, selector, relatedInputs), acquisition = [a, ...related].some(x => x.acquisition === 'unavailable') ? 'unavailable' : [a, ...related].some(x => x.acquisition === 'failed') ? 'failed' : 'completed';
+  return guarded(() => { input = detachedSource(input); relatedInputs = detachedSources(relatedInputs); selector = inertSnapshot(selector); receipt = inertSnapshot(receipt); judgmentSlots = inertSnapshot(judgmentSlots); const c = detachContext(context), { a, related, checkInput } = opportunitySources(c, input, selector, relatedInputs), acquisition = [a, ...related].some(x => x.acquisition === 'unavailable') ? 'unavailable' : [a, ...related].some(x => x.acquisition === 'failed') ? 'failed' : 'completed';
     const check = checked(verifyDevelopmentSourceCheck(c, receipt, checkBinding(checkInput, acquisition, Math.max(a.interval.upperWallMs, ...related.map(x => x.interval.upperWallMs)), hostNow, judgmentSlots)));
+    invariant(selector.opportunityId === check.value.opportunityId, 'Opportunity/checker subject differs');
     const proof: DevelopmentOpportunityProof = { ...common(c, input, 'opportunity', selector.opportunityId, { configurationDigest: input.configurationDigest, assignmentPacket: input.assignmentPacket, assignment: a, related }), checks: [inertSnapshot(receipt)], check, output: checkInput.output, feedback: checkInput.feedback, ...axes(check.value) };
     encodeDevelopmentSourceProof(proof, c.policy.bounds.maxProofBytes); finalUse(input); relatedInputs.forEach(finalUse); return inertSnapshot(proof); });
 }
 function eligible(interval: SourceInterval): void { invariant(Number.isFinite(interval.lowerWallMs) && Number.isFinite(interval.upperWallMs) && interval.lowerWallMs <= interval.upperWallMs, 'Invalid source interval'); if (interval.temporalEligibility === 'unavailable') throw new Unavailable('Host temporal qualification unavailable'); invariant(interval.clockKind === 'synthetic' ? interval.temporalEligibility === 'synthetic' : interval.temporalEligibility === 'qualified', 'Clock eligibility differs'); }
 export function validateDevelopmentCycleIntervals(proofs: DevelopmentCycleProof[], cycles: string[], actualStart: number, currentEnd: number, windowMs: number): SourceAdmissionResult<string[]> {
-  return guarded(() => { proofs = inertSnapshot(proofs); positive(windowMs); invariant(Number.isFinite(actualStart) && Number.isFinite(currentEnd) && currentEnd - actualStart >= 3 * windowMs && cycles.length === 3 && proofs.length === 3 && equal(proofs.map(p => p.subjectId), cycles), 'Three registered cycle intervals required');
+  return guarded(() => { proofs = inertSnapshot(proofs); cycles = inertSnapshot(cycles); positive(windowMs); invariant(Number.isFinite(actualStart) && Number.isFinite(currentEnd) && currentEnd - actualStart >= 3 * windowMs && cycles.length === 3 && proofs.length === 3 && equal(proofs.map(p => p.subjectId), cycles), 'Three registered cycle intervals required');
     invariant(new Set(proofs.map(x => x.source.cycle.runId)).size === 3 && new Set(proofs.map(x => x.source.cycle.selection.id)).size === 3 && proofs.every(p => p.roleId === proofs[0]!.roleId && p.planDigest === proofs[0]!.planDigest && p.policyDigest === proofs[0]!.policyDigest), 'Cycle run/selection/binding reused');
     return proofs.map((p, i) => { eligible(p.interval); invariant(p.interval.lowerWallMs - (i ? proofs[i - 1]!.interval.upperWallMs : actualStart) >= windowMs && p.interval.upperWallMs <= currentEnd, 'Conservative cycle interval separation failed'); return new Date(p.interval.upperWallMs).toISOString(); }); });
 }
 export function validateDevelopmentTransferIntervals(learning: DevelopmentLearningProof, experiences: DevelopmentExperienceProof[], transfer: DevelopmentOpportunityProof, interferenceIds: string[], windowMs: number): SourceAdmissionResult<string> {
-  return guarded(() => { learning = inertSnapshot(learning); experiences = inertSnapshot(experiences); transfer = inertSnapshot(transfer); positive(windowMs);
+  return guarded(() => { learning = inertSnapshot(learning); experiences = inertSnapshot(experiences); transfer = inertSnapshot(transfer); interferenceIds = inertSnapshot(interferenceIds); positive(windowMs);
     invariant(learning.subjectId === transfer.subjectId && equal(experiences.map(x => x.subjectId), interferenceIds) && experiences.length === 3 && new Set(experiences.map(x => x.episodeId)).size === 3 && [transfer, ...experiences].every(x => x.roleId === learning.roleId && x.planDigest === learning.planDigest && x.policyDigest === learning.policyDigest), 'Transfer source/episode coverage differs');
     if (!(learning.acquisition === 'completed' && learning.behavior === 'pass' && learning.disclosure === 'preserved' && learning.matching === 'valid')) throw new Unavailable('Initial learning not qualified successful');
     [learning, transfer, ...experiences].forEach(x => eligible(x.interval)); invariant(transfer.interval.lowerWallMs - learning.interval.upperWallMs >= windowMs && experiences.every(x => x.interval.lowerWallMs > learning.interval.upperWallMs && x.interval.upperWallMs < transfer.interval.lowerWallMs), 'Conservative transfer interval separation failed'); return new Date(transfer.interval.upperWallMs).toISOString(); });
@@ -309,7 +343,8 @@ export function encodeDevelopmentSourceProof(value: DevelopmentSourceAdmissionPr
   const result = bytes(p); invariant(result.byteLength <= maxBytes, 'Proof byte bound exceeded'); return Uint8Array.from(result);
 }
 export function developmentProofSlot(plan: DevelopmentAcquisitionPlan, kind: 'cycle' | 'experience' | 'learning' | 'task-output' | 'feedback' | 'checker', roleId: string, subjectId: string): { kind: string; ordinal: number } {
-  plan = inertSnapshot(plan); const m = plan.manifest.value, roles = plan.registration.value.roles.filter(r => r.kind === 'candidate' || m.controls.some(c => c.id === r.assignmentId && ['no-memory', 'no-standing-goals'].includes(c.kind))), candidate = roles.find(r => r.kind === 'candidate'); let ordinal = -1;
+  plan = inertSnapshot(plan); invariant(typeof kind === 'string' && ['cycle', 'experience', 'learning', 'task-output', 'feedback', 'checker'].includes(kind), 'Registered proof kind required'); id(roleId); id(subjectId);
+  const m = plan.manifest.value, roles = plan.registration.value.roles.filter(r => r.kind === 'candidate' || m.controls.some(c => c.id === r.assignmentId && ['no-memory', 'no-standing-goals'].includes(c.kind))), candidate = roles.find(r => r.kind === 'candidate'); let ordinal = -1;
   if (['cycle', 'experience', 'learning'].includes(kind)) { invariant(roleId === candidate?.id, 'Candidate proof slot required'); ordinal = kind === 'cycle' ? m.cycles.indexOf(subjectId) : kind === 'learning' ? m.opportunities.filter(x => x.family === 'transfer').findIndex(x => x.id === subjectId) : [...new Set(m.opportunities.flatMap(x => x.interferenceIds))].indexOf(subjectId); }
   else { const role = roles.findIndex(x => x.id === roleId), opportunity = m.opportunities.findIndex(x => x.id === subjectId); if (role >= 0 && opportunity >= 0) ordinal = role * m.opportunities.length + opportunity; }
   invariant(ordinal >= 0 && ordinal < ({ cycle: 3, experience: 9, learning: 3, 'task-output': 36, feedback: 36, checker: 36 }[kind]), 'Unregistered typed proof slot'); return { kind, ordinal };

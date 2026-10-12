@@ -315,7 +315,7 @@ test('actual OpenAI Pi transport derives final response using the accepted v2 de
 function actualRecorderFixture(t: TestContext, shortRoleIds = false, snapshotComposition = false) {
   const g = fixture(t), o = g.options, registration = structuredClone(o.registration.value);
   const priorFreeze = g.originalStore.get('development.accounting.freeze', identity(registration))!; g.originalStore.delete('development.accounting.freeze', identity(registration), priorFreeze.revision);
-  if (snapshotComposition) { g.f.m.limits.maxArtifactBytes = 850_000; registration.attemptDigest = identity(g.f.m); g.f.trust.acceptedAttemptDigest = identity(g.f.m); for (const session of o.sessions) { session.plan.maxPayloadBytes = 65_536; session.plan.maxResponseBytes = 8192; } }
+  if (snapshotComposition) { g.f.m.limits.maxArtifactBytes = 850_000; registration.attemptDigest = identity(g.f.m); g.f.trust.acceptedAttemptDigest = identity(g.f.m); for (const session of o.sessions) { session.plan.maxPayloadBytes = 65_536; session.plan.maxResponseBytes = 8192; session.plan.maxReadBytes = 8192; } }
   if (shortRoleIds) for (const [i,role] of registration.roles.entries()) if (role.kind !== 'candidate') { const session = o.sessions.find(s=>s.roleId===role.id); role.id=`r${i}`; if (session) session.roleId=role.id; }
   const put = (value: unknown) => g.raw.putBytes(Buffer.from(canonicalJson(value)));
   const configurations = new Map<string, ReturnType<typeof put>>(), closures = new Map<string, ReturnType<typeof put>>();
