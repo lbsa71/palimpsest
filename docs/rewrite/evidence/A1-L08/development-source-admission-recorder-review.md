@@ -1,0 +1,76 @@
+# A1-L08 independent mechanical source-admission review
+
+Owner `/root/a1_development_recorder_admission_review`; base `469c8ca`; reviewed source `a919d98`, authored handoff `0f7b5b2`, import `b64ea9a`; adopted composition `c48f0b5`. Actual finite goal created before inspection. Exclusive writes are this file and `evaluations/development/source-admission-recorder-review.test.ts`. Source and existing tests are read-only.
+
+## Frozen independent criteria (before test implementation)
+
+1. A recorded cycle/experience must have an authentic retained graph: canonical proof and wrapper bytes, matching signed observation, capture membership and exact source interval. Assignment/episode origin must come from authentic actual Store history. A current cut cannot supply facts after an earlier declared endpoint.
+2. Fixed mandatory 202 slots plus optional identities 0–53 must preserve future proof, metadata, wrapper and terminal reserves. Repeated identical content consumes each required logical slot; unauthenticated raw bytes and generic calls cannot acquire source authority.
+3. Claim/reopen must bind descriptor, native key, owner/original/custodian identity and policy presence. Accessors and proxies execute no traps. Identity changes and source/custodian withdrawal cannot revive a claim or allow positive replay; unrelated legitimate later source activity remains compatible with historical replay.
+4. Once admission pending is durable, every callback/retention failure remains a durable failed admission, including errors whose text or class resembles source unavailability. No false positive observation, signature, retry or clean reopen; no source-withdrawal misclassification from host callback text. Before pending, genuine unavailable source remains unavailable.
+5. Host callbacks cannot mutate actual fenced owner/source/custodian Stores, reenter public authority, or export live reader authority. Explicit controlled adapter injection will supply adversarial behavior; no global monkeypatching or caller assertion signing.
+6. Exact replay reauthenticates retained proofs, source current-use and unchanged selector, without charging new evidence. Supported Store mutations must not manufacture eligibility, assignment origin, experience ingestion or interval coverage.
+
+Validation is serial using `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node`, root dependency symlink without install, new independent tests, unchanged authored 32 and justified affected source/recorder/storage checks, plus strict TypeScript and diff checks. No physical/native/provider/network/private credentials/Slack/full benchmark/push/deployment. Existing fixture ambient dependencies are tracked as limitations for the separate DI plan. Driver/timing and DC2 R3/semantic b2b are separate gates.
+
+## Results
+
+**Changes required.** The finite independent review is complete. Across the final complete receipt plus its two-case targeted correction/replay receipt, the 26 independent cases have **18 passing predicates and eight preserved causal failures**, representing the three findings below. Unchanged regressions pass **228/228**, including authored **32/32**; strict and diff checks pass. Failed predicates remain ordinary failing tests. No production source or old test was changed, and this review does not wait for repair.
+
+### R1 — post-pending retention failures are returned as unavailable (P2)
+
+The independently injected raw adapter throws `AcquisitionUnavailable` or its `AcquisitionUseWithdrawn` subclass during the actual proof or raw-wrapper write, after both pending records exist. All four variants return `{status:'unavailable', code:'document-history-withdrawn: injected raw persistence failure'}`. The durable record correctly has phase `failed`, both pending markers, no source use disposition, no admission index and no cycle observation. Reopen refuses and a retry leaves state unchanged. Plain `Error` with exactly the same source-looking message correctly returns `failed` at both positions.
+
+`acquire.ts`'s `admissionOperation` attempts terminal failure after unwinding the source scope, then rethrows the callback error. `recordSource` classifies only by `instanceof AcquisitionUnavailable`, losing whether this invocation already began durable retention. The result contract therefore describes a terminal persistence failure as missing/unavailable acquisition. Repair must preserve genuine pre-pending unavailability and authentic withdrawal; do not blanket-convert those to failed. No assertion of lost pending state, false proof, withdrawn-source reuse or new physical charge follows from these four cases.
+
+### R2 — refused unsigned reentry acts on another invocation's pending marker (P2)
+
+An injected raw callback invokes `inspectAssignment` once while its surrounding `recordCycle` has durable pending state, then handles the expected unavailable reentry result. No source mutation or new assignment is requested. `withAdmissionScope` correctly rejects reentry, but the enclosing `admissionOperation` sees the **outer** admission's pending marker and attempts `fail`. That attempt runs under the outer owner read-only fence, cannot persist its owner mutation, and sets the recorder's in-memory `denied` flag.
+
+The valid outer operation nevertheless commits its cycle proof, wrapper, signed observation and admission index and clears pending. Its final current-use check then returns `unavailable` with `Source use remains conservatively refused after marker failure`. Actual state is phase `acquiring`, `admissionPending:null`, one admission and one cycle observation. The targeted final check proves ordinary reopen plus authentic source reattachment returns **recorded** for the exact selector. Thus a refused pre-entry operation poisons another invocation and produces an unavailable result inconsistent with the committed observation and reopened replay. The raw proof itself remains source-backed; no fabricated behavior is alleged.
+
+Reject reentry before pending-failure handling can affect another invocation, or otherwise tie failure handling to the invocation that owns the pending transition. Preserve genuine post-pending terminal failures, owner read-only enforcement and the existing successful swallowed write/public-reader refusal control.
+
+### R3 — omitted optional reservations become unauthorized generic slots (P2)
+
+With full policy and `composition.support:[]`, generic `retainProtocolArtifact('adaptation',52,bytes)` and ordinal 53 both succeed. With mechanical policy and the same empty support list, ordinal 1 succeeds. All three independent default-deny tests fail with `Missing expected exception`.
+
+The adopted composition's fixed-slot section explicitly says 52/53 are at most two preaccepted public support objects, default none, and unused identities remain unavailable to generic callers unless the accepted descriptor explicitly leaves them unassigned. Current `SourceComposition` has no unassigned authorization field. `retainProtocolArtifact` instead guards only adaptation ordinals present in `capacity.sourceAdmission.slots`; absence from the reservation list becomes generic write permission. This contradicts the adopted host composition authority. It does not demonstrate a mandatory reserve overflow or that those bytes can pass typed checker-support validation.
+
+Default-deny the omitted identities under enabled source admission unless a separate explicit grant is actually adopted. Preserve admission-absent behavior, typed accepted support and all original caps. The unaccepted author's test allowing generic 52/53 pressure conflicts with this adopted requirement; root explicitly owns correction of that expectation with its original revision preserved. This reviewer has not edited it or treated its pass as authority.
+
+### Validation and preserved review history
+
+The first 17-case receipt (`/tmp/recorder-admission-review-new-first.log`) has 10 pass / 7 fail in 42.984 s. Four are R1. Three are review harness mistakes, not source findings: strict object equality compared parsed objects to detached null-prototype records; `identity` was applied to a descriptor containing a native key; and the withdrawal reason used a prose string instead of the supported `forget` literal. Those were corrected without weakening a behavioral predicate. The initial strict receipt (`/tmp/recorder-admission-review-strict.log`) independently caught the withdrawal literal. No production or old-test source was edited.
+
+The second 20-case receipt at test revision `b4420f9` (`/tmp/recorder-admission-review-new-second.log`) has 16 pass / exactly the four R1 failures, zero skipped/cancelled, 51.379 s. It confirms authentic retained proof/wrapper/signature/event/version graphs, conservative assignment/cycle/experience endpoints, no experience from a bare real ingestion marker, later unrelated journal activity with exact replay, swallowed hostile callback write/reentry refusals, admission/custodian presence and replacement binding, accepted caller descriptor detachment, all 54 accepted optional reservations with deduplicated support charged twice, and actual source/custodian withdrawal. The unattached-source control stays unavailable before pending and succeeds after authentic reattachment. Signed custodian withdrawal cannot be revived by a later active row or reopening.
+
+Subsequent cases cover preclaim owner/source/custodian aliases, nested proxy/option accessor inertness, reentrant unsigned inspection, and the adopted default-deny allocation rule. Root independently confirmed that `support:[]` is not the explicit unassigned-slot authorization required by `c48f0b5`. The old author's generic 52/53 allowance remains unchanged as evidence of the conflicting implementation expectation; it is not adopted authority.
+
+The complete 26-case receipt at test revision `3b7edc6` is `/tmp/recorder-admission-review-new-final.log`: **17 pass / 9 fail**, zero skipped/cancelled, 68.644 s. Eight failures are R1–R3. One was an over-specific new review assertion expecting the word `alias`: owner/source aliasing was already safely refused earlier as `Unavailable candidate/configuration source` because its duplicate read fences rejected the read. The test now accepts either refusal while still requiring unchanged raw usage and no owner claim. Its custodian/source alias predicate remains intact.
+
+Final test revision **`92d19f7`** changes only that accepted refusal text and adds actual reopen/replay evidence to R2. The two affected cases were rerun with `--test-name-pattern='independent preclaim identity|independent reentry'`: **1 pass / 1 preserved R2 fail**, zero skipped/cancelled, 2.845 s, `/tmp/recorder-admission-review-targeted-final.log`. All other 24 test bodies are unchanged from the complete receipt. This establishes the 18 passing / eight failing disposition across the receipts; no clean full-26 run at the final revision is claimed.
+
+Independent commands use the same pinned Node and flags as the regression command below, with `evaluations/development/source-admission-recorder-review.test.ts` as the sole file; the targeted command adds the exact name pattern above. All original failed receipts remain at the paths recorded here, with their actual failing predicates and revisions preserved in Git history.
+
+Unchanged regressions: **228/228 pass**, zero skipped/cancelled, 169.317 s, `/tmp/recorder-admission-review-regressions.log`. This includes all authored **32/32** and 196 selected unchanged predicates. The selection covers the four b1 source/independent repair suites, retained paged recorder review, both owner-fence suites, recorder retention and the real Store owner fence. It exercises the composition's affected dependencies without redundantly rerunning the entire historic 167/223 suites. The prior author's full receipts remain prerequisites, not new review-run counts.
+
+Exact regression command, from this isolated worktree:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 evaluations/development/source-admission-recorder.test.ts evaluations/development/development-source-admission.test.ts evaluations/development/development-source-admission-review.test.ts evaluations/development/development-source-admission-repair.test.ts evaluations/development/development-source-admission-rereview.test.ts evaluations/development/acquisition-pages-review.test.ts evaluations/development/current-use-owner-fence.test.ts evaluations/development/current-use-owner-fence-review.test.ts evaluations/development/acquisition-retention.test.ts packages/storage/test/development-owner-read-fence.test.ts
+```
+
+Strict passes at final test revision `92d19f7` using `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit` (`/tmp/recorder-admission-review-strict-final.log`). Dependencies are the existing root `node_modules` symlink; no install. `git diff a919d98 --` over acquire/plan/reservation/author fixture/author tests is empty, and the diff from `469c8ca` contains exactly the two owned new paths. `git diff --check` passes.
+
+### Scope and dependency-injection limitations
+
+The new raw adapter is passed through the recorder's existing `raw` option and delegates actual bytes/claim/usage/identity to the controlled real `QualificationStore`. Callback hooks are explicit inputs; there is no module/global monkeypatch, environmental singleton, fake signed caller assertion or source repair. Custody tests inject controlled real Stores and perform supported signed disposition writes. Tests use authentic runtime/initiative/communications/memory journal sources and only synthetic public local fixture material.
+
+The reused `sourceRecorderFixture` / `pagedRecorderFixture` still own ambient temporary directory/filesystem creation, fixture IDs, `performance.now`/CPU measurement and some runtime/storage default clocks/IDs; `QualificationStore.claim` still samples its own timestamp. Those existing interfaces are read-only here and require the separately owned DI plan. New tests use the existing injected synthetic clock and do not invoke the fixture's host-clock mode. The raw option's concrete class type requires a public delegating adapter cast because its private implementation members are not an interface; no private member is used by this review adapter.
+
+This is a mechanical integration review. Source/slot/callback results do not qualify the synthetic checker, host clock, elapsed developmental competence, complete workload fit, actual provider/native execution, driver timing, semantic b2b/control signing or H1. DC2 R3 remains independent.
+
+## Handoff
+
+Root may import exactly the two owned new paths from this clean review branch. The final test revision is `92d19f7`; the evidence-only handoff commit is supplied in the final coordination message. Root owns repair assignment, any necessary explicit correction to unaccepted authored allocation expectations, integration and fresh re-review. Acceptance requires all eight independent red predicates addressed while retaining the passing source/current-use/withdrawal/identity/reserve and unchanged regression evidence. No waiver, cap increase, signed caller assertion or semantic qualification was introduced.
