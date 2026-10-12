@@ -6,16 +6,18 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 **User steering, 2026-10-12:** [ADR0034](../adr/0034-select-mistral-large-4-reasoning.md) selects reasoning Mistral Large4, `mistral-large-4-0` / high, with the [machine-readable target](model-selection.json). Official model/reasoning docs confirm its preview and advertised1M context. Root updated L02, readiness, tokenizer and boundary planning; existing transport supports high effort/native thinking replay. This supersedes the Medium3.5 proposal without changing frozen synthetic fixtures, consumed attempts or grants. Account/runtime profile, exact Large4 tokenization/context and live qualification remain open. DB2-Q1a Medium byte verification completed within its bounded claim; those cached bytes remain Medium-only evidence and no dependency was installed.
 
-**User requirement, 2026-10-12:** all environmental dependencies must be injectable for mocking; [AGENTS.md](../../AGENTS.md) now makes this an engineering requirement for the whole rewrite. Root will replace its pending-transport fixture's interim global clock mock with an explicit host-injected clock through application/broker composition. Other discovered ambient dependencies need finite ownable refactoring tasks; this does not authorize a broad concurrent rewrite of sibling-owned files.
+**User requirement, 2026-10-12:** all environmental dependencies must be injectable for mocking; [AGENTS.md](../../AGENTS.md) makes this mandatory across the rewrite. The adopted [29-task DI plan](evidence/A1-L09/environment-di-plan.md) and [DI01 contract decision](evidence/A1-L01/environment-di-01.md) govern its parallel implementation. Application/broker timing and explicit worker composition, including replacement of the interim global clock mock, now have fresh acceptance. Whole-environment closure remains open.
 
-### Current finite ownership — 04:25 UTC
+### Current finite ownership — 04:35 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
 |---|---|
-| `/root/a1_development_control_payload_repair`, `development-control-payload-repair` | Repair preserved independent R3: complete current original bridge identity under actual journaled mutation; prior tests read-only. |
-| `/root/a1_environment_di_plan`, `environment-di-plan` | Finite read-only inventory and parallel refactoring plan for the user's whole-rewrite environmental DI requirement; new evidence/design document only. |
-| `/root/a1_development_recorder_admission_review`, `development-recorder-admission-review` | Fresh mechanical recorder review of exact `a919d98` / final handoff `0f7b5b2`; new tests/evidence only. |
-| `/root` | Timing/worker DI integrated `c253c61`,57/57 focused/strict pass. Exact b3a host-adapter forwarding and global-clock fixture replacement are under joined driver checks; final qualification/H1 remain open. |
+| `/root/a1_environment_runtime`, `environment-di-03` | Runtime/effects/resources clock and ID injection; precode preserves read-only snapshot fences and durable allowance across clock rollback. |
+| `/root/a1_environment_memory_review`, `environment-di-04-review` | Fresh review of memory DI `c249aa6`,42/42 authored/old checks; source and old tests read-only. |
+| `/root/a1_development_recorder_admission_repair`, `development-recorder-admission-repair` | Repair eight independent b2a reds covering pending failure classification, rejected reentry and default-deny adaptation identities. |
+| `/root` | Exact integration and narrowly claimed corrections to two conflicting old fixtures after their source handoffs. DC2 `55ac335` passes47/47; fresh payload review is queued. Latest joined strict passes at4001212; no aggregate-green claim. |
+
+Fresh driver/timing `9f6790a` accepted52/52 and strict, imported `f3210de`, following author57/57 and driver56/56. Memory DI author `c249aa6` passes42/42 and strict, imported `3cc6ef9`, now independently reviewed. DC2 payload repair `55ac335` is imported `51066f0`; its queued review remains required. Recorder review `4e90935` passes228 unchanged cases but preserves eight independent failures, imported `3e7acf6`; implementation is not accepted. Existing source/current-use, grants, checker qualification, semantic b2b and H1 gates remain intact.
 
 Independent compact/consumer fixture review `115f816` accepted174/174 with old642 assertion expressions preserved, integrated `969dd1b`. Control-proof re-review `166bb6a` returns old28/28 and new6/7, preserving R3's actual payload mutation failure; integrated `9d52e77`, then assigned a finite repair. Recorder author final `0f7b5b2` passes32 new,167 source/projector and223 recorder/storage checks with strict, integrated `b64ea9a`; fresh acceptance remains pending. These component results do not close the semantic signing, boundary, qualification, live or H1 gates.
 
