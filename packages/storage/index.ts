@@ -170,15 +170,17 @@ export class OperationalStore {
     this.transaction(() => { const binding = this.readJournalBinding(); const existing = this.get(namespace, key); if (existing?.revision !== expectedRevision) throw new RevisionConflict('delete revision conflict'); this.db.prepare('DELETE FROM documents WHERE namespace=? AND key=?').run(namespace, key); this.journalMutation(binding, namespace, key, existing, null); });
   }
   append(input: EventInput): StoredEvent {
-    invariant(input.type !== JOURNAL_ANCHOR && input.type !== JOURNAL_MUTATION, 'reserved document journal event type');
-    return this.transaction(() => this.insertEvent(input));
+    const { id, stream, type } = input;
+    invariant(type !== JOURNAL_ANCHOR && type !== JOURNAL_MUTATION, 'reserved document journal event type');
+    return this.transaction(() => this.insertEvent({ id, stream, type, data: input.data }));
   }
   private insertEvent(input: EventInput): StoredEvent {
-    nonempty(input.id, 'event.id'); nonempty(input.stream, 'event.stream'); nonempty(input.type, 'event.type'); const encoded = canonicalJson(input.data);
-    const previous = this.db.prepare('SELECT * FROM events WHERE id=?').get(input.id) as { sequence: number; id: string; stream: string; type: string; data: string } | undefined;
-    if (previous) { invariant(previous.stream === input.stream && previous.type === input.type && previous.data === encoded, 'conflicting event identity'); return { ...previous, data: JSON.parse(previous.data) as JsonValue }; }
-    const result = this.db.prepare('INSERT INTO events(id,stream,type,data) VALUES(?,?,?,?)').run(input.id, input.stream, input.type, encoded);
-    return { sequence: Number(result.lastInsertRowid), id: input.id, stream: input.stream, type: input.type, data: JSON.parse(encoded) as JsonValue };
+    const { id, stream, type, data } = input;
+    nonempty(id, 'event.id'); nonempty(stream, 'event.stream'); nonempty(type, 'event.type'); const encoded = canonicalJson(data);
+    const previous = this.db.prepare('SELECT * FROM events WHERE id=?').get(id) as { sequence: number; id: string; stream: string; type: string; data: string } | undefined;
+    if (previous) { invariant(previous.stream === stream && previous.type === type && previous.data === encoded, 'conflicting event identity'); return { ...previous, data: JSON.parse(previous.data) as JsonValue }; }
+    const result = this.db.prepare('INSERT INTO events(id,stream,type,data) VALUES(?,?,?,?)').run(id, stream, type, encoded);
+    return { sequence: Number(result.lastInsertRowid), id, stream, type, data: JSON.parse(encoded) as JsonValue };
   }
   events<T = JsonValue>(stream?: string, afterSequence = 0): StoredEvent<T>[] {
     invariant(Number.isSafeInteger(afterSequence) && afterSequence >= 0, 'invalid event cursor');

@@ -219,3 +219,23 @@ test('invalid host anchor options refuse without persisting a partial anchor', t
   assert.throws(() => f.open({ ...journal, extra: 1 } as DocumentJournalOptions), /cannot open/);
   assert.equal(store.documentJournalBinding(), null); assert.equal(store.events().length, 0);
 });
+
+test('ordinary accessor inputs retain stable event identity across payload serialization and deduplication', t => {
+  const store = fixture(t).open(journal), metadata = { id: 'ordinary', stream: 'runtime', type: 'observation' }, reads = { id: 0, stream: 0, type: 0, data: 0 };
+  const input = {
+    get id() { reads.id++; return metadata.id; }, get stream() { reads.stream++; return metadata.stream; }, get type() { reads.type++; return metadata.type; },
+    get data() { reads.data++; return { get retained() { metadata.id = 'changed'; metadata.stream = 'changed'; metadata.type = 'document-mutation'; return true; } }; },
+  };
+  const event = store.append(input);
+  assert.deepEqual(reads, { id: 1, stream: 1, type: 1, data: 1 });
+  assert.deepEqual({ id: event.id, stream: event.stream, type: event.type, data: event.data }, { id: 'ordinary', stream: 'runtime', type: 'observation', data: { retained: true } });
+  assert.equal(store.append({ id: 'ordinary', stream: 'runtime', type: 'observation', data: { retained: true } }).sequence, event.sequence);
+  assert.throws(() => store.append({ id: 'ordinary', stream: 'runtime', type: 'observation', data: { retained: false } }), /conflicting event identity/);
+  assert.equal(store.events().length, 2); assert.equal(mutations(store).length, 0);
+});
+
+test('payload accessor serialization failure rolls back its nested document side effects', t => {
+  const store = fixture(t).open(journal), before = store.captureDevelopmentSnapshot(limits);
+  assert.throws(() => store.append({ id: 'ordinary', stream: 'runtime', type: 'observation', data: { get invalid() { store.put('memory', 'side-effect', 'uncommitted', null); throw Error('serialization fault'); } } }), /serialization fault/);
+  assert.deepEqual(store.captureDevelopmentSnapshot(limits), before);
+});
