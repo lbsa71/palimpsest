@@ -14,7 +14,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 | Current owner | Finite work and handoff |
 |---|---|
-| `/root/a1_development_acquisition`, `development-acquisition` worktree | NEW finite author repair goal for residual R4 from completed review `a50fb41`: 252 joined cases, 251 pass and one preserved signed-B metadata headroom failure (`2c4dbe4`); original R1–R6 predicates are green, but recorder component acceptance remains changes-required |
+| `/root/a1_development_acquisition_review`, `development-acquisition-review` worktree | NEW finite independent R4 re-review of authored handoff `8463af7`, source `2c76be2`; unchanged 26 independent predicates plus focused metadata-pressure cases. Author reports 254 joined passes and strict; component acceptance awaits this review |
 | `/root/a1_development_pages`, `development-pages` worktree | New finite CP1 storage implementation goal under the [adopted complete-page design](evidence/A1-L08/development-incremental-capture-design.md); bounded physical inventory, v2 graph validation and distinct current-cut/historical-use fences; old full-capture predicates remain unchanged |
 | `/root/a1_development_observer`, `development-observer` worktree | NEW finite repair goal after independent review `822dd03`: two actual carried-result provenance failures and one changed request/prompt identity failure; preserve all 18 review predicates, then return exact source for fresh re-review |
 | `/root` | Integration, source-bound checks, later ordinary acquisition composition, remaining native inquiry and H1 |
