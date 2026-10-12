@@ -1,5 +1,7 @@
 # Complete bounded page capture for ordinary developmental sources
 
+Root adoption, 2026-10-12: adopted from design `d64566d` plus correction `d9b6500`, imported as `8ed0453`/`e0abd0d`. The corrected split between exact current-cut admission and historical-version availability governs implementation; later reviewer accounting alone must not invalidate frozen B. CP1 is assigned to `/root/a1_development_pages` under the current execution claim. This is a specification adoption, not a source, capacity or qualification pass.
+
 2026-10-12. **Specified; proposed for root adoption; no source implementation or capacity pass claimed.** A1-L08/L09, requirements RW08–RW10, RW16, RW18–RW21. Owner `/root/a1_capture_capacity_design`; root claim `3b7a288`; branch `codex/a1-capture-capacity-design-20261012`, worktree `/home/palimpsest/migration/aeon-1-20261011/capture-capacity-design`, base `925c8ccf10861f12a7e0f3a2ff5396aa004d16ea`. Exclusive writes: this new document. All source, tests, earlier evidence and central plans are read-only. An actual finite tool goal preceded investigation.
 
 ```text
