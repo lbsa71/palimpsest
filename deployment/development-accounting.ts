@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, identity, invariant, validateCapturedPrompt, validatePhysicalRequest, type ArtifactRef, type EffectReceiver, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type ShellPort, type ToolCall } from '../packages/contracts/index.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { ResourceLedger, type RequestCeiling } from '../packages/runtime/resources/index.ts';
@@ -32,6 +32,8 @@ export interface DevelopmentAccountingOptions {
   transport: { id: string; key: Uint8Array };
   /** Trusted finite recorder; must durably reserve before returning. Throws on exhaustion. */
   reserveEvidence(request: DevelopmentCapacityRequest): void;
+  /** Trusted recorder routes physical replies to their already reserved evidence capacity. */
+  retainResponse?(requestId: string, bytes: Uint8Array): ArtifactRef;
   maxResponseBytes: number;
 }
 export class DevelopmentAccountingUnavailable extends Error { override name = 'DevelopmentAccountingUnavailable'; }
@@ -227,15 +229,38 @@ export class DevelopmentAccounting {
     store.transaction(() => { const prior = this.latest(q.id); invariant(developmentRequestIdentity(q) === developmentRequestIdentity(prior.request), 'Physical dispatch changed'); this.options.original.dispatched(q); this.transition(q.id, prior, null); });
   }
   private entered(localId: string): PhysicalRequest {
-    this.live(); const q = this.options.original.request(this.requestId(localId)); invariant(q?.status === 'dispatched', 'Receiver lacks original durable dispatch'); return q;
+    const original = this.options.original, store = original.store;
+    return store.transaction(() => {
+      this.live(); const q = original.request(this.requestId(localId)); invariant(q?.status === 'dispatched', 'Receiver lacks original durable dispatch');
+      const tracked = store.get<Tracked>(requests, q.id)?.value, path = this.path(q.runId);
+      invariant(tracked?.registrationDigest === this.registrationDigest && tracked.roleId === this.role.id && path.includes(this.role.allocationId), 'Receiver changed registered allocation lineage');
+      this.unavailable(!original.snapshot(q.runId).cancelled, 'Original request allocation cancelled');
+      const rows = store.list<Reservation>('requests'), now = original.now();
+      for (const id of path) {
+        const allocation = store.get<Allocation>('allocations', id)!.value, descendants = new Set([id, ...original.descendants(id)]);
+        const charged = rows.filter(row => descendants.has(row.value.request.runId)).reduce((n, row) => n + row.value.charged.elapsedMs, 0);
+        this.unavailable(!allocation.cancelled && Math.max(now - allocation.startedAt, charged) <= allocation.envelope.maxElapsedMs, 'Original request ancestor cancelled or expired');
+      }
+      return q;
+    });
   }
   assertEntry(localId: string): void { this.dispatchPhase(); this.entered(localId); }
+  private retainResponse(localId: string, bytes: Uint8Array): ArtifactRef {
+    invariant(bytes.byteLength <= this.options.maxResponseBytes, 'Response exceeds reserved evidence capacity');
+    const id = this.requestId(localId), q = this.options.original.request(id);
+    const tracked = this.options.original.store.get<Tracked>(requests, id)?.value;
+    invariant(q && ['dispatched', 'uncertain'].includes(q.status) && tracked?.roleId === this.role.id && tracked.registrationDigest === this.registrationDigest, 'Response lacks original dispatched role binding');
+    const expected = createHash('sha256').update(bytes).digest('hex');
+    const ref = this.options.retainResponse ? this.options.retainResponse(id, Uint8Array.from(bytes)) : this.options.rawStore.putBytes(bytes);
+    invariant(ref.sha256 === expected && createHash('sha256').update(this.options.rawStore.readArtifact(ref, this.options.maxResponseBytes)).digest('hex') === expected, 'Response retention substituted or lost original bytes');
+    return ref;
+  }
   recordResponse(localId: string, response: { status: number; body: string }): void {
     const id = this.requestId(localId), store = this.options.original.store, q = this.options.original.request(id);
     const tracked = store.get<Tracked>(requests, id)?.value;
     invariant(q && ['dispatched', 'uncertain'].includes(q.status) && tracked?.roleId === this.role.id && tracked.registrationDigest === this.registrationDigest, 'Response lacks original dispatched role binding');
     invariant(Buffer.byteLength(response.body) <= this.options.maxResponseBytes, 'Response exceeds reserved evidence capacity');
-    const ref = this.options.rawStore.putBytes(Buffer.from(response.body)); this.responses.set(localId, ref);
+    const ref = this.retainResponse(localId, Buffer.from(response.body)); this.responses.set(localId, ref);
     const old = store.get('development.accounting.responses', id);
     invariant(!old || identity(old.value) === identity({ status: response.status, response: ref }), 'Changed physical response');
     if (!old) store.put('development.accounting.responses', id, { status: response.status, response: ref }, null);
@@ -295,11 +320,11 @@ export class DevelopmentAccounting {
     }, signal) };
   }
   wrapReceiver(receiver: EffectReceiver): EffectReceiver {
-    const retain = (ref?: ArtifactRef): ArtifactRef | null => ref ? this.options.rawStore.putBytes(this.options.localStore.readArtifact(ref, this.options.maxResponseBytes)) : null;
+    const retain = (id: string, ref?: ArtifactRef): ArtifactRef | null => ref ? this.retainResponse(id, this.options.localStore.readArtifact(ref, this.options.maxResponseBytes)) : null;
     return {
       dispatch: async (effect, signal) => {
         this.assertEntry(effect.id); const start = this.options.original.now();
-        try { const result = await receiver.dispatch(effect, signal); this.trustedEffect(effect.id, result.outcome, Math.max(0, this.options.original.now() - start), retain(result.receipt)); return result; }
+        try { const result = await receiver.dispatch(effect, signal); this.trustedEffect(effect.id, result.outcome, Math.max(0, this.options.original.now() - start), retain(effect.id, result.receipt)); return result; }
         catch (error) { this.trustedEffect(effect.id, 'uncertain', Math.max(0, this.options.original.now() - start), null); throw error; }
       },
       reconcile: async effect => {
@@ -312,7 +337,7 @@ export class DevelopmentAccounting {
         this.resources.reserve(request); this.resources.dispatched({ ...request, status: 'dispatched' }); this.entered(id);
         const start = this.options.original.now();
         try {
-          const result = await receiver.reconcile(effect), response = retain(result.receipt);
+          const result = await receiver.reconcile(effect), response = retain(id, result.receipt);
           const status = result.outcome === 'succeeded' ? 'succeeded' : result.outcome === 'not-applied' ? 'failed' : 'uncertain';
           this.trustedEffect(id, status, Math.max(0, this.options.original.now() - start), response);
           this.resources.settle({ ...request, status, usage: request.usage });

@@ -66,6 +66,50 @@ function effect(a: DevelopmentAccounting, id = 'effect') {
   return q;
 }
 
+test('reserved responses retain mapped identities out of order after draft exhaustion and cancellation', t => {
+  const f = fixture(t), o = f.options(), reserved = new Set<string>(), replies: string[] = []; let draftsExhausted = false;
+  o.rawStore = { putBytes: bytes => { if (draftsExhausted) throw new Error('Draft allowance exhausted'); return f.raw.putBytes(bytes); }, readArtifact: (ref, bound) => f.raw.readArtifact(ref, bound) };
+  o.reserveEvidence = request => { reserved.add(request.request.id); };
+  o.retainResponse = (id, bytes) => { assert.ok(reserved.has(id)); replies.push(id); return f.raw.putBytes(bytes); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const first = model(a, o.localStore, 'first'), second = model(a, o.localStore, 'second');
+  for (const q of [first, second]) { a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' }); }
+  draftsExhausted = true; assert.throws(() => model(a, o.localStore, 'rejected-draft'), /Draft allowance/);
+  f.original.cancel(rootId); f.time(issued + f.resources.maxElapsedMs + 1);
+  success(a, second, 'second actual reply'); success(a, first, 'first actual reply');
+  assert.deepEqual(replies, [a.requestId(second.id), a.requestId(first.id)]);
+  assert.equal(a.accounting('grant').usage.requests, 2); assert.equal(a.accounting('grant').chargedTokens, 6); assert.equal(a.rootCancelled, true);
+});
+
+test('effect and physical reconciliation replies consume their distinct reserved response identities', async t => {
+  const f = fixture(t), o = f.options(), replies: string[] = [], reserved = new Set<string>();
+  o.reserveEvidence = value => { reserved.add(value.request.id); };
+  o.retainResponse = (id, bytes) => { assert.ok(reserved.has(id)); replies.push(id); return f.raw.putBytes(bytes); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = effect(a); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' });
+  const receiver = a.wrapReceiver({ dispatch: async () => ({ outcome: 'uncertain', receipt: o.localStore.putArtifact('unknown') }), reconcile: async () => ({ outcome: 'succeeded', receipt: o.localStore.putArtifact('authoritative result') }) });
+  const e = { id: q.id, runId: 'run', stepId: 'step', kind: 'fixture_read', payload: { file: 'fixture' }, scope: { kind: 'public' as const }, authority, status: 'dispatched' as const, revision: 2, reservationId: q.id };
+  await receiver.dispatch(e); a.resources.settle({ ...q, status: 'uncertain' }); await receiver.reconcile({ ...e, status: 'uncertain' });
+  const reconciliation = a.states().find(s => s.request.id !== a.requestId(q.id))!;
+  assert.deepEqual(replies, [a.requestId(q.id), reconciliation.request.id]); assert.equal(reconciliation.request.parentRequestId, replies[0]);
+  assert.equal(a.originalRequest(q.id)!.status, 'succeeded'); assert.equal(f.original.snapshot(rootId).requests, 2);
+});
+
+for (const kind of ['model', 'effect'] as const) for (const failure of ['throws', 'substitutes'] as const) test(`${kind} response retention ${failure} preserves original uncertain charges`, async t => {
+  const f = fixture(t), o = f.options();
+  o.retainResponse = () => { if (failure === 'throws') throw new Error('Response reservation unavailable'); return f.raw.putBytes(Buffer.from('substituted bytes')); };
+  const a = new DevelopmentAccounting(o); a.resources.allocate(rootId, f.resources); a.resources.allocate('run', f.resources, rootId);
+  const q = kind === 'model' ? model(a, o.localStore) : effect(a); a.resources.reserve(q); a.resources.dispatched({ ...q, status: 'dispatched' });
+  const before = a.states()[0]!.ceiling;
+  if (kind === 'model') assert.throws(() => a.recordResponse(q.id, { status: 200, body: 'actual response' }), /Response reservation|substituted/);
+  else {
+    const receiver = a.wrapReceiver({ dispatch: async () => ({ outcome: 'succeeded', receipt: o.localStore.putArtifact('actual response') }), reconcile: async () => { throw new Error('Unused'); } });
+    await assert.rejects(receiver.dispatch({ id: q.id, runId: 'run', stepId: 'step', kind: 'fixture_read', payload: {}, scope: { kind: 'public' }, authority, status: 'dispatched', revision: 2, reservationId: q.id }), /Response reservation|substituted/);
+  }
+  a.resources.settle({ ...q, status: 'succeeded', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
+  assert.equal(a.originalRequest(q.id)!.status, 'uncertain'); assert.equal(a.originalRequest(q.id)!.usage.inputTokens, kind === 'model' ? null : 0); assert.deepEqual(a.states()[0]!.charged, before);
+});
+
 test('two isolated states consume one final original request and retain role lineage', t => {
   const f = fixture(t, { maxRequests: 1 }), x = f.adapter(), y = f.adapter('control-b');
   const q = model(x.a, x.store); x.a.resources.reserve(q);
