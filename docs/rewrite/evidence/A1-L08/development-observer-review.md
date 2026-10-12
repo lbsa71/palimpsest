@@ -81,3 +81,31 @@ Before executing repaired checks, freeze these additional independent assertions
 4. Removing/withdrawing the exact result-producing execution source in supplied current refuses reuse of cached or surrounding origin records. The original 18 predicates remain unchanged and all author 31 checks plus strict compilation are rerun.
 
 Acceptance requires actual source-supported producer chronology, not merely passing stale-result null assertions. No production/runtime/recorder/page/live modifications or operations are authorized in this review.
+
+## Repair re-review disposition: accepted within bounded unsigned scope
+
+Exact accepted source subject is author handoff `f97d3c55a9246592f2400fd3ae4b1bc12ce29b9e`, repair source `853c687`, repair pre-code `3b9af13`. Independent extra criteria were committed at `5163d77` before execution; added tests are `ace5188`. The original rejection remains historically valid for `ebbb96c`, with unchanged red tests at `be63324`. The repaired source closes R1 and R2 for the supported retained v2 runtime path. This accepts a bounded **unsigned proposed mechanical source projection**, not recorder observations, signing integration, semantic success or development qualification.
+
+R1 is closed by source-supported producer attribution. At this exact runtime source, checkpoint saves are followed by their matching checkpoint event; result saves are followed by synchronous run mutation/status disposition; failed invocations carry the previous result while adding or retaining failure metadata. The resolver retains the actual producer execution JournalRef and its running/disposition events, and uses the input cursor belonging to that producer. It does not equate a later document mutation with result production. Independent inspection of the runtime save/checkpoint/failure branches supports these chronology distinctions. The added in-flight test holds an actual shell invocation after its checkpoint: the run is still `running`, the prior assignment retains exactly the original producer/cursor, and the later assignment has no result. The test resolves origin refs against actual journal mutations and status events and verifies their presence in proof. Author checks also establish fresh equal results without failure metadata and fresh changed results after inherited failure. Equal bytes with inherited failure and waiting/blocked disposition remain conservatively unavailable, verified independently using a legitimately returned equal result. This admitted limitation prevents unsupported attribution rather than treating equality as a production detector.
+
+R2 is closed by checking the full retained lineage through the slice end. `developmentRequestIdentity` includes immutable fields and excludes only status/usage; every intermediate version additionally retains original root/ceiling and contiguous revisions/intervals. Prompt/effect resolution occurs after these checks, so the later row cannot substitute an identity different from its reservation. Unchanged final-prompt substitution now refuses; the author's intermediate-prompt restoration case and independent root/ceiling restoration cases also refuse. These are explicit journaled corruption probes. Legitimate status/usage changes continue through the real runtime path.
+
+The additional producer-withdrawal case confirms that an earlier accepted result cannot survive withdrawal of its execution source in the supplied later current capture. Existing host-label, freshness, complete-prefix, artifact, intermediate-version, role/run/input, proof-bound and failure cases all pass unchanged. The result-origin proof is tied to the exact runtime implementation and retained complete graph; future changes to runtime ordering require renewed qualification. It is not a generic guarantee about caller-fabricated histories or other runtimes.
+
+Final commands and observations:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/development-observer.test.ts evaluations/development/development-observer-review.test.ts
+# 54 total: 54 pass / 0 fail / 0 cancelled / 0 skipped / 0 todo; exit 0, ~7.8 seconds.
+# Breakdown: original author27 + new author4 + unchanged original independent18 + new independent5.
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+# exit 0.
+git diff --check
+# exit 0.
+git diff --exit-code f97d3c55a9246592f2400fd3ae4b1bc12ce29b9e -- evaluations/development/development-observer.ts evaluations/development/development-observer.test.ts docs/rewrite/evidence/A1-L08/development-observer.md
+# exit 0: exact author source/tests/evidence unchanged.
+```
+
+A byte comparison against `git show be63324:evaluations/development/development-observer-review.test.ts` confirms the original complete file remains an identical prefix of the new review file. No original predicate, fixture or import changed. The first new-check run was 52 pass / 2 fail: the root/ceiling corruption fixtures incorrectly used nonexistent `OperationalStore.get(...).key`, and both failed before reaching the projector with `key must be nonempty`. Those two fixture call arguments were corrected to the already-known request key `review-request:1`; assertions were untouched. These were reviewer fixture construction failures, not product regressions, and no synthetic red commit is claimed. The subsequent joined run and strict compilation passed. SQLite emitted its ordinary experimental warning.
+
+This new finite review goal completes at this accepted source handoff. Only the two owned review files changed after importing the exact author handoff. No runtime, ledger, recorder, historical evidence, configuration or author test was edited. No live/provider/network/native/private-account or paged-source operation occurred. Root may integrate this source; CP3 page adaptation and OD2-b/JR2 signing admission require their own exact joined gates. The documented caller-current freshness assumption, host-clock qualification, complete-snapshot capacity refusal, ambiguous equal-result boundary, external interpretation/control/sensor work, live development and H1 remain open and unchanged.
