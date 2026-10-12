@@ -35,7 +35,7 @@ function fresh(snapshot: DevelopmentSnapshot, afterBridge: boolean): void {
   invariant(snapshot.documents.every(row => allowed.has(row.namespace)), 'Evaluation role requires fresh operational state');
   invariant(snapshot.events.every(event => {
     if (event.type === 'document-journal-anchor') return true;
-    if (event.type !== 'document-journal-mutation') return false;
+    if (event.type !== 'document-mutation') return false;
     const data = event.data as Record<string, JsonValue>; return typeof data.namespace === 'string' && allowed.has(data.namespace);
   }), 'Evaluation role contains prior operational events');
   invariant(snapshot.journalPayloads.every(payload => allowed.has(payload.ref.namespace)), 'Evaluation role contains prior journal content');
@@ -122,7 +122,7 @@ export class BoundDevelopmentControl {
     }
     if (this.kind === 'no-memory' || this.isScripted) invariant(this.#store.list('host.consolidation-runs').length === 0 && this.#store.list('development.jobs').length === 0, 'Consolidation contaminates control');
     for (const event of this.#store.events()) {
-      if (event.type === 'document-journal-mutation') { const data = event.data as Record<string, JsonValue>; if (this.kind === 'no-standing-goals' || this.isScripted) invariant(!standingNamespaces.includes(String(data.namespace)), 'Standing goal journal history contaminates control'); if (this.kind === 'no-memory' || this.isScripted) invariant(!['host.consolidation-runs', 'development.jobs'].includes(String(data.namespace)), 'Consolidation journal history contaminates control'); }
+      if (event.type === 'document-mutation') { const data = event.data as Record<string, JsonValue>; if (this.kind === 'no-standing-goals' || this.isScripted) invariant(!standingNamespaces.includes(String(data.namespace)), 'Standing goal journal history contaminates control'); if (this.kind === 'no-memory' || this.isScripted) invariant(!['host.consolidation-runs', 'development.jobs'].includes(String(data.namespace)), 'Consolidation journal history contaminates control'); }
       if (this.kind === 'no-standing-goals' || this.isScripted) invariant(event.type !== 'goal-revised', 'Standing goal event history contaminates control');
     }
     for (const row of this.#store.list('runs')) this.assertRun(row.key);
