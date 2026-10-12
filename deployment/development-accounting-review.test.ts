@@ -137,3 +137,35 @@ test('retry and compaction use distinct original identities with mapped parent p
   assert.notEqual(a.requestId(first.id), a.requestId(retry.id)); assert.equal(f.original.snapshot(root).requests, 2);
   assert.throws(() => a.resources.reserve(first), /already consumed/);
 });
+
+test('reserved response hook receives distinct mapped IDs after other drafts fail and authority expires', t => {
+  const f = fixture(t), reserved = new Set<string>(), retained: string[] = [];
+  let refuseDrafts = false;
+  const build = (role: string) => {
+    const o = f.options(role);
+    o.rawStore = { putBytes: bytes => { if (refuseDrafts) throw Error('draft capacity exhausted'); return f.raw.putBytes(bytes); }, readArtifact: (ref, bound) => f.raw.readArtifact(ref, bound) };
+    o.reserveEvidence = request => { reserved.add(request.request.id); };
+    o.retainResponse = (id, bytes) => { assert.ok(reserved.has(id)); assert.equal(f.original.request(id)!.status, 'dispatched'); retained.push(id); return f.raw.putBytes(bytes); };
+    const a = new DevelopmentAccounting(o); a.resources.allocate(root, limits); a.resources.allocate('child', limits, root); return a;
+  };
+  const a = build('control'), b = build('other'), qa = model(a, 'same'), qb = model(b, 'same'); dispatch(a, qa); dispatch(b, qb);
+  refuseDrafts = true; assert.throws(() => model(a, 'aborted-draft'), /draft capacity exhausted/);
+  f.original.cancel(root); f.now(1001);
+  b.recordResponse(qb.id, { status: 200, body: 'second finishes first' }); a.recordResponse(qa.id, { status: 200, body: 'first finishes last' });
+  assert.deepEqual(retained, [b.requestId(qb.id), a.requestId(qa.id)]); assert.equal(new Set(retained).size, 2);
+});
+for (const attack of ['throw', 'mutate-and-substitute'] as const) {
+  test(`response hook ${attack} cannot turn missing original raw evidence into released usage`, t => {
+    const f = fixture(t), o = f.options();
+    o.retainResponse = (_id, bytes) => { if (attack === 'throw') throw Error('retention failed'); bytes.fill(120); return f.raw.putBytes(bytes); };
+    const a = new DevelopmentAccounting(o); a.resources.allocate(root, limits); a.resources.allocate('child', limits, root);
+    const q = model(a); dispatch(a, q); const charged = f.original.snapshot(root);
+    assert.throws(() => a.recordResponse(q.id, { status: 200, body: 'exact original bytes' }), /retention failed|substituted/);
+    a.resources.settle({ ...q, status: 'succeeded', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
+    assert.equal(a.originalRequest(q.id)!.status, 'uncertain'); assert.equal(f.original.snapshot(root).tokens, charged.tokens); assert.equal(f.original.snapshot(root).costUsd, charged.costUsd);
+  });
+}
+test('entry fence preserves live sibling authority when another role is cancelled', t => {
+  const f = fixture(t), x = f.adapter(), y = f.adapter('other'), q = model(y.a); dispatch(y.a, q);
+  x.a.resources.cancel(root); assert.doesNotThrow(() => y.a.assertEntry(q.id));
+});
