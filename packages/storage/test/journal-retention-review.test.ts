@@ -91,3 +91,37 @@ test('independent anchor and cutoff use SQLite BINARY key order across unicode n
   const after = f.open().captureDevelopmentSnapshot(limits);
   assert.deepEqual((after.events.at(-1)!.data as unknown as { targets: typeof targets }).targets.map(t => t.namespace), ['a', 'é', '\uE000', '😀']);
 });
+
+// JR1-R1 re-review additions; all original tests above remain byte-for-byte unchanged.
+for (const bound of [false, true]) test(`repair rejects unknown reserved inventory before binding acceptance: bound=${bound}`, t => {
+  const f = fixture(t), store = f.open(bound); store.put('ordinary', 'safe', 'control', null);
+  for (const namespace of [`${META}.unexpected`, `${PAYLOAD}.child`, `${HEAD}.child`, `${META}.`, `${META}.PAYLOADS`]) {
+    f.sql(db => db.prepare('INSERT INTO documents VALUES(?,?,1,?)').run(namespace, 'unexpected', canonicalJson('raw')));
+    assert.throws(() => store.documentJournalBinding(), /unknown reserved/);
+    assert.throws(() => store.captureDevelopmentSnapshot(limits), /unknown reserved/);
+    assert.throws(() => store.put('ordinary', 'safe', 'changed', 1), /unknown reserved/);
+    assert.throws(() => store.withdrawDocumentJournalContent({ id: 'attempt', reason: 'forget', targets: [target('safe', 1, 'ordinary')] }), /unknown reserved/);
+    assert.throws(() => f.open(false), error => error instanceof Error && String(error.cause).includes('unknown reserved'));
+    assert.equal(store.get('ordinary', 'safe')?.value, 'control');
+    f.sql(db => db.prepare('DELETE FROM documents WHERE namespace=?').run(namespace));
+  }
+  assert.equal(store.captureDevelopmentSnapshot(limits).documents.find(d => d.namespace === 'ordinary')?.value, 'control');
+});
+
+for (const namespace of [META, PAYLOAD, HEAD]) test(`repair preserves wrong-key rejection for known metadata namespace ${namespace}`, t => {
+  const f = fixture(t), store = f.open(); store.put('ordinary', 'safe', 'control', null);
+  f.sql(db => db.prepare('UPDATE documents SET key=? WHERE namespace=?').run('wrong-reserved-key', namespace));
+  assert.throws(() => store.captureDevelopmentSnapshot(limits));
+  assert.equal(store.get('ordinary', 'safe')?.value, 'control');
+});
+
+test('repair BINARY prefix check preserves ordinary namespace case and literal lookalikes', t => {
+  const f = fixture(t), store = f.open(false);
+  const ordinary = ['System.document-journal.extra', 'system.Document-journal.payloads', 'system.document-journalish', 'systemXdocument-journal.extra', 'system.document-journal-extra', 'prefix.system.document-journal.extra'];
+  for (const namespace of ordinary) store.put(namespace, 'key', namespace, null);
+  const bound = f.open(), snapshot = bound.captureDevelopmentSnapshot(limits);
+  assert.deepEqual(new Set(snapshot.documents.filter(d => d.namespace !== META).map(d => d.namespace)), new Set(ordinary));
+  const result = bound.withdrawDocumentJournalContent({ id: 'lookalikes', reason: 'forget', targets: ordinary.map(namespace => target('key', 1, namespace)) });
+  assert.equal(result.withdrawnVersionIds.length, ordinary.length);
+  assert.equal(f.open(false).captureDevelopmentSnapshot(limits).journalPayloads.filter(p => p.state === 'withdrawn').length, ordinary.length);
+});
