@@ -19,4 +19,14 @@ Initial execution against implementation `fdd9134`: 40 cases, 38 pass and two fa
 
 **R1, consequential, open:** `modelExecution` checks actual ToolCall mapping only inside the supplied `execution.evidenceReads` loop. The independent test starts with an actual SQLite/QualificationStore succeeded evidence read, changes the authenticated physical reservation ID, rebuilds the signed receipt and transition links, and removes all execution access metadata. Preparation accepts all mechanical joins (only the intentional synthetic finding remains, with final accounting). With the metadata present the same wrong reservation rejects. This is an already observed request in authenticated T, so the explicitly limited completeness of unobserved streams does not justify the omission. Reconcile the observed reviewer tool-request inventory with the declared access inventory before accepting the review. Root and the exclusive author received the reproduction; production/shared source remain read-only to this reviewer.
 
-Historical fixture adaptation inspection found constructor/index-maintenance changes and actual ToolCall mapping adaptation only; no historical test body or rejection predicate changed. Historical execution and fresh repair verification remain pending.
+Historical fixture adaptation inspection found constructor/index-maintenance changes and actual ToolCall mapping adaptation only; no historical test body or rejection predicate changed. The follow-up frozen run at reviewer checkpoint `6d243eb` gives **61/62 pass, one failure**, solely R1: 39/40 independent retention cases and all 22 historical review cases pass. No skipped, cancelled or todo cases. Commands:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/retention-review.test.ts evaluations/development/review-envelope-review.test.ts
+git diff --check
+```
+
+Strict compiler and diff checks pass. The exact final-envelope byte boundary, full record count, rejected drafts, mandatory prompt fragments and metadata-present actual ToolCall cases pass. Historical equal-timestamp ordering rejection passes. The author-reported 172 checks are not used as independent evidence.
+
+Status: bounded red review handed off; **source acceptance withheld for R1**. Root has resumed the exclusive author for repair. This review's actual finite goal stays active for unchanged fresh verification at the author's exact repair source; the reviewer yields its worker slot at root request. No competence, live development, parity, H1, or automatic release was accepted.
