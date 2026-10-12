@@ -28,7 +28,11 @@ export class DevelopmentalMemory implements MemoryPort {
     invariant([wallClock, monotonicNow, withdrawalId, compareIds].every(f => typeof f === 'function'), 'Memory environmental callbacks required');
     this.environment = Object.freeze({ monotonicNow: () => monotonicNow(), withdrawalId: () => withdrawalId(),
       compareIds: (left: string, right: string) => { const value = compareIds(left, right); invariant(Number.isFinite(value), 'Invalid memory collation result'); return value; } });
-    this.clock = () => { const value = wallClock(); invariant(typeof value === 'string', 'Memory wall clock must return an ISO timestamp'); timestamp(value); return value; };
+    this.clock = () => {
+      const value = wallClock();
+      invariant(typeof value === 'string' && /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value), 'invalid timestamp: Memory wall clock must return an ISO timestamp with explicit timezone');
+      timestamp(value); return value;
+    };
   }
   private monotonicTime(): number {
     const value = this.environment.monotonicNow();
@@ -37,12 +41,18 @@ export class DevelopmentalMemory implements MemoryPort {
 
   private raw(id: string): MemoryEntry | undefined { return this.store.get<MemoryEntry>(MEMORIES, id)?.value; }
   private activeSources(ids: string[], scope: DataScope): MemoryRecord[] {
+    const sources = this.availableSources(ids, scope);
+    invariant(sources, 'source unavailable for destination'); return sources;
+  }
+  private availableSources(ids: string[], scope: DataScope): MemoryRecord[] | undefined {
     unique(ids); validateScope(scope);
-    return ids.map(id => {
+    const sources: MemoryRecord[] = [];
+    for (const id of ids) {
       const entry = this.raw(id);
-      invariant(entry && entry.record.status === 'active' && (entry.expiresAt === null || Date.parse(entry.expiresAt) > Date.parse(this.clock())) && scopeAllows(entry.record.scope, scope), 'source unavailable for destination');
-      return entry.record;
-    });
+      if (!entry || entry.record.status !== 'active' || entry.expiresAt !== null && Date.parse(entry.expiresAt) <= Date.parse(this.clock()) || !scopeAllows(entry.record.scope, scope)) return undefined;
+      sources.push(entry.record);
+    }
+    return sources;
   }
   get(id: string, audience: DataScope): MemoryRecord | undefined {
     validateScope(audience); const entry = this.raw(id);
@@ -197,8 +207,10 @@ export class DevelopmentalMemory implements MemoryPort {
     return this.store.transaction(() => {
       const candidates = this.store.list<ConsolidationJob>(JOBS).filter(entry => Date.parse(entry.value.dueAt) <= Date.parse(at) && (entry.value.state === 'pending' || (entry.value.state === 'running' && entry.value.lease !== null && Date.parse(entry.value.lease.until) <= Date.parse(at))));
       for (const entry of candidates.sort((a, b) => Date.parse(a.value.dueAt) - Date.parse(b.value.dueAt) || this.environment.compareIds(a.key, b.key))) {
-        try { const sources = this.activeSources(entry.value.sourceIds, entry.value.scope); invariant(sources.every((source, i) => source.revision === entry.value.sourceRevisions[i]), 'source changed'); }
-        catch { this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source unavailable or revised' }, entry.revision); continue; }
+        const sources = this.availableSources(entry.value.sourceIds, entry.value.scope);
+        if (!sources || !sources.every((source, i) => source.revision === entry.value.sourceRevisions[i])) {
+          this.writeJob({ ...entry.value, state: 'cancelled', lease: null, error: 'source unavailable or revised' }, entry.revision); continue;
+        }
         return { job: this.writeJob({ ...entry.value, state: 'running', attempts: entry.value.attempts + 1, lease: { owner, until: new Date(Date.parse(at) + leaseMs).toISOString() }, error: null }, entry.revision) };
       }
       return undefined;
