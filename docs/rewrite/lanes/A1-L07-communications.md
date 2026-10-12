@@ -34,6 +34,8 @@ Non-goals: preserving old webhook paths or config aliases, reading every channel
 
 ## Coordination
 
+Environmental DI07: `/root/a1_environment_communications` owns the exact eight paths in the [execution claim](../execution.md), worktree `environment-di-07` / branch `codex/a1-environment-di-07-20261012`, base3570785. Ingress/recovery paths include `slack/` as clarified394ad43. New explicit adapters and deterministic tests are in progress; existing callback-mutating fixture stays read-only pending root integration. No live Slack/network acceptance follows.
+
 Owned by the lead who claims this lane; update here before concurrent implementation.
 
 | Field | Current value |

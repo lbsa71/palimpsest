@@ -8,16 +8,16 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 **User requirement, 2026-10-12:** all environmental dependencies must be injectable for mocking; [AGENTS.md](../../AGENTS.md) makes this mandatory across the rewrite. The adopted [29-task DI plan](evidence/A1-L09/environment-di-plan.md) and [DI01 contract decision](evidence/A1-L01/environment-di-01.md) govern its parallel implementation. Application/broker timing and explicit worker composition, including replacement of the interim global clock mock, now have fresh acceptance. Whole-environment closure remains open.
 
-### Current finite ownership — 04:52 UTC
+### Current finite ownership — 04:53 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
 |---|---|
-| `/root/a1_environment_runtime_review`, `environment-di-03-review` | Fresh review of author `c4d9280` and root resource fixture `9b57ba6`; joined41/41 and strict pass, source/old tests read-only. |
-| `/root/a1_environment_memory_rereview`, `environment-di-04-rereview` | Fresh review of root `8ffe075` repairing all five prior clock failures;63/63 and strict pass, source/old tests read-only. |
-| `/root/a1_development_recorder_admission_repair`, `development-recorder-admission-repair` | Frozen source `b6af7da` passes independent26 and new13; old227/228 with only separately corrected author pressure fixture. Exact root correction `832d27e` awaits final author32 join. |
-| `/root` | Exact integration, queued DC2 physical inventory repair, and remaining DI task ownership. DC2 fresh review `062a6ba` preserves one R4 red alongside15 passes; no aggregate-green claim. |
+| `/root/a1_environment_initiative_review`, `environment-di-05-review` | Fresh review of `06f4487`,35/35 authored/old checks; source and old tests read-only. |
+| `/root/a1_environment_communications`, `environment-di-07` | Clock/transport/timer/listener DI;21 new checks and strict pass, exact source handoff pending. Original socket callback-mutation fixture awaits narrowly claimed root adaptation. |
+| `/root/a1_development_control_inventory_repair`, `development-control-inventory-repair` | R4 physical inventory repair; unchanged payload7 and initial new12 pass, expanded causal variants/regressions active. |
+| `/root` | DI06a and exact DI26 metadata joined at8929868,111/111 and unchanged source audit/strict pass; fresh schema review queued. Recorder repair accepted. No aggregate-green, live or H1 claim. |
 
-Fresh driver/timing `9f6790a` accepted52/52 and strict, imported `f3210de`, following author57/57 and driver56/56. DI03 author and DI04 repair are integrated, fresh acceptance pending. DC2 `062a6ba` accepts tested R3 keyed payload behavior but exposes an original request omitted when its bridge row is absent; imported `1debe0e`, finite R4 repair next. Recorder review `4e90935` and its eight preserved failures remain historical evidence while repair is verified. Existing source/current-use, grants, checker qualification, semantic b2b and H1 gates remain intact.
+Fresh driver/timing `9f6790a` accepted52/52, runtime `bddd9bf` accepted53/53 and memory `f501511` accepted79/79, all strict/diff pass. Recorder `2b3c16f` accepted mechanical repair83/83 and exact pressure fixture audit. DC2 `062a6ba` accepts tested R3 payload behavior but exposes unbridged original physical work; finite R4 repair active before semantic b2b. Original failed receipts remain preserved. Existing source/current-use, grants, checker qualification and H1 gates remain intact.
 
 Independent compact/consumer fixture review `115f816` accepted174/174 with old642 assertion expressions preserved, integrated `969dd1b`. Control-proof re-review `166bb6a` returns old28/28 and new6/7, preserving R3's actual payload mutation failure; integrated `9d52e77`, then assigned a finite repair. Recorder author final `0f7b5b2` passes32 new,167 source/projector and223 recorder/storage checks with strict, integrated `b64ea9a`; fresh acceptance remains pending. These component results do not close the semantic signing, boundary, qualification, live or H1 gates.
 

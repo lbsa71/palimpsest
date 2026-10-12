@@ -44,7 +44,7 @@ Non-goals: proving consciousness, defining a permanent personality, treating eve
 
 ## Coordination
 
-Environmental DI04: root repair `8ffe075` integrated as `e6bbee1`;63/63 focused checks and strict pass. Fresh `/root/a1_environment_memory_rereview` owns only new `deployment/environment-di-04-rereview.test.ts` and lane evidence `environment-di-04-rereview.md`, in isolated `environment-di-04-rereview` / `codex/a1-environment-di-04-rereview-20261012`. The [execution record](../execution.md) supplies the exact claim and limits. Prior independent five failures remain preserved; acceptance awaits this re-review.
+Environmental DI04: root repair `8ffe075` integrated as `e6bbee1`; fresh `f501511` accepted79/79 and strict, imported `af7772c`. The [execution record](../execution.md) supplies exact evidence and limits. Prior independent five failures remain preserved; this component repair is accepted, while DI09 storage and DI14 full composition remain open.
 
 Owned by the lead who claims this lane; update here before concurrent implementation.
 
