@@ -124,6 +124,8 @@ export class OperationalStore {
     return (this.db.prepare('SELECT namespace,key,revision,value FROM documents ORDER BY namespace,key').all() as { namespace: string; key: string; revision: number; value: string }[]).filter(row => !ownedJournalNamespace(row.namespace)).map(row => ({ ...row, value: JSON.parse(row.value) as JsonValue }));
   }
   private readJournalBinding(): DocumentJournalBinding | null {
+    const prefix = `${DOCUMENT_JOURNAL_NAMESPACE}.`;
+    invariant(!this.db.prepare('SELECT 1 FROM documents WHERE substr(namespace,1,?)=? AND namespace NOT IN (?,?) LIMIT 1').get(prefix.length, prefix, DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, DOCUMENT_JOURNAL_HEAD_NAMESPACE), 'unknown reserved document journal namespace');
     const rows = this.db.prepare('SELECT key,revision,value FROM documents WHERE namespace=? LIMIT 2').all(DOCUMENT_JOURNAL_NAMESPACE) as { key: string; revision: number; value: string }[];
     if (rows.length === 0) {
       invariant(!this.observedJournal && !this.db.prepare('SELECT 1 FROM events WHERE type IN (?,?,?) LIMIT 1').get(JOURNAL_ANCHOR, JOURNAL_MUTATION, JOURNAL_WITHDRAWAL), 'document journal binding missing');
@@ -318,7 +320,7 @@ export class OperationalStore {
     }
     invariant(anchored && known.size === payloads.size, 'document journal anchor missing or orphan payload');
     for (const [id, payload] of payloads) invariant(withdrawn.has(id) ? payload.state === 'withdrawn' && payload.withdrawalId === withdrawn.get(id) : payload.state === 'available', 'document journal withdrawal disposition differs');
-    const documents = snapshot.documents.filter(row => !reservedJournalNamespace(row.namespace));
+    const documents = snapshot.documents.filter(row => row.namespace !== DOCUMENT_JOURNAL_NAMESPACE);
     invariant(documents.length === current.size && heads.length === current.size, 'document journal current inventory differs');
     for (const row of documents) { const ref = current.get(documentKey(row.namespace, row.key)); invariant(ref && ref.revision === row.revision && ref.sha256 === documentDigest({ revision: row.revision, value: row.value }), 'document journal current document differs'); }
     for (const head of heads) invariant(canonicalJson(current.get(head.key) ?? null) === canonicalJson(JSON.parse(head.value)), 'document journal current head differs');
