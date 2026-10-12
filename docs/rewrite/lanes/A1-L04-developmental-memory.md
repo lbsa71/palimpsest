@@ -1,5 +1,7 @@
 # A1-L04 — developmental memory and a revisable self
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **reviewing** — ordinary memory/context, consolidation and initiative integration is implemented and fixture-verified with fresh boundary review; independent developmental/live acceptance remains open. Session owner: **`/root/a1_memory`** (component handoff); L09 integrates remaining gates. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW06, RW08, RW09, RW19](../../../REQUIREMENTS.md).

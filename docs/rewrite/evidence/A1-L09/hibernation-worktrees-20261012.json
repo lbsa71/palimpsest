@@ -1,0 +1,46 @@
+{
+  "createdAt": "2026-10-12T05:28:47.004237+00:00",
+  "scope": "Preservation only; no edits or acceptance of historical dirty worktrees",
+  "worktrees": [
+    {
+      "worktree": "/home/palimpsest/migration/aeon-1-20261011/installation-integration",
+      "head": "806dd52445c1e35396ff7e28c5d3d5a6a93788fa",
+      "paths": [
+        "deployment/installation-entry.mjs",
+        "deployment/installation.test.ts",
+        "deployment/installation.ts",
+        "docs/rewrite/evidence/A1-L09/installation.md",
+        "docs/rewrite/operations.md"
+      ],
+      "archive": "/home/palimpsest/migration/aeon-1-20261011/hibernation-20261012/installation-integration.tar.gz",
+      "archiveSha256": "73a0b33f96395df1dabd979962c2ae17f443d683802cd642fde016685bdac522",
+      "patch": "/home/palimpsest/migration/aeon-1-20261011/hibernation-20261012/installation-integration.patch",
+      "patchSha256": "3f7b3bef9bd8a5fcae0f550e505b067430c202415ca5beea173f6945345efd78"
+    },
+    {
+      "worktree": "/home/palimpsest/migration/aeon-1-20261011/provider-review-before",
+      "head": "401a70cfc0095731fbb1283d550efa1b0de4ff15",
+      "paths": [
+        "deployment/handoff.test.ts",
+        "deployment/proposal-origin.test.ts",
+        "deployment/provider-review.test.ts",
+        "packages/agent-shell/agent-shell.test.ts"
+      ],
+      "archive": "/home/palimpsest/migration/aeon-1-20261011/hibernation-20261012/provider-review-before.tar.gz",
+      "archiveSha256": "00bd3a77c4e337d970e2c68704eb0be570b80263e73a0a08410b6263ee95ead2",
+      "patch": "/home/palimpsest/migration/aeon-1-20261011/hibernation-20261012/provider-review-before.patch",
+      "patchSha256": "419acaf20d9d4671b6087e94035b3ceba67f7b2e6a731c75ed363e78f58cea11"
+    },
+    {
+      "worktree": "/home/palimpsest/migration/aeon-1-20261011/shell",
+      "head": "9efe9a05b2bd32124a9ae6527eeab26c9597797a",
+      "paths": [
+        "packages/contracts"
+      ],
+      "archive": "/home/palimpsest/migration/aeon-1-20261011/hibernation-20261012/shell.tar.gz",
+      "archiveSha256": "44561963bcba4f71992f35c433c630ad4fc761f754a0e50a5ec77c79c929dc6a",
+      "patch": "/home/palimpsest/migration/aeon-1-20261011/hibernation-20261012/shell.patch",
+      "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

@@ -1,10 +1,12 @@
 # A1-L02 — selected agent shell and qualification
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Current model selection (2026-10-12): user-selected reasoning Mistral Large4, `mistral-large-4-0` / high. Root records [ADR0034](../../adr/0034-select-mistral-large-4-reasoning.md) and the [machine-readable selection](../model-selection.json); earlier Medium3.5 readiness/tokenizer work remains scoped historical evidence. Selected does not mean account-qualified or deployed.
 
 Status: **reviewing engineering disposition; live Q3 remains open**. Current disposition owner: **Codex /root/a1_shell_disposition**; original implementation owner: **Codex /root/a1_shell**. Accountable actor: Codex. Governing method: [workflow](../workflow.md); [ADR 0032](../../adr/0032-select-pi-core-and-source-owned-dependencies.md) selects Pi agent core; [qualification](../agent-shell-decision.md) defines Q1–Q5. The 2026-10-11 source/decision subtask is recorded, not completion of this lane.
 
-Environmental DI update, 2026-10-12: DI06a retained-schema base isolation and its exact local-patch metadata passed fresh review `63a67fb` (123/123 plus unchanged source auditor). Shell/transport/Pi DI06 and broader DI26 closure remain open; this does not qualify the selected live model.
+Environmental DI update, 2026-10-12: DI06a retained-schema base isolation and its exact local-patch metadata passed fresh review `63a67fb` (123/123 plus unchanged source auditor). DI06 source/provenance is integrated at `d53ccda`; fresh review `ea97739` preserves four failures across OpenAI cleanup uncertainty and shell bridge callback capture (prior73 pass, held-out17/21). Repair is unstarted. Exact Pi provenance passed independent verification; broader DI26 and live qualification remain open.
 
 Requirements: [RW01, RW02, RW04, RW05, RW13, RW16, RW17, RW19, RW21](../../../REQUIREMENTS.md).
 

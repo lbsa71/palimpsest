@@ -1,5 +1,7 @@
 # A1-L07 — responsive communication and durable follow-through
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **reviewing** — ordinary communication/recovery/report paths integrated and fixture-verified with fresh application/offline boundary review; authentic live interaction and full lane acceptance pending. Session owner: **`/root/a1_communications`**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW09, RW10, RW11, RW12, RW19](../../../REQUIREMENTS.md).
@@ -34,7 +36,7 @@ Non-goals: preserving old webhook paths or config aliases, reading every channel
 
 ## Coordination
 
-Environmental DI07: `/root/a1_environment_communications` owns the exact eight paths in the [execution claim](../execution.md), worktree `environment-di-07` / branch `codex/a1-environment-di-07-20261012`, base3570785. Ingress/recovery paths include `slack/` as clarified394ad43. New explicit adapters and deterministic tests are in progress; existing callback-mutating fixture stays read-only pending root integration. No live Slack/network acceptance follows.
+Environmental DI07: original review `6f75ce2` found four response cleanup failures; repair `fae9434` is integrated at `4c5af22`, fresh acceptance `f0f297b` at `7ad4aa4`, with120/120 plus strict. Explicit transport/clock/timer/listener injection and cleanup are accepted within that bounded review. No active owner, live Slack/network or full lane acceptance follows; see [RESUME](../RESUME.md).
 
 Owned by the lead who claims this lane; update here before concurrent implementation.
 

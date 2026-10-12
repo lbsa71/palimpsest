@@ -1,5 +1,7 @@
 # A1-L08 — independent competence, development and parity evaluation
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **implementing — actual application fixture-verified; v2 protocol corrected before live scoring; empirical acceptance outstanding**. Session owner: **Codex /root, with finite isolated acquisition/review owners below**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW03, RW04, RW11, RW17, RW18, RW19, RW20](../../../REQUIREMENTS.md).
@@ -10,7 +12,7 @@ Requirements: [RW02, RW03, RW04, RW11, RW17, RW18, RW19, RW20](../../../REQUIREM
 
 ## Ownership and dependencies
 
-Current checkpoint, 2026-10-12 04:04 UTC: the [execution record](../execution.md) is authoritative for exclusive claims. Accepted b1 source and P3 owner fences remain integrated. Compact handoff `4c4fcda` is imported at `12ccda2` with audit33/33/authored53/53; DC2 repair `21ab531` is imported at `478b57f` with joined27/27 and separate1/1, all original failures preserved. Both now have separate fresh finite review owners. Mechanical b2a recorder integration remains active; semantic b2b waits for accepted DC2 and b2a. Root's isolated b3a forwards the frozen API and has corrected two test-construction errors; unchanged old-driver freeze behavior is under baseline comparison without altered caps/assertions. Full-workload, qualified checker/workload, actual development/parity and H1 acceptance remain open.
+Current checkpoint, hibernated 2026-10-12: [RESUME](../RESUME.md) supersedes earlier ownership. DC2 R5 attribution repair `1a04f41` is a clean isolated three-path handoff (48/48 focused, strict), pending exact integration and fresh review; retain root's separately integrated deterministic binding selectors `c2c078f`. Mechanical recorder b2a `2b3c16f` and b3 timing/forwarding are accepted, but semantic b2b awaits fresh DC2 acceptance, then b3b and fresh joined review. Boundary sizing/design, exact Large4 context, original grants, checker/workload qualification, full development/parity and H1 remain open. Neither native recovery first attempt may be silently repeated.
 
 Root owns only the new [boundary composition reconciliation](../evidence/A1-L08/development-boundary-composition.md) alongside b3a integration. Its scope is a finite read-only prerequisite check of DB0 against current complete-page/source-admission reservations; no boundary source edits or allocation changes are claimed.
 

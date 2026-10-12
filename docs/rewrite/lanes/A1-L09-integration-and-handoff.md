@@ -1,5 +1,7 @@
 # A1-L09 — integration, whole-system evolution and handoff
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **implementing**. Session owner: **/root**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21](../../../REQUIREMENTS.md).
@@ -8,7 +10,7 @@ Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21]
 /goal Complete A1-L09 by integrating the rewrite into a recoverable installation, demonstrating an independently evaluated autonomous change through the whole-system release path and a failed-successor recovery that preserves current work, then delivering and verifying the H1 handoff package required for the Autark to own Aeon 2.
 ```
 
-The user requires every environmental boundary injectable. The adopted [DI plan](../evidence/A1-L09/environment-di-plan.md) covers 29 finite tasks across all lanes; [DI01](../evidence/A1-L01/environment-di-01.md) releases their local port/trust design prerequisite. Timing/driver, runtime, memory, initiative and retained-schema DI slices have fresh component acceptance; communication response cleanup is under repair and storage DI09 is claimed. Full application forwarding and whole-environment closure remain open. Exact current ownership and receipts are in [execution](../execution.md); no future task has implicit permission to edit active recorder/driver/control files.
+The user requires every environmental boundary injectable. The adopted [DI plan](../evidence/A1-L09/environment-di-plan.md) covers 29 finite tasks across all lanes; [DI01](../evidence/A1-L01/environment-di-01.md) releases their local port/trust design prerequisite. Timing/driver, runtime, memory, initiative, retained-schema and communication DI slices have fresh component acceptance. DI06 needs repair after fresh review; DI09 has an isolated verified repair pending integration/review; DI10 is integrated and awaits its unstarted fresh review. All owners/goals are hibernated; [RESUME](../RESUME.md) specifies exact checkpoints and parallel restart tasks. Full application forwarding and whole-environment closure remain open. Exact current ownership and receipts are in [execution](../execution.md); no future task has implicit permission to edit active recorder/driver/control files.
 
 ## Ownership and dependencies
 

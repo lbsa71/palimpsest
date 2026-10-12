@@ -1,6 +1,6 @@
 # Aeon 1 execution record
 
-Implementation authorized 2026-10-11 by the user: “start work, set a goal to implement aeon 1 with maximal parallelism. Make sure subagents has goals as well.” The lead's active goal covers all nine lanes and H1 without reducing the acceptance gates. Every delegated session must create a finite goal and record its claim, evidence and remaining integration work.
+Implementation authorized 2026-10-11 by the user: “start work, set a goal to implement aeon 1 with maximal parallelism. Make sure subagents has goals as well.” The authorized objective covers all nine lanes and H1 without reducing the acceptance gates; it is hibernated at the user's request on 2026-10-12. Every delegated session must create a finite goal and record its claim, evidence and remaining integration work.
 
 ## Current disposition — developmental acquisition and native recovery
 
@@ -8,16 +8,20 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 **User requirement, 2026-10-12:** all environmental dependencies must be injectable for mocking; [AGENTS.md](../../AGENTS.md) makes this mandatory across the rewrite. The adopted [29-task DI plan](evidence/A1-L09/environment-di-plan.md) and [DI01 contract decision](evidence/A1-L01/environment-di-01.md) govern its parallel implementation. Application/broker timing and explicit worker composition, including replacement of the interim global clock mock, now have fresh acceptance. Whole-environment closure remains open.
 
-### Current finite ownership — 05:07 UTC
+### Current disposition — hibernated 2026-10-12 05:28 UTC
 
-| Owner / isolated worktree | Finite task and current boundary |
+The user requested shutdown, completion of only each agent's current item, deactivation of all goals, persisted status and clear restart directions. **No finite owner remains active.** All visible child goals completed their bounded handoffs and their agents were stopped; the unfinished overall goal is paused as the final shutdown step because the available goal API has no delete/clear operation. The final tool status is reported in the session. Previous claims below are historical and confer no continuing ownership. [RESUME.md](RESUME.md) is the authoritative restart entry point.
+
+| Work | Exact checkpoint and disposition |
 |---|---|
-| `/root/a1_development_control_attribution_repair`, `development-control-attribution-repair` | Repair R5 physical request attribution/exclusion before semantic b2b. Source plus new test/evidence only; prior tests read-only. |
-| `/root/a1_environment_communications_repair`, `environment-di-07-repair` | Repair four independently reproduced response-disposal/failure-composition cases. Slack client plus new test/evidence only. |
-| `/root/a1_environment_storage`, `environment-di-09` | Newly claimed storage filesystem/SQLite/ID injection, with unchanged journals, cuts and owner fences. |
-| `/root` | Integrate exact handoffs, maintain lane status and arrange fresh reviews. No aggregate-green, live or H1 claim. |
+| DI02/03/04/05/06a/07 | Fresh component acceptance retained: `9f6790a`, `bddd9bf`, `f501511`, `9ad8a20`, `63a67fb`, `f0f297b`. DI07's four cleanup failures were repaired and re-reviewed; final120/120 plus strict. |
+| DC2 R5 attribution | Clean three-path author `1a04f411238f1428f387ade59078da7e0e925bf6` in `development-control-attribution-repair`;48/48 focused plus strict. **Not imported into main or freshly accepted.** Root's deterministic selector correction is separately integrated at `c2c078f`; retain it during exact-path import. |
+| DI06 shell | Source/provenance joined `d53ccda`; review `ea97739` imported at `1a72ad8`. Prior73/73, held-out17/21 with four preserved failures: OpenAI cleanup uncertainty loses accounting; mutable shell bridge receiver capture. Repair unstarted. Pi provenance independently verified; broader DI26 remains open. |
+| DI09 storage | Integrated author `af817a9`; review `d8cd34b` imported at `be84643` preserves BEGIN-after-effect R1. Root repair `65b1c18fef18c04c98e8b242e85ceee3bbc4e696` in `environment-di-09-repair`: original50/50, new15/15, strict; **not imported or freshly accepted**. Two separate old application/storage fixture gates remain open. |
+| DI10 supervisor | Author `5b1463c` imported at `93cdf45`,60/60 focused and strict. Fresh review was claimed at `2c4e840` and its worktree created; **no reviewer was launched, no review goal or tests exist**. Queued for next session. |
+| Recorder/driver | Mechanical b2a accepted `2b3c16f` (83/83); b3 timing/forwarding accepted. Semantic b2b waits for fresh DC2 acceptance, then b3b and independent semantic join. |
 
-Fresh component acceptance: DI02 timing/driver `9f6790a` (52/52), DI03 runtime `bddd9bf` (53/53), DI04 memory `f501511` (79/79), DI05 initiative repair `9ad8a20` (61/61 plus exact driver 1/1), DI06a/schema metadata `63a67fb` (123/123 and unchanged source audit). Recorder b2a `2b3c16f` accepts the mechanical repair (83/83), while semantic b2b remains gated on control-proof acceptance. Strict/diff checks pass for these bounded handoffs. DC2 review `77ba11a` preserves R5 and an unchanged hash-selected fixture failure; DI07 review `6f75ce2` preserves four response cleanup failures. Full environmental coverage, original source/current-use, grants, checker qualification and H1 remain open.
+Main source/review checkpoint before this shutdown documentation is `1a72ad8` on `codex/aeon-1-implementation-20261011`. Author repairs remain explicit isolated checkpoints to avoid claiming unreviewed integration at shutdown. No new implementation, aggregate test, provider/native request, Slack action, publication or deployment was started for shutdown. Last aggregate green remains historical `746afac`, not current acceptance. Three older dirty worktrees were preserved in place and snapshotted; details and hashes are in the restart guide/manifest. No repository/worktree test or check processes were found running in the shutdown scan.
 
 ### Historical claims and findings (superseded by the current disposition above)
 

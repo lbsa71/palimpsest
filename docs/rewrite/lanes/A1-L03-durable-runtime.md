@@ -1,8 +1,10 @@
 # A1-L03 — durable runtime and recovery
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **accepted — engineering runtime/recovery gate**. Session owner: **/root after author and fresh-review handoffs**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
-Environmental DI coordination, 2026-10-12: DI03 runtime/effects/resources passed fresh review `bddd9bf` (53/53). Root claims DI09 for `/root/a1_environment_storage`, isolated `environment-di-09` / `codex/a1-environment-di-09-20261012`: only storage index, new environment adapter, new DI09 test and lane evidence, as specified in the execution record. Original engineering acceptance remains historical evidence; storage DI and full application closure remain open.
+Environmental DI coordination, 2026-10-12: DI03 passed fresh review `bddd9bf` (53/53). DI09 author is integrated at `af817a9`; independent `d8cd34b` preserves transaction-entry R1. Root's isolated seven-path repair `65b1c18` passes50 prior plus15 new and strict, awaiting exact integration/fresh review. Two pre-existing application/storage fixture failures remain DI27-owned. Original runtime acceptance is historical evidence; current storage DI and application closure remain open. All claims are hibernated; see [RESUME](../RESUME.md).
 
 Requirements: [RW02, RW05, RW10, RW11, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
 

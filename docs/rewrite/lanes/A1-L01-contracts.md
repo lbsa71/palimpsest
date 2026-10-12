@@ -1,5 +1,7 @@
 # A1-L01 — contracts and architecture foundations
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **accepted — C1 engineering interface gate only**. Session owner: **Codex /root/a1_contract_closeout**. Accountable actor: Codex. Governing method: [workflow](../workflow.md). Phase and dependencies: [Aeon 1](../aeon-1.md).
 
 Requirements: [RW01, RW04, RW09, RW12, RW15, RW16, RW19, RW21](../../../REQUIREMENTS.md).

@@ -1,5 +1,7 @@
 # A1-L06 — tools, iterative coding and delegation
 
+**Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
+
 Status: **reviewing** — ordinary tools and overlapping sibling delegation implemented, integrated and fixture-verified with fresh boundary review; live competence and independent task qualification remain open. Session owner: **a1_tools**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW02, RW05, RW09, RW13, RW16, RW19, RW21](../../../REQUIREMENTS.md).

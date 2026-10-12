@@ -70,3 +70,9 @@ Every consequential architecture proposal includes a reuse/fork/build assessment
 ## Current planning-package acceptance
 
 This package is ready as a planning baseline when every lane has a goal and task decomposition, local references resolve, ownership and dependencies are consistent, the historical status is unmistakable, empirical claims have evidence or explicit uncertainty, and decommission claims match actual host checks. This does **not** start or complete any rewrite implementation lane.
+
+## Hibernate and resume explicitly
+
+When the user requests hibernation, stop launching work and tell every active owner to finalize only its current bounded item. Complete a finite goal only if its criteria are met; otherwise pause it, preserve its exact partial state and remaining failures, and stop its agent. Deactivate the overall unfinished goal after checkpointing; do not label an unfinished Aeon complete. Where the goal API offers pause but no deletion, report that distinction.
+
+Before stopping, commit authored changes within their declared scope, preserve unrelated/older dirty work without overwriting it, retain exact revision and evidence pointers, and update PLAN, execution, affected lanes and the restart entry point. Record unintegrated branches, known failures, tests actually run, dependencies, current effects/processes and concrete next slash goals with exclusive paths and model/effort routing. Supersede stale active claims explicitly. A future session must read the restart guide, inspect the current tree, and reclaim finite tasks only after the user resumes work; a document or queued review does not start an agent by itself.
