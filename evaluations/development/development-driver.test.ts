@@ -118,7 +118,10 @@ test('prepare binds six actual application Stores and unchanged original allocat
   const f = fixture(t), beforeWorkers = workers, driver = await f.open();
   assert.equal(f.plan.protocol!.schedule.length, 126); assert.equal(driver.recorder.status().snapshots.length, 6);
   const original = driver.application('candidate').accounting.originalResources;
-  for (const [roleId, value] of f.anchors) assert.deepEqual(original.store.get('allocations', roleId)!.value, value);
+  for (const [roleId, value] of f.anchors) {
+    const anchor=value as {startedAt:number;elapsedFloorMs:number},observed=roleId===f.registration.rootId||f.roles.some(role=>role.allocationId===roleId&&role.kind!=='reviewer');
+    assert.deepEqual(original.store.get('allocations', roleId)!.value, observed?{...anchor,elapsedFloorMs:Math.max(anchor.elapsedFloorMs,Date.parse(f.m.registeredAt)-anchor.startedAt)}:value);
+  }
   for (const descriptor of f.descriptors) { const { application: app, accounting } = driver.application(descriptor.roleId); assert.ok(app instanceof AutarkApplication); assert.equal(accounting.originalResources, original); assert.equal(app.resources, accounting.resources); assert.equal(app.runtime.store, app.store); assert.equal(app.communications.options.runtime, app.runtime); assert.equal(app.directApi.listening, false); assert.equal(app.options.performRequest, descriptor.application.performRequest); assert.equal(app.options.authorityStore, descriptor.application.authorityStore); assert.equal(app.options.secrets, descriptor.application.secrets); assert.equal(app.store.documentJournalBinding()!.stream, f.plan.roles.find(role => role.roleId === descriptor.roleId)!.journal!.stream); }
   assert.equal(original.store, driver.application('candidate').application.store); assert.equal(original.store.filename, f.plan.originalStateFile); assert.equal(original.snapshot(f.registration.rootId).requests, 0); assert.equal(workers, beforeWorkers); assert.equal(f.payloads.length, 0);
   assert.throws(() => driver.application('reviewer-a'), /Unregistered/);
