@@ -30,4 +30,27 @@ OD2-b recorder owner receives the typed input/output above. It constructs expect
 
 ## Execution and handoff
 
-Pre-code freeze only. Commands/results and exact source handoff will be appended after implementation.
+**Implemented and fixture-verified; not integrated or qualified.** Pre-code freeze is `a495782`. Source imports only accepted storage/contracts/communications types within this checkout. No new dependencies, live provider work, process confinement, listeners or network were used. Production/configuration/plan/historical source remained read-only.
+
+The concrete exports are `DevelopmentSourceInput`, `DevelopmentSourceProjection`, `DevelopmentSourceCapture`, `DevelopmentSourceClock`, `DevelopmentCycleSource`, `DevelopmentAssignmentSource`, `DevelopmentSourceProof`, `DevelopmentEventPosition`, `DevelopmentRuntimeResultSource`, and `projectDevelopmentSources`. Each cycle now directly retains `{before,after,lowerWallMs,upperWallMs,clockKind}` rather than relying solely on the enclosing projection. The recorder must establish separation using the later lower bound minus earlier upper bound; `observedAt` alone cannot qualify W. `current` is an explicit host-provided latest-known source assumption; it cannot authenticate its own freshness or replace JR2 durable attempt-use/custodian disposition.
+
+Actual fixture inspection refined two source bindings without changing the frozen authority boundary. A runtime-issued model request's captured `aeon:artifact` payload is resolved to its retained `sha256` copy and verified against the request/prompt digest. Runtime tool requests instead bind to their exact effect row and reconstructed ToolCall identity; no nonexistent tool prompt is required. Runtime result source records `{status,messageSequence,observationIds}` from `execution.lastResult` and its actual stored observations. An assignment revision can retain its admitted/steering ingress while its result remains null/unavailable until the durable `messageSequence` reaches that specific input. This prevents an earlier result on a reused run from awarding the later revision success. Result kinds/statuses are mechanical, with no semantic success interpretation.
+
+Observed initial focused run: **20 pass / 3 fail / 23 total**. All three failures came from the author's URI assumption: the projector required the operational prompt URI itself to be `sha256`, despite the recorder retaining a copy under that URI. The test fixture used real OperationalStore prompt records and exposed the defect. The source was corrected before any implementation/test commit, so there is no fabricated red revision. A subsequent focused run passed 23; final four additional cases specifically closed outstanding causal concerns: unconsumed later steering, new selection without a request, foreign-run request substitution, and later current-prefix replacement.
+
+Final commands from this worktree, pinned runtime `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node`:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/development-observer.test.ts
+# 27 tests: 27 pass, 0 fail, 0 skipped; ~3.4 seconds. SQLite emitted its ordinary experimental warning.
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+# exit 0; repository strict compilation, accepted-base closure only.
+git diff --check
+# exit 0.
+```
+
+Cases include real small SQLite v2 graphs; FairScheduler `ordinary`, InitiativeRunner, DurableRuntime, ResourceLedger and EffectJournal; exact CommunicationsCore admitted/steering input records and run reuse; preserved failed/uncertain physical requests; host-label/synthetic distinction; payload/current/prefix/digest/clock/session/schema/row/proof failures and operational withdrawal. They do not prove provider/model competence, qualified host-clock acquisition, complete ordinary-app shutdown/quiescence, retained full workload capacity or live elapsed operation. Packet bytes are authenticated only by recorder-owned accepted plan/registration outside this projector; local digest equality alone cannot establish an accepted assignment packet.
+
+Root's separately reported capacity inquiry (`a11b21a`, pre-code `54259b2`/`5666ab7`) found full snapshots refuse after eight separate actual ordinary ingress conversations: 370 combined rows but 1,127,064 conservative bytes; twelve reach 546 rows / 1,668,758 bytes. This task did not reproduce that inquiry or alter the fixed bounds. A separately designed bounded retained-page reader may consume the same global event/version proof identities after its own source/review gate; the current implementation remains the bounded materialized v2 path. No silent truncation, raised allowance, reader overlay or incremental implementation was added.
+
+Handoff is finite OD2-a source projection only. Root/recorder owner performs OD2-b after accepted JR2: constructs pinned input from actual recorder inventory/accepted role and packet, checks durable withdrawal/use/freshness eligibility, reads only retained bytes, retains bounded canonical proof, and exposes only specifically supported observation admission. Fresh independent OD3 review, recorder source integration, feedback judgments, matched controls, restart/context sensors, host qualification, full capacity, live development and H1 remain open. The author tool goal completes at this source/evidence handoff rather than waiting active for those separate gates.
