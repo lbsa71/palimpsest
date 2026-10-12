@@ -1,7 +1,7 @@
-import { DatabaseSync } from 'node:sqlite';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve, basename, join, sep } from 'node:path';
-import { mkdirSync, existsSync, realpathSync } from 'node:fs';
+import { createNodeStorageEnvironment } from './environment.ts';
+import type { StorageDatabase, StorageEnvironment } from './environment.ts';
 import { canonicalJson, invariant, nonempty, validateArtifact } from '../contracts/common.ts';
 import type { ArtifactRef, JsonValue } from '../contracts/common.ts';
 
@@ -51,27 +51,51 @@ function compareKeys(a: { namespace: string; key: string }, b: { namespace: stri
 
 export interface StoreOptions { filename: string; checkoutRoot?: string; documentJournal?: DocumentJournalOptions | null }
 /** One engine for operational and developmental state. Transactions are synchronous and cannot cross await. */
-function physicalPath(path: string): string {
-  if (existsSync(path)) return realpathSync(path);
-  return join(physicalPath(dirname(path)), basename(path));
+function physicalPath(path: string, exists: StorageEnvironment['exists'], realpath: StorageEnvironment['realpath']): string {
+  if (exists(path)) return realpath(path);
+  const parent = dirname(path);
+  invariant(parent !== path, 'physical filesystem root unavailable');
+  return join(physicalPath(parent, exists, realpath), basename(path));
+}
+function withCleanupFailure(primary: unknown, cleanup: unknown, message: string): AggregateError {
+  return new AggregateError([primary, cleanup], message, { cause: primary });
 }
 export class OperationalStore {
   readonly filename: string;
-  private db: DatabaseSync;
+  private db: StorageDatabase;
+  readonly #id: StorageEnvironment['id'];
+  #transactionUncertain = false;
+  #rollbackDatabase!: StorageDatabase['exec'];
   private depth = 0;
   private journalOption: DocumentJournalOptions | null | undefined;
   private observedJournal?: string;
   private developmentFence = false;
-  constructor(options: StoreOptions) {
-    invariant(isAbsolute(options.filename), 'state filename must be absolute');
-    this.filename = resolve(options.filename);
-    if (options.checkoutRoot) {
-      const path = relative(physicalPath(resolve(options.checkoutRoot)), physicalPath(this.filename));
+  constructor(options: StoreOptions, environment: StorageEnvironment = createNodeStorageEnvironment()) {
+    const { id, exists, realpath, mkdir, openDatabase } = environment;
+    this.#id = id;
+    const { filename, checkoutRoot, documentJournal } = options;
+    this.journalOption = documentJournal === undefined || documentJournal === null ? documentJournal : { ...documentJournal };
+    invariant(isAbsolute(filename), 'state filename must be absolute');
+    this.filename = resolve(filename);
+    if (checkoutRoot) {
+      const path = relative(physicalPath(resolve(checkoutRoot), exists, realpath), physicalPath(this.filename, exists, realpath));
       invariant(path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path), 'lived state must remain outside checkout');
     }
-    mkdirSync(dirname(this.filename), { recursive: true, mode: 0o700 });
-    this.db = new DatabaseSync(this.filename);
+    mkdir(dirname(this.filename), { recursive: true, mode: 0o700 });
+    const opened = openDatabase(this.filename);
+    const close = opened.close;
     try {
+      const { exec, prepare } = opened;
+      this.#rollbackDatabase = exec;
+      this.db = {
+        close: () => close(),
+        exec: sql => { this.assertTransactionCertain(); exec(sql); },
+        prepare: sql => {
+          this.assertTransactionCertain();
+          const { get, all, run } = prepare(sql);
+          return { get: (...values) => get(...values), all: (...values) => all(...values), run: (...values) => run(...values) };
+        },
+      };
       this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON');
       this.db.exec('BEGIN IMMEDIATE');
       try {
@@ -84,7 +108,7 @@ export class OperationalStore {
           CREATE TABLE artifacts(digest TEXT PRIMARY KEY, bytes BLOB NOT NULL);
           PRAGMA user_version=1;`);
         this.db.exec('COMMIT');
-      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+      } catch (error) { this.rollback('ROLLBACK', error); }
       const check = this.db.prepare('PRAGMA quick_check').all() as { quick_check: string }[];
       invariant(check.length === 1 && check[0]?.quick_check === 'ok', 'operational database corruption');
       // Diagnose a forged or partial schema on open, rather than during later writes.
@@ -92,7 +116,6 @@ export class OperationalStore {
         const actual = this.db.prepare(`PRAGMA table_info(${table})`).all() as {name:string}[];
         invariant(canonicalJson(actual.map(c=>c.name))===canonicalJson(columns), `incompatible ${table} schema`);
       }
-      this.journalOption = options.documentJournal === undefined || options.documentJournal === null ? options.documentJournal : { ...options.documentJournal };
       if (this.journalOption) {
         this.validateJournalOptions(this.journalOption);
         invariant(canonicalJson(this.journalOption) === canonicalJson({ stream: this.journalOption.stream, hostId: this.journalOption.hostId, maxAnchorDocuments: this.journalOption.maxAnchorDocuments, maxAnchorBytes: this.journalOption.maxAnchorBytes }), 'invalid document journal options');
@@ -107,13 +130,24 @@ export class OperationalStore {
         const documents = this.documentRows().map(row => this.createJournalVersion(row.namespace, row.key, { revision: row.revision, value: row.value }));
         const data = { schema: JOURNAL_SCHEMA, hostId: limits.hostId, maxAnchorDocuments: limits.maxAnchorDocuments, maxAnchorBytes: limits.maxAnchorBytes, documents };
         invariant(Buffer.byteLength(canonicalJson(data)) <= limits.maxAnchorBytes, 'document journal anchor exceeds bound');
-        const anchor = this.insertEvent({ id: randomUUID(), stream: limits.stream, type: JOURNAL_ANCHOR, data });
+        const anchor = this.insertEvent({ id: this.nextId(), stream: limits.stream, type: JOURNAL_ANCHOR, data });
         const created: DocumentJournalBinding = { ...limits, schema: JOURNAL_SCHEMA, anchorId: anchor.id, anchorSequence: anchor.sequence };
         this.db.prepare('INSERT INTO documents VALUES(?,?,1,?)').run(DOCUMENT_JOURNAL_NAMESPACE, DOCUMENT_JOURNAL_KEY, canonicalJson(created));
         return created;
       });
       if (binding) this.observedJournal = canonicalJson(binding);
-    } catch (error) { this.db.close(); throw new Error(`cannot open operational state ${this.filename}`, { cause: error }); }
+    } catch (error) {
+      let cause = error;
+      try { close(); } catch (cleanup) { cause = withCleanupFailure(error, cleanup, 'operational open and close failed'); }
+      throw new Error(`cannot open operational state ${this.filename}`, { cause });
+    }
+  }
+  private assertTransactionCertain(): void { invariant(!this.#transactionUncertain, 'operational transaction outcome uncertain; close required'); }
+  private nextId(): string { const id = this.#id; const value = id(); nonempty(value, 'storage.id'); return value; }
+  private rollback(sql: string, primary: unknown): never {
+    try { const exec = this.#rollbackDatabase; exec(sql); if (sql === 'ROLLBACK') this.#transactionUncertain = false; }
+    catch (cleanup) { this.#transactionUncertain = true; throw withCleanupFailure(primary, cleanup, 'operational transaction and rollback failed'); }
+    throw primary;
   }
   close(): void { this.assertDevelopmentWrite(); this.db.close(); }
   /** Retained source captures must not escape an uncommitted caller transaction. */
@@ -137,7 +171,7 @@ export class OperationalStore {
       const result = fn();
       invariant(!(result && typeof result === 'object' && 'then' in result), 'transaction callback must be synchronous');
       this.db.exec(outer ? 'COMMIT' : `RELEASE ${savepoint}`); return result;
-    } catch (error) { this.db.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`); throw error; }
+    } catch (error) { this.rollback(outer ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`, error); }
     finally { this.depth--; }
   }
   get<T = JsonValue>(namespace: string, key: string): Document<T> | undefined {
@@ -466,7 +500,8 @@ export class OperationalStore {
     invariant(canonicalJson(ref) === canonicalJson({ versionId: ref.versionId, namespace: ref.namespace, key: ref.key, revision: ref.revision, sha256: ref.sha256 }), 'invalid document journal ref fields');
   }
   private createJournalVersion(namespace: string, key: string, document: Document): JournalRef {
-    const ref: JournalRef = { versionId: randomUUID(), namespace, key, revision: document.revision, sha256: documentDigest(document) };
+    const ref: JournalRef = { versionId: this.nextId(), namespace, key, revision: document.revision, sha256: documentDigest(document) };
+    invariant(!this.db.prepare('SELECT 1 FROM documents WHERE namespace=? AND key=?').get(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, ref.versionId), 'duplicate document journal version identity');
     this.internalWrite(DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, ref.versionId, { ref, state: 'available', document });
     this.internalWrite(DOCUMENT_JOURNAL_HEAD_NAMESPACE, documentKey(namespace, key), ref);
     return ref;
@@ -502,7 +537,7 @@ export class OperationalStore {
     if (!binding) return;
     const next = after ? this.createJournalVersion(namespace, key, after) : null;
     if (!after) this.db.prepare('DELETE FROM documents WHERE namespace=? AND key=?').run(DOCUMENT_JOURNAL_HEAD_NAMESPACE, documentKey(namespace, key));
-    this.insertEvent({ id: randomUUID(), stream: binding.stream, type: JOURNAL_MUTATION, data: { schema: JOURNAL_SCHEMA, hostId: binding.hostId, namespace, key, before, after: next } });
+    this.insertEvent({ id: this.nextId(), stream: binding.stream, type: JOURNAL_MUTATION, data: { schema: JOURNAL_SCHEMA, hostId: binding.hostId, namespace, key, before, after: next } });
   }
   withdrawDocumentJournalContent(input: JournalWithdrawalInput): { withdrawalId: string | null; withdrawnVersionIds: string[] } {
     this.assertDevelopmentWrite();
