@@ -8,6 +8,8 @@ Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21]
 /goal Complete A1-L09 by integrating the rewrite into a recoverable installation, demonstrating an independently evaluated autonomous change through the whole-system release path and a failed-successor recovery that preserves current work, then delivering and verifying the H1 handoff package required for the Autark to own Aeon 2.
 ```
 
+Current additional root claim: environmental timing DI in isolated `environment-clock-injection`, narrow application/broker source, new broker timing tests and evidence; see the current execution record. User requires all environmental boundaries injectable. This finite clock/timeout slice replaces the interim driver global mock; broader ambient coupling must receive separate ownable tasks.
+
 ## Ownership and dependencies
 
 Root's 2026-10-12 shutdown follow-up reserves only `deployment/application.ts` shutdown fields/method, new `deployment/application-shutdown.test.ts` and `docs/rewrite/evidence/A1-L09/application-shutdown-drain.md`. The [precode contract](../evidence/A1-L09/application-shutdown-drain.md) requires shared completion, abort/drain despite preparatory failures, and retained Store/lease on failed closure; existing tests remain unchanged. Independent review follows exact source and local causal checks. This does not authorize a physical process or provider operation.
