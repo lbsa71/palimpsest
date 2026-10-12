@@ -332,6 +332,8 @@ function modelExecution(binding: DevelopmentReviewBinding, b: DevelopmentBehavio
   }
   invariant(decoded.judgment.overall === reviewed.overall, 'Signed overall judgment changed model output'); reason(decoded.judgment.reason, reviewed.judgment);
   unique(x.evidenceReads.map(v => v.requestId));
+  const observedReads = transitions.filter(t => t.state.roleId === role.id && t.state.request.provider === 'effect-receiver' && t.state.request.model === 'evidence_read' && t.state.request.status === 'succeeded');
+  equal(x.evidenceReads.map(v => v.requestId).sort(), observedReads.map(t => t.state.request.id).sort(), 'Review evidence read inventory omits/changes observed succeeded reviewer requests');
   for (const access of x.evidenceReads) {
     exact(access, 'requestId,artifact,localToolCallId,localRunId,stepId'); id(access.localToolCallId); id(access.localRunId); id(access.stepId); invariant(b.artifactIndex.some(v => v.artifact.sha256 === access.artifact.sha256), 'Model evidence read outside sealed B index');
     const event = transitions.find(t => t.state.request.id === access.requestId && t.state.request.status === 'succeeded');

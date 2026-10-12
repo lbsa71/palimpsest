@@ -308,3 +308,15 @@ test('tail collection snapshots input without executing signed getters', () => {
   Object.defineProperty(g.envelope.behavior.value, 'registrationDigest', { enumerable: true, get() { invoked = true; return identity(g.registered); } });
   assert.throws(() => tailWith(g, []), /accessors/); assert.equal(invoked, false);
 });
+
+for (const forged of [false, true]) test(`R1: observed actual succeeded read cannot omit access metadata${forged ? ' and forge reservation' : ''}`, async t => {
+  const { g } = await actualRead(t), x = g.envelope.reviews[0]!.value.execution.value, access = x.evidenceReads[0]!;
+  if (forged) {
+    let prior: DevelopmentRequestState | null = null;
+    for (const event of g.transitions.filter(e => e.state.request.id === access.requestId)) {
+      event.state.request.reservationId = 'forged-reservation'; event.beforeDigest = prior ? identity(prior) : null;
+      if (event.settlement) { const receipt = g.receipt(event.state); receipt.value.response = access.artifact; event.settlement = signDocument(d.settlement, receipt.value, 'transport', Buffer.alloc(32, 11)); } prior = event.state;
+    }
+  }
+  x.evidenceReads = []; refreshRead(g); rejected(g, /observed succeeded reviewer|Evidence read|evidence read/);
+});
