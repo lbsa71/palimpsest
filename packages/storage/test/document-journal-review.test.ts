@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { OperationalStore, RevisionConflict, DOCUMENT_JOURNAL_NAMESPACE, type DocumentJournalOptions, type EventInput } from '../index.ts';
+import { OperationalStore, RevisionConflict, DOCUMENT_JOURNAL_NAMESPACE, type DocumentJournalOptions, type EventInput, type JournalRef } from '../index.ts';
 import { AutarkApplication } from '../../../deployment/application.ts';
 import type { ApplicationConfig } from '../../../deployment/config.ts';
 import { AuthorityStore } from '../../supervisor/authority.ts';
@@ -25,8 +25,8 @@ for (const reserved of ['document-mutation', 'document-journal-anchor']) for (co
   const before = store.captureDevelopmentSnapshot(bounds);
   let reads = 0;
   const event: EventInput = fault === 'data-getter'
-    ? { id: 'forged', stream: journal.stream, type: 'observation', get data() { this.type = reserved; return { hostId: journal.hostId, schema: 'aeon.document-journal.v1' }; } }
-    : { id: 'forged', stream: journal.stream, get type() { return ++reads <= 2 ? 'observation' : reserved; }, data: { hostId: journal.hostId, schema: 'aeon.document-journal.v1' } };
+    ? { id: 'forged', stream: journal.stream, type: 'observation', get data() { this.type = reserved; return { hostId: journal.hostId, schema: 'aeon.document-journal.v2' }; } }
+    : { id: 'forged', stream: journal.stream, get type() { return ++reads <= 2 ? 'observation' : reserved; }, data: { hostId: journal.hostId, schema: 'aeon.document-journal.v2' } };
   try { store.append(event); } catch (error) { assert.match(String(error), /reserved/); }
   const after = store.captureDevelopmentSnapshot(bounds);
   assert.equal(after.events.filter(e => e.type === reserved).length, before.events.filter(e => e.type === reserved).length, 'generic caller minted a reserved host event');
@@ -49,7 +49,15 @@ test('committed transitions remain reconstructable through delete/recreate, stal
   early.delete('memory', 'x', 2); store.put('memory', 'x', 'recreated', null);
   const snapshot = f.open().captureDevelopmentSnapshot(bounds);
   assert.equal(snapshot.journalBinding?.anchorId, binding.anchorId);
-  const transitions = snapshot.events.filter(e => e.type === 'document-mutation').map(e => e.data as { before: unknown; after: unknown });
+  const resolveRef = (ref: JournalRef | null) => {
+    if (!ref) return null;
+    const payload = snapshot.journalPayloads.find(payload => payload.ref.versionId === ref.versionId);
+    assert.ok(payload && payload.state === 'available'); return payload.document;
+  };
+  const transitions = snapshot.events.filter(e => e.type === 'document-mutation').map(e => {
+    const data = e.data as unknown as { before: JournalRef | null; after: JournalRef | null };
+    return { before: resolveRef(data.before), after: resolveRef(data.after) };
+  });
   assert.deepEqual(transitions.map(e => [e.before, e.after]), [[{ revision: 1, value: 'anchor' }, { revision: 2, value: 'intermediate' }], [{ revision: 2, value: 'intermediate' }, null], [null, { revision: 1, value: 'recreated' }]]);
   assert.deepEqual(snapshot.documents.find(d => d.namespace === 'memory'), { namespace: 'memory', key: 'x', revision: 1, value: 'recreated' });
 });
@@ -135,7 +143,8 @@ test('actual application binds before initial allocation and omitted-option reop
     assert.equal(binding.anchorSequence, 1);
     assert.deepEqual((first.events[0]!.data as { documents: unknown[] }).documents, []);
     const allocation = first.events.filter(e => e.type === 'document-mutation').map(e => e.data as { namespace: string; key: string; before: unknown; after: unknown }).find(e => e.namespace === 'allocations' && e.key === 'operating-envelope:v1');
-    assert.ok(allocation); assert.equal(allocation.before, null); assert.deepEqual(allocation.after, app.store.get('allocations', 'operating-envelope:v1'));
+    assert.ok(allocation); assert.equal(allocation.before, null); const allocationPayload = first.journalPayloads.find(payload => payload.ref.versionId === (allocation.after as JournalRef).versionId);
+    assert.ok(allocationPayload && allocationPayload.state === 'available'); assert.deepEqual(allocationPayload.document, app.store.get('allocations', 'operating-envelope:v1'));
     await app.close(); app = undefined;
     app = new AutarkApplication(options); assert.deepEqual(app.store.documentJournalBinding(), binding);
     assert.deepEqual(app.store.captureDevelopmentSnapshot(bounds), first); assert.equal(requests, 0); assert.equal(app.directApi.listening, false);
