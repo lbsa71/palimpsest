@@ -2,7 +2,28 @@
 
 Implementation authorized 2026-10-11 by the user: “start work, set a goal to implement aeon 1 with maximal parallelism. Make sure subagents has goals as well.” The lead's active goal covers all nine lanes and H1 without reducing the acceptance gates. Every delegated session must create a finite goal and record its claim, evidence and remaining integration work.
 
-## Current disposition — host/runtime succession and independent dispatch
+## Current disposition — developmental acquisition and native recovery
+
+2026-10-12. The full Aeon 1 goal remains **active**. Component implementation and independent reviews are integrated across all nine lanes; product competence, actual developmental transfer and H1 are still unaccepted. This section supersedes older activity labels below. Every current delegated session has an actual finite tool goal and exclusive isolated worktree; completing that finite goal does not complete its lane or the root goal.
+
+- The complete joined source at `746afac525d1112f3e3beb4c1c0fec7967e50697` passed strict compilation, build and **1,238 tests, zero failures/cancellations, 18 explicit opt-in skips** across 115 files. The checkout stayed unchanged; the [aggregate record](evidence/A1-L09/integration-timeout-diagnosis.md) preserves exact commands, original failures, timings and log hashes. Later changes below have separate focused evidence and were not part of that aggregate.
+- The bounded developmental envelope is independently reviewed through author `104b5d3` / review `0073ac0`: **84 checks and strict compilation passed**. Actual model-response derivation, original wall-time reservations and persistent overrun cancellation are checked. The [review](evidence/A1-L08/development-review-envelope-review.md) retains the original three defects and the explicit unsupported manual-cancellation closure. This is mechanical evidence preparation, not qualified judgment.
+- Original-grant accounting is implemented through `c022227`, with independent review `5b53940`: **71 joined checks and strict compilation passed**. Isolated candidate/control/reviewer work shares the original allowance, immediate entry checks all ancestors, late responses retain their reserved evidence capacity, and recovery preserves unknown charges. [Accounting review](evidence/A1-L09/development-accounting-review.md) records the reproduced nested-cancellation/expiry defect and exact repair. Actual confined Pi/recorder composition remains to be demonstrated.
+- Raw-byte retention and bounded private reads are accepted through `2d37224`. The finite [acquisition recorder specification](evidence/A1-L08/development-acquisition-specification.md) is adopted. Its author is implementing bounded plans, complete evidence capture and phase control against the reviewed envelope/bridge. A separate transactional document journal addresses the demonstrated missing intermediate-revision/deletion observation surface; source `26328ad` has 31 author checks but remains isolated pending fresh review.
+- Native lifetime source/procedure review `5accad6` cleared the repair at `0abc4a1`, with **50 checks passed and three explicit skips**. It observes the spawned child's actual lifetime and permits PID/namespace reuse only with a later process start identity and awaited predecessor cleanup. [Native recovery review](evidence/A1-L08/native-recovery-review.md) preserves the consumed failed Codex acquisition; the separate Claude acquisition is unconsumed and awaits root's exact clean freeze/window. No successful actual persistent resume is claimed.
+
+| Current owner | Finite work and handoff |
+|---|---|
+| `/root/a1_development_acquisition`, `development-acquisition` worktree | Finite plan/capacity/recorder implementation; actual tool goal active; shared source changes require owner coordination |
+| `/root/a1_development_journal_review`, `development-journal-review` worktree | Fresh consequential journal/snapshot review; actual tool goal active; preserve causal failures before author repair |
+| `/root` | Integration, source-bound checks, next native physical window, later ordinary acquisition composition and H1 |
+| `/root/a1_native_recovery_review` | Existing actual audit goal remains active; its idle turn is interrupted to release a slot until exact Claude evidence is assigned |
+
+The journal author and envelope/accounting authors/reviewers completed their finite code/review handoffs. Slots are reused as dependencies become ready. Code and lightweight causal review remain parallel; root serializes substantial materialization and physical acquisition so evidence is reproducible. The source-owned Pi choice remains adopted; none of these observation/accounting defects demonstrates that replacing the shell would remove the required host boundaries.
+
+Actual live Mistral competence, qualified private workloads/calibration, both comparator results, complete real developmental boundaries/feedback, a model-authored whole-system improvement, live Slack conversation and H1 plan execution remain open. Account access and a priced live grant are still unanswered; no live inference, external Slack send, push or rewrite production deployment has occurred. The existing account/budget question is not silently treated as approval. Historical credentials/data remain preserved and the retired service remains decommissioned.
+
+## Earlier integration record — host/runtime succession and independent dispatch
 
 This section supersedes historical activity labels below. All nine lanes have source components or evaluation machinery integrated, but **no lane is accepted as a complete product capability and H1 is unaccepted**. The full lead goal remains active. Finite component/review goals release their slots after verified handoff; they do not inherit or falsely complete the full Aeon goal.
 
@@ -103,13 +124,13 @@ Integration checkout: `/home/palimpsest/src/palimpsest`, branch `codex/aeon-1-im
 |---|---|---|---|
 | A1-L01 | Lead after `/root/a1_contract_closeout` | Executable shared contracts and C1 consumer gate | Accepted engineering gate at `dbab4be`; closeout integrated `cc72d1c` |
 | A1-L02 | Lead after shell/schema/core-review handoffs | Narrow Pi source closure, real loop, prompt/transport control and deterministic qualification | Source-owned shell/schema and core repairs integrated; live competence pending |
-| A1-L08 | `/root/a1_evaluation`; `/home/palimpsest/migration/aeon-1-20261011/evaluation` | Predeclared evaluation, runnable screen, comparator feasibility and evidence envelopes | Foundation integrated; empirical protocol review and runs pending; `gpt-6-astra`, high |
+| A1-L08 | Root with finite acquisition/native sessions above | Predeclared evaluation, actual screen/comparator acquisition and developmental evidence | Mechanical envelopes and bounded screen source reviewed; actual qualification remains open |
 | A1-L09 | `/root`; integration checkout | Supervisor/release boundary, build/installation, incremental integration and eventual H1 | Implementing |
 | A1-L03 | Lead after author and fresh review | Durable runtime/effect engineering gate | Accepted at 01b3974; exact joined recovery proof and limitations recorded |
-| A1-L04 | `/root/a1_memory`; `/home/palimpsest/migration/aeon-1-20261011/memory` | Developmental retrieval, provenance, consolidation and revisable self | Component integrated; joined host qualification pending; `gpt-6.1-sol`, high |
-| A1-L05 | `/root/a1_initiative`; `initiative` worktree | Goals/drives/plans/scheduler/obligations with explicit model progress | Component integrated, 14 tests; finite goal complete; fresh review/live gates open |
-| A1-L06 | Lead after tools/application-integration handoffs | Confined repository/command/research tools and bounded child runtimes | Ordinary child execution and parent inspection integrated; application/resource review active |
-| A1-L07 | `/root/a1_communications`; `communications` worktree | Authenticated direct/Slack intake, recovery and explicit speech | Component integrated, 23 tests; finite goal complete; live/fresh review pending |
+| A1-L04 | Lead after component and fresh application reviews | Developmental retrieval, provenance, consolidation and revisable self | Engineering disposition integrated; real delayed learning/transfer remains open |
+| A1-L05 | Lead after component and fresh application reviews | Goals/drives/plans/scheduler/obligations with explicit model progress | Engineering disposition integrated; real initiative/development remains open |
+| A1-L06 | Lead after tools/application-integration handoffs | Confined repository/command/research tools and bounded child runtimes | Ordinary sibling delegation, parent inspection and fresh application/resource review integrated; competence remains open |
+| A1-L07 | Lead after communication/application review | Authenticated direct/Slack intake, recovery and explicit speech | Actual readonly Slack recovery and scoped visibility verified; live send/conversation remains open |
 
 The exact finite lane goals and task acceptance remain in the [lane documents](aeon-1.md). A component handoff releases a slot without representing unfinished live/integrated gates as accepted. Fresh reviews use isolated context and frozen artifacts.
 
@@ -131,7 +152,7 @@ Record source revisions, executed checks, outstanding review and downstream owne
 - Pi bridge: `6d806a7` integrated as `bbf7e2b`; nineteen component tests and a real dependency edit/build/fresh-process load check passed in its worktree. Further review is addressing repeated provider tool IDs, diagnostic preservation and reasoning-model support. TypeBox source ownership remains an explicit task.
 - Lead aggregate verification before Pi integration: strict typecheck, 44 tests and compiled build passed. This includes real namespace and persistent authority checks plus disposable release-admission fixtures. It is engineering evidence, not H1.
 
-## Current integration and review wave
+## Initial integration and review wave
 
 Frozen integration base `b95ee1d` includes L01–L08 components. Root owns the ordinary application/configuration/CLI wiring and repository configuration. Three isolated sessions have explicit finite tool goals:
 
