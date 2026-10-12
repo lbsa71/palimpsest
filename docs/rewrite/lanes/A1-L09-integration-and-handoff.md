@@ -61,7 +61,7 @@ Non-goals: reviving the old systemd process, old database migration, permanent h
 
 ## Coordination
 
-PILOT11 transport handoff: source70747a8 independently accepted and deployed as820bb1a0…/831c0624… at epoch73, preserving252 request values/six unknowns and nullable caps. New actual coding run20d7e17b… is running; source acceptance does not establish its coding outcome or cost. Private admission/progress scripts and exact evidence are listed in slack-pilot. Root still owns integration; feature paths remain Autark-only.
+PILOT11 transport handoff: source70747a8 independently accepted and deployed as820bb1a0…/831c0624… at epoch73, preserving252 request values/six unknowns and nullable caps. Run20d7e17b… returned measured usage but consumed32768 outputtokens entirely in thinking and safely stopped before tools; coding acceptance failed. Root claims one configuration-only effort:none coding trial, normal cognition release under unchanged accepted controls and a254-request baseline; see PILOT11. Private admission/progress scripts and exact evidence are listed in slack-pilot. Root still owns integration; feature paths remain Autark-only.
 
 PILOT11 transport follow-up at `c542fc3`: root reserves provider-gateway.ts/test and new provider-http.ts/test under deployment to a Sol/high author; root owns exact release/configuration,252-request admission guard and documentation. One independently reviewed adapter corrects the pinned Node five-minute header deadline while preserving caller abort, accounting, scope and failed trial evidence. No feature authorship or broad repair work. See PILOT11 behavioral gate.
 
