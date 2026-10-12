@@ -10,7 +10,7 @@ import { BudgetExceeded, ResourceLedger } from '../resources/index.ts';
 import { createProductionElapsedClock, createProductionIdSupplier, createProductionWallClock } from '../environment.ts';
 export class UncertainEffect extends Error { override name='UncertainEffect'; }
 interface InboxEntry { input: InboundInput; runId: string }
-interface ExecutionState { checkpoint?: ShellCheckpoint; lastResult?: ShellResult; failure?: string; messageSequence?: number }
+interface ExecutionState { checkpoint?: ShellCheckpoint; lastResult?: ShellResult; failure?: string; failedAttempt?: number; messageSequence?: number }
 export interface RuntimeOptions { store: OperationalStore; shell: ShellPort; effects: EffectJournal; resources: ResourceLedger; now?: ()=>number;
   elapsedNow?: () => number; newId?: () => string;
   /** Host eligibility, checked under the same operational write lock as the running claim. */
@@ -139,8 +139,12 @@ export class DurableRuntime {
     invariant(current.status==='running' && current.revision===run.revision && identity(current.authority)===identity(run.authority),'runtime claim changed before execution');
     const controller=new AbortController();this.active.set(runId,controller);const abort=()=>controller.abort(signal?.reason);signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     try {
-      this.effects.fence.assert(run.authority);signal?.throwIfAborted();
+      this.effects.fence.assert(run.authority);
       const state=this.execution(runId);
+      // Failure describes one attempt, not later steering or a successful continuation.
+      const { failure: _failure, failedAttempt: _failedAttempt, ...retained } = state;
+      this.saveExecution(runId,retained);
+      signal?.throwIfAborted();
       const entries=this.store.events<InboundInput>(runId,state.messageSequence??0).filter(e=>e.type==='admitted'||e.type==='steering');
       const messageSequence=entries.at(-1)?.sequence??state.messageSequence??0;
       const checkpoint=state.checkpoint?{...state.checkpoint,revision:run.revision}:undefined;
@@ -153,7 +157,7 @@ export class DurableRuntime {
       return this.status(runId,result.status==='completed'?'completed':result.status==='blocked'?'blocked':'waiting');
     } catch(error) {
       if(this.getRun(runId)!.status==='cancelled')return this.getRun(runId)!;
-      this.saveExecution(runId,{...this.execution(runId),failure:error instanceof Error?error.message:String(error)});
+      if(!controller.signal.aborted)this.saveExecution(runId,{...this.execution(runId),failure:error instanceof Error?error.message:String(error),failedAttempt:run.revision});
       return this.status(runId,error instanceof BudgetExceeded||error instanceof UncertainEffect?'blocked':'waiting');
     } finally {signal?.removeEventListener('abort',abort);this.active.delete(runId);}
   }

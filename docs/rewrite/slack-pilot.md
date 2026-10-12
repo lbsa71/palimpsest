@@ -69,6 +69,12 @@ Fresh independent activation review verified the exact running candidate and ori
 
 ## Operational handoff
 
+### PILOT-06: silent conversational deadline (2026-10-12)
+
+The user reported receipt reactions but no answer. Actual run `b3b0647…` made model/tool calls, reached `Worker deadline exceeded`, and became waiting with no pending scheduling entry or unconsumed steering. No speech was attempted. This is a concrete first-conversation blocker. Root owns this evidence, `deployment/prompts/mind.md`, bounded pilot input configuration and activation. `/root/runtime_readiness` (Sol/high) owns only narrow `deployment/application.ts` failure-notice composition, `packages/runtime/execution/index.ts` clearing stale attempt failures, and a new `deployment/conversation-failure.test.ts`. No automatic model retry loop or allowance reset is authorized.
+
+Finite outcome: conversational turns send an initial response before extended investigation; a worker deadline produces a truthful, durable host interruption notice through the existing fenced/accounted speech effect path instead of silent waiting. Existing checkpoints, uncertain charges and grants remain. The notice explicitly identifies itself as host status, can clear receipt indicators as a delivered terminal response, and must not counterfeit an AI answer. Send at most one notice per failed attempt, reconcile unknown delivery before another send, and avoid sending for ordinary checkpointed waiting, cancellation, steering or shutdown. Recovery may notify an already stranded deadline once without starting inference. Use injected existing APIs/Store/ledger and deterministic identity; focused causal fixture checks and strict only. Root increases the per-slice worker quantum from three to ten minutes to allow multiple high-effort requests within one slice; provider per-request limit and all root/conversation allowances stay fixed. Independent review and ordinary staged release remain required.
+
 - Mention `@palimpsest` in the existing configured Slack channel and continue in its thread. DMs are unqualified.
 - Service: `aeon-pilot.service`; use `sudo systemctl status aeon-pilot.service` for liveness. Avoid restarting during a running turn. The fixed service retains pilot state and allowance rather than creating another fresh instance.
 - Accepted candidate: `4db012639fd1136731ab1347d377dec3c656114d3fc021f7c0ef5939596f4726`; feature source `79c5a14`, parser source `3e9f28d`, original scope `5efba59`.

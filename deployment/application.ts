@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort } from '../packages/contracts/index.ts';
+import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort } from '../packages/contracts/index.ts';
 import type { Tool } from '../packages/agent-shell/vendor/pi/ai/types.ts';
 import { OperationalStore, type DocumentJournalOptions } from '../packages/storage/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
@@ -65,6 +65,9 @@ export class AutarkApplication {
   readonly slackActivity?: SlackActivity;
   private bootstrapPrompt?: PromptManifest;
   private active = new Map<string, Promise<Run>>();
+  private readonly checkedFailureNotices = new Set<string>();
+  private readonly reconciledFailureNotices = new Set<string>();
+  private readonly noticeElapsedNow: () => number;
   private shutdown = new AbortController();
   private initiativeTask?: Promise<unknown>;
   private developmentTurn = true;
@@ -76,6 +79,7 @@ export class AutarkApplication {
   private readonly rootAllocation = 'operating-envelope:v1';
   constructor(options: ApplicationOptions) {
     const suppliedTiming = options.brokerTiming, brokerTiming = captureBrokerTiming(suppliedTiming);
+    this.noticeElapsedNow = brokerTiming.monotonicNow;
     // Read accepted callback/accessor values once; caller aliases cannot change the
     // options used by constructor closures or later descriptor/receiver paths.
     options = Object.freeze({ config: options.config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore,
@@ -348,6 +352,55 @@ export class AutarkApplication {
       try { this.store.put('communications.slack.activity-status', 'storage', { error: 'activity_state_unavailable' }, this.store.get('communications.slack.activity-status', 'storage')?.revision ?? null); } catch {}
     }
   }
+  /** A host interruption is speech, never a new inference attempt or a grant reset. */
+  private async notifyConversationFailures(): Promise<void> {
+    const ids = new Set(this.store.list<Effect>('effects').filter(row => row.key.startsWith('host:deadline:')).map(row => row.key));
+    for (const { value: run } of this.store.list<Run>('runs')) {
+      if (run.status !== 'waiting' || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+      const state = this.store.get<{ failure?: string; failedAttempt?: number; checkpoint?: JsonValue; messageSequence?: number }>('execution', run.id)?.value;
+      if (state?.failure !== 'Worker deadline exceeded') continue;
+      const target = this.store.get<GrantRecord>('host.run-grants', run.id)?.value.target;
+      if (!target || target.transport === 'slack' && !this.config.slack?.allowSpeech) continue;
+      // Legacy stranded attempts retain a checkpoint identity across authority adoption.
+      const id = `host:deadline:${identity({ runId: run.id, attempt: state.failedAttempt ?? { checkpoint: state.checkpoint ?? null, messageSequence: state.messageSequence ?? 0 } })}`;
+      ids.add(id);
+      if (this.checkedFailureNotices.has(id) || this.effects.get(id)) continue;
+      this.checkedFailureNotices.add(id);
+      const payload = { channel: target.channel, ...(target.threadTs ? { threadTs: target.threadTs } : {}), kind: 'message', text: '[Host status] This turn stopped because its execution time limit was reached. No automatic retry has been started. Your message and recorded work are retained.' };
+      const request: PhysicalRequest = { id, runId: run.id, purpose: 'reasoning', provider: 'effect-receiver', model: 'speech_send', promptManifestId: id, requestDigest: identity(payload), reservationId: id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
+      try {
+        this.store.transaction(() => {
+          this.options.authorityStore.assert(run.authority);
+          this.resources.reserve(request);
+          this.effects.create({ id, runId: run.id, stepId: id, kind: 'speech_send', payload, scope: run.scope, authority: run.authority, status: 'pending', revision: 0 });
+          this.effects.authorize(id, id, run.authority);
+        });
+        this.checkedFailureNotices.delete(id); // Process the committed intent below.
+      } catch { this.store.put('host.failure-notice-status', id, { runId: run.id, status: 'not_authorized' }, this.store.get('host.failure-notice-status', id)?.revision ?? null); }
+    }
+    for (const id of ids) {
+      if (this.closing) continue;
+      let effect = this.effects.get(id); if (!effect) continue;
+      if (this.checkedFailureNotices.has(id) && (effect.status !== 'uncertain' || this.reconciledFailureNotices.has(id))) continue;
+      this.checkedFailureNotices.add(id);
+      try {
+        if (effect.status === 'authorized') {
+          const run = this.runtime.getRun(effect.runId);
+          if (run?.status !== 'waiting' || this.hasPendingSteering(effect.runId)) continue;
+          const request = this.resources.request(id)!;
+          const started = this.noticeElapsedNow();
+          effect = await this.effects.dispatch(id, run.authority, this.shutdown.signal, () => this.resources.dispatched({ ...request, status: 'dispatched' }));
+          this.resources.settle({ ...request, status: effect.status === 'succeeded' ? 'succeeded' : effect.status === 'failed' ? 'failed' : 'uncertain', usage: { ...request.usage, elapsedMs: Math.max(0, this.noticeElapsedNow() - started) } });
+        } else {
+          // One bounded history reconciliation per host lifetime. Unknown delivery is
+          // retained; never send another message just because its receipt was lost.
+          if (effect.status === 'uncertain') { this.reconciledFailureNotices.add(id); effect = await this.effects.reconcile(id, this.options.authority); }
+          const request = this.resources.request(id);
+          if (request && ['dispatched', 'uncertain'].includes(request.status) && ['succeeded', 'failed'].includes(effect.status)) this.resources.settle({ ...request, status: effect.status === 'succeeded' ? 'succeeded' : 'failed' });
+        }
+      } catch { this.store.put('host.failure-notice-status', id, { runId: effect.runId, status: 'receipt_pending' }, this.store.get('host.failure-notice-status', id)?.revision ?? null); }
+    }
+  }
   output(runId: string): JsonValue[] { return this.store.list<{ runId: string; receipt: JsonValue }>('communications.direct-outbox').filter(row => row.value.runId === runId).map(row => row.value.receipt); }
   private providerAvailable(): boolean {
     if (this.developmentControl.isScripted) { this.developmentControl.assert(); return true; }
@@ -433,6 +486,7 @@ export class AutarkApplication {
       this.developmentControl.assertRestoredState();
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
       this.activity(() => this.slackActivity?.tick());
+      await this.notifyConversationFailures();
       // Offline recovery retains intake and known local reconciliation. Missing credentials
       // must not consume scheduler slices or physical reservations on repeated polling.
       if (!this.providerAvailable()) return;
