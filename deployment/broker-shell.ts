@@ -19,7 +19,20 @@ export interface TransportReceipt {
   responseServiceTier?: JsonValue;
 }
 type WorkerConfig = Omit<ShellOptions, 'apiKey' | 'fetch' | 'resolveFragment' | 'steering' | 'reservationEstimate' | 'endpoint' | 'toolInstructions'>;
+/** Host callbacks, invoked without a receiver; never worker/model configuration. */
+export interface BrokerTiming {
+  monotonicNow(): number;
+  timeoutSignal(milliseconds: number): AbortSignal;
+}
+export function captureBrokerTiming(timing?: BrokerTiming): Readonly<BrokerTiming> {
+  const monotonicNow = timing?.monotonicNow ?? performance.now.bind(performance);
+  const timeoutSignal = timing?.timeoutSignal ?? AbortSignal.timeout.bind(AbortSignal);
+  invariant(typeof monotonicNow === 'function' && typeof timeoutSignal === 'function', 'Host timing callbacks required');
+  return Object.freeze({ monotonicNow, timeoutSignal });
+}
 export interface BrokerShellOptions {
+  brokerTiming?: BrokerTiming;
+  runWorker?: typeof runWorker;
   applicationRoot: string;
   entrypoint: string;
   workspace(input: ShellInput): string;
@@ -46,6 +59,14 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Model iteration is confined; credentials, reservations, receipts and tools remain in the host. */
 export function createBrokerShell(options: BrokerShellOptions): ShellPort {
+  const { monotonicNow, timeoutSignal } = captureBrokerTiming(options.brokerTiming);
+  const executeWorker = options.runWorker ?? runWorker;
+  invariant(typeof executeWorker === 'function', 'Host worker runner required');
+  const readTime = (): number => {
+    const value = monotonicNow();
+    invariant(Number.isFinite(value) && value >= 0, 'Invalid host monotonic time');
+    return value;
+  };
   const provider = options.worker.provider ?? 'mistral';
   invariant(provider === 'mistral' || provider === 'openai', 'Unsupported broker provider');
   invariant(options.worker.model && !options.worker.model.includes('latest'), 'Broker needs an explicitly pinned model');
@@ -95,7 +116,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
       }
       let output: JsonValue;
       try {
-      output = await runWorker({
+      output = await executeWorker({
         command: { workspace: options.workspace(input), protectedPaths: options.protectedPaths, applicationRoot: options.applicationRoot,
           nodeBinary: options.nodeBinary, executable: '/runtime/node', args: [`/app/${options.entrypoint}`],
           timeoutMs: options.timeoutMs, maxOutputBytes: options.maxPayloadBytes * 64, resourceLimits: options.resourceLimits, signal },
@@ -185,12 +206,14 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               // Consumption precedes network I/O. A second fetch can never reuse this reservation.
               record.fetched = true; physicalRequests++;
               const receipt: TransportReceipt = { requestId: record.request.id, dispatched: true, status: 'uncertain', httpStatus: null,
-                usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 }, responseModel: null, responseDigest: null };
-              const started = performance.now();
+                usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: record.request.usage.elapsedMs }, responseModel: null, responseDigest: null };
+              let started: number | undefined;
               record.receipt = receipt;
               options.recordTransport(receipt);
               const operation = (async () => { try {
-                const bounded = AbortSignal.any([workerSignal, AbortSignal.timeout(worker.timeoutMs ?? 60_000)]);
+                started = readTime();
+                const bounded = AbortSignal.any([workerSignal, timeoutSignal(worker.timeoutMs ?? 60_000)]);
+                bounded.throwIfAborted();
                 options.beforeRequest?.(record.request.id);
                 const response = await options.performRequest(payload, bounded);
                 invariant(Buffer.byteLength(response.body) <= (options.maxResponseBytes ?? options.maxPayloadBytes), 'Provider response too large');
@@ -225,11 +248,25 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                 } else if (response.status >= 400 && response.status < 500) receipt.status = 'failed';
                 return json(response);
               } finally {
-                receipt.usage.elapsedMs = performance.now() - started;
+                let timingFailure: Error | undefined;
+                if (started !== undefined) {
+                  try {
+                    const ended = readTime();
+                    invariant(ended >= started, 'Host monotonic time regressed');
+                    receipt.usage.elapsedMs = ended - started;
+                  } catch (cause) {
+                    // Raw response retention precedes timing. Unknown timing cannot
+                    // refund any part of a dispatched reservation, even with usage.
+                    receipt.status = 'uncertain';
+                    receipt.usage = { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: record.request.usage.elapsedMs };
+                    timingFailure = new Error('Host monotonic timing unavailable', { cause });
+                  }
+                }
                 options.recordTransport(receipt);
                 // Trusted host evidence is durable before replying, even if the worker dies
                 // or omits its advisory settlement RPC.
                 await settleRecord(record);
+                if (timingFailure) throw timingFailure;
               } })();
               inFlight.add(operation);
               try { return await operation; } finally { inFlight.delete(operation); }

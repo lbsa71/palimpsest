@@ -13,7 +13,7 @@ import { DelegationCoordinator } from '../packages/delegation/index.ts';
 import { ToolEffectReceiver, toolDefinitions, type ToolGrant } from '../packages/tools/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
-import { createBrokerShell } from './broker-shell.ts';
+import { createBrokerShell, captureBrokerTiming } from './broker-shell.ts';
 import { providerGateway, reconcileProviderReceipts, transportRecorder } from './provider-gateway.ts';
 import { selectedProviderKey, validateConfiguration, type ApplicationConfig, type ApplicationSecrets } from './config.ts';
 import { mindDevelopmentTools } from './development-tools.ts';
@@ -36,6 +36,8 @@ export interface ApplicationOptions {
   /** Only an external accepted release/bootstrap procedure supplies authority. */
   authority: Authority; authorityStore: AuthorityStore;
   performRequest?: Parameters<typeof createBrokerShell>[0]['performRequest'];
+  brokerTiming?: Parameters<typeof createBrokerShell>[0]['brokerTiming'];
+  runWorker?: Parameters<typeof createBrokerShell>[0]['runWorker'];
   slackBotApi?: SlackApi; slackAppApi?: SlackApi;
   lease?: ProcessLease;
   /** Trusted finite acquisition composition; never application configuration or a model tool. */
@@ -71,10 +73,12 @@ export class AutarkApplication {
   private closeTask?: Promise<void>;
   private readonly rootAllocation = 'operating-envelope:v1';
   constructor(options: ApplicationOptions) {
+    const suppliedTiming = options.brokerTiming, brokerTiming = captureBrokerTiming(suppliedTiming);
     // Read accepted callback/accessor values once; caller aliases cannot change the
     // options used by constructor closures or later descriptor/receiver paths.
     options = Object.freeze({ config: options.config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore,
-      performRequest: options.performRequest, slackBotApi: options.slackBotApi, slackAppApi: options.slackAppApi, lease: options.lease,
+      performRequest: options.performRequest, brokerTiming: suppliedTiming ? brokerTiming : undefined, runWorker: options.runWorker,
+      slackBotApi: options.slackBotApi, slackAppApi: options.slackAppApi, lease: options.lease,
       developmentAccounting: options.developmentAccounting, documentJournal: options.documentJournal, additionalTools: options.additionalTools });
     this.options = options; this.config = validateConfiguration(options.config);
     const config = this.config; options.authorityStore.assert(options.authority);
@@ -192,6 +196,7 @@ export class AutarkApplication {
       const permittedTools = toolDefinitions.filter(tool => this.toolGrant(input.run.id).actions.includes(tool.name));
       const tools = [...permittedTools.map(tool => ({ ...tool, parameters: tool.parameters as unknown as Tool['parameters'] })), ...descriptors.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema as Tool['parameters'] }))];
       const broker = createBrokerShell({ applicationRoot: config.applicationRoot, entrypoint: config.workerEntrypoint, workspace: () => record.workspace,
+        brokerTiming, runWorker: options.runWorker,
         protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
