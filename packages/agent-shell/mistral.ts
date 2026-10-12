@@ -131,7 +131,7 @@ export function createMistralTransport(options: MistralTransportOptions): { stre
               const choice = record(body.choices[0]); const reply = record(choice.message);
               message.content.push(...parseContent(reply.content));
               if (options.reasoningEffort) message.providerThinkingLevel = options.reasoningEffort;
-              if (reply.tool_calls !== undefined && !Array.isArray(reply.tool_calls)) throw new Error('Invalid Mistral tool calls');
+              if (reply.tool_calls !== undefined && reply.tool_calls !== null && !Array.isArray(reply.tool_calls)) throw new Error('Invalid Mistral tool calls');
               for (const raw of (reply.tool_calls ?? []) as unknown[]) {
                 const call = record(raw); const fn = record(call.function);
                 if (typeof call.id !== 'string' || typeof fn.name !== 'string' || typeof fn.arguments !== 'string') throw new Error('Invalid Mistral tool call');

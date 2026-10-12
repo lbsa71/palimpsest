@@ -24,3 +24,17 @@ Only fix defects reproduced on this path or demonstrated to compromise its resul
 ## Evidence
 
 Preparation in progress. No live inference, service activation or Slack conversation has yet been claimed.
+
+### Observed launch blocker: installed runtime path
+
+The first direct smoke task reached the ordinary runtime but stopped before any model request: `Runtime mount overlaps protected storage`. The installed bootstrap copies Node into `state/boot/targets/.../node` and forwards that path to the worker, whose existing confinement correctly refuses a runtime mount inside protected state. This is a concrete pilot blocker; no hypothetical-fault repairs are in scope.
+
+Root claims the private systemd drop-in for this pilot: select the existing frozen `deployment/cli.ts supervise` entrypoint using `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node`, retaining the same admission, current state, bounded volumes, delegated resources, and unit restrictions. Clear the bootstrap-specific stop hook. No production source or sandbox rule changes. This engineering pilot does not enable automatic coordinator self-evolution; later installation work owns that integration defect. Preserve the original bootstrap failure and review the direct-entry configuration before activation.
+
+### Observed conversation blocker: normal Mistral completion
+
+After the entrypoint correction, actual Large4/high inference executed `/runtime/node -e "console.log(6 * 7)"`, observed exit 0/stdout 42 and delivered explicit direct speech. The subsequent HTTP 200 model completion was rejected as `Invalid Mistral tool calls`, leaving the run blocked. The parser rejects `tool_calls: null` even though its following iteration already treats absent/null calls as an empty list.
+
+Root delegates PILOT-02 repair to `/root/model_iteration_readiness`, Sol/high, exclusive writes `packages/agent-shell/mistral.ts` and new `packages/agent-shell/mistral-null-tools.test.ts`. Establish the narrow behavior with nullable no-call completion, existing valid calls and genuinely invalid non-array payloads; change only the demonstrated completion parser boundary. Use focused transport checks and strict compilation. No other review/DI repairs. Root owns integration, fresh candidate/review and ordinary staged activation preserving the current state and allowance.
+
+Author result: nullable completion reproduced with 2 passing/1 failing focused case before the fix; after the one-line change, 22/22 new and existing shell cases and strict TypeScript pass. Malformed non-null nonarrays still fail. No broad backlog repair was made. The configured direct supervisor restart preserved all 12 retained memory/effect/request/outbox rows byte-for-byte (SHA-256 `27afc454698955b45c98541203e8b5f30408353a3bb0fa5b929fc1512b42e94a`), including the original 3 model/2 tool requests and USD 0.04284746 charged usage. Slack recovery resumed, with no transport-error event observed. The normal retention-coverage limitation remains explicit.
