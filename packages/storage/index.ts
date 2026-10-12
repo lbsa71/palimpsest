@@ -116,6 +116,8 @@ export class OperationalStore {
     } catch (error) { this.db.close(); throw new Error(`cannot open operational state ${this.filename}`, { cause: error }); }
   }
   close(): void { this.assertDevelopmentWrite(); this.db.close(); }
+  /** Retained source captures must not escape an uncommitted caller transaction. */
+  get transactionActive(): boolean { return this.depth > 0; }
   private assertDevelopmentWrite(): void { invariant(!this.developmentFence, 'source writes forbidden during development fence'); }
   private withDevelopmentFence<T>(fn: () => T): T {
     invariant(!this.developmentFence && this.depth === 0, 'reentrant development acquisition forbidden');

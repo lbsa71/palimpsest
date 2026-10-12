@@ -25,6 +25,43 @@ test('checkout state and asynchronous transactions are refused', () => {
   assert.throws(() => store.transaction(() => Promise.resolve(1))); store.close();
 });
 
+test('retained capture gate excludes outer and nested uncommitted state through rollback', () => {
+  const store = new OperationalStore({ filename: filename() });
+  const retained: unknown[] = [];
+  const capture = () => { assert.equal(store.transactionActive, false, 'capture requires committed source'); retained.push(store.get('runs', 'committed')?.value); };
+  try {
+    assert.equal(store.transactionActive, false);
+    store.transaction(() => {
+      store.put('runs', 'committed', { phase: 'outer' }, null);
+      assert.throws(capture, /capture requires committed source/);
+      assert.throws(() => store.transaction(() => {
+        store.put('runs', 'committed', { phase: 'nested' }, 1);
+        assert.throws(capture, /capture requires committed source/);
+        throw new Error('nested rollback');
+      }), /nested rollback/);
+      assert.equal(store.transactionActive, true);
+      assert.deepEqual(store.get('runs', 'committed')?.value, { phase: 'outer' });
+      assert.throws(capture, /capture requires committed source/);
+    });
+    assert.equal(retained.length, 0); capture();
+    assert.deepEqual(retained, [{ phase: 'outer' }]);
+    assert.throws(() => store.transaction(() => {
+      store.put('runs', 'committed', { phase: 'rolled back' }, 1);
+      store.transaction(() => assert.throws(capture, /capture requires committed source/));
+      assert.equal(store.transactionActive, true);
+      throw new Error('outer rollback');
+    }), /outer rollback/);
+    capture(); assert.deepEqual(retained, [{ phase: 'outer' }, { phase: 'outer' }]);
+    assert.throws(() => store.transaction(() => {
+      store.put('runs', 'committed', { phase: 'async rejected' }, 1);
+      assert.throws(capture, /capture requires committed source/);
+      return Promise.resolve();
+    }), /must be synchronous/);
+    assert.equal(store.transactionActive, false);
+    assert.deepEqual(store.get('runs', 'committed')?.value, { phase: 'outer' });
+  } finally { store.close(); }
+});
+
 test('dot-dot named checkout children and symlink aliases are rejected', async () => {
   const { mkdirSync, symlinkSync } = await import('node:fs');
   const root=mkdtempSync(join(tmpdir(),'aeon-checkout-'));mkdirSync(join(root,'checkout'));symlinkSync(join(root,'checkout'),join(root,'alias'));
