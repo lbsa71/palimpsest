@@ -176,7 +176,8 @@ function prepare(c: SourceAdmissionContext, s: DevelopmentControlSources) {
     const actual = required(original.rows.find(x => x.namespace === 'requests' && x.key === requestId(q.id)), 'Original physical inventory missing').value as unknown as { request: PhysicalRequest };
     const retainedState = required(original.rows.find(x => x.namespace === 'development.accounting.latest' && x.key === requestId(q.id)), 'Original bridge latest state missing').value;
     const currentActual = required(original.current.rows.find(x => x.namespace === 'requests' && x.key === requestId(q.id)), 'Current original physical inventory missing').value as unknown as { request: PhysicalRequest };
-    invariant(equal(actual.request, latest.state.request) && equal(retainedState, latest.state) && equal(currentActual.request, latest.state.request) && equal(currentOriginal.find(x => x.id === requestId(q.id)), latest.state.request), 'Original physical/bridge latest inventory differs');
+    const currentState = required(original.current.rows.find(x => x.namespace === 'development.accounting.latest' && x.key === requestId(q.id)), 'Current original bridge latest state missing').value;
+    invariant(equal(actual.request, latest.state.request) && equal(retainedState, latest.state) && equal(currentActual.request, latest.state.request) && equal(currentState, latest.state), 'Original physical/bridge latest inventory differs');
     invariant(latest.state.request.status === q.status && equal(latest.state.request.usage, q.usage), 'Original/local settlement differs');
     if (['reserved', 'dispatched', 'uncertain'].includes(q.status)) throw new Unavailable('Control physical settlement unavailable');
   }
