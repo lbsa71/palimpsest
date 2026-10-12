@@ -22,7 +22,7 @@ for (const cause of ['explicit-tool-error', 'wrong-task-run', 'wrong-task-call',
 
 import { mock } from 'node:test';
 import * as os from 'node:os';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, openSync, closeSync, constants, fstatSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { NativeBaselineRun } from './run-native.ts';
 import type { WorkerOptions } from '../../packages/supervisor/worker-process.ts';
@@ -217,5 +217,88 @@ test('read-only actual Codex acquisition preserves failed outcome, lineage, char
     assert.deepEqual(launches.map(x => x.result.nativeProcess.pidNamespace), ['pid:[4026532474]', 'pid:[4026532474]']);
     assert.ok(launches.every(x => x.result.nativeProcess.closeObserved === true));
     assert.match(failed.workspaceExportError, /unsupported workspace entry/);
+  } finally { db.close(); }
+});
+
+test('read-only actual Claude acquisition retains failed instructions, original accounting and observed child lifetimes', { skip: process.env.AEON_NATIVE_RECOVERY_AUDIT !== 'claude-acquisition-1' }, () => {
+  const parent = '/home/palimpsest/migration/aeon-1-20261011/native-recovery-physical-evidence', root = join(parent, 'claude-acquisition-1');
+  const bytes = (path: string) => { const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); try { assert.ok(fstatSync(fd).isFile()); return readFileSync(fd); } finally { closeSync(fd); } };
+  const hash = (value: Uint8Array | string) => createHash('sha256').update(value).digest('hex');
+  const read = (name: string) => JSON.parse(bytes(join(root, name)).toString());
+  const ready = read('ready.json'), failed = read('failure-state.json'), failure = read('failure.json'), freeze = read('observed-freeze.json');
+  const clearance = JSON.parse(bytes(join(parent, 'claude-clearance-cdc291a.json')).toString());
+  assert.deepEqual(freeze, clearance.freeze); assert.deepEqual(read('clearance.json'), clearance);
+  assert.deepEqual(JSON.parse(bytes(join(parent, 'claude-lifetime-preparation-freeze.json')).toString()).freeze, freeze);
+  assert.equal(freeze.sourceRevision, 'cdc291af5bdd66c91d59400aa9029d791da691c9');
+  assert.equal(hash(bytes(join(parent, 'claude-root-execution.log'))), '79f4e828a161fcd0d45b4e26afee609eae253430338167e9f0e0ffe84c9105c1');
+  const rootCleanup = JSON.parse(bytes(join(parent, 'claude-root-cleanup-observation.json')).toString());
+  assert.deepEqual(rootCleanup.leases.owner, []); assert.deepEqual(rootCleanup.matchingProcesses, []);
+  assert.equal(rootCleanup.retainedAttemptSha256, hash(bytes(join(root, 'attempt.json')))); assert.equal(rootCleanup.retainedFailureSha256, hash(bytes(join(root, 'failure.json'))));
+  assert.match(rootCleanup.limitations, /Point-in-time/);
+  assert.equal(bytes(join(root, 'protected/sentinel')).toString(), 'PRIVATE_NATIVE_RECOVERY_CONTROL');
+  assert.equal(bytes(join(root, 'workspace/recovery-observed.txt')).toString(), 'native-recovery-write-observed');
+  assert.equal(read('attempt.json').ordinal, 1); assert.equal(read('attempt.json').retry, false);
+  assert.equal(failure.firstFailure, true); assert.equal(failure.retry, false); assert.match(failure.refusal, /unknown effective instruction\/control difference/);
+  assert.deepEqual(failure.counts, { write: 2, read: 1 }); assert.equal(failure.results.length, 1);
+  assert.equal(existsSync(join(root, 'response-3.sse')), false); assert.equal(existsSync(join(root, 'result.json')), false);
+  const db = new DatabaseSync(join(root, 'state/observer.sqlite'), { readOnly: true });
+  try {
+    const artifacts = db.prepare('SELECT digest,bytes FROM artifacts').all(); assert.equal(artifacts.length, 29);
+    for (const row of artifacts) { assert.equal(hash(row.bytes as Uint8Array), row.digest); assert.deepEqual(bytes(join(root, 'artifacts', String(row.digest))), Buffer.from(row.bytes as Uint8Array)); }
+    const artifact = (ref: any) => { assert.equal(ref.uri, `aeon:artifact:${ref.sha256}`); const row = artifacts.find(item => item.digest === ref.sha256); assert.ok(row); return JSON.parse(Buffer.from(row.bytes as Uint8Array).toString()); };
+    const documents = db.prepare('SELECT namespace,key,revision,value FROM documents ORDER BY namespace,key').all().map(row => ({ ...row, value: JSON.parse(String(row.value)) })); assert.deepEqual(documents, failed.documents);
+    const rows = (snapshot: any, namespace: string): any[] => snapshot.documents.filter((row: any) => row.namespace === namespace);
+    for (const namespace of ['baseline-grants', 'budgets']) assert.deepEqual(rows(ready, namespace), rows(failed, namespace));
+    for (const row of rows(ready, 'requests')) assert.deepEqual(row, rows(failed, 'requests').find(item => item.key === row.key));
+    assert.equal(rows(failed, 'allocations').length, 1); assert.equal(rows(failed, 'allocations')[0].value.cancelled, true);
+    const requests = rows(failed, 'requests'); assert.equal(requests.length, 3);
+    assert.deepEqual(requests.filter(row => row.value.request.status === 'succeeded').map(row => row.value.charged.tokens), [110, 110]);
+    assert.deepEqual(requests.find(row => row.value.request.status === 'uncertain').value.charged, { costUsd: 8.08192, elapsedMs: 10000, tokens: 1004096 });
+    assert.equal(rows(failed, 'native-checkpoints').length, 1); const checkpoint = rows(failed, 'native-checkpoints')[0], original = rows(ready, 'native-checkpoints')[0];
+    assert.equal(original.value.status, 'ready'); assert.equal(checkpoint.value.status, 'running'); assert.equal(checkpoint.revision, 2); assert.equal(checkpoint.value.generation, 2);
+    assert.equal(checkpoint.value.originalStartedAt, 1791763916360); assert.equal(checkpoint.value.originalDeadline, 1791763976360);
+    assert.equal(checkpoint.value.originalStartedAt, original.value.originalStartedAt); assert.equal(checkpoint.value.originalDeadline, original.value.originalDeadline);
+    const session = '0a9ac94e-8c61-4891-a566-6e6d26bc5fe7'; assert.equal(checkpoint.value.sessionId, session);
+    const launches = rows(failed, 'baseline-launches').map(row => ({ row, manifest: artifact(row.value.manifest), context: artifact(row.value.context), outcome: artifact(row.value.result) })); assert.equal(launches.length, 2);
+    for (const [index, launch] of launches.entries()) {
+      assert.equal(launch.context.generation, index + 1); assert.equal(launch.context.manifestSha256, launch.row.value.manifest.sha256);
+      assertNativeProcessLifetime(launch.outcome.nativeProcess, launch.context, true);
+      assert.equal(launch.outcome.nativeProcess.close.code, launch.outcome.code); assert.equal(launch.outcome.nativeProcess.close.signal, launch.outcome.signal);
+      assert.deepEqual(launch.manifest.sourceIdentity.files, freeze.sourceFiles); assert.equal(launch.manifest.sourceIdentity.sha256, freeze.sourceManifestSha256);
+      assert.deepEqual(launch.manifest.kernelIdentity, freeze.kernelIdentity); assert.deepEqual(launch.manifest.hostTools, freeze.hostTools);
+      assert.equal(launch.manifest.nodeSha256, freeze.node.sha256); assert.equal(launch.manifest.nodeVersion, freeze.node.version);
+      assert.deepEqual(launch.manifest.native.files, freeze.native.files); assert.equal(launch.manifest.native.version, freeze.native.version);
+      assert.equal(launch.context.hostBootId, failed.host.bootId); assert.equal(launch.context.hostPid, failed.host.pid);
+      assert.notEqual(launch.outcome.nativeProcess.pidNamespaceBefore, failed.host.namespaces.pid);
+    }
+    const [first, second] = launches; assert.deepEqual(first!.manifest.grant, second!.manifest.grant);
+    assert.deepEqual(first!.manifest.grant.resources, { maxConcurrency: 4, maxCostUsd: 100, maxElapsedMs: 60000, maxRequests: 8, maxTokens: 8032768 });
+    assert.equal(first!.manifest.grant.profile.contextWindowTokens, 1000000); assert.equal(first!.manifest.grant.profile.maxOutputTokens, 4096);
+    const cleanup = artifact(original.value.cleanup); assert.deepEqual(cleanup.launchContext, first!.row.value.context); assert.deepEqual(cleanup.manifest, first!.row.value.manifest); assert.deepEqual(cleanup.result, first!.row.value.result);
+    assert.equal(cleanup.pendingOperations, 0); assert.equal(cleanup.nativeExit, 0); assert.equal(cleanup.nativeSignal, null);
+    assert.equal(second!.context.priorCleanupSha256, original.value.cleanup.sha256); assert.ok(BigInt(first!.context.startedNs) < BigInt(cleanup.completedNs)); assert.ok(BigInt(cleanup.completedNs) < BigInt(second!.context.startedNs));
+    assert.deepEqual(launches.map(x => x.outcome.nativeProcess.pid), [9, 9]); assert.deepEqual(launches.map(x => x.outcome.nativeProcess.startTicks), ['15900357', '15900693']);
+    assert.equal(first!.outcome.code, 0); assert.equal(first!.outcome.recoveryError, null); const gate = new NativeSessionEvents('claude', session, 1_000_000); gate.feed(Buffer.from(first!.outcome.stdout)); assert.equal(gate.finish().sessionId, session);
+    assert.equal(second!.outcome.code, 143); assert.equal(second!.outcome.signal, null); assert.equal(second!.outcome.recoveryError, 'Unacquired native event');
+    const retry = second!.outcome.stdout.split('\n').filter(Boolean).map((line: string) => JSON.parse(line)).find((event: any) => event.subtype === 'api_retry'); assert.equal(retry.attempt, 1); assert.equal(retry.error_status, 502);
+    const args = second!.outcome.invocation.args; assert.equal(args[args.indexOf('--resume') + 1], session); assert.equal(second!.manifest.nativeSession.sessionId, session);
+    assert.equal(read('dispatch-3.json').identity.sessionId, session); assert.equal(JSON.parse(read('dispatch-3.json').identity.startup).session_id, session);
+    const request2 = read('request-2.json'), request3 = read('request-3.json'); acquisitionAssertions().history('claude', request3);
+    const blocks = (request: any, type: string) => request.messages.flatMap((m: any) => Array.isArray(m.content) ? m.content : []).filter((b: any) => b.type === type);
+    for (const type of ['tool_use', 'tool_result']) assert.deepEqual(blocks(request2, type), blocks(request3, type));
+    const instructions = read('instruction-audit.json'); assert.equal(instructions.equal, false); assert.deepEqual(instructions.before.control, instructions.resumed.control);
+    assert.equal(instructions.before.instructions.length, 1); assert.equal(instructions.resumed.instructions.length, 3);
+    assert.equal(instructions.before.instructions[0].content[0].text, instructions.resumed.instructions[0].content);
+    assert.equal(instructions.resumed.instructions[1].content, '<total_tokens>14999890 tokens left</total_tokens>');
+    assert.equal(instructions.resumed.instructions[2].content[0].text, '<total_tokens>15000000 tokens left</total_tokens>');
+    assert.throws(() => assert.deepEqual(instructions.before, instructions.resumed), 'failed instruction equivalence remains a failed capability');
+    const beforeLog = ready.workspace.find((entry: any) => entry.path.endsWith('.jsonl')), afterLog = failed.workspace.find((entry: any) => entry.path === beforeLog.path);
+    const oldBytes = Buffer.from(beforeLog.base64, 'base64'), newBytes = Buffer.from(afterLog.base64, 'base64');
+    assert.equal(oldBytes.length, 36322); assert.equal(newBytes.length, 39563); assert.deepEqual(newBytes.subarray(0, oldBytes.length), oldBytes);
+    for (const snapshot of [ready, failed]) for (const file of snapshot.workspace.filter((entry: any) => entry.kind === 'file')) { const content = Buffer.from(file.base64, 'base64'); assert.equal(content.length, file.size); assert.equal(hash(content), file.sha256); }
+    assert.equal(failed.workspaceExportError, undefined); assert.deepEqual(ready.lease, []); assert.deepEqual(failed.lease, []);
+    const plan = read('declared-plan.json'); assert.equal(hash(canonicalJson(plan)), freeze.publicPlanSha256);
+    assert.equal(plan.phases[1].prompt.includes('native-recovery-write-observed'), false);
+    for (const ordinal of [1, 2]) assert.equal(bytes(join(root, `response-${ordinal}.sse`)).toString(), plan.phases[0].replies[ordinal - 1].body);
   } finally { db.close(); }
 });
