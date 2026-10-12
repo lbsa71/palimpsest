@@ -17,3 +17,9 @@ git diff --check
 ```
 
 Strict and diff pass. Eight-file suite **183/183pass**, zero failures/cancellations/skips,44.333923seconds. Complete log SHA-256 `24f096cc6ee37caad8ad3fc1e192fff3d256ffca62937a13d793a67d8006733b`; temporary log `/tmp/aeon-h-f1-root-tests.log` is not a durable artifact dependency. These commands ran against the final source/test diff committed with this receipt. No recorder/projection/full-trace/native/provider/physical test ran. New fresh classification review, later exact joined recorder/P1/P2 acceptance and whole-workload performance remain open.
+
+## H-F2 preserved first repair
+
+Fresh review `e3098a5164ff8bb965578bfd2277ec316a186996` adds14 held-out cases:12pass/2fail on83e76b1,1.809seconds final run; prior183pass. Exact1M controls pass; larger operational aliases are read at32MiB during final B reconstruction and copied twice before later refusal. Root's pre-code supplement2533dc0 freezes a shared bounded prompt/ref helper and earlier final admission.
+
+The first root H-F2 implementation fixes all14 held-out cases but moves review/T checks before B reconstruction for *both* attempt versions. The nine-file check records197total,189pass/8fail,zero skips,48.190821seconds (logSHA `1e520562c1b5635bdceead80f68b8eb7dea1be233e7f28ec346f6f6a5d0f5d4d`). Eight old version1 causal tests still reject invalid envelopes, but now report review/B-binding instead of their original inventory/history/overhead reason. This is an unnecessary validation-order change for the old1M profile. Root preserves this failed source checkpoint, then restricts early whole-envelope preflight to the explicit larger version2 profile while leaving original version1 sequencing unchanged. No assertion is edited. The standalone tail helper remains shared and bounded.

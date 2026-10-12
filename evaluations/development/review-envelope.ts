@@ -106,6 +106,15 @@ function refs(value: unknown, visit: (ref: ArtifactRef) => void): void {
   if ('uri' in value && 'sha256' in value) { visit(value as ArtifactRef); return; }
   for (const child of Object.values(value)) refs(child, visit);
 }
+/** Operational preimages are classified before any generic retained-metadata inventory. */
+function operationalSources(read: BoundedArtifactReader, sources: unknown, prompts: (ArtifactRef | null)[]): void {
+  const bounded = (ref: ArtifactRef) => read(ref, developmentOperationalArtifactBytes);
+  refs(sources, bounded);
+  for (const prompt of prompts) if (prompt) {
+    const captured: unknown = JSON.parse(Buffer.from(bounded(prompt)).toString('utf8'));
+    refs(captured, bounded);
+  }
+}
 /** One content digest counts once across aliases; every encountered URI is validated. */
 function retained(reader: BoundedArtifactReader, limits: DevelopmentAttempt['limits'], overhead = 0) {
   let total = overhead; const bytes = new Map<string, Uint8Array>();
@@ -154,16 +163,11 @@ export function collectDevelopmentAccountingTail(registrationDigest: string, beh
   invariant(input.limits.maxArtifactBytes <= input.limits.maxEvidenceBytes, 'Tail artifact allowance exceeds total bound');
   limits = input.limits; validateIndex(input.behavior.artifactIndex, limits);
   const storage = retained(reader, limits), original = new Set(input.behavior.artifactIndex.map(e => e.artifact.sha256));
-  const operationalRead = (ref: ArtifactRef) => storage.read(ref, developmentOperationalArtifactBytes);
   // Classify known operational uses before a generic metadata inventory can load them.
   const { artifactIndex: _index, ...behavioralSources } = input.behavior;
-  refs({ behavior: behavioralSources, transitions: input.transitions, reviews: input.reviews }, operationalRead);
-  for (const transition of [...input.behavior.transitions, ...input.transitions]) if (transition.state.prompt) {
-    const captured = JSON.parse(Buffer.from(operationalRead(transition.state.prompt)).toString('utf8')); refs(captured, operationalRead);
-  }
-  for (const request of input.behavior.requests) if (request.prompt) {
-    const captured = JSON.parse(Buffer.from(operationalRead(request.prompt)).toString('utf8')); refs(captured, operationalRead);
-  }
+  operationalSources(storage.read, { behavior: behavioralSources, transitions: input.transitions, reviews: input.reviews }, [
+    ...input.behavior.requests.map(s => s.prompt), ...input.behavior.transitions.map(t => t.state.prompt), ...input.transitions.map(t => t.state.prompt),
+  ]);
   for (const entry of input.behavior.artifactIndex) invariant(storage.read(entry.artifact).byteLength === entry.bytes, 'Retained B index byte length changed');
   storage.scan(input.retainedArtifacts);
   const tail: DevelopmentAccountingTail = { version: 2, registrationDigest, behaviorDigest: identity(input.behavior), transitions: input.transitions, artifactIndex: storage.index().filter(e => !original.has(e.artifact.sha256)) };
@@ -414,9 +418,6 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
       invariant(Buffer.byteLength(canonicalJson(envelope.behavior)) <= m.limits.maxArtifactBytes, 'Signed B metadata artifact allowance exceeded');
       invariant(Buffer.byteLength(canonicalJson(envelope.accountingTail)) <= m.limits.maxArtifactBytes, 'Signed T metadata artifact allowance exceeded');
     }
-    const storage = retained(reader, m.limits, Buffer.byteLength(canonicalJson(envelope)));
-    validateIndex(b.artifactIndex, m.limits);
-    const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now, b.artifactIndex.map(e => e.artifact)); equal(b, collected, 'Changed immutable B/evidence/artifact index');
     const behaviorDigest = identity(b), reviews: Signed<DevelopmentReview>[] = []; invariant(envelope.reviews.length <= 2, 'At most two independent review bindings'); unique(envelope.reviews.map(v => v.signer));
     for (const signed of envelope.reviews) {
       const reviewer = trust.behavior.reviewers.get(signed.signer); invariant(reviewer, 'Unqualified reviewer'); const v = authenticate(reviewEnvelopeDomains.review, signed, new Map([[signed.signer, reviewer.key]]));
@@ -424,11 +425,18 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
       invariant(v.version === 2 && v.registrationDigest === identity(r) && v.behaviorDigest === behaviorDigest && role?.kind === 'reviewer' && role.assignmentId === signed.signer && v.review.signer === signed.signer, 'Review changed B/assigned role');
       invariant(at(v.review.value.reviewedAt) >= at(b.frozenAt) && at(v.review.value.reviewedAt) <= at(r.reviewDeadlineAt) && at(v.review.value.reviewedAt) <= now, 'Review outside original completion deadline'); reviews.push(v.review);
     }
-    behavioralReview = prepareDevelopmentEvidenceProjection(b.manifest, b.observations, reviews, trust.behavior, storage.read, profiles(b.requests, roles), now).result;
-    findings.push(...behavioralReview.findings);
     const tail = authenticate(reviewEnvelopeDomains.tail, envelope.accountingTail, observer); exact(tail, 'version,registrationDigest,behaviorDigest,transitions,artifactIndex');
     invariant(tail.version === 2 && tail.registrationDigest === identity(r) && tail.behaviorDigest === behaviorDigest, 'Tail changed registration/B');
     invariant(behaviorRecords(r, b) + tail.transitions.length + envelope.reviews.length + tail.artifactIndex.length <= m.limits.maxRecords, 'Joined bounded record allowance exceeded');
+    const storage = retained(reader, m.limits, Buffer.byteLength(canonicalJson(envelope)));
+    const { artifactIndex: _index, ...behavioralSources } = b;
+    operationalSources(storage.read, { behavior: behavioralSources, originalRequests: r.originalRequests, transitions: tail.transitions, reviews: envelope.reviews, closure: envelope.closure }, [
+      ...r.originalRequests.map(s => s.prompt), ...b.requests.map(s => s.prompt), ...b.transitions.map(t => t.state.prompt), ...tail.transitions.map(t => t.state.prompt),
+    ]);
+    validateIndex(b.artifactIndex, m.limits);
+    const collected = collectDevelopmentBehavior(envelope.registration, b.manifest, b.observations, b.requests, b.transitions, b.frozenAt, trust, storage.read, now, b.artifactIndex.map(e => e.artifact)); equal(b, collected, 'Changed immutable B/evidence/artifact index');
+    behavioralReview = prepareDevelopmentEvidenceProjection(b.manifest, b.observations, reviews, trust.behavior, storage.read, profiles(b.requests, roles), now).result;
+    findings.push(...behavioralReview.findings);
     const { latest, previousTime, rootCancelled } = replay(tail.transitions, [...r.originalRequests, ...b.requests], b.rootCancelled, 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
     for (const binding of envelope.reviews) modelExecution(binding.value, b, r, roles, tail.transitions, latest, trust, storage.read);
     validateIndex(tail.artifactIndex, m.limits);
