@@ -5,6 +5,7 @@ import { authenticate, inertSnapshot, type Signed } from '../qualification/manif
 import type { DocumentJournalOptions, PageCaptureBounds } from '../../packages/storage/index.ts';
 import { collectDevelopmentEvidenceProjection, developmentCapacityProfile, developmentCapacityLimits, developmentOperationalArtifactBytes, verifyDevelopmentAttempt, type DevelopmentAttempt } from './witness.ts';
 import { reviewEnvelopeDomains, type DevelopmentEnvelopeTrust, type DevelopmentRegistration } from './review-envelope.ts';
+import { validateReviewAdmission, reviewAdmissionDigest, reviewAdmissionSources, developmentReviewReservation, type ReviewAdmission, type ReviewReservation, type ReviewAdmissionSource } from './review-reservation.ts';
 
 export const evidenceRetentionDomain = 'aeon.development.evidence-retention.v1';
 export const evidenceCustodianDomain = 'aeon.development.evidence-custodian.v1';
@@ -40,10 +41,12 @@ export interface DevelopmentAcquisitionPlan {
   capacity: { captureBytes: number; maxSnapshots: number; maxSnapshotBytes: number; envelopeBytes: number; transitionBytes: number; failureBytes: number; inventoryEntryBytes: number; maxArtifacts: number; maxObservations: number };
 }
 export interface AcquisitionPlanTrust {
+  reviewAdmission?: ReviewAdmission;
   retention?: { acceptedGrantDigest: string; issuers: ReadonlyMap<string, Uint8Array>; custodianSigner: string; custodianKey: Uint8Array };
   acceptedPlanDigest: string; issuers: ReadonlyMap<string, Uint8Array>; envelope: DevelopmentEnvelopeTrust;
 }
 export interface AcquisitionCapacity {
+  reviewAdmissionDigest?: string; reviewReservations?: ReviewReservation[]; reviewSources?: ReviewAdmissionSource[];
   draftBytes: number; responseBytes: number; metadataBytes: number; captureBytes: number; failureBytes: number;
   totalBytes: number; records: number; maxRequests: number;
   sourceArtifacts: number; sourceBytes: number; mandatoryObservations: number; mandatorySnapshots: number; observationBytes: number;
@@ -158,9 +161,20 @@ export function verifyAcquisitionPlan(document: Signed<DevelopmentAcquisitionPla
   invariant(p.capacity.inventoryEntryBytes >= 256 && p.capacity.failureBytes >= 2048 && (p.version === 2 || p.capacity.maxSnapshots * p.capacity.maxSnapshotBytes <= p.capacity.captureBytes), 'Snapshot/index/failure capacity insufficient');
   if (p.version === 2) validatePagePlan(p, packet);
   const capacity = acquisitionCapacity(p);
+  if (p.version === 2) {
+    try {
+      const admission = trust.reviewAdmission; invariant(admission, 'Externally accepted reviewer admission missing');
+      validateReviewAdmission(admission, m, r, p.roles,trust.envelope.behavior.reviewers);
+      invariant(admission.sessions.every(s=>s.plan.maxResponseBytes<=p.captureLayout!.proofPool.mandatoryArtifactBytes),'Required decoded review proof singleton cannot fit');
+      capacity.reviewAdmissionDigest = reviewAdmissionDigest(admission);
+      capacity.reviewSources = reviewAdmissionSources(admission, reader);
+      capacity.reviewReservations = admission.sessions.map(session => developmentReviewReservation(session, p.roles.find(rp => rp.roleId === session.roleId)!, { manifest: m, registration: r, template: admission.template, instructionBytes: capacity.reviewSources!.map(i => ({ artifact: i.artifact, bytes: Buffer.from(i.contentBase64, 'base64') })) }));
+    } catch (error) { throw new AcquisitionInfeasible(`Reviewer preclaim admission cannot fit: ${String(error instanceof Error ? error.message : error)}`); }
+  }
   const retainedSources = new Set<string>(); let sourceBytes = 0;
   const countSources = (v: unknown): void => { if (!v || typeof v !== 'object') return; if ('uri' in v && 'sha256' in v) { const ref = v as ArtifactRef; if (!retainedSources.has(ref.sha256)) { retainedSources.add(ref.sha256); sourceBytes += reader(ref, m.limits.maxArtifactBytes).byteLength; } return; } Object.values(v).forEach(countSources); };
   countSources(p);
+  for (const item of capacity.reviewSources ?? []) if (!retainedSources.has(item.artifact.sha256)) { retainedSources.add(item.artifact.sha256); sourceBytes += item.bytes; }
   capacity.sourceArtifacts = retainedSources.size; capacity.sourceBytes = sourceBytes;
   capacity.mandatorySnapshots = packet.assignments.length + r.roles.filter(role => role.kind !== 'reviewer').length + (p.protocol ? p.protocol.initialCaptures + p.protocol.cycleCaptures + p.protocol.boundaryCaptures : 1);
   if (p.capacity.maxSnapshots < capacity.mandatorySnapshots || p.capacity.maxObservations < capacity.mandatoryObservations || p.capacity.maxArtifacts < mandatoryAcquisitionSlots(p, capacity))
@@ -193,6 +207,11 @@ export function verifyAcquisitionPlan(document: Signed<DevelopmentAcquisitionPla
   const snapshotOwnerBytes = Math.max(...r.roles.map(role => size({ roleId: role.id, source: { pathIdentity: { device: '9'.repeat(20), inode: '9'.repeat(20) }, journalDigest: zero }, artifact: ref, cursor: Number.MAX_SAFE_INTEGER, snapshotDigest: zero, clock: { kind: 'synthetic', wallMs: Number.MAX_SAFE_INTEGER, monotonicMs: Number.MAX_VALUE, bootId: 'x'.repeat(128), processStart: 'x'.repeat(128) } })));
   capacity.dispositionOwnerBytes = Math.max(...r.roles.map(role => size(wrap({ version: 1, planDigest: zero, attemptDigest: zero, grantDigest: zero, custodianId: p.retention?.value.custodianId ?? m.observerId, status: 'document-history-corrupt-or-missing', reasonCode: '\u0000'.repeat(128), behaviorDigest: zero, inventoryDigest: zero, source: { roleId: role.id, journalDigest: zero, cursor: Number.MAX_SAFE_INTEGER, withdrawalIdsDigest: zero, withdrawalCount: Number.MAX_SAFE_INTEGER, artifact: ref, retentionStatus: 'capacity-unavailable' } })))) + 32;
   capacity.ownerBaseBytes = capacity.dispositionOwnerBytes + fixedObservations + p.capacity.maxSnapshots * (p.captureLayout?.maxCaptureIndexBytes ?? snapshotOwnerBytes) + capacity.maxRequests * 1024 + packet.assignments.reduce((n, a) => n + size({ roleId: a.roleId, id: a.id, runId: worstId }), 0) + capacity.terminalOwnerBytes + size(terminalPending) + 8192 + (p.captureLayout ? p.captureLayout.referencedOriginalPool.maxOriginals * 512 + p.captureLayout.proofPool.maxArtifacts*256 : 0);
+  if (capacity.reviewReservations) {
+    const extra = capacity.reviewReservations.reduce((n, q) => n + q.metadataBytes, 0);
+    capacity.finalBaseBytes += capacity.reviewReservations.reduce((n, q) => n + q.bindingBytes + p.roles.find(rp => rp.roleId === q.roleId)!.maxDrafts * q.readEntryBytes, 0);
+    capacity.ownerBaseBytes += extra + size({ reviewAdmissionDigest: capacity.reviewAdmissionDigest, reviewEntries: [], reviewReservations: capacity.reviewReservations });
+  }
   const entryBytes = Math.max(...r.roles.map(role => size({ artifact: ref, bytes: m.limits.maxArtifactBytes, pool: 'response', roleId: role.id, slot: 'observation' })));
   const fullIndex = acquisitionMetadataUsage(p, capacity, p.capacity.maxArtifacts, []);
   const mandatoryIndex = mandatoryAcquisitionSlots(p, capacity);
@@ -220,7 +239,7 @@ export function verifyEvidenceRetention(p: DevelopmentAcquisitionPlan, trust: Ac
 /** Declared no-reuse slots/bytes. Global pair accounting is additional to raw digest dedup. */
 export function mandatoryAcquisitionSlots(p: DevelopmentAcquisitionPlan, c: AcquisitionCapacity): number {
   const l=p.captureLayout;
-  return (l?.sourcePool.maxArtifacts ?? c.sourceArtifacts) + p.capacity.maxSnapshots * (l ? l.page.maxPages + 1 : 1) + (l?.referencedOriginalPool.maxOriginals ?? 0) + c.mandatoryObservations + c.maxRequests + 3 + (l?.proofPool.maxArtifacts ?? 0);
+  return (l?.sourcePool.maxArtifacts ?? c.sourceArtifacts) + p.capacity.maxSnapshots * (l ? l.page.maxPages + 1 : 1) + (l?.referencedOriginalPool.maxOriginals ?? 0) + c.mandatoryObservations + c.maxRequests + 3 + (l?.proofPool.maxArtifacts ?? 0) + (c.reviewReservations?.reduce((n,q)=>n+q.draftSlots,0) ?? 0);
 }
 export function mandatoryAcquisitionCaptureBytes(p: DevelopmentAcquisitionPlan, c: AcquisitionCapacity): number {
   const l=p.captureLayout;

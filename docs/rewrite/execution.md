@@ -4,20 +4,22 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 ## Current disposition — developmental acquisition and native recovery
 
-### Current finite ownership — 02:54 UTC
+### Current finite ownership — 03:20 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
 |---|---|
-| `/root/a1_development_acquisition`, `development-review-adapter-pages` | CP2-P2 bounded model-review integration, exact preclaim descriptor/template reservations and actual recorder composition. Own recorder/plan/adapter and authored fixtures as claimed below; new shared test-only `acquisition-pages.test-fixture.ts` is authorized. |
-| `/root/a1_development_control_proof`, `development-control-proof` | DC2-a unsigned actual control proof after OD2-b1 type freeze `643c311`; new source/test/evidence only. Fresh lifecycle review accepted `fe124e0`. |
-| `/root/a1_development_source_admission`, `development-source-admission` | OD2-b1 bounded unsigned derivation/validation helpers after adopted design `7d209fc`; new source/test/evidence only, no recorder overlap. |
-| `/root` | Exact integration, central planning and consumer coordination; final qualification/H1 remain open. |
+| `/root/a1_development_p2_review`, `development-review-projection-review` | Fresh P3 review of exact P2 source52c0ea0/root3fd78a1; two new independent test/evidence paths only. |
+| `/root/a1_development_control_proof`, `development-control-proof` | DC2-a unsigned actual control proof; new source/test/evidence only. Read-only b1 dependency refreshed to5743022. |
+| `/root/a1_development_source_admission_review`, `development-source-admission-review` | Fresh unsigned source helper review at67a7877; two new independent test/evidence paths only. |
+| `/root` | Exact integration, central planning, consumer coordination and older v1 fixture inquiry; final qualification/H1 remain open. |
+
+CP2-P2 author goal completed at409fe11, source52c0ea0:29new/29pass,14preserved old capacity failures separately reported. OD2-b1 author goal completed5743022:44/44final causal checks, earlier128/128joined projector checks. Both have fresh independent reviews in progress. Root consumer adaptation4cae198 joins the exact P2 final handoff and passes83/83affected cases with strict and unchanged assertion bodies. This is component integration, not full-workload/semantic/H1 acceptance.
 
 Root additionally claims the narrowly specified [application shutdown repair](evidence/A1-L09/application-shutdown-drain.md): `deployment/application.ts` shutdown method/fields, new `deployment/application-shutdown.test.ts` and its new evidence only. Existing source owners and tests remain read-only. Preserve one shared close result, abort/drain after preparatory failures and retain Store/lease on failed teardown. Precode causal tests and independent review are required; no physical/native/provider operation.
 
-Root's [independent model fixture inquiry](evidence/A1-L08/development-model-fixture-capacity.md) measures the five preserved 250,000-byte cut failures and reserves only their explicit preclaim fixture opt-in in `model-review-audit.test.ts`, plus a new original-allocation refusal case. All old assertions/grants and aggregate/record caps remain unchanged; source is read-only and fresh review is required. P2 retains sole ownership of its authored adapter and paged fixtures.
+Root's [independent model fixture inquiry](evidence/A1-L08/development-model-fixture-capacity.md) measures the five preserved 250,000-byte cut failures and reserves only their explicit preclaim fixture opt-in in `model-review-audit.test.ts`, plus a new original-allocation refusal case. All old assertions/grants and aggregate/record caps remain unchanged; source is read-only and fresh review is required. P2 authored source ownership is released after409fe11; no repair is claimed until its review supplies findings.
 
-Root claims isolated [P2 consumer integration](evidence/A1-L08/development-p2-consumer-integration.md), `development-p2-consumer-integration` / `codex/a1-p2-consumer-integration-20261012`, from this claim. Exact readonly dependency import `52c0ea0`; final P2 handoff still required. Own only the five named driver/paged-consumer fixture adaptations and evidence, preserving all original assertions and signed-claim boundaries. No P2 source edits. New required reviewer admission is explicit before claim; missing inputs cannot be defaulted. Root's main original v1 failure history remains preserved separately.
+Root claims isolated [P2 consumer integration](evidence/A1-L08/development-p2-consumer-integration.md), `development-p2-consumer-integration` / `codex/a1-p2-consumer-integration-20261012`, from this claim. Exact readonly dependency import `52c0ea0`, final evidence refreshed from `409fe11`, joined consumer handoff `4cae198`. Own only the five named driver/paged-consumer fixture adaptations and evidence, preserving all original assertions and signed-claim boundaries. No P2 source edits. New required reviewer admission is explicit before claim; missing inputs cannot be defaulted. Root's main original v1 failure history remains preserved separately.
 
 Fresh lifecycle review `fe124e0` accepts source `74cb6a3`: seven new independent cases plus six unchanged authored cases pass (13/13), the existing startup case passes, strict and diff pass. Reentrant close, two active drain orders, first-write failure with second work persisted, dual ingress failures, original uncertainty and lease retention are covered. Root imports only its two new paths. The completed review is separate from physical lifecycle and H1.
 

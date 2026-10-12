@@ -5,12 +5,14 @@ import { canonicalJson, identity, invariant, type ArtifactRef } from '../../pack
 import { OperationalStore, DOCUMENT_JOURNAL_NAMESPACE, DOCUMENT_JOURNAL_KEY, DOCUMENT_JOURNAL_PAYLOAD_NAMESPACE, type SourcePage, type SourceCut, type DevelopmentSnapshot, type JournalRef, type HistoricalSourceUse, type StoredEvent, type PhysicalDocumentRow, type Document } from '../../packages/storage/index.ts';
 import { DurableRuntime, type ResourceLedger } from '../../packages/runtime/index.ts';
 import { hashBytes } from '../../packages/release/artifacts.ts';
+import { reviewAdmissionDigest, developmentReviewReservation, type ReviewReservation, type ReviewReservationTemplate } from './review-reservation.ts';
+import type { DevelopmentReviewerSession, DevelopmentModelReviewOptions } from './model-review.ts';
 import type { AutarkApplication } from '../../deployment/application.ts';
 import { DevelopmentAccounting, type DevelopmentCapacityRequest } from '../../deployment/development-accounting.ts';
 import { CommunicationsCore } from '../../packages/communications/core/index.ts';
 import { QualificationStore } from '../qualification/store.ts';
 import { authenticate, inertSnapshot, signDocument, type Signed } from '../qualification/manifest.ts';
-import { collectDevelopmentAccountingTail, collectDevelopmentBehavior, developmentRequestIdentity, prepareDevelopmentReviewEnvelope, reviewEnvelopeDomains, type DevelopmentBehavior, type DevelopmentClosure, type DevelopmentReviewBinding, type DevelopmentReviewEnvelope } from './review-envelope.ts';
+import { collectDevelopmentAccountingTail, collectDevelopmentBehavior, developmentRequestIdentity, prepareDevelopmentReviewEnvelope, reviewEnvelopeDomains, type DevelopmentBehavior, type DevelopmentClosure, type DevelopmentReviewBinding, type DevelopmentReviewEnvelope, type AnyDevelopmentReviewExecution } from './review-envelope.ts';
 import { DevelopmentArtifactUnavailable, developmentCapacityProfile, developmentOperationalArtifactBytes, domains, type DevelopmentObservation, type Finding } from './witness.ts';
 import { attemptUseDomain, evidenceCustodianDomain, type EvidenceCustodianDisposition, type AttemptUseDisposition, acquisitionMetadataUsage, acquisitionTerminalRecord, verifyAcquisitionPlan, validateAssignmentPacket, type AcquisitionAssignmentPacket, type AcquisitionCapacity, type AcquisitionPlanTrust, type AcquisitionRequestMetadata, type DevelopmentAcquisitionPlan } from './acquisition-plan.ts';
 export type { AcquisitionAssignmentPacket } from './acquisition-plan.ts';
@@ -27,8 +29,9 @@ export interface AcquiredCaptureReader {readonly manifest:AcquiredCaptureManifes
 export const acquisitionProofCounts={ 'task-output':36,feedback:36,checker:36,'script-receipt':18,cycle:3,learning:3,experience:9,boundary:6,control:5,'reviewer-output':2,'review-judgment':48 } as const;
 export type AcquisitionProofKind=keyof typeof acquisitionProofCounts|'adaptation';
 interface Reservation { roleId: string; identity: string; responseLimit: number; responseBytes: number; responseArtifacts: string[]; metadata: AcquisitionRequestMetadata }
-type ArtifactSlot = 'source' | 'draft' | 'response' | 'snapshot' | 'observation' | 'capture' | 'metadata' | 'failure' | 'page' | 'original' | 'proof';
+type ArtifactSlot = 'source' | 'draft' | 'review-draft' | 'response' | 'snapshot' | 'observation' | 'capture' | 'metadata' | 'failure' | 'page' | 'original' | 'proof';
 interface RecorderState {
+  reviewAdmissionDigest?: string; reviewEntries?: ReviewReservation[];
   planDigest: string; phase: 'claimed' | 'acquiring' | 'freezing' | 'reviewing' | 'closed' | 'failed';
   inventory: { artifact: ArtifactRef; bytes: number; pool: 'draft' | 'response' | 'capture' | 'metadata' | 'failure'; roleId: string | null; slot: ArtifactSlot }[];
   draftBytes: Record<string, number>; reservations: Record<string, Reservation>; snapshots: SourceCapture[];
@@ -97,16 +100,16 @@ export class DevelopmentAcquisitionRecorder {
     const claimBytes = 2 * Buffer.byteLength(canonicalJson({ manifest: o.document, claimedAt: new Date(clock.wallMs).toISOString() }));
     unavailable(o.raw.usedBytes + r.capacity.totalBytes + claimBytes <= o.raw.capacityBytes, 'Private store cannot retain claim and full reserved attempt');
     o.raw.claim(r.plan.id, r.plan.manifest.value.grant.id, o.document);
-    const state: RecorderState = { planDigest: identity(r.plan), phase: 'claimed', inventory: [], draftBytes: {}, reservations: {}, snapshots: [], ...(r.plan.version===2?{originals:[],proofs:[]}:{}), observations: [], deliveries: [], finalCaptures: [], pending: null, findings: [], behavior: null, frozen: null, failure: null, useDisposition: null, lastClock: clock, startedAt: null };
+    const state: RecorderState = { planDigest: identity(r.plan), phase: 'claimed', inventory: [], draftBytes: {}, reservations: {}, snapshots: [], ...(r.plan.version===2?{originals:[],proofs:[],reviewAdmissionDigest:r.capacity.reviewAdmissionDigest,reviewEntries:[]}:{}), observations: [], deliveries: [], finalCaptures: [], pending: null, findings: [], behavior: null, frozen: null, failure: null, useDisposition: null, lastClock: clock, startedAt: null };
     o.state.put(namespace, r.plan.id, state, null);
     // Charge preregistered exact source bytes too; they do not become free merely by pre-existing.
-    try { refs(r.plan, ref => { const bytes = o.raw.readArtifact(ref, r.plan.manifest.value.limits.maxArtifactBytes); r.writeRaw(bytes, 'capture', null, undefined, 'source'); }); }
+    try { refs(r.plan, ref => { const bytes = o.raw.readArtifact(ref, r.plan.manifest.value.limits.maxArtifactBytes); r.writeRaw(bytes, 'capture', null, undefined, 'source'); }); for(const item of r.capacity.reviewSources??[])r.writeRaw(Buffer.from(item.contentBase64,'base64'),'capture',null,undefined,'source'); }
     catch (e) { r.fail('claim-source', e); throw e; }
     return r;
   }
   static reopen(o: AcquisitionRecorderOptions): DevelopmentAcquisitionRecorder {
     const r = new DevelopmentAcquisitionRecorder(o, this.verify(o, true)), s = r.state();
-    unavailable(s.planDigest === identity(r.plan) && !s.pending, 'Interrupted raw write or changed acquisition binding');
+    unavailable(s.planDigest === identity(r.plan) && !s.pending && (r.plan.version!==2 || s.reviewAdmissionDigest===r.capacity.reviewAdmissionDigest), 'Interrupted raw write or changed acquisition/review binding');
     for (const i of s.inventory) unavailable(o.raw.readArtifact(i.artifact, i.bytes).byteLength === i.bytes, 'Recorded raw inventory changed');
     if (s.phase === 'freezing') { r.fail('interrupted-freeze', new Error('Freeze was interrupted; no behavioral replay')); throw new AcquisitionUnavailable('Interrupted freeze remains fenced'); }
     r.checkClock(); return r;
@@ -192,7 +195,7 @@ export class DevelopmentAcquisitionRecorder {
   /** Maintenance only: no withdrawn attempt evidence can be read via this request-scoped path. */
   readRetainedResponse(requestId: string, artifact: ArtifactRef, maxBytes: number): Buffer {
     invariant(Number.isSafeInteger(maxBytes) && maxBytes >= 0, 'Bounded retained response read required');
-    const s = this.state(), r = s.reservations[requestId], actual = this.options.original.request(requestId), entry = s.inventory.find(i => i.artifact.sha256 === artifact.sha256 && i.pool === 'response');
+    const s = this.state(), r = s.reservations[requestId], actual = this.options.original.request(requestId), entry = s.inventory.find(i => i.artifact.sha256 === artifact.sha256);
     invariant(r && actual && actual.status !== 'reserved' && developmentRequestIdentity(actual) === r.identity && r.responseArtifacts.includes(artifact.sha256) && entry && artifact.uri === `sha256:${artifact.sha256}` && entry.bytes <= r.responseLimit && entry.bytes <= maxBytes, 'Response read lacks exact dispatched reservation/inventory scope');
     return this.loadRaw(artifact, Math.min(maxBytes,r.responseLimit));
   }
@@ -215,6 +218,7 @@ export class DevelopmentAcquisitionRecorder {
   private remainingSlots(s: RecorderState): Map<ArtifactSlot, number> {
     const limits = new Map<ArtifactSlot, number>([['source', this.plan.captureLayout?.sourcePool.maxArtifacts ?? this.capacity.sourceArtifacts], ['snapshot', this.plan.capacity.maxSnapshots], ['observation', this.capacity.mandatoryObservations], ['response', this.capacity.maxRequests], ['metadata', 2], ['failure', 1]]);
     if(this.plan.captureLayout){ const l=this.plan.captureLayout; limits.set('page',this.plan.capacity.maxSnapshots*l.page.maxPages);limits.set('original',l.referencedOriginalPool.maxOriginals);limits.set('proof',l.proofPool.maxArtifacts); }
+    if(this.capacity.reviewReservations)limits.set('review-draft',this.capacity.reviewReservations.reduce((n,r)=>n+r.draftSlots,0));
     for (const entry of s.inventory) if (limits.has(entry.slot)) limits.set(entry.slot, Math.max(0, limits.get(entry.slot)! - 1));
     return limits;
   }
@@ -268,16 +272,28 @@ export class DevelopmentAcquisitionRecorder {
   }
   rawStoreForRole(roleId: string): Pick<QualificationStore, 'putBytes' | 'readArtifact'> {
     invariant(this.plan.roles.some(r => r.roleId === roleId), 'Unregistered raw writer role');
-    return { putBytes: bytes => { this.assertCurrentUse(); const role = this.plan.registration.value.roles.find(r => r.id === roleId)!, phase = this.state().phase; unavailable(role.kind === 'reviewer' ? phase === 'reviewing' : ['claimed', 'acquiring'].includes(phase), 'Raw draft role cannot write outside registered phase'); return this.writeRaw(bytes, 'draft', roleId); }, readArtifact: (a, n = this.plan.manifest.value.limits.maxArtifactBytes) => this.readArtifact(a, n) };
+    return { putBytes: bytes => { this.assertCurrentUse(); const role = this.plan.registration.value.roles.find(r => r.id === roleId)!, state=this.state(),phase = state.phase; unavailable(role.kind === 'reviewer' ? phase === 'reviewing' : ['claimed', 'acquiring'].includes(phase), 'Raw draft role cannot write outside registered phase'); const review=this.plan.version===2&&role.kind==='reviewer';if(review){const entry=state.reviewEntries?.find(r=>r.roleId===roleId);unavailable(entry && state.inventory.filter(i=>i.roleId===roleId&&i.slot==='review-draft').length<entry.draftSlots && (state.draftBytes[roleId]??0)+bytes.byteLength<=entry.draftBytes,'Review draft lacks admitted protected bytes/slots');}return this.writeRaw(bytes, 'draft', roleId,undefined,review?'review-draft':'draft'); }, readArtifact: (a, n = this.plan.manifest.value.limits.maxArtifactBytes) => this.readArtifact(a, n) };
+  }
+  admitModelReviews(sessions:readonly [DevelopmentReviewerSession,DevelopmentReviewerSession],host:DevelopmentModelReviewOptions['host'],template:ReviewReservationTemplate,reservations:readonly ReviewReservation[]):void {
+    this.assertCurrentUse();const s=this.state(),a=this.options.trust.reviewAdmission;
+    unavailable(this.plan.version===2&&s.phase==='reviewing'&&a&&s.reviewAdmissionDigest===reviewAdmissionDigest(a),'Reviewer entry lacks fixed preclaim admission');
+    invariant(identity(sessions)===identity(a.sessions)&&identity(host)===identity(a.host)&&identity(template)===identity(a.template),'Reviewer entry substituted accepted descriptors/templates');
+    const derived=this.withEvidenceRead(read=>sessions.map(session=>developmentReviewReservation(session,this.plan.roles.find(rp=>rp.roleId===session.roleId)!,{manifest:this.plan.manifest.value,registration:this.plan.registration.value,template,instructionBytes:[...session.prompt.fragments,...(session.compaction?[session.compaction.instruction]:[])].map(f=>({artifact:f.artifact,bytes:read({uri:`sha256:${f.artifact.sha256}`,sha256:f.artifact.sha256},session.plan.maxPayloadBytes)})),behavior:s.behavior!.value})));
+    invariant(identity(derived)===identity(reservations),'Reviewer entry reservation changed actual canonical wire');
+    if(s.reviewEntries!.length){invariant(identity(s.reviewEntries)===identity(reservations),'One-use review admission changed');return;}
+    for(const actual of reservations){const maximum=this.capacity.reviewReservations!.find(r=>r.roleId===actual.roleId);invariant(maximum&&actual.sessionDigest===maximum.sessionDigest,'Wrong admitted review role/session');for(const [k,v]of Object.entries(actual))if(typeof v==='number')invariant(v<=(maximum as unknown as Record<string,number>)[k]!,'Actual review wire exceeds preclaim template');const rp=this.plan.roles.find(r=>r.roleId===actual.roleId)!;unavailable((s.draftBytes[actual.roleId]??0)+actual.draftBytes<=rp.maxDrafts*(rp.maxPayloadBytes+rp.maxPromptBytes+rp.maxFragmentBytes),'Remaining review draft reservation exhausted');}
+    invariant(reservations.length===2&&new Set(reservations.map(r=>r.roleId)).size===2,'Exact two review reservations required');
+    this.mutate(s=>{s.reviewEntries=inertSnapshot(reservations) as ReviewReservation[];});
   }
   readArtifact(artifact: ArtifactRef, maxBytes: number): Buffer { this.assertCurrentUse(); return this.loadRaw(artifact, maxBytes); }
+  withEvidenceRead<T>(use:(read:(ref:ArtifactRef,maxBytes:number)=>Uint8Array)=>T):T {return this.withCurrentUse(()=>{let active=true;const read=(ref:ArtifactRef,n:number)=>{invariant(active,'Review reader escaped synchronous current-use scope');invariant(Number.isSafeInteger(n)&&n>=0&&n<=developmentOperationalArtifactBytes,'Bounded operational review reader required');const entry=this.state().inventory.find(i=>identity(i.artifact)===identity(ref));invariant(entry&&entry.bytes<=n,'Exact inventory review read exceeds bound');return this.loadRaw(ref,n);};try{return use(read);}finally{active=false;}});}
   private loadRaw(artifact: ArtifactRef, maxBytes: number): Buffer {
     if (!this.state().inventory.some(i => i.artifact.sha256 === artifact.sha256)) throw new DevelopmentArtifactUnavailable('Artifact absent from durable acquisition inventory');
     try { return this.options.raw.readArtifact({ uri: `sha256:${artifact.sha256}`, sha256: artifact.sha256 }, Math.min(maxBytes, this.plan.manifest.value.limits.maxArtifactBytes)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DevelopmentArtifactUnavailable('Recorded raw bytes unavailable'); throw error; }
   }
   retainResponse(requestId: string, bytes: Uint8Array): ArtifactRef {
-    const r = this.state().reservations[requestId], actual = this.options.original.request(requestId); invariant(r && actual && actual.status !== 'reserved' && developmentRequestIdentity(actual) === r.identity, 'Unregistered or undispatched response request'); return this.writeRaw(bytes, 'response', r.roleId, requestId);
+    const r = this.state().reservations[requestId], actual = this.options.original.request(requestId); invariant(r && actual && (['dispatched','uncertain'].includes(actual.status)||(r.responseArtifacts.includes(hashBytes(bytes))&&['succeeded','failed'].includes(actual.status))) && developmentRequestIdentity(actual) === r.identity, 'Unregistered or undispatched response request'); return this.writeRaw(bytes, 'response', r.roleId, requestId);
   }
   reserveEvidence(roleId: string, request: DevelopmentCapacityRequest): void {
     this.assertCurrentUse();
@@ -462,7 +478,7 @@ export class DevelopmentAcquisitionRecorder {
       publish(); return this.withCurrentUse(()=>inertSnapshot(signed));
     } catch (e) { this.fail('behavior-freeze', e); throw e; }
   }
-  close(bridge: DevelopmentAccounting, reviews: Signed<DevelopmentReviewBinding>[]) {
+  close(bridge: DevelopmentAccounting, reviews: Signed<DevelopmentReviewBinding<AnyDevelopmentReviewExecution>>[]) {
     this.assertCurrentUse();
     const s = this.state(); unavailable(s.phase === 'reviewing' && s.behavior && s.frozen, 'No immutable B for final closure');
     invariant(bridge instanceof DevelopmentAccounting && bridge.originalResources === this.options.original && bridge.registrationDigest === identity(this.plan.registration.value), 'Actual original bridge required');
@@ -476,7 +492,7 @@ export class DevelopmentAcquisitionRecorder {
       const value: DevelopmentClosure = { version: 2, registrationDigest, behaviorDigest, tailDigest: identity(tail), reviewDigests: reviews.map(r => identity(r.value)).sort(), closedAt: new Date(this.checkClock().wallMs).toISOString(), rootCancelled: bridge.rootCancelled, requestStates: [...this.plan.registration.value.originalRequests, ...bridge.states()].map(s => ({ id: s.request.id, stateDigest: identity(s) })).sort((a, b) => a.id.localeCompare(b.id)), accounting: bridge.accounting(this.plan.manifest.value.grant.id) };
       closure = signDocument(reviewEnvelopeDomains.closure, value, this.options.trust.envelope.closure.id, this.options.trust.envelope.closure.key);
     }
-    const envelope: DevelopmentReviewEnvelope = { version: 2, registration: this.plan.registration, behavior, reviews: inertSnapshot(reviews), accountingTail, closure };
+    const envelope: DevelopmentReviewEnvelope<AnyDevelopmentReviewExecution> = { version: 2, registration: this.plan.registration, behavior, reviews: inertSnapshot(reviews), accountingTail, closure };
     unavailable(Buffer.byteLength(canonicalJson(envelope)) <= Math.min(this.capacity.metadataBytes,this.plan.captureLayout?.metadata.finalBytes ?? this.plan.manifest.value.limits.maxArtifactBytes), 'Final envelope metadata exceeds reserved capacity');
     const result = prepareDevelopmentReviewEnvelope(envelope, this.options.trust.envelope, (a, n) => this.readArtifact(a, n), this.clock().wallMs);
     this.writeRaw(Buffer.from(canonicalJson(envelope)), 'metadata', null); this.mutate(s => { s.phase = 'closed'; });
