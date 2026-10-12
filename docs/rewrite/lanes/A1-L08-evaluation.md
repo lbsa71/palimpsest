@@ -14,6 +14,8 @@ Current checkpoint, 2026-10-12 04:04 UTC: the [execution record](../execution.md
 
 Root owns only the new [boundary composition reconciliation](../evidence/A1-L08/development-boundary-composition.md) alongside b3a integration. Its scope is a finite read-only prerequisite check of DB0 against current complete-page/source-admission reservations; no boundary source edits or allocation changes are claimed.
 
+Root's b3a isolated scope additionally owns one preconstruction synthetic-monotonic opt-in in the old driver fixture for the pending-transport freeze case. Exact diagnostic/precode and unchanged assertion/limit requirements are in the execution record; fresh joined review follows.
+
 The following dated claims preserve earlier handoffs; current ownership above and in the execution record supersedes them.
 
 Current finite claims are maintained in the [execution record](../execution.md). At the 2026-10-12 02:46 UTC checkpoint, root reserves the new design-only `docs/rewrite/evidence/A1-L08/development-source-admission-design.md` for `/root/a1_development_source_admission_design`, branch/worktree `codex/a1-development-source-admission-design-20261012` / `development-source-admission-design`, from the claim revision. Its actual finite goal supplies exact OD2-b/DC2 recorder admission and checker/proof contracts, implementation ownership and causal acceptance; all source/tests/existing plans are read-only. Active P2 owns recorder/plan/adapter and its authored fixture extraction; OD1 owns only its new driver/test/evidence. Earlier ownership tables below are preserved checkpoints, superseded by this claim and the current execution table.
