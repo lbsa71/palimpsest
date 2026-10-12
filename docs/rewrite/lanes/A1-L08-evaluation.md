@@ -39,6 +39,12 @@ Non-goals: proving subjective experience, benchmarking on private reasoning verb
 
 Owned by the lead who claims this lane; update here before concurrent implementation.
 
+### Current follow-up specifications — 2026-10-12
+
+Root reserves and adopts the bounded [ordinary-driver specification](../evidence/A1-L08/development-ordinary-driver-specification.md) under its active Aeon goal. OD1/OD2 are concrete implementation tasks, still unclaimed; their new source/test/evidence paths do not conflict with the active recorder/model-review/retention owners. OD1 final composition requires accepted recorder R1–R6 and JR1/JR2; OD2 can start its source-proof contract independently but recorder mutations remain with that owner. A returned ordinary tick is not a completed cycle, and untimed historical scheduler events cannot be restamped as current activity. Neither this specification nor component handoffs close the missing observer/control/feedback/sensor implementations or developmental qualification.
+
+Recorder author repair `c312047` (source `21aa234`/`53e8298`, strict and 46 focused checks) is in direct same-source re-review by `/root/a1_development_acquisition_review`; original red `91a38e2` remains preserved. Only fixture construction/call arguments may adapt to the required actual fourth bridge parameter; review assertions remain unchanged. Model-review author is finishing its exact joined repair handoff before a new independent audit. Journal JR1-R1 is undergoing its separately claimed fresh re-review; JR2 is not yet implemented.
+
 | Field | Current value |
 |---|---|
 | Owner session | `/root` integration owner; recorder, model-review and retained-inventory authors have active finite goals; journal and native audit finite goals complete |
