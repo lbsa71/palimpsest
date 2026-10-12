@@ -7,19 +7,19 @@
       "source": "packages/agent/src/agent-loop.ts",
       "retained": "agent/agent-loop.ts",
       "upstreamSha256": "28a2b03e34a7e32f004aa851e54d3b5be9dad71c392205614cbc9abdf3a9020a",
-      "retainedSha256": "9aa3d382ac1de24c5418188e8602b3f90e46489c6d6bb553ecc5c4d3012010db"
+      "retainedSha256": "58fb6ecb84b3fac8778ac0a2c0072bbcd4ec893f30df6580ede42b8e7f638481"
     },
     {
       "source": "packages/agent/src/types.ts",
       "retained": "agent/types.ts",
       "upstreamSha256": "2e116ef60fdaca4e26be5a1ace8d8b47f545d648d365de60b8c9f9d1ba629ee4",
-      "retainedSha256": "5e453961a387ec638b9234b87588c6607281119eee1cbe8ae78e66e3e0909907"
+      "retainedSha256": "bd4c8b9075f73228388951e5ea5e7aeb93d0b58b7e12c7cecdbd31f2a4737d61"
     },
     {
       "source": "packages/agent/src/stream-fn.ts",
       "retained": "agent/stream-fn.ts",
       "upstreamSha256": "1f9dee101a5ce1052558458d9ce47e53e05187224e879217899059a80d90bc45",
-      "retainedSha256": "1f9dee101a5ce1052558458d9ce47e53e05187224e879217899059a80d90bc45"
+      "retainedSha256": "cfd06d019f39d3881aadb3e11e146c29bdeadc72f160035b97b48f9e8a2ae802"
     },
     {
       "source": "packages/ai/src/utils/transcript.ts",
@@ -37,7 +37,7 @@
       "source": "packages/ai/src/utils/event-stream.ts",
       "retained": "ai/utils/event-stream.ts",
       "upstreamSha256": "9fd5e33a8e295d88b5911af71d7afbfd437c9620288808d18331f16811e24dac",
-      "retainedSha256": "9fd5e33a8e295d88b5911af71d7afbfd437c9620288808d18331f16811e24dac"
+      "retainedSha256": "d3418121a13cb3f52ea17c8e3b854ccd77c0d5030effd088cbd12ebe5286ccbc"
     },
     {
       "source": "packages/ai/src/utils/validation.ts",
@@ -55,14 +55,14 @@
       "source": "packages/ai/src/utils/diagnostics.ts",
       "retained": "ai/utils/diagnostics.ts",
       "upstreamSha256": "06fcbc2347f65a43938078094a7118036b5f12e73147affb5c73cd72753443f0",
-      "retainedSha256": "06fcbc2347f65a43938078094a7118036b5f12e73147affb5c73cd72753443f0"
+      "retainedSha256": "01ea4d34c39ec2c09a08458046ee9f3a8e518041e75d96056e4bc9674c2546e3"
     },
     {
       "source": "packages/ai/src/types.ts",
       "retained": "ai/types.ts",
       "upstreamSha256": "19f632e0918cca442d3dfa3572ebabe79453dea0b1f54eadd3287a9c6b515674",
       "patch": "Retain request/message/tool/model protocol declarations; omit optional provider/classifier/image APIs and compat declarations; telemetry context opaque.",
-      "retainedSha256": "aa1ad5c342e4dced7c61c2c9c7652c7d18e5206d9363a6a6b2e0c39b54b93289"
+      "retainedSha256": "b1f5967a97ed86ed44cd5d90cd2d2b464c25c7d2b92fd5e77a6755927b88c83d"
     }
   ],
   "runtimeDependencies": {},
@@ -76,9 +76,10 @@
     "durable package"
   ],
   "patches": [
-    "Agent imports redirected to selected local ai barrel; core loop otherwise retained verbatim.",
+    "Agent imports redirected to the selected local AI barrel. DI06 adds captured clocks, explicit stream-function validation without a global fallback, terminal host-failure propagation, and complete started-tool/update drain on failure.",
     "pi-ai type-only declaration closure narrowed.",
-    "TypeBox builders removed; plain JSON Schema declarations validated strictly by the source-owned narrow validator (ADR 0033), with no argument coercion."
+    "TypeBox builders removed; plain JSON Schema declarations validated strictly by the source-owned narrow validator (ADR 0033), with no argument coercion.",
+    "DI06 injects response/diagnostic clocks and response stream timing; local source includes an explicit terminal failure channel. Complete upstream-to-retained delta is local.patch; original upstream hashes and test fixtures remain pinned."
   ],
   "retainedTests": [
     {
@@ -95,5 +96,22 @@
       "manifest": "packages/narrow-schema/vendor/cfworker/source-manifest.json",
       "decision": "docs/adr/0033-source-owned-json-schema-validation.md"
     }
-  }
+  },
+  "localPatch": {
+    "path": "experiments/agent-shell/audit/local.patch",
+    "sha256": "babe96b7eec2d28b53afa144c4569d32f7d5b599d0168b560c0618d038471d64",
+    "format": "Unified diff against the ten manifest upstream source paths; apply with -p1 and zero fuzz."
+  },
+  "localFiles": [
+    {
+      "path": "packages/agent-shell/vendor/pi/ai/index.ts",
+      "sha256": "2a08760495674d2df5f6dd9d4211bd029083c03f3c1656ffebd9ba87af1f4715",
+      "purpose": "Local selected export barrel; not retained upstream source."
+    },
+    {
+      "path": "packages/agent-shell/environment.ts",
+      "sha256": "ea5c4ff222a12ccc3a3500816e98415809d2f8c59cfc35dff0ab6cae367b0dc7",
+      "purpose": "Local captured clock and named Node host composition imported by retained loop/stream/diagnostic modules; not an upstream runtime dependency."
+    }
+  ]
 }

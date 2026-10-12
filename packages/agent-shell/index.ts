@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { captureShellEnvironment, nodeShellFetch, throwShellFailures } from './environment.ts';
 import { canonicalJson, identity, invariant, scopeAllows, validateCheckpoint, validateObservation, validatePromptManifest, validateRun } from '../contracts/index.ts';
 import type { ArtifactRef, JsonValue, Observation, PhysicalRequest, PromptFragment, PromptManifest, ResourceUsage, ShellBridge, ShellCheckpoint, ShellInput, ShellPort } from '../contracts/index.ts';
 import { runAgentLoopContinue } from './vendor/pi/agent/agent-loop.ts';
@@ -37,12 +37,14 @@ function message(value: JsonValue): Message {
   else invariant(Array.isArray(item.content), 'Invalid shell message content');
   return value as unknown as Message;
 }
-function toolResult(call: { id: string; name: string }, observation: Observation, aeonStepId: string): ToolResultMessage & { aeonStepId: string } {
-  return { role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: canonicalJson(observation.value) }], isError: observation.kind === 'error', timestamp: Date.now(), aeonStepId };
+function toolResult(call: { id: string; name: string }, observation: Observation, aeonStepId: string, wallNow: () => number): ToolResultMessage & { aeonStepId: string } {
+  return { role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: canonicalJson(observation.value) }], isError: observation.kind === 'error', timestamp: wallNow(), aeonStepId };
 }
 
 /** Pi is a projection over the durable receiver: this adapter never directly executes a tool. */
 export function createAgentShell(options: ShellOptions): ShellPort {
+  const environment = captureShellEnvironment(options.environment);
+  options = { ...options, environment, fetch: options.fetch ?? nodeShellFetch(), modelProfile: options.modelProfile && { ...options.modelProfile } };
   const provider = options.provider ?? 'mistral';
   invariant(provider === 'mistral' || provider === 'openai', 'Unsupported shell provider');
   invariant(provider !== 'openai' || !!options.model, 'OpenAI requires an explicit model');
@@ -104,11 +106,13 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         invariant(checkpoint.shell === SHELL_REVISION && checkpoint.artifact.sha256 === identity(content), 'Checkpoint receiver returned another artifact');
         invariant(identity(checkpoint.observationIds) === identity(observationIds), 'Checkpoint receiver omitted observation IDs');
       }
+      const stepIds = new Set(transcript.filter(item => item.role === 'assistant').map(item => (item as Message & { aeonStepId?: string }).aeonStepId).filter((id): id is string => typeof id === 'string'));
       const records = new Map<string, PhysicalRequest>();
       const started = new Map<string, number>();
       let currentFragments = fragments;
       const transport = (provider === 'openai' ? createOpenAITransport : createMistralTransport)({ ...options,
         async reserve(attempt: Attempt) {
+          const begun = environment.monotonicNow();
           const source = attempt.purpose === 'compaction' ? '[]' : JSON.stringify(tools);
           const artifact = attempt.purpose === 'compaction' ? options.toolInstructions.compaction : options.toolInstructions.tools;
           invariant(artifact && artifact.sha256 === digest(source) && artifact.uri === `aeon:artifact:${artifact.sha256}`, 'Tool instruction artifact does not match effective tools');
@@ -118,12 +122,19 @@ export function createAgentShell(options: ShellOptions): ShellPort {
           validatePromptManifest(manifest);
           await bridge.capturePrompt(manifest, attempt.payload);
           const request: PhysicalRequest = { id: attempt.id, runId: input.run.id, purpose: attempt.purpose, provider, model: attempt.model, promptManifestId: manifest.id, requestDigest: attempt.digest, reservationId: `request:${attempt.id}`, status: 'reserved', usage: options.reservationEstimate?.(attempt) ?? { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
-          await bridge.reserve(request); records.set(attempt.id, request); started.set(attempt.id, performance.now());
+          await bridge.reserve(request); records.set(attempt.id, request); started.set(attempt.id, begun);
         },
         async dispatched(attempt: Attempt) { await bridge.dispatched({ ...records.get(attempt.id)!, status: 'dispatched' }); },
         async settle(attempt: Attempt, outcome: AttemptOutcome) {
           const request = records.get(attempt.id)!;
-          await bridge.settle({ ...request, status: outcome.status === 'completed' ? 'succeeded' : outcome.status === 'uncertain' ? 'uncertain' : 'failed', usage: { requests: 1, inputTokens: outcome.usage?.inputTokens ?? null, outputTokens: outcome.usage?.outputTokens ?? null, costUsd: null, elapsedMs: performance.now() - started.get(attempt.id)! } });
+          const failures: unknown[] = [];
+          let elapsedMs = request.usage.elapsedMs;
+          try { elapsedMs = environment.monotonicNow() - started.get(attempt.id)!; }
+          catch (error) { failures.push(error); }
+          const uncertain = failures.length > 0 || outcome.status === 'uncertain';
+          try { await bridge.settle({ ...request, status: uncertain ? 'uncertain' : outcome.status === 'completed' ? 'succeeded' : 'failed', usage: { requests: 1, inputTokens: uncertain ? null : outcome.usage?.inputTokens ?? null, outputTokens: uncertain ? null : outcome.usage?.outputTokens ?? null, costUsd: null, elapsedMs } }); }
+          catch (error) { failures.push(error); }
+          throwShellFailures(failures);
         },
       });
       async function execute(call: { id: string; name: string; arguments: unknown }, assistantIndex: number): Promise<Observation> {
@@ -152,7 +163,10 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         if (event.type !== 'message_end' || event.message.role === 'system') return;
         if (event.message.role === 'toolResult' && halted) return;
         const completed = structuredClone(event.message) as Message & { aeonStepId?: string };
-        if (completed.role === 'assistant') completed.aeonStepId = randomUUID();
+        if (completed.role === 'assistant') {
+          const id = environment.newId(); invariant(!stepIds.has(id), 'Duplicate assistant step identity');
+          stepIds.add(id); completed.aeonStepId = id;
+        }
         if (completed.role === 'toolResult') completed.aeonStepId = (transcript.findLast(item => item.role === 'assistant') as Message & { aeonStepId?: string })?.aeonStepId;
         transcript.push(completed);
         await save(); // completed assistant/tool observations become durable before subsequent dispatch
@@ -186,13 +200,13 @@ export function createAgentShell(options: ShellOptions): ShellPort {
             const args = validateToolArguments(declaration, call);
             const observation = await execute({ ...call, arguments: args }, index);
             if (halted) { await save(); return { status: 'blocked', checkpoint, observations }; }
-            transcript.push(toolResult(call, observation, (item as Message & { aeonStepId: string }).aeonStepId)); results.add(resultKey(item, call.id)); await save();
+            transcript.push(toolResult(call, observation, (item as Message & { aeonStepId: string }).aeonStepId, environment.wallNow)); results.add(resultKey(item, call.id)); await save();
           }
         }
         const model = provider === 'openai' ? openaiModel(options.model!, options.modelProfile) : mistralModel(options.model, options.modelProfile);
         stage = 'model';
         await runAgentLoopContinue({ messages: [system(), ...continuationMessages()], tools: wrapped }, {
-          model, convertToLlm: messages => messages, toolExecution: 'sequential',
+          model, clock: environment, convertToLlm: messages => messages, toolExecution: 'sequential',
           getSteeringMessages: options.steering ? async () => (await options.steering!()).filter(item => item.role !== 'system') : undefined,
           finishTurn: ({ message }) => halted || message.stopReason === 'length' ? { action: 'end' } : undefined,
           async prepareRequest() {
@@ -209,11 +223,11 @@ export function createAgentShell(options: ShellOptions): ShellPort {
                 const fragment = options.compaction.instruction; const instruction = await resolve(fragment);
                 currentFragments = [...fragments, { ...fragment, order: Math.max(-1, ...fragments.map(item => item.order)) + 1 }];
                 transport.setPurpose('compaction');
-                const summary = await (await transport.stream(model, normalizeContext({ messages: [{ role: 'system', content: `${basePrompt}\n\n${instruction}`, timestamp: 0 }, { role: 'user', content: canonicalJson(json(prefix)), timestamp: Date.now() }] }), { signal })).result();
+                const summary = await (await transport.stream(model, normalizeContext({ messages: [{ role: 'system', content: `${basePrompt}\n\n${instruction}`, timestamp: 0 }, { role: 'user', content: canonicalJson(json(prefix)), timestamp: environment.wallNow() }] }), { signal })).result();
                 currentFragments = fragments; transport.setPurpose('reasoning');
                 invariant(summary.stopReason === 'stop' && !summary.content.some(block => block.type === 'toolCall'), 'Compaction failed; original context retained');
                 compactions.push({ sourceDigest: identity(json(prefix)), summary: structuredClone(summary) });
-                transcript = [{ role: 'user', content: summary.content.filter(block => block.type === 'text'), timestamp: Date.now() }, ...retainedNative, ...suffix];
+                transcript = [{ role: 'user', content: summary.content.filter(block => block.type === 'text'), timestamp: environment.wallNow() }, ...retainedNative, ...suffix];
                 await save();
                 stage = 'model';
               }

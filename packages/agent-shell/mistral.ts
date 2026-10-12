@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { captureShellEnvironment, nodeShellFetch, readShellJson, shellTimeout, throwShellFailures, type ShellEnvironment } from './environment.ts';
+import { createHash } from 'node:crypto';
 import { AssistantMessageEventStream, collapseSystemMessages, contentText, getCurrentTools, getSystemMessageText } from './vendor/pi/ai/index.ts';
 import type { AssistantMessage, JsonValue, Model, TranscriptContext, Usage } from './vendor/pi/ai/types.ts';
 import type { StreamFn } from './vendor/pi/agent/types.ts';
@@ -7,6 +8,7 @@ export const DEFAULT_MISTRAL_MODEL = 'mistral-large-latest';
 export type Attempt = { id: string; payload: string; digest: string; attempt: number; purpose: 'reasoning' | 'compaction'; model: string };
 export type AttemptOutcome = { status: 'completed' | 'failed' | 'uncertain' | 'cancelled'; usage?: { inputTokens: number; outputTokens: number }; httpStatus?: number };
 export interface MistralTransportOptions {
+  environment?: ShellEnvironment;
   model?: string;
   endpoint?: string;
   apiKey: () => string | Promise<string>;
@@ -77,6 +79,10 @@ export function mistralPayload(context: TranscriptContext, model: string, maxTok
 
 /** One finite transport per run; reservations cover retries and compaction as well as ordinary calls. */
 export function createMistralTransport(options: MistralTransportOptions): { stream: StreamFn; setPurpose(purpose: Attempt['purpose']): void; attempts(): number } {
+  options = { ...options, modelProfile: options.modelProfile && { ...options.modelProfile } };
+  const environment = captureShellEnvironment(options.environment), transport = options.fetch ?? nodeShellFetch();
+  const { apiKey, reserve, dispatched: markDispatched, settle } = options;
+  const identities = new Set<string>();
   if (!Number.isSafeInteger(options.maxRequests) || options.maxRequests < 1) throw new Error('A finite positive request budget is required');
   const retries = options.maxRetries ?? 0;
   if (!Number.isSafeInteger(retries) || retries < 0 || retries > 3) throw new Error('Retry budget must be between zero and three');
@@ -85,34 +91,42 @@ export function createMistralTransport(options: MistralTransportOptions): { stre
   let dispatched = 0;
   let purpose: Attempt['purpose'] = 'reasoning';
   const stream: StreamFn = (model, context, requestOptions) => {
-    const events = new AssistantMessageEventStream();
-    const message: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: 'mistral', model: model.id, usage: emptyUsage(), stopReason: 'pending', timestamp: Date.now() };
+    const events = new AssistantMessageEventStream(environment);
+    const message: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: 'mistral', model: model.id, usage: emptyUsage(), stopReason: 'pending', timestamp: environment.wallNow() };
     void (async () => {
       try {
         const payload = mistralPayload(context, model.id, options.maxOutputTokens ?? 4096, options.reasoningEffort);
         for (let retry = 0; ; retry++) {
           requestOptions?.signal?.throwIfAborted();
           if (dispatched >= options.maxRequests) throw new Error('Physical request budget exhausted');
-          const key = await options.apiKey();
+          const key = await apiKey();
           if (!key) throw new Error('Mistral API key is required');
-          const attempt: Attempt = { id: randomUUID(), payload, digest: digest(payload), attempt: dispatched + 1, purpose, model: model.id };
-          await options.reserve(attempt);
+          const attempt: Attempt = { id: environment.newId(), payload, digest: digest(payload), attempt: dispatched + 1, purpose, model: model.id };
+          if (identities.has(attempt.id)) throw new Error('Duplicate shell request identity');
+          identities.add(attempt.id);
+          await reserve(attempt);
           let outcome: AttemptOutcome = { status: 'cancelled' };
           let retryAllowed = false;
+          let timeout: ReturnType<typeof shellTimeout> | undefined, response: Response | undefined;
+          let readStarted = false, sent = false;
+          const failures: unknown[] = [];
           try {
             requestOptions?.signal?.throwIfAborted();
-            const signal = AbortSignal.any([AbortSignal.timeout(options.timeoutMs ?? 60_000), ...(requestOptions?.signal ? [requestOptions.signal] : [])]);
-            await options.dispatched(attempt);
+            timeout = shellTimeout(environment.scheduleTimeout, options.timeoutMs ?? 60_000, requestOptions?.signal);
+            const signal = timeout.signal;
+            await markDispatched(attempt);
             signal.throwIfAborted();
-            dispatched++;
+            dispatched++; sent = true;
             outcome = { status: 'uncertain' };
-            const response = await (options.fetch ?? globalThis.fetch)(options.endpoint ?? 'https://api.mistral.ai/v1/chat/completions', { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: payload, signal });
+            response = await transport(options.endpoint ?? 'https://api.mistral.ai/v1/chat/completions', { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: payload, signal });
+            signal.throwIfAborted();
             outcome.httpStatus = response.status;
             if (!response.ok) {
               if (response.status === 429) { outcome.status = 'failed'; retryAllowed = retry < retries; }
               if (!retryAllowed) throw new Error(`Mistral HTTP ${response.status}`);
             } else {
-              const body = record(await response.json());
+              readStarted = true;
+              const body = record(await readShellJson(response, signal));
               if (!Array.isArray(body.choices) || body.choices.length === 0) throw new Error('Missing Mistral choice');
               const choice = record(body.choices[0]); const reply = record(choice.message);
               message.content.push(...parseContent(reply.content));
@@ -136,7 +150,15 @@ export function createMistralTransport(options: MistralTransportOptions): { stre
               message.stopReason = choice.finish_reason === 'length' ? 'length' : message.content.some(block => block.type === 'toolCall') ? 'toolUse' : 'stop';
               outcome.status = 'completed';
             }
-          } finally { await options.settle(attempt, outcome); }
+          } catch (error) { failures.push(error); }
+          finally {
+            const beforeCleanup = failures.length;
+            if (response?.body && !readStarted) { try { await response.body.cancel(); } catch (error) { failures.push(error); } }
+            try { timeout?.cancel(); } catch (error) { failures.push(error); }
+            if (failures.length > beforeCleanup && sent) { outcome = { status: 'uncertain', httpStatus: outcome.httpStatus }; retryAllowed = false; }
+            try { await settle(attempt, outcome); } catch (error) { failures.push(error); }
+          }
+          throwShellFailures(failures);
           if (retryAllowed) continue;
           break;
         }
@@ -147,7 +169,8 @@ export function createMistralTransport(options: MistralTransportOptions): { stre
         message.content = [];
         message.stopReason = requestOptions?.signal?.aborted ? 'aborted' : 'error';
         message.errorMessage = error instanceof Error && /^(Mistral HTTP|Physical request budget|Mistral API key|Invalid Mistral|Missing Mistral|Unsupported Mistral)/.test(error.message) ? error.message : 'Mistral transport or accounting failed';
-        events.push({ type: 'error', reason: message.stopReason, error: message });
+        try { events.push({ type: 'error', reason: message.stopReason, error: message }); }
+        catch (timing) { events.fail(new AggregateError([error, timing], 'Shell response timing failed', { cause: error })); }
       }
     })();
     return events;

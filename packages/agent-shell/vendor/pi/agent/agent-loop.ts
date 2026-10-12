@@ -15,7 +15,9 @@ import {
 	toToolDeclaration,
 	validateToolArguments,
 } from "../ai/index.ts";
-import { getDefaultStreamFn } from "./stream-fn.ts";
+import { requireStreamFn } from "./stream-fn.ts";
+import { captureShellClock } from "../../../environment.ts";
+import type { AssistantClock } from "../ai/types.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -55,7 +57,7 @@ export function agentLoop(
 		streamFn,
 	).then((messages) => {
 		stream.end(messages);
-	});
+	}, (error) => stream.fail(error));
 
 	return stream;
 }
@@ -94,7 +96,7 @@ export function agentLoopContinue(
 		streamFn,
 	).then((messages) => {
 		stream.end(messages);
-	});
+	}, (error) => stream.fail(error));
 
 	return stream;
 }
@@ -107,7 +109,10 @@ export async function runAgentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
-	const initialMessages = declareToolChanges(context, prompts);
+	const clock = captureShellClock(config.clock);
+	config = { ...config, clock };
+	streamFn = requireStreamFn(streamFn);
+	const initialMessages = declareToolChanges(context, prompts, clock);
 	const newMessages: AgentMessage[] = [...initialMessages];
 	const currentContext: AgentContext = {
 		...context,
@@ -121,7 +126,7 @@ export async function runAgentLoop(
 		await emit({ type: "message_end", message });
 	}
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
+	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
 	return newMessages;
 }
 
@@ -140,13 +145,16 @@ export async function runAgentLoopContinue(
 		throw new Error("Cannot continue from message role: assistant");
 	}
 
+	const clock = captureShellClock(config.clock);
+	config = { ...config, clock };
+	streamFn = requireStreamFn(streamFn);
 	const newMessages: AgentMessage[] = [];
 	const currentContext: AgentContext = { ...context };
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
+	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
 	return newMessages;
 }
 
@@ -208,7 +216,7 @@ async function runLoop(
 			}
 
 			// Process prepared and queued messages before the next assistant response.
-			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
+			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages], config.clock!)) {
 				await emit({ type: "message_start", message });
 				await emit({ type: "message_end", message });
 				currentContext.messages.push(message);
@@ -266,7 +274,7 @@ async function runLoop(
 				// them all instead of executing potentially borked calls.
 				const executedToolBatch =
 					message.stopReason === "length"
-						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
+						? await failToolCallsFromTruncatedMessage(toolCalls, emit, config.clock!)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
@@ -330,7 +338,7 @@ async function runLoop(
  * the executable set, so replay always yields exactly `context.tools`. Otherwise a new
  * system message is inserted before the first non-system pending message.
  */
-function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
+function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[], clock: AssistantClock): AgentMessage[] {
 	let systemIndex = -1;
 	for (let i = pendingMessages.length - 1; i >= 0; i--) {
 		if (pendingMessages[i].role === "system") {
@@ -356,7 +364,7 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 		return baseline.map((message, index) => (index === systemIndex ? withToolChanges(pending, changes) : message));
 	}
 	if (unchanged) return pendingMessages;
-	const update = withToolChanges({ role: "system", content: "", timestamp: Date.now() }, changes);
+	const update = withToolChanges({ role: "system", content: "", timestamp: clock.wallNow() }, changes);
 	const insertIndex = pendingMessages.findIndex((message) => message.role !== "system");
 	const index = insertIndex === -1 ? pendingMessages.length : insertIndex;
 	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];
@@ -400,8 +408,9 @@ async function streamAssistantResponse(
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
+	const { clock: _clock, ...providerOptions } = config;
 	const response = await streamFunction(config.model, llmContext, {
-		...config,
+		...providerOptions,
 		apiKey: resolvedApiKey,
 		signal,
 	});
@@ -478,6 +487,7 @@ async function streamAssistantResponse(
 async function failToolCallsFromTruncatedMessage(
 	toolCalls: AgentToolCall[],
 	emit: AgentEventSink,
+	clock: AssistantClock,
 ): Promise<ExecutedToolCallBatch> {
 	const messages: ToolResultMessage[] = [];
 	for (const toolCall of toolCalls) {
@@ -495,7 +505,7 @@ async function failToolCallsFromTruncatedMessage(
 			isError: true,
 		};
 		await emitToolExecutionEnd(finalized, emit);
-		const toolResultMessage = createToolResultMessage(finalized);
+		const toolResultMessage = createToolResultMessage(finalized, clock);
 		await emitToolResultMessage(toolResultMessage, emit);
 		messages.push(toolResultMessage);
 	}
@@ -555,7 +565,7 @@ async function executeToolCallsSequential(
 				isError: preparation.isError,
 			};
 		} else {
-			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit));
+			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit), config.clock!);
 			finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -567,7 +577,7 @@ async function executeToolCallsSequential(
 		}
 
 		await emitToolExecutionEnd(finalized, emit);
-		const toolResultMessage = createToolResultMessage(finalized);
+		const toolResultMessage = createToolResultMessage(finalized, config.clock!);
 		await emitToolResultMessage(toolResultMessage, emit);
 		finalizedCalls.push(finalized);
 		messages.push(toolResultMessage);
@@ -626,7 +636,7 @@ async function executeToolCallsParallel(
 				await emitToolExecutionEnd(finalized, emit);
 				return finalized;
 			}
-			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit));
+			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit), config.clock!);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -643,12 +653,16 @@ async function executeToolCallsParallel(
 		}
 	}
 
-	const orderedFinalizedCalls = await Promise.all(
+	const settled = await Promise.allSettled(
 		finalizedCalls.map((entry) => (typeof entry === "function" ? entry() : Promise.resolve(entry))),
 	);
+	const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected").map(item => item.reason);
+	if (failures.length === 1) throw failures[0];
+	if (failures.length > 1) throw new AggregateError(failures, "Parallel tool observations failed", { cause: failures[0] });
+	const orderedFinalizedCalls = settled.map(item => (item as PromiseFulfilledResult<FinalizedToolCallOutcome>).value);
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {
-		const toolResultMessage = createToolResultMessage(finalized);
+		const toolResultMessage = createToolResultMessage(finalized, config.clock!);
 		await emitToolResultMessage(toolResultMessage, emit);
 		messages.push(toolResultMessage);
 	}
@@ -789,6 +803,7 @@ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink):
 
 /** Options for {@link runToolCall}. */
 export interface RunToolCallOptions extends ToolCallHooks {
+	clock?: AssistantClock;
 	/** Tools the call resolves against. */
 	tools: readonly AgentTool<any>[];
 	/** Passed to the hooks as the message that issued the call. */
@@ -809,12 +824,13 @@ export interface RunToolCallOptions extends ToolCallHooks {
  * errors come back as `isError: true`.
  */
 export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallOptions): Promise<AgentToolCallOutcome> {
+	const clock = captureShellClock(options.clock);
 	const { assistantMessage, context, signal } = options;
 	const preparation = await prepareToolCall(context, assistantMessage, toolCall, options, signal, options.tools);
 	if (preparation.kind === "immediate") {
 		return { toolCall, result: preparation.result, isError: preparation.isError };
 	}
-	const executed = await executePreparedToolCall(preparation, signal, options.onUpdate ?? (() => {}));
+	const executed = await executePreparedToolCall(preparation, signal, options.onUpdate ?? (() => {}), clock);
 	return finalizeExecutedToolCall(context, assistantMessage, preparation, executed, options, signal);
 }
 
@@ -822,38 +838,38 @@ async function executePreparedToolCall(
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
+	clock: AssistantClock,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
-	const startedAt = performance.now();
-	const elapsed = () => Math.round(performance.now() - startedAt);
-
+	const startedAt = clock.monotonicNow();
+	let result: AgentToolResult<any> | undefined;
+	let operationFailure: { value: unknown } | undefined;
 	try {
-		const result = await prepared.tool.execute(
-			prepared.toolCall.id,
-			prepared.args as never,
-			signal,
-			(partialResult) => {
-				if (!acceptingUpdates) return;
-				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
-			},
-		);
-		const durationMs = elapsed();
-		acceptingUpdates = false;
-		await Promise.all(updateEvents);
-		return { result, isError: result.isError === true, durationMs };
-	} catch (error) {
-		const durationMs = elapsed();
-		acceptingUpdates = false;
-		await Promise.all(updateEvents);
-		return {
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
-			isError: true,
-			durationMs,
-		};
-	} finally {
-		acceptingUpdates = false;
+		result = await prepared.tool.execute(prepared.toolCall.id, prepared.args as never, signal, (partialResult) => {
+			if (!acceptingUpdates) return;
+			const update = Promise.resolve(onUpdate(partialResult));
+			void update.catch(() => {});
+			updateEvents.push(update);
+		});
+	} catch (error) { operationFailure = { value: error }; }
+	finally { acceptingUpdates = false; }
+	// Drain updates even when execution or timing failed; never re-execute the tool.
+	const failures: unknown[] = [];
+	let durationMs: number | undefined;
+	try { durationMs = Math.round(clock.monotonicNow() - startedAt); }
+	catch (error) { failures.push(error); }
+	for (const update of await Promise.allSettled(updateEvents)) if (update.status === "rejected") failures.push(update.reason);
+	if (failures.length) {
+		if (operationFailure) failures.unshift(operationFailure.value);
+		if (failures.length === 1) throw failures[0];
+		throw new AggregateError(failures, "Tool observation or timing failed", { cause: failures[0] });
 	}
+	if (operationFailure) return {
+		result: createErrorToolResult(operationFailure.value instanceof Error ? operationFailure.value.message : String(operationFailure.value)),
+		isError: true, durationMs: durationMs!,
+	};
+	return { result: result!, isError: result!.isError === true, durationMs: durationMs! };
 }
 
 async function finalizeExecutedToolCall(
@@ -927,7 +943,7 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
 	});
 }
 
-function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
+function createToolResultMessage(finalized: FinalizedToolCallOutcome, clock: AssistantClock): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: finalized.toolCall.id,
@@ -939,7 +955,7 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		usage: finalized.result.usage,
 		isError: finalized.isError,
 		...(finalized.durationMs === undefined ? {} : { durationMs: finalized.durationMs }),
-		timestamp: Date.now(),
+		timestamp: clock.wallNow(),
 	};
 }
 

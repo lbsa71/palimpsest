@@ -25,7 +25,8 @@ import type { Schema } from "../../../../narrow-schema/index.ts";
  * `context.systemPrompt` or `context.tools`.
  *
  * Contract:
- * - Must not throw or return a rejected promise for request/model/runtime failures.
+ * - Ordinary provider failures are protocol messages. Explicit host-adapter failures
+ *   (for example unavailable clocks) may reject/terminate the stream and stop the loop.
  * - Must return an AssistantMessageEventStream.
  * - Failures must be encoded in the returned stream via protocol events and a
  *   final AssistantMessage with stopReason "error" or "aborted" and errorMessage.
@@ -191,6 +192,8 @@ export type PrepareRequest = (
 export interface PrepareNextTurnContext extends AgentTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
+	/** Captured per loop; host observations never enter provider options. */
+	clock?: import("../ai/types.ts").AssistantClock;
 	model: Model<any>;
 
 	/**

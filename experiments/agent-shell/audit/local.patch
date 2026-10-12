@@ -1,0 +1,1173 @@
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -17,2 +17,4 @@
+-} from "@earendil-works/pi-ai";
+-import { getDefaultStreamFn } from "./stream-fn.ts";
++} from "../ai/index.ts";
++import { requireStreamFn } from "./stream-fn.ts";
++import { captureShellClock } from "../../../environment.ts";
++import type { AssistantClock } from "../ai/types.ts";
+@@ -58 +60 @@
+-	});
++	}, (error) => stream.fail(error));
+@@ -97 +99 @@
+-	});
++	}, (error) => stream.fail(error));
+@@ -110 +112,4 @@
+-	const initialMessages = declareToolChanges(context, prompts);
++	const clock = captureShellClock(config.clock);
++	config = { ...config, clock };
++	streamFn = requireStreamFn(streamFn);
++	const initialMessages = declareToolChanges(context, prompts, clock);
+@@ -124 +129 @@
+-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
++	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+@@ -142,0 +148,3 @@
++	const clock = captureShellClock(config.clock);
++	config = { ...config, clock };
++	streamFn = requireStreamFn(streamFn);
+@@ -149 +157 @@
+-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
++	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+@@ -211 +219 @@
+-			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
++			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages], config.clock!)) {
+@@ -269 +277 @@
+-						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
++						? await failToolCallsFromTruncatedMessage(toolCalls, emit, config.clock!)
+@@ -333 +341 @@
+-function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
++function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[], clock: AssistantClock): AgentMessage[] {
+@@ -359 +367 @@
+-	const update = withToolChanges({ role: "system", content: "", timestamp: Date.now() }, changes);
++	const update = withToolChanges({ role: "system", content: "", timestamp: clock.wallNow() }, changes);
+@@ -402,0 +411 @@
++	const { clock: _clock, ...providerOptions } = config;
+@@ -404 +413 @@
+-		...config,
++		...providerOptions,
+@@ -480,0 +490 @@
++	clock: AssistantClock,
+@@ -498 +508 @@
+-		const toolResultMessage = createToolResultMessage(finalized);
++		const toolResultMessage = createToolResultMessage(finalized, clock);
+@@ -558 +568 @@
+-			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit));
++			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit), config.clock!);
+@@ -570 +580 @@
+-		const toolResultMessage = createToolResultMessage(finalized);
++		const toolResultMessage = createToolResultMessage(finalized, config.clock!);
+@@ -629 +639 @@
+-			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit));
++			const executed = await executePreparedToolCall(preparation, signal, emitToolExecutionUpdate(toolCall, emit), config.clock!);
+@@ -646 +656 @@
+-	const orderedFinalizedCalls = await Promise.all(
++	const settled = await Promise.allSettled(
+@@ -648,0 +659,4 @@
++	const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected").map(item => item.reason);
++	if (failures.length === 1) throw failures[0];
++	if (failures.length > 1) throw new AggregateError(failures, "Parallel tool observations failed", { cause: failures[0] });
++	const orderedFinalizedCalls = settled.map(item => (item as PromiseFulfilledResult<FinalizedToolCallOutcome>).value);
+@@ -651 +665 @@
+-		const toolResultMessage = createToolResultMessage(finalized);
++		const toolResultMessage = createToolResultMessage(finalized, config.clock!);
+@@ -791,0 +806 @@
++	clock?: AssistantClock;
+@@ -811,0 +827 @@
++	const clock = captureShellClock(options.clock);
+@@ -817 +833 @@
+-	const executed = await executePreparedToolCall(preparation, signal, options.onUpdate ?? (() => {}));
++	const executed = await executePreparedToolCall(preparation, signal, options.onUpdate ?? (() => {}), clock);
+@@ -824,0 +841 @@
++	clock: AssistantClock,
+@@ -828,3 +845,3 @@
+-	const startedAt = performance.now();
+-	const elapsed = () => Math.round(performance.now() - startedAt);
+-
++	const startedAt = clock.monotonicNow();
++	let result: AgentToolResult<any> | undefined;
++	let operationFailure: { value: unknown } | undefined;
+@@ -832,25 +849,24 @@
+-		const result = await prepared.tool.execute(
+-			prepared.toolCall.id,
+-			prepared.args as never,
+-			signal,
+-			(partialResult) => {
+-				if (!acceptingUpdates) return;
+-				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
+-			},
+-		);
+-		const durationMs = elapsed();
+-		acceptingUpdates = false;
+-		await Promise.all(updateEvents);
+-		return { result, isError: result.isError === true, durationMs };
+-	} catch (error) {
+-		const durationMs = elapsed();
+-		acceptingUpdates = false;
+-		await Promise.all(updateEvents);
+-		return {
+-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+-			isError: true,
+-			durationMs,
+-		};
+-	} finally {
+-		acceptingUpdates = false;
+-	}
++		result = await prepared.tool.execute(prepared.toolCall.id, prepared.args as never, signal, (partialResult) => {
++			if (!acceptingUpdates) return;
++			const update = Promise.resolve(onUpdate(partialResult));
++			void update.catch(() => {});
++			updateEvents.push(update);
++		});
++	} catch (error) { operationFailure = { value: error }; }
++	finally { acceptingUpdates = false; }
++	// Drain updates even when execution or timing failed; never re-execute the tool.
++	const failures: unknown[] = [];
++	let durationMs: number | undefined;
++	try { durationMs = Math.round(clock.monotonicNow() - startedAt); }
++	catch (error) { failures.push(error); }
++	for (const update of await Promise.allSettled(updateEvents)) if (update.status === "rejected") failures.push(update.reason);
++	if (failures.length) {
++		if (operationFailure) failures.unshift(operationFailure.value);
++		if (failures.length === 1) throw failures[0];
++		throw new AggregateError(failures, "Tool observation or timing failed", { cause: failures[0] });
++	}
++	if (operationFailure) return {
++		result: createErrorToolResult(operationFailure.value instanceof Error ? operationFailure.value.message : String(operationFailure.value)),
++		isError: true, durationMs: durationMs!,
++	};
++	return { result: result!, isError: result!.isError === true, durationMs: durationMs! };
+@@ -930 +946 @@
+-function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
++function createToolResultMessage(finalized: FinalizedToolCallOutcome, clock: AssistantClock): ToolResultMessage {
+@@ -942 +958 @@
+-		timestamp: Date.now(),
++		timestamp: clock.wallNow(),
+--- a/packages/agent/src/types.ts
++++ b/packages/agent/src/types.ts
+@@ -16,2 +16,2 @@
+-} from "@earendil-works/pi-ai";
+-import type { Static, TSchema } from "typebox";
++} from "../ai/index.ts";
++import type { Schema } from "../../../../narrow-schema/index.ts";
+@@ -28 +28,2 @@
+- * - Must not throw or return a rejected promise for request/model/runtime failures.
++ * - Ordinary provider failures are protocol messages. Explicit host-adapter failures
++ *   (for example unavailable clocks) may reject/terminate the stream and stop the loop.
+@@ -193,0 +195,2 @@
++	/** Captured per loop; host observations never enter provider options. */
++	clock?: import("../ai/types.ts").AssistantClock;
+@@ -466 +469 @@
+-export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
++export interface AgentTool<TParameters extends object = object, TDetails = any> extends Tool<TParameters> {
+@@ -473 +476 @@
+-	prepareArguments?: (args: unknown) => Static<TParameters>;
++	prepareArguments?: (args: unknown) => Record<string, unknown>;
+@@ -478 +481 @@
+-	outputSchema?: TSchema;
++	outputSchema?: Schema;
+@@ -485 +488 @@
+-		params: Static<TParameters>,
++		params: Record<string, unknown>,
+--- a/packages/agent/src/stream-fn.ts
++++ b/packages/agent/src/stream-fn.ts
+@@ -3,10 +3,4 @@
+-let defaultStreamFn: StreamFn | undefined;
+-
+-/**
+- * Configure the fallback used by Agent and low-level loops when callers omit streamFn.
+- *
+- * Hosts that provide a default model runtime can install its stream function here
+- * without making pi-agent-core depend on a provider catalog or compatibility layer.
+- */
+-export function setDefaultStreamFn(streamFn: StreamFn | undefined): void {
+-	defaultStreamFn = streamFn;
++/** The retained loop has no mutable process-wide provider default. */
++export function requireStreamFn(streamFn: StreamFn): StreamFn {
++	if (typeof streamFn !== "function") throw new Error("Pass a stream function explicitly.");
++	return streamFn;
+@@ -14,7 +7,0 @@
+-
+-export function getDefaultStreamFn(): StreamFn {
+-	if (!defaultStreamFn) {
+-		throw new Error("No default stream function configured. Pass streamFn explicitly or call setDefaultStreamFn().");
+-	}
+-	return defaultStreamFn;
+-}
+--- a/packages/ai/src/utils/event-stream.ts
++++ b/packages/ai/src/utils/event-stream.ts
+@@ -1 +1,2 @@
+-import type { AssistantMessage, AssistantMessageEvent } from "../types.ts";
++import { captureShellClock } from "../../../../environment.ts";
++import type { AssistantClock, AssistantMessage, AssistantMessageEvent } from "../types.ts";
+@@ -31,0 +33,2 @@
++	private rejectFinalResult!: (error: unknown) => void;
++	private failure?: { value: unknown };
+@@ -38 +41 @@
+-		this.finalResultPromise = new Promise((resolve) => {
++		this.finalResultPromise = new Promise((resolve, reject) => {
+@@ -39,0 +43 @@
++			this.rejectFinalResult = reject;
+@@ -40,0 +45,2 @@
++		// Consumers may use iteration, result(), or both; retain rejection for either.
++		void this.finalResultPromise.catch(() => {});
+@@ -71,0 +78,7 @@
++	fail(error: unknown): void {
++		if (this.done) return;
++		this.failure = { value: error };
++		this.rejectFinalResult(error);
++		this.end();
++	}
++
+@@ -76,0 +90 @@
++				if (this.failure) throw this.failure.value;
+@@ -80 +94 @@
+-				if (result.done) return;
++				if (result.done) { if (this.failure) throw this.failure.value; return; }
+@@ -98,2 +112,3 @@
+-	readonly #startedAt = Date.now();
+-	readonly #startedAtMonotonic = performance.now();
++	readonly #startedAt: number;
++	readonly #startedAtMonotonic: number;
++	readonly #clock: AssistantClock;
+@@ -101 +116 @@
+-	constructor() {
++	constructor(clock?: AssistantClock) {
+@@ -112,0 +128,3 @@
++		this.#clock = captureShellClock(clock);
++		this.#startedAt = this.#clock.wallNow();
++		this.#startedAtMonotonic = this.#clock.monotonicNow();
+@@ -116,2 +134,4 @@
+-		if (event.type === "done") this.#time(event.message);
+-		else if (event.type === "error") this.#time(event.error);
++		try {
++			if (event.type === "done") this.#time(event.message);
++			else if (event.type === "error") this.#time(event.error);
++		} catch (error) { super.fail(error); throw error; }
+@@ -122 +142,2 @@
+-		if (result !== undefined) this.#time(result);
++		try { if (result !== undefined) this.#time(result); }
++		catch (error) { super.fail(error); throw error; }
+@@ -128 +149 @@
+-		message.durationMs = Math.max(0, Math.round(performance.now() - this.#startedAtMonotonic));
++		message.durationMs = Math.round(this.#clock.monotonicNow() - this.#startedAtMonotonic);
+@@ -133,2 +154,2 @@
+-export function createAssistantMessageEventStream(): AssistantMessageEventStream {
+-	return new AssistantMessageEventStream();
++export function createAssistantMessageEventStream(clock?: AssistantClock): AssistantMessageEventStream {
++	return new AssistantMessageEventStream(clock);
+--- a/packages/ai/src/utils/validation.ts
++++ b/packages/ai/src/utils/validation.ts
+@@ -1,3 +1,3 @@
+-import { Compile } from "typebox/compile";
+-import type { TLocalizedValidationError } from "typebox/error";
+-import { Value } from "typebox/value";
++import { canonicalJson } from "../../../../../contracts/common.ts";
++import { Validator } from "../../../../../narrow-schema/index.ts";
++import type { Schema } from "../../../../../narrow-schema/index.ts";
+@@ -6,12 +6,9 @@
+-const validatorCache = new WeakMap<object, ReturnType<typeof Compile>>();
+-const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
+-
+-interface JsonSchemaObject {
+-	type?: string | string[];
+-	properties?: Record<string, JsonSchemaObject>;
+-	required?: string[];
+-	items?: JsonSchemaObject | JsonSchemaObject[];
+-	additionalProperties?: boolean | JsonSchemaObject;
+-	allOf?: JsonSchemaObject[];
+-	anyOf?: JsonSchemaObject[];
+-	oneOf?: JsonSchemaObject[];
++// Schema definitions are owned, immutable configuration for the lifetime of a shell run.
++// cfworker annotates schemas during dereferencing, so give it a private clone.
++const validatorCache = new WeakMap<object, Validator>();
++function getValidator(schema: Tool["parameters"]): Validator {
++  const cached = validatorCache.get(schema);
++  if (cached) return cached;
++  const validator = new Validator(structuredClone(schema) as Schema, "2020-12", false);
++  validatorCache.set(schema, validator);
++  return validator;
+@@ -20,8 +17,4 @@
+-function getSchemaTypes(schema: JsonSchemaObject): string[] {
+-	if (typeof schema.type === "string") {
+-		return [schema.type];
+-	}
+-	if (Array.isArray(schema.type)) {
+-		return schema.type.filter((type): type is string => typeof type === "string");
+-	}
+-	return [];
++export function validateToolCall(tools: Tool[], toolCall: ToolCall): Record<string, unknown> {
++  const tool = tools.find(candidate => candidate.name === toolCall.name);
++  if (!tool) throw new Error(`Tool "${toolCall.name}" not found`);
++  return validateToolArguments(tool, toolCall);
+@@ -30,19 +23,8 @@
+-function matchesJsonType(value: unknown, type: string): boolean {
+-	switch (type) {
+-		case "number":
+-			return typeof value === "number";
+-		case "integer":
+-			return typeof value === "number" && Number.isInteger(value);
+-		case "boolean":
+-			return typeof value === "boolean";
+-		case "string":
+-			return typeof value === "string";
+-		case "null":
+-			return value === null;
+-		case "array":
+-			return Array.isArray(value);
+-		case "object":
+-			return typeof value === "object" && value !== null && !Array.isArray(value);
+-		default:
+-			return false;
+-	}
++/** Strict JSON Schema validation. No coercion, optional-null removal, or default insertion. */
++export function validateToolArguments(tool: Tool, toolCall: ToolCall): Record<string, unknown> {
++  canonicalJson(toolCall.arguments);
++  const args = structuredClone(toolCall.arguments);
++  const result = getValidator(tool.parameters).validate(args);
++  if (result.valid) return args;
++  const errors = result.errors.map(error => `  - ${error.instanceLocation}: ${error.error}`).join("\n");
++  throw new Error(`Validation failed for tool "${toolCall.name}":\n${errors}`);
+@@ -50,301 +31,0 @@
+-
+-function getSubSchemaValidator(schema: JsonSchemaObject): ReturnType<typeof Compile> | undefined {
+-	try {
+-		return getValidator(schema as Tool["parameters"]);
+-	} catch {
+-		return undefined;
+-	}
+-}
+-
+-function coercePrimitiveByType(value: unknown, type: string): unknown {
+-	switch (type) {
+-		case "number": {
+-			if (value === null) {
+-				return 0;
+-			}
+-			if (typeof value === "string" && value.trim() !== "") {
+-				const parsed = Number(value);
+-				if (Number.isFinite(parsed)) {
+-					return parsed;
+-				}
+-			}
+-			if (typeof value === "boolean") {
+-				return value ? 1 : 0;
+-			}
+-			return value;
+-		}
+-		case "integer": {
+-			if (value === null) {
+-				return 0;
+-			}
+-			if (typeof value === "string" && value.trim() !== "") {
+-				const parsed = Number(value);
+-				if (Number.isInteger(parsed)) {
+-					return parsed;
+-				}
+-			}
+-			if (typeof value === "boolean") {
+-				return value ? 1 : 0;
+-			}
+-			return value;
+-		}
+-		case "boolean": {
+-			if (value === null) {
+-				return false;
+-			}
+-			if (typeof value === "string") {
+-				if (value === "true") {
+-					return true;
+-				}
+-				if (value === "false") {
+-					return false;
+-				}
+-			}
+-			if (typeof value === "number") {
+-				if (value === 1) {
+-					return true;
+-				}
+-				if (value === 0) {
+-					return false;
+-				}
+-			}
+-			return value;
+-		}
+-		case "string": {
+-			if (value === null) {
+-				return "";
+-			}
+-			if (typeof value === "number" || typeof value === "boolean") {
+-				return String(value);
+-			}
+-			return value;
+-		}
+-		case "null": {
+-			if (value === "" || value === 0 || value === false) {
+-				return null;
+-			}
+-			return value;
+-		}
+-		default:
+-			return value;
+-	}
+-}
+-
+-function applySchemaObjectCoercion(value: Record<string, unknown>, schema: JsonSchemaObject): void {
+-	const properties = schema.properties;
+-	const definedKeys = new Set<string>(properties ? Object.keys(properties) : []);
+-
+-	if (properties) {
+-		for (const [key, propertySchema] of Object.entries(properties)) {
+-			if (!(key in value)) {
+-				continue;
+-			}
+-			value[key] = coerceWithJsonSchema(value[key], propertySchema);
+-		}
+-	}
+-
+-	if (schema.additionalProperties && typeof schema.additionalProperties === "object") {
+-		for (const [key, propertyValue] of Object.entries(value)) {
+-			if (definedKeys.has(key)) {
+-				continue;
+-			}
+-			value[key] = coerceWithJsonSchema(propertyValue, schema.additionalProperties);
+-		}
+-	}
+-}
+-
+-function applySchemaArrayCoercion(value: unknown[], schema: JsonSchemaObject): void {
+-	if (Array.isArray(schema.items)) {
+-		for (let index = 0; index < value.length; index++) {
+-			const itemSchema = schema.items[index];
+-			if (!itemSchema) {
+-				continue;
+-			}
+-			value[index] = coerceWithJsonSchema(value[index], itemSchema);
+-		}
+-		return;
+-	}
+-
+-	if (schema.items && typeof schema.items === "object") {
+-		for (let index = 0; index < value.length; index++) {
+-			value[index] = coerceWithJsonSchema(value[index], schema.items);
+-		}
+-	}
+-}
+-
+-function coerceWithUnionSchema(value: unknown, schemas: JsonSchemaObject[]): unknown {
+-	for (const schema of schemas) {
+-		const validator = getSubSchemaValidator(schema);
+-		if (validator?.Check(value)) {
+-			return value;
+-		}
+-	}
+-
+-	for (const schema of schemas) {
+-		const candidate = structuredClone(value);
+-		const coerced = coerceWithJsonSchema(candidate, schema);
+-		const validator = getSubSchemaValidator(schema);
+-		if (validator?.Check(coerced)) {
+-			return coerced;
+-		}
+-	}
+-	return value;
+-}
+-
+-function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown {
+-	let nextValue = value;
+-
+-	if (Array.isArray(schema.allOf)) {
+-		for (const nested of schema.allOf) {
+-			nextValue = coerceWithJsonSchema(nextValue, nested);
+-		}
+-	}
+-
+-	if (Array.isArray(schema.anyOf)) {
+-		nextValue = coerceWithUnionSchema(nextValue, schema.anyOf);
+-	}
+-
+-	if (Array.isArray(schema.oneOf)) {
+-		nextValue = coerceWithUnionSchema(nextValue, schema.oneOf);
+-	}
+-
+-	const schemaTypes = getSchemaTypes(schema);
+-	const matchesUnionMember =
+-		schemaTypes.length > 1 && schemaTypes.some((schemaType) => matchesJsonType(nextValue, schemaType));
+-	if (schemaTypes.length > 0 && !matchesUnionMember) {
+-		for (const schemaType of schemaTypes) {
+-			const candidate = coercePrimitiveByType(nextValue, schemaType);
+-			if (candidate !== nextValue) {
+-				nextValue = candidate;
+-				break;
+-			}
+-		}
+-	}
+-
+-	if (
+-		schemaTypes.includes("object") &&
+-		typeof nextValue === "object" &&
+-		nextValue !== null &&
+-		!Array.isArray(nextValue)
+-	) {
+-		applySchemaObjectCoercion(nextValue as Record<string, unknown>, schema);
+-	}
+-
+-	if (schemaTypes.includes("array") && Array.isArray(nextValue)) {
+-		applySchemaArrayCoercion(nextValue, schema);
+-	}
+-
+-	return nextValue;
+-}
+-
+-function normalizeOptionalNulls(value: unknown, schema: JsonSchemaObject): void {
+-	if (Array.isArray(value)) {
+-		if (Array.isArray(schema.items)) {
+-			for (let index = 0; index < value.length; index++) {
+-				const itemSchema = schema.items[index];
+-				if (itemSchema) normalizeOptionalNulls(value[index], itemSchema);
+-			}
+-		} else if (schema.items) {
+-			for (const item of value) normalizeOptionalNulls(item, schema.items);
+-		}
+-		return;
+-	}
+-	if (typeof value !== "object" || value === null || !schema.properties) return;
+-
+-	const object = value as Record<string, unknown>;
+-	const required = new Set(schema.required ?? []);
+-	for (const [key, propertySchema] of Object.entries(schema.properties)) {
+-		if (!(key in object)) continue;
+-		if (
+-			object[key] === null &&
+-			!required.has(key) &&
+-			typeof (propertySchema as { $ref?: unknown }).$ref !== "string" &&
+-			getSubSchemaValidator(propertySchema)?.Check(null) === false
+-		) {
+-			delete object[key];
+-		} else {
+-			normalizeOptionalNulls(object[key], propertySchema);
+-		}
+-	}
+-}
+-
+-function getValidator(schema: Tool["parameters"]): ReturnType<typeof Compile> {
+-	const key = schema as object;
+-	const cached = validatorCache.get(key);
+-	if (cached) {
+-		return cached;
+-	}
+-	const validator = Compile(schema);
+-	validatorCache.set(key, validator);
+-	return validator;
+-}
+-
+-function formatValidationPath(error: TLocalizedValidationError): string {
+-	if (error.keyword === "required") {
+-		const requiredProperties = (error.params as { requiredProperties?: string[] }).requiredProperties;
+-		const requiredProperty = requiredProperties?.[0];
+-		if (requiredProperty) {
+-			const basePath = error.instancePath.replace(/^\//, "").replace(/\//g, ".");
+-			return basePath ? `${basePath}.${requiredProperty}` : requiredProperty;
+-		}
+-	}
+-	const path = error.instancePath.replace(/^\//, "").replace(/\//g, ".");
+-	return path || "root";
+-}
+-
+-/**
+- * Finds a tool by name and validates the tool call arguments against its TypeBox schema
+- * @param tools Array of tool definitions
+- * @param toolCall The tool call from the LLM
+- * @returns The validated arguments
+- * @throws Error if tool is not found or validation fails
+- */
+-export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
+-	const tool = tools.find((t) => t.name === toolCall.name);
+-	if (!tool) {
+-		throw new Error(`Tool "${toolCall.name}" not found`);
+-	}
+-	return validateToolArguments(tool, toolCall);
+-}
+-
+-/**
+- * Validates tool call arguments against the tool's TypeBox schema
+- * @param tool The tool definition with TypeBox schema
+- * @param toolCall The tool call from the LLM
+- * @returns The validated (and potentially coerced) arguments
+- * @throws Error with formatted message if validation fails
+- */
+-export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
+-	const args = structuredClone(toolCall.arguments);
+-	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
+-	Value.Convert(tool.parameters, args);
+-
+-	const validator = getValidator(tool.parameters);
+-	if (!Object.getOwnPropertySymbols(tool.parameters).includes(TYPEBOX_KIND)) {
+-		const coerced = coerceWithJsonSchema(args, tool.parameters as JsonSchemaObject);
+-		if (coerced !== args) {
+-			if (typeof args === "object" && args !== null && typeof coerced === "object" && coerced !== null) {
+-				for (const key of Object.keys(args)) {
+-					delete args[key];
+-				}
+-				Object.assign(args, coerced);
+-			} else {
+-				return validator.Check(coerced) ? coerced : args;
+-			}
+-		}
+-	}
+-
+-	if (validator.Check(args)) {
+-		return args;
+-	}
+-
+-	const errors =
+-		validator
+-			.Errors(args)
+-			.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
+-			.join("\n") || "Unknown validation error";
+-
+-	const errorMessage = `Validation failed for tool "${toolCall.name}":\n${errors}\n\nReceived arguments:\n${JSON.stringify(toolCall.arguments, null, 2)}`;
+-
+-	throw new Error(errorMessage);
+-}
+--- a/packages/ai/src/providers/model-schema.ts
++++ b/packages/ai/src/providers/model-schema.ts
+@@ -1,96 +1,13 @@
+-import { type Static, type TSchemaOptions, Type } from "typebox";
+-
+-export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+-export const MODEL_THINKING_LEVELS = ["off", ...THINKING_LEVELS] as const;
+-export const MODEL_INPUT_MODALITIES = ["text", "image"] as const;
+-export const CACHE_RETENTIONS = ["none", "short", "long"] as const;
+-export const MODEL_PROMPT_CACHE_RETENTIONS = ["short", "long"] as const;
+-
+-export const ThinkingLevelSchema = Type.Enum(THINKING_LEVELS);
+-export const ModelThinkingLevelSchema = Type.Enum(MODEL_THINKING_LEVELS);
+-export const ModelInputModalitySchema = Type.Enum(MODEL_INPUT_MODALITIES);
+-export const CacheRetentionSchema = Type.Enum(CACHE_RETENTIONS);
+-
+-const ThinkingLevelMapValueSchema = Type.Union([Type.String(), Type.Null()]);
+-export const ThinkingLevelMapSchema = Type.Partial(Type.Record(ModelThinkingLevelSchema, ThinkingLevelMapValueSchema));
+-
+-export const ModelPromptCacheSchema = Type.Partial(
+-	Type.Record(Type.Enum(MODEL_PROMPT_CACHE_RETENTIONS), Type.Number({ exclusiveMinimum: 0 })),
+-	{
+-		description:
+-			"Best-effort prompt cache lifetime in seconds for each retention tier. A missing tier means the lifetime is unknown, so Pi does not warm it.",
+-	},
+-);
+-
+-const ModelCostRatesProperties = {
+-	input: Type.Number({ description: "Input cost in USD per million tokens." }),
+-	output: Type.Number({ description: "Output cost in USD per million tokens." }),
+-	cacheRead: Type.Number({ description: "Cache-read cost in USD per million tokens." }),
+-	cacheWrite: Type.Number({ description: "Cache-write cost in USD per million tokens." }),
+-};
+-
+-export const ModelCostRatesSchema = Type.Object(ModelCostRatesProperties);
+-export const ModelCostTierSchema = Type.Object({
+-	inputTokensAbove: Type.Number({
+-		description: "Use this tier when total request input exceeds this token count.",
+-	}),
+-	...ModelCostRatesProperties,
+-});
+-export const ModelCostSchema = Type.Object({
+-	...ModelCostRatesProperties,
+-	tiers: Type.Optional(
+-		Type.Array(ModelCostTierSchema, {
+-			description: "Request-wide pricing tiers. The highest matching input threshold applies to the full request.",
+-		}),
+-	),
+-});
+-
+-function modelImageResizeOptions(options?: TSchemaOptions) {
+-	return Type.Object(
+-		{
+-			maxWidth: Type.Optional(Type.Integer({ minimum: 1 })),
+-			maxHeight: Type.Optional(Type.Integer({ minimum: 1 })),
+-			maxBytes: Type.Optional(
+-				Type.Integer({ minimum: 1, description: "Maximum base64-encoded payload size in bytes." }),
+-			),
+-			jpegQuality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+-		},
+-		options,
+-	);
+-}
+-
+-export const ModelImageResizeOptionsSchema = modelImageResizeOptions();
+-
+-export const ModelImageInputLimitsSchema = Type.Object({
+-	resize: Type.Optional(
+-		modelImageResizeOptions({
+-			description: "Cache-safe resize profile applied before a new image enters conversation history.",
+-		}),
+-	),
+-	maxPerMessage: Type.Optional(
+-		Type.Integer({ minimum: 1, description: "Maximum images accepted in one provider message." }),
+-	),
+-	maxPerRequest: Type.Optional(
+-		Type.Integer({ minimum: 1, description: "Maximum images accepted across one provider request." }),
+-	),
+-});
+-
+-export const ModelInputLimitsSchema = Type.Object({
+-	maxRequestBytes: Type.Optional(
+-		Type.Integer({ minimum: 1, description: "Maximum serialized provider request size in bytes." }),
+-	),
+-	images: Type.Optional(ModelImageInputLimitsSchema),
+-});
+-
+-export type ThinkingLevel = Static<typeof ThinkingLevelSchema>;
+-export type ModelThinkingLevel = Static<typeof ModelThinkingLevelSchema>;
+-export type ThinkingLevelMap = Static<typeof ThinkingLevelMapSchema>;
+-export type ModelInputModality = Static<typeof ModelInputModalitySchema>;
+-export type CacheRetention = Static<typeof CacheRetentionSchema>;
+-export type ModelPromptCache = Static<typeof ModelPromptCacheSchema>;
+-export type ModelCostRates = Static<typeof ModelCostRatesSchema>;
+-export type ModelCostTier = Static<typeof ModelCostTierSchema>;
+-export type ModelCost = Static<typeof ModelCostSchema>;
+-export type ModelImageResizeOptions = Static<typeof ModelImageResizeOptionsSchema>;
+-export type ModelImageInputLimits = Static<typeof ModelImageInputLimitsSchema>;
+-export type ModelInputLimits = Static<typeof ModelInputLimitsSchema>;
++// Selected Pi protocol types only. Runtime model catalogue schemas are not consumed by this host.
++export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
++export type ModelThinkingLevel = 'off' | ThinkingLevel;
++export type ModelInputModality = 'text' | 'image';
++export type CacheRetention = 'none' | 'short' | 'long';
++export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
++export type ModelPromptCache = Partial<Record<'short' | 'long', number>>;
++export interface ModelCostRates { input: number; output: number; cacheRead: number; cacheWrite: number; }
++export interface ModelCostTier extends ModelCostRates { inputTokensAbove: number; }
++export interface ModelCost extends ModelCostRates { tiers?: ModelCostTier[]; }
++export interface ModelImageResizeOptions { maxWidth?: number; maxHeight?: number; maxBytes?: number; jpegQuality?: number; }
++export interface ModelImageInputLimits { resize?: ModelImageResizeOptions; maxPerMessage?: number; maxPerRequest?: number; }
++export interface ModelInputLimits { maxRequestBytes?: number; images?: ModelImageInputLimits; }
+--- a/packages/ai/src/utils/diagnostics.ts
++++ b/packages/ai/src/utils/diagnostics.ts
+@@ -0,0 +1 @@
++import { captureShellClock } from "../../../../environment.ts";
+@@ -37,0 +39 @@
++	wallNow: () => number = captureShellClock().wallNow,
+@@ -39 +41,3 @@
+-	return { type, timestamp: Date.now(), error: extractDiagnosticError(error), details };
++	const timestamp = wallNow();
++	if (!Number.isFinite(timestamp)) throw new Error("Diagnostic wall time unavailable");
++	return { type, timestamp, error: extractDiagnosticError(error), details };
+--- a/packages/ai/src/types.ts
++++ b/packages/ai/src/types.ts
+@@ -1,28 +1,4 @@
+-import type { TelemetryContext } from "@earendil-works/pi-telemetry";
+-import type { AnthropicOptions } from "./api/anthropic-messages.ts";
+-import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
+-import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
+-import type { GoogleOptions } from "./api/google-generative-ai.ts";
+-import type { GoogleVertexOptions } from "./api/google-vertex.ts";
+-import type { MistralOptions } from "./api/mistral-conversations.ts";
+-import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.ts";
+-import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
+-import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
+-import type { PiMessagesOptions } from "./api/pi-messages.ts";
+-import type {
+-	AnthropicMessagesCompat,
+-	BedrockCompat,
+-	MistralConversationsCompat,
+-	OpenAICompletionsCompat,
+-	OpenAIResponsesCompat,
+-} from "./providers/compat-schema.ts";
+-import type {
+-	CacheRetention,
+-	ModelCost,
+-	ModelInputLimits,
+-	ModelInputModality,
+-	ModelPromptCache,
+-	ModelThinkingLevel,
+-	ThinkingLevel,
+-	ThinkingLevelMap,
+-} from "./providers/model-schema.ts";
++/** Explicit host time for retained loop and response metadata. */
++export interface AssistantClock { wallNow(): number; monotonicNow(): number }
++
++import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
+@@ -30,103 +6,3 @@
+-import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
+-
+-export type {
+-	AnthropicAllowedFallbackModel,
+-	AnthropicMessagesCompat,
+-	BedrockCompat,
+-	ChatTemplateKwargValue,
+-	MistralConversationsCompat,
+-	OpenAICompletionsCompat,
+-	OpenAIResponsesCompat,
+-	OpenRouterRouting,
+-	SessionAffinityFormat,
+-	ThinkingTokenBudgetField,
+-	VercelGatewayRouting,
+-} from "./providers/compat-schema.ts";
+-export type {
+-	CacheRetention,
+-	ModelCost,
+-	ModelCostRates,
+-	ModelCostTier,
+-	ModelImageInputLimits,
+-	ModelImageResizeOptions,
+-	ModelInputLimits,
+-	ModelInputModality,
+-	ModelPromptCache,
+-	ModelThinkingLevel,
+-	ThinkingLevel,
+-	ThinkingLevelMap,
+-} from "./providers/model-schema.ts";
+-export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
+-
+-export type KnownApi =
+-	| "openai-completions"
+-	| "mistral-conversations"
+-	| "openai-responses"
+-	| "azure-openai-responses"
+-	| "openai-codex-responses"
+-	| "anthropic-messages"
+-	| "bedrock-converse-stream"
+-	| "google-generative-ai"
+-	| "google-vertex"
+-	| "pi-messages";
+-
+-export type Api = KnownApi | (string & {});
+-
+-export type KnownImageApi = "openrouter-images";
+-
+-export type ImageApi = KnownImageApi | (string & {});
+-
+-export type KnownClassifierApi =
+-	| "typesafe-system-one"
+-	| "cloudflare-workers-ai-system-one"
+-	| "llama-cpp-classify"
+-	| "openai-decisions";
+-
+-export type ClassifierApi = KnownClassifierApi | (string & {});
+-
+-export type KnownProvider =
+-	| "amazon-bedrock"
+-	| "ant-ling"
+-	| "anthropic"
+-	| "google"
+-	| "google-vertex"
+-	| "openai"
+-	| "azure"
+-	| "openai-codex"
+-	| "radius"
+-	| "typesafe"
+-	| "nvidia"
+-	| "deepseek"
+-	| "github-copilot"
+-	| "xai"
+-	| "groq"
+-	| "cerebras"
+-	| "openrouter"
+-	| "vercel-ai-gateway"
+-	| "zai"
+-	| "zai-coding-cn"
+-	| "mistral"
+-	| "minimax"
+-	| "minimax-cn"
+-	| "moonshotai"
+-	| "moonshotai-cn"
+-	| "huggingface"
+-	| "fireworks"
+-	| "together"
+-	| "baseten"
+-	| "opencode"
+-	| "opencode-go"
+-	| "kimi-coding"
+-	| "meta"
+-	| "cloudflare-workers-ai"
+-	| "cloudflare-ai-gateway"
+-	| "qwen-token-plan"
+-	| "qwen-token-plan-cn"
+-	| "qwen-token-plan-individual"
+-	| "xiaomi"
+-	| "xiaomi-token-plan-cn"
+-	| "xiaomi-token-plan-ams"
+-	| "xiaomi-token-plan-sgp";
+-export type ProviderId = KnownProvider | string;
+-
+-export type ToolChoice = "auto" | "none";
++import type { CacheRetention, ModelCost, ModelInputLimits, ModelInputModality, ModelPromptCache, ModelThinkingLevel, ThinkingLevel, ThinkingLevelMap } from "./providers/model-schema.ts";
++export type Api = string;
++export type ProviderId = string;
+@@ -135 +11 @@
+-/** Token budgets for each thinking level (token-based providers only) */
++export type ToolChoice = "auto" | "none";
+@@ -160 +36 @@
+-	telemetryContext?: TelemetryContext;
++	telemetryContext?: Record<string, unknown>;
+@@ -264,105 +139,0 @@
+-export type ProviderStreamOptions = StreamOptions & Record<string, unknown>;
+-
+-export interface DeferredFetchOptions extends ProviderRequestOptions<Model<Api>> {
+-	/**
+-	 * Maximum provider long-poll duration in milliseconds.
+-	 * Defaults to 0, which performs one status check.
+-	 */
+-	wait?: number;
+-}
+-
+-/** Request options for best-effort deferred-response cancellation. */
+-export type DeferredCancelOptions = ProviderRequestOptions<Model<Api>>;
+-
+-/**
+- * Maps known APIs to their full provider-specific stream option types.
+- * Type-only imports from API implementation modules are erased at emit, so
+- * this is tree-shake safe.
+- */
+-export interface ApiOptionsMap {
+-	"anthropic-messages": AnthropicOptions;
+-	"openai-completions": OpenAICompletionsOptions;
+-	"openai-responses": OpenAIResponsesOptions;
+-	"openai-codex-responses": OpenAICodexResponsesOptions;
+-	"azure-openai-responses": AzureOpenAIResponsesOptions;
+-	"google-generative-ai": GoogleOptions;
+-	"google-vertex": GoogleVertexOptions;
+-	"mistral-conversations": MistralOptions;
+-	"bedrock-converse-stream": BedrockOptions;
+-	"pi-messages": PiMessagesOptions;
+-}
+-
+-/**
+- * Full stream options for an API. Known APIs resolve to their concrete option
+- * type; custom API strings fall back to the generic shape.
+- */
+-export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMap
+-	? ApiOptionsMap[TApi]
+-	: StreamOptions & Record<string, unknown>;
+-
+-/**
+- * The uniform stream contract of an API implementation module: every module
+- * under `src/api/` exports `stream` and `streamSimple`; capable modules may also
+- * export deferred-response methods. Lazy wrappers (`lazyApi()`) and provider
+- * factories pass these around as values. This is the untyped dispatch shape;
+- * per-API option typing lives on the implementation modules themselves and on
+- * `Provider.stream()` via `ApiStreamOptions`.
+- */
+-export interface ProviderStreams {
+-	stream(model: Model<Api>, context: TranscriptContext, options?: StreamOptions): AssistantMessageEventStream;
+-	streamSimple(
+-		model: Model<Api>,
+-		context: TranscriptContext,
+-		options?: SimpleStreamOptions,
+-	): AssistantMessageEventStream;
+-	fetchDeferred?(
+-		model: Model<Api>,
+-		handle: DeferredHandle,
+-		options?: DeferredFetchOptions,
+-	): AssistantMessageEventStream;
+-	cancelDeferred?(model: Model<Api>, handle: DeferredHandle, options?: DeferredCancelOptions): Promise<void>;
+-}
+-
+-/**
+- * The uniform contract of an image-generation API implementation module:
+- * every image API module under `src/api/` exports exactly `generateImages`,
+- * so the module itself satisfies this interface. Lazy wrappers and
+- * `createProvider({ images })` pass these around as values.
+- */
+-export interface ProviderImages {
+-	generateImages(
+-		model: ImageModel<ImageApi>,
+-		context: ImagesContext,
+-		options?: ImagesOptions,
+-	): Promise<AssistantImages>;
+-}
+-
+-/** The uniform contract implemented by classifier API modules. */
+-export interface ProviderClassifier {
+-	classify(
+-		model: ClassifierModel<ClassifierApi>,
+-		context: ClassifierContext,
+-		options?: ClassifierOptions,
+-	): Promise<ClassifierResult>;
+-}
+-
+-export interface ClassifierOptions extends ProviderRequestOptions<ClassifierModel<ClassifierApi>> {
+-	/**
+-	 * Divides the answer logits by this value before they are normalized into probabilities.
+-	 * Values above 1 soften the distribution; values below 1 sharpen it. Must be positive.
+-	 * APIs that cannot apply it ignore it.
+-	 */
+-	temperature?: number;
+-}
+-
+-export interface ImagesOptions extends ProviderRequestOptions<ImageModel<ImageApi>> {
+-	/**
+-	 * Optional metadata to include in API requests.
+-	 * Providers extract the fields they understand and ignore the rest.
+-	 */
+-	metadata?: Record<string, unknown>;
+-}
+-
+-export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
+-
+-// Unified options with reasoning passed to streamSimple() and completeSimple()
+@@ -378,29 +148,0 @@
+-
+-// Generic StreamFunction with typed options.
+-//
+-// Contract:
+-// - Receives a normalized transcript: the system prompt and tools live in the
+-//   leading system message, never on the context itself.
+-// - Must return an AssistantMessageEventStream.
+-// - Direct streamSimple() calls may throw synchronously when request auth is
+-//   missing. Once a stream is returned, request/model/runtime failures should
+-//   be encoded in that stream.
+-// - Error termination must produce an AssistantMessage with stopReason
+-//   "error" or "aborted" and errorMessage, emitted via the stream protocol.
+-export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
+-	model: Model<TApi>,
+-	context: TranscriptContext,
+-	options?: TOptions,
+-) => AssistantMessageEventStream;
+-
+-export type ImagesFunction<TOptions extends ImagesOptions = ImagesOptions> = (
+-	model: ImageModel<ImageApi>,
+-	context: ImagesContext,
+-	options?: TOptions,
+-) => Promise<AssistantImages>;
+-
+-export type ClassifierFunction<TOptions extends ClassifierOptions = ClassifierOptions> = (
+-	model: ClassifierModel<ClassifierApi>,
+-	context: ClassifierContext,
+-	options?: TOptions,
+-) => Promise<ClassifierResult>;
+@@ -571,0 +314,2 @@
++	/** Complete stateless Responses output, retained verbatim for replay. */
++	openaiOutput?: JsonValue[];
+@@ -640,88 +383,0 @@
+-
+-export type ImagesInputContent = TextContent | ImageContent;
+-export type ImagesOutputContent = TextContent | ImageContent;
+-
+-export interface ImagesContext {
+-	input: ImagesInputContent[];
+-}
+-
+-export type ImagesStopReason = "stop" | "error" | "aborted";
+-
+-export interface AssistantImages {
+-	api: ImageApi;
+-	provider: ProviderId;
+-	model: string;
+-	output: ImagesOutputContent[];
+-	responseId?: string;
+-	usage?: Usage;
+-	stopReason: ImagesStopReason;
+-	errorMessage?: string;
+-	timestamp: number; // Unix timestamp in milliseconds
+-}
+-
+-export interface ClassifierChoiceQuestion {
+-	type: "choice";
+-	instructions: string;
+-	criteria: Record<string, string>;
+-}
+-
+-export interface ClassifierScoreQuestion {
+-	type: "score";
+-	instructions: string;
+-	criteria: string[];
+-}
+-
+-export interface ClassifierBoolQuestion {
+-	type: "bool";
+-	instructions: string;
+-	criteria: { true: string; false: string };
+-}
+-
+-export type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierScoreQuestion | ClassifierBoolQuestion;
+-
+-export interface ClassifierContext {
+-	state: JsonObject;
+-	/**
+-	 * Images judged together with `state`. Only models whose `input` includes `"image"` accept them;
+-	 * other models return an error result.
+-	 */
+-	images?: ImageContent[];
+-	questions: Record<string, ClassifierQuestion>;
+-}
+-
+-export interface ClassifierChoiceAnswer {
+-	type: "choice";
+-	choice: string;
+-	probabilities: Record<string, number>;
+-	confidence: number;
+-}
+-
+-export interface ClassifierScoreAnswer {
+-	type: "score";
+-	score: number;
+-	confidence: number;
+-}
+-
+-export interface ClassifierBoolAnswer {
+-	type: "bool";
+-	probability: number;
+-}
+-
+-export type ClassifierAnswer = ClassifierChoiceAnswer | ClassifierScoreAnswer | ClassifierBoolAnswer;
+-export type ClassifierStopReason = "stop" | "error" | "aborted";
+-
+-export interface ClassifierResult {
+-	api: ClassifierApi;
+-	provider: ProviderId;
+-	model: string;
+-	answers: Record<string, ClassifierAnswer>;
+-	/** Token usage and its cost at the model's catalog price, when the service reports token counts. */
+-	usage?: Usage;
+-	stopReason: ClassifierStopReason;
+-	errorMessage?: string;
+-	timestamp: number; // Unix timestamp in milliseconds
+-}
+-
+-import type { TSchema } from "typebox";
+-
+-/** OpenAI grammar variants for constrained sampling. */
+@@ -749 +405 @@
+-export interface Tool<TParameters extends TSchema = TSchema> {
++export interface Tool<TParameters extends object = object> {
+@@ -855,12 +511 @@
+-	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
+-	compat?: TApi extends "openai-completions"
+-		? OpenAICompletionsCompat
+-		: TApi extends "openai-responses" | "azure-openai-responses" | "openai-codex-responses"
+-			? OpenAIResponsesCompat
+-			: TApi extends "anthropic-messages"
+-				? AnthropicMessagesCompat
+-				: TApi extends "bedrock-converse-stream"
+-					? BedrockCompat
+-					: TApi extends "mistral-conversations"
+-						? MistralConversationsCompat
+-						: never;
++
+@@ -870,24 +514,0 @@
+-export interface ImageModel<TApi extends ImageApi> extends BaseModel<TApi> {
+-	type: "image";
+-	/** Output modalities. Always includes `"image"`; `"text"` means the model can also return text blocks. */
+-	output: ("text" | "image")[];
+-}
+-
+-/** Structured classifier model: usable with `classify()` only. */
+-export interface ClassifierModel<TApi extends ClassifierApi> extends BaseModel<TApi> {
+-	type: "classifier";
+-	contextWindow: number;
+-}
+-
+-/** Model shape for each model type. */
+-export interface ModelTypeMap {
+-	chat: Model<Api>;
+-	image: ImageModel<ImageApi>;
+-	classifier: ClassifierModel<ClassifierApi>;
+-}
+-
+-/** What a catalog entry is for. Decides which `Models` operation accepts it. */
+-export type ModelType = keyof ModelTypeMap;
+-
+-/** Anything a provider can list. Narrow with `isModelType()`. */
+-export type AnyModel = ModelTypeMap[ModelType];

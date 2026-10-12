@@ -1,3 +1,4 @@
+import { captureShellClock } from "../../../../environment.ts";
 import type { JsonObject } from "../types.ts";
 
 export interface DiagnosticErrorInfo {
@@ -35,8 +36,11 @@ export function createAssistantMessageDiagnostic(
 	type: string,
 	error: unknown,
 	details?: JsonObject,
+	wallNow: () => number = captureShellClock().wallNow,
 ): AssistantMessageDiagnostic {
-	return { type, timestamp: Date.now(), error: extractDiagnosticError(error), details };
+	const timestamp = wallNow();
+	if (!Number.isFinite(timestamp)) throw new Error("Diagnostic wall time unavailable");
+	return { type, timestamp, error: extractDiagnosticError(error), details };
 }
 
 export function appendAssistantMessageDiagnostic<T extends { diagnostics?: AssistantMessageDiagnostic[] }>(

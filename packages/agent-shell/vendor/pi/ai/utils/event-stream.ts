@@ -1,4 +1,5 @@
-import type { AssistantMessage, AssistantMessageEvent } from "../types.ts";
+import { captureShellClock } from "../../../../environment.ts";
+import type { AssistantClock, AssistantMessage, AssistantMessageEvent } from "../types.ts";
 
 class FifoQueue<T> {
 	private incoming: T[] = [];
@@ -29,15 +30,20 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	protected done = false;
 	private finalResultPromise: Promise<R>;
 	private resolveFinalResult!: (result: R) => void;
+	private rejectFinalResult!: (error: unknown) => void;
+	private failure?: { value: unknown };
 	private isComplete: (event: T) => boolean;
 	private extractResult: (event: T) => R;
 
 	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R) {
 		this.isComplete = isComplete;
 		this.extractResult = extractResult;
-		this.finalResultPromise = new Promise((resolve) => {
+		this.finalResultPromise = new Promise((resolve, reject) => {
 			this.resolveFinalResult = resolve;
+			this.rejectFinalResult = reject;
 		});
+		// Consumers may use iteration, result(), or both; retain rejection for either.
+		void this.finalResultPromise.catch(() => {});
 	}
 
 	push(event: T): void {
@@ -69,15 +75,23 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 	}
 
+	fail(error: unknown): void {
+		if (this.done) return;
+		this.failure = { value: error };
+		this.rejectFinalResult(error);
+		this.end();
+	}
+
 	async *[Symbol.asyncIterator](): AsyncIterator<T> {
 		while (true) {
 			if (this.queue.length > 0) {
 				yield this.queue.dequeue()!;
 			} else if (this.done) {
+				if (this.failure) throw this.failure.value;
 				return;
 			} else {
 				const result = await new Promise<IteratorResult<T>>((resolve) => this.waiting.enqueue(resolve));
-				if (result.done) return;
+				if (result.done) { if (this.failure) throw this.failure.value; return; }
 				yield result.value;
 			}
 		}
@@ -95,10 +109,11 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
  * elsewhere, such as a deferred result fetched later, therefore leaves it untimed.
  */
 export class AssistantMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	readonly #startedAt = Date.now();
-	readonly #startedAtMonotonic = performance.now();
+	readonly #startedAt: number;
+	readonly #startedAtMonotonic: number;
+	readonly #clock: AssistantClock;
 
-	constructor() {
+	constructor(clock?: AssistantClock) {
 		super(
 			(event) => event.type === "done" || event.type === "error",
 			(event) => {
@@ -110,26 +125,32 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 				throw new Error("Unexpected event type for final result");
 			},
 		);
+		this.#clock = captureShellClock(clock);
+		this.#startedAt = this.#clock.wallNow();
+		this.#startedAtMonotonic = this.#clock.monotonicNow();
 	}
 
 	override push(event: AssistantMessageEvent): void {
-		if (event.type === "done") this.#time(event.message);
-		else if (event.type === "error") this.#time(event.error);
+		try {
+			if (event.type === "done") this.#time(event.message);
+			else if (event.type === "error") this.#time(event.error);
+		} catch (error) { super.fail(error); throw error; }
 		super.push(event);
 	}
 
 	override end(result?: AssistantMessage): void {
-		if (result !== undefined) this.#time(result);
+		try { if (result !== undefined) this.#time(result); }
+		catch (error) { super.fail(error); throw error; }
 		super.end(result);
 	}
 
 	#time(message: AssistantMessage): void {
 		if (this.done || message.durationMs !== undefined || message.timestamp < this.#startedAt) return;
-		message.durationMs = Math.max(0, Math.round(performance.now() - this.#startedAtMonotonic));
+		message.durationMs = Math.round(this.#clock.monotonicNow() - this.#startedAtMonotonic);
 	}
 }
 
 /** Factory function for AssistantMessageEventStream (for use in extensions) */
-export function createAssistantMessageEventStream(): AssistantMessageEventStream {
-	return new AssistantMessageEventStream();
+export function createAssistantMessageEventStream(clock?: AssistantClock): AssistantMessageEventStream {
+	return new AssistantMessageEventStream(clock);
 }

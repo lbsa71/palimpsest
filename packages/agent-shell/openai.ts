@@ -1,5 +1,5 @@
+import { captureShellEnvironment, nodeShellFetch, readShellJson, shellTimeout, throwShellFailures } from './environment.ts';
 import { identity } from '../contracts/index.ts';
-import { randomUUID } from 'node:crypto';
 import { AssistantMessageEventStream, collapseSystemMessages, contentText, getCurrentTools, getSystemMessageText } from './vendor/pi/ai/index.ts';
 import type { AssistantMessage, JsonValue, Model, TranscriptContext } from './vendor/pi/ai/types.ts';
 import type { StreamFn } from './vendor/pi/agent/types.ts';
@@ -78,6 +78,10 @@ export function openaiPayload(context: TranscriptContext, model: string, maxToke
 }
 /** Reservations and host settlement apply to every attempt, including retry and compaction. */
 export function createOpenAITransport(options: MistralTransportOptions): { stream: StreamFn; setPurpose(value: Attempt['purpose']): void; attempts(): number } {
+  options = { ...options, modelProfile: options.modelProfile && { ...options.modelProfile } };
+  const environment = captureShellEnvironment(options.environment), transport = options.fetch ?? nodeShellFetch();
+  const { apiKey, reserve, dispatched: markDispatched, settle } = options;
+  const identities = new Set<string>();
   if (options.endpoint !== undefined && options.endpoint !== OPENAI_ENDPOINT) throw new Error('OpenAI endpoint must be the allowlisted HTTPS destination');
   if (!Number.isSafeInteger(options.maxRequests) || options.maxRequests < 1) throw new Error('A finite positive request budget is required');
   const retries = options.maxRetries ?? 0;
@@ -86,30 +90,38 @@ export function createOpenAITransport(options: MistralTransportOptions): { strea
   if (options.modelProfile && (!Number.isSafeInteger(options.modelProfile.contextWindow) || options.modelProfile.contextWindow < 1)) throw new Error('Invalid configured model context window');
   let dispatched = 0; let purpose: Attempt['purpose'] = 'reasoning';
   const stream: StreamFn = (model, context, requestOptions) => {
-    const events = new AssistantMessageEventStream();
-    const message: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: 'openai', model: model.id, usage: emptyUsage(), stopReason: 'pending', timestamp: Date.now() };
+    const events = new AssistantMessageEventStream(environment);
+    const message: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: 'openai', model: model.id, usage: emptyUsage(), stopReason: 'pending', timestamp: environment.wallNow() };
     void (async () => {
       try {
         const payload = openaiPayload(context, model.id, options.maxOutputTokens ?? 4096, options.reasoningEffort);
         for (let retry = 0; ; retry++) {
           requestOptions?.signal?.throwIfAborted();
           if (dispatched >= options.maxRequests) throw new Error('Physical request budget exhausted');
-          const key = await options.apiKey(); if (!key) throw new Error('OpenAI API key is required');
-          const attempt: Attempt = { id: randomUUID(), payload, digest: digest(payload), attempt: dispatched + 1, purpose, model: model.id };
-          await options.reserve(attempt);
+          const key = await apiKey(); if (!key) throw new Error('OpenAI API key is required');
+          const attempt: Attempt = { id: environment.newId(), payload, digest: digest(payload), attempt: dispatched + 1, purpose, model: model.id };
+          if (identities.has(attempt.id)) throw new Error('Duplicate shell request identity');
+          identities.add(attempt.id);
+          await reserve(attempt);
           let outcome: AttemptOutcome = { status: 'cancelled' }; let retryAllowed = false;
+          let timeout: ReturnType<typeof shellTimeout> | undefined, response: Response | undefined;
+          let readStarted = false, sent = false;
+          const failures: unknown[] = [];
           try {
             requestOptions?.signal?.throwIfAborted();
-            const signal = AbortSignal.any([AbortSignal.timeout(options.timeoutMs ?? 60_000), ...(requestOptions?.signal ? [requestOptions.signal] : [])]);
-            await options.dispatched(attempt); signal.throwIfAborted(); dispatched++; outcome = { status: 'uncertain' };
-            const response = await (options.fetch ?? globalThis.fetch)(OPENAI_ENDPOINT, { method: 'POST', redirect: 'error', signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: payload });
+            timeout = shellTimeout(environment.scheduleTimeout, options.timeoutMs ?? 60_000, requestOptions?.signal);
+            const signal = timeout.signal;
+            await markDispatched(attempt); signal.throwIfAborted(); dispatched++; sent = true; outcome = { status: 'uncertain' };
+            response = await transport(OPENAI_ENDPOINT, { method: 'POST', redirect: 'error', signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: payload });
+            signal.throwIfAborted();
             outcome.httpStatus = response.status;
             if (!response.ok) {
               if (response.status === 429) { outcome.status = 'failed'; retryAllowed = retry < retries; }
               if (!retryAllowed) throw new Error(`OpenAI HTTP ${response.status}`);
             } else {
               outcome.status = 'failed'; // A received invalid protocol reply is a known failure, not a network ambiguity.
-              const body = object(await response.json());
+              readStarted = true;
+              const body = object(await readShellJson(response, signal));
               if (body.usage !== undefined && body.usage !== null) {
                 const usage = object(body.usage);
                 if (![usage.input_tokens, usage.output_tokens].every(value => Number.isSafeInteger(value) && Number(value) >= 0)) throw new Error('Invalid OpenAI usage');
@@ -123,7 +135,15 @@ export function createOpenAITransport(options: MistralTransportOptions): { strea
               if (options.reasoningEffort) message.providerThinkingLevel = options.reasoningEffort;
               message.stopReason = message.content.some(part => part.type === 'toolCall') ? 'toolUse' : 'stop'; outcome.status = 'completed';
             }
-          } finally { await options.settle(attempt, outcome); }
+          } catch (error) { failures.push(error); }
+          finally {
+            const beforeCleanup = failures.length;
+            if (response?.body && !readStarted) { try { await response.body.cancel(); } catch (error) { failures.push(error); } }
+            try { timeout?.cancel(); } catch (error) { failures.push(error); }
+            if (failures.length > beforeCleanup && sent) { outcome = { status: 'uncertain', httpStatus: outcome.httpStatus }; retryAllowed = false; }
+            try { await settle(attempt, outcome); } catch (error) { failures.push(error); }
+          }
+          throwShellFailures(failures);
           if (retryAllowed) continue; break;
         }
         events.push({ type: 'start', partial: message }); events.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
@@ -131,7 +151,8 @@ export function createOpenAITransport(options: MistralTransportOptions): { strea
         message.content = []; delete message.openaiOutput;
         message.stopReason = requestOptions?.signal?.aborted ? 'aborted' : 'error';
         message.errorMessage = error instanceof Error && /^(OpenAI HTTP|OpenAI API key|Physical request budget|Invalid OpenAI|Unsupported OpenAI)/.test(error.message) ? error.message : 'OpenAI transport or accounting failed';
-        events.push({ type: 'error', reason: message.stopReason, error: message });
+        try { events.push({ type: 'error', reason: message.stopReason, error: message }); }
+        catch (timing) { events.fail(new AggregateError([error, timing], 'Shell response timing failed', { cause: error })); }
       }
     })();
     return events;

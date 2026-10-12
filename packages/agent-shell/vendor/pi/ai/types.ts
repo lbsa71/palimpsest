@@ -1,3 +1,6 @@
+/** Explicit host time for retained loop and response metadata. */
+export interface AssistantClock { wallNow(): number; monotonicNow(): number }
+
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { CacheRetention, ModelCost, ModelInputLimits, ModelInputModality, ModelPromptCache, ModelThinkingLevel, ThinkingLevel, ThinkingLevelMap } from "./providers/model-schema.ts";
