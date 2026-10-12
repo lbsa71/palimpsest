@@ -1,6 +1,5 @@
-import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { capture, captureDatabase, authorityKeys, nodeAuthorityEnvironment, throwFailures, type AuthorityEnvironment, type SqlDatabase } from './environment.ts';
 import type { Authority } from '../contracts/index.ts';
 
 export type ServingAuthority = Authority;
@@ -13,19 +12,23 @@ export interface AuthorityState {
 
 /** Host-owned ledger. Workers receive a grant, never the database path or handle. */
 export class AuthorityStore {
-  readonly #db: DatabaseSync;
-  constructor(path: string) {
+  readonly #db: SqlDatabase;
+  readonly #environment: AuthorityEnvironment;
+  constructor(path: string, environment: AuthorityEnvironment = nodeAuthorityEnvironment()) {
     if (!isAbsolute(path)) throw new Error('Authority database requires an absolute external state path');
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    this.#db = new DatabaseSync(path);
-    this.#db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
+    this.#environment = capture(environment, authorityKeys);
+    this.#environment.mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    this.#db = captureDatabase(this.#environment.openDatabase(path));
+    try { this.#db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS authority (
         singleton INTEGER PRIMARY KEY CHECK(singleton=1), epoch INTEGER NOT NULL,
         generation TEXT, control_revision TEXT NOT NULL, artifact_id TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS authority_events (
         epoch INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL
-      );`);
+      );`); } catch (error) {
+      const failures = [error]; try { this.#db.close(); } catch (cleanup) { failures.push(cleanup); } throwFailures(failures);
+    }
   }
   close(): void { this.#db.close(); }
   current(): AuthorityState | undefined {
@@ -111,11 +114,16 @@ export class AuthorityStore {
     this.#record(kind, state);
   }
   #record(kind: string, state: AuthorityState): void {
-    this.#db.prepare('INSERT INTO authority_events VALUES(?,?,?,?)').run(state.epoch, new Date().toISOString(), kind, JSON.stringify(state));
+    this.#db.prepare('INSERT INTO authority_events VALUES(?,?,?,?)').run(state.epoch, this.#timestamp(), kind, JSON.stringify(state));
+  }
+  #timestamp(): string {
+    const value = this.#environment.wallNow();
+    if (!Number.isFinite(value)) throw new Error('Invalid authority wall clock');
+    return new Date(value).toISOString();
   }
   #transaction<T>(operation: () => T): T {
     this.#db.exec('BEGIN IMMEDIATE');
     try { const result = operation(); this.#db.exec('COMMIT'); return result; }
-    catch (error) { this.#db.exec('ROLLBACK'); throw error; }
+    catch (error) { const failures = [error]; try { this.#db.exec('ROLLBACK'); } catch (cleanup) { failures.push(cleanup); } throwFailures(failures); throw error; }
   }
 }

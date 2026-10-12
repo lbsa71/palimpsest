@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { capture, confinementKeys, executionKeys, nodeConfinementEnvironment, nodeExecutionEnvironment, monotonicReader, scheduleTimer, throwFailures, type ConfinementEnvironment, type ExecutionEnvironment, type Timer } from './environment.ts';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { spawnBounded, type ResourceLimits, type ResourceObservation } from './resource-limits.ts';
 
@@ -30,22 +30,23 @@ function contains(parent: string, child: string): boolean {
   return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path));
 }
 
-export function confinementArguments(command: ConfinedCommand): string[] {
-  if (process.platform !== 'linux') throw new Error('Linux namespace isolation unavailable');
-  const workspace = realpathSync(command.workspace);
-  if (!statSync(workspace).isDirectory()) throw new Error('Workspace must be a directory');
+export function confinementArguments(command: ConfinedCommand, supplied: ConfinementEnvironment = nodeConfinementEnvironment()): string[] {
+  const environment = capture(supplied, confinementKeys);
+  if (environment.platform() !== 'linux') throw new Error('Linux namespace isolation unavailable');
+  const workspace = environment.realpath(command.workspace);
+  if (!environment.stat(workspace).isDirectory()) throw new Error('Workspace must be a directory');
   if (command.protectedPaths.length === 0) throw new Error('Protected control/state/rescue paths must be declared');
-  const protectedPaths = command.protectedPaths.map(path => realpathSync(path));
+  const protectedPaths = command.protectedPaths.map(path => environment.realpath(path));
   for (const protectedPath of protectedPaths) {
     if (contains(workspace, protectedPath) || contains(protectedPath, workspace)) {
       throw new Error(`Workspace overlaps protected storage: ${protectedPath}`);
     }
   }
   // A preexisting hardlink could expose or mutate a host file despite namespace isolation.
-  const inspect = (directory: string, device = statSync(directory).dev) => {
-    for (const entry of readdirSync(directory)) {
+  const inspect = (directory: string, device = environment.stat(directory).dev) => {
+    for (const entry of environment.readdir(directory)) {
       const path = join(directory, entry);
-      const stat = lstatSync(path);
+      const stat = environment.lstat(path);
       if (command.resourceLimits && stat.dev !== device) throw new Error('Resource-bounded mount contains a nested filesystem');
       if (stat.isDirectory()) inspect(path, device);
       else if (!stat.isSymbolicLink() && (!stat.isFile() || stat.nlink !== 1)) {
@@ -59,7 +60,7 @@ export function confinementArguments(command: ConfinedCommand): string[] {
       if (contains(mount, protectedPath) || contains(protectedPath, mount)) throw new Error('Runtime mount overlaps protected storage');
     }
   };
-  assertMount(realpathSync('/usr'));
+  assertMount(environment.realpath('/usr'));
   if (!Number.isSafeInteger(command.timeoutMs) || command.timeoutMs < 1 ||
     !Number.isSafeInteger(command.maxOutputBytes) || command.maxOutputBytes < 1) throw new Error('Finite command limits required');
   if (!isAbsolute(command.executable)) throw new Error('Sandbox executable must have an absolute path');
@@ -69,14 +70,14 @@ export function confinementArguments(command: ConfinedCommand): string[] {
     '--bind', workspace, '/work', '--chdir', '/work', '--clearenv', '--setenv', 'PATH', '/runtime:/usr/bin:/bin',
     '--setenv', 'LANG', 'C.UTF-8'];
   if (command.nodeBinary) {
-    const binary = realpathSync(command.nodeBinary);
+    const binary = environment.realpath(command.nodeBinary);
     assertMount(binary);
-    const stat = lstatSync(binary);
+    const stat = environment.lstat(binary);
     if (!stat.isFile() || stat.nlink !== 1) throw new Error('Runtime binary must be an ordinary file without hardlinks');
     args.push('--ro-bind', binary, '/runtime/node');
   }
   if (command.applicationRoot) {
-    const application = realpathSync(command.applicationRoot);
+    const application = environment.realpath(command.applicationRoot);
     assertMount(application);
     inspect(application);
     args.push('--ro-bind', application, '/app');
@@ -87,19 +88,23 @@ export function confinementArguments(command: ConfinedCommand): string[] {
 }
 
 /** Every command runs in a fresh PID/mount/network namespace; unavailable isolation fails closed. */
-export async function runConfined(command: ConfinedCommand): Promise<CommandReceipt> {
-  const args = confinementArguments(command);
+export async function runConfined(command: ConfinedCommand, supplied: ExecutionEnvironment = nodeExecutionEnvironment()): Promise<CommandReceipt> {
+  const environment = capture(supplied, executionKeys);
+  environment.monotonicNow = monotonicReader(environment.monotonicNow);
+  command = { ...command, args: [...command.args], protectedPaths: [...command.protectedPaths], ...(command.resourceLimits ? { resourceLimits: { ...command.resourceLimits } } : {}) };
+  const args = confinementArguments(command, environment);
   command.signal?.throwIfAborted();
-  const started = performance.now();
-  const confined = await spawnBounded(args, { ...command, input: 'ignore' });
+  const started = environment.monotonicNow();
+  const confined = await spawnBounded(args, { ...command, input: 'ignore' }, environment);
   const { child } = confined;
   let stoppedFor: CommandReceipt['stoppedFor'];
   let outputBytes = 0;
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
+  const failures: unknown[] = [];
   const stop = (reason: NonNullable<CommandReceipt['stoppedFor']>) => {
     stoppedFor ??= reason;
-    confined.stop();
+    try { confined.stop(); } catch (error) { failures.push(error); }
   };
   const collect = (destination: Buffer[]) => (chunk: Buffer) => {
     const remaining = Math.max(0, command.maxOutputBytes - outputBytes);
@@ -107,22 +112,27 @@ export async function runConfined(command: ConfinedCommand): Promise<CommandRece
     outputBytes += chunk.length;
     if (outputBytes > command.maxOutputBytes) stop('output-limit');
   };
-  child.stdout.on('data', collect(stdout));
-  child.stderr.on('data', collect(stderr));
-  const timer = setTimeout(() => stop('timeout'), command.timeoutMs);
+  let timer: Timer | undefined;
   const abort = () => stop('cancelled');
-  command.signal?.addEventListener('abort', abort, { once: true });
-  // Abort may have arrived between the preflight check and listener registration.
-  if (command.signal?.aborted) abort();
+  let receipt: CommandReceipt | undefined;
   try {
+    child.stdout.on('data', collect(stdout));
+    child.stderr.on('data', collect(stderr));
+    timer = scheduleTimer(environment, command.timeoutMs, () => stop('timeout'));
+    command.signal?.addEventListener('abort', abort, { once: true });
+    if (command.signal?.aborted) abort();
     const completion = await confined.closed;
+
+    receipt = { exitCode: completion.code, signal: completion.signal, stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'), stoppedFor, elapsedMs: 0 };
+  } catch (error) { failures.push(error); }
+  if (timer) { try { timer.cancel(); } catch (error) { failures.push(error); } }
+  command.signal?.removeEventListener('abort', abort);
+  try {
     const resources = await confined.cleanup();
     if (resources?.oomKills) stoppedFor ??= 'resource-limit';
-    return { exitCode: completion.code, signal: completion.signal, stdout: Buffer.concat(stdout).toString('utf8'),
-      stderr: Buffer.concat(stderr).toString('utf8'), stoppedFor, elapsedMs: performance.now() - started, ...(resources ? { resources } : {}) };
-  } finally {
-    clearTimeout(timer);
-    command.signal?.removeEventListener('abort', abort);
-    await confined.cleanup();
-  }
+    if (receipt) { receipt.stoppedFor = stoppedFor; receipt.elapsedMs = environment.monotonicNow() - started; if (resources) receipt.resources = resources; }
+  } catch (error) { failures.push(error); }
+  throwFailures(failures);
+  return receipt!;
 }
