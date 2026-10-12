@@ -20,4 +20,6 @@ Root explicitly adopted the recorder's additional narrow hook on 2026-10-12. `ca
 
 ## Results and handoff
 
+Pre-handoff identity refinement: the anchor also carries `maxAnchorDocuments` and `maxAnchorBytes`; together with its event stream and hostId this anchors every construction option so a newly reopened omitted-option writer refuses changed ceilings. Snapshot SQL preflight checks global sequence count/min/max against SQLite's events high-water mark; missing internal or trailing events refuse without returning a partial prefix. Recorder still owns immutable-prefix and document-replay interpretation. These refinements and their causal tests are frozen before the corresponding code changes.
+
 Pending implementation. This finite goal covers code and reviewable handoff, not A1-L09, live acquisition, H1, deployment, or observer qualification.
