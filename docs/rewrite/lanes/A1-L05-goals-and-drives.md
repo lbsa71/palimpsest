@@ -34,6 +34,8 @@ Non-goals: simulating biological urges, hard-coding a personality, guaranteeing 
 
 ## Coordination
 
+Environmental DI05: root claims `environment-di-05` / `codex/a1-environment-di-05-20261012` at `5514ee8`, owning only the five existing initiative files, new local environment adapter, new deployment test and lane evidence enumerated in the [execution record](../execution.md). Frozen precode `f67dc64` covers clock/IDs/collation/quantum timers and failure cleanup. Existing tests remain read-only; full application propagation and fresh acceptance remain separate.
+
 Owned by the lead who claims this lane; update here before concurrent implementation.
 
 | Field | Current value |
