@@ -68,6 +68,7 @@ export class AutarkApplication {
   private loop?: NodeJS.Timeout;
   private ticking = false;
   private closing = false;
+  private closeTask?: Promise<void>;
   private readonly rootAllocation = 'operating-envelope:v1';
   constructor(options: ApplicationOptions) {
     // Read accepted callback/accessor values once; caller aliases cannot change the
@@ -433,14 +434,31 @@ export class AutarkApplication {
     this.loop = setInterval(() => { void this.tick().catch(error => this.store.append({ id: randomUUID(), stream: 'host', type: 'scheduler-error', data: { reason: error instanceof Error ? error.message : 'Unknown scheduler error' } })); }, this.config.pollMs);
     await this.tick();
   }
-  async close(): Promise<void> {
-    if (this.closing) return; this.closing = true; if (this.loop) clearInterval(this.loop);
-    // Persist unfinished ordinary work before abort can turn running into waiting.
-    for (const row of this.store.list<Run>('runs')) if (row.value.status === 'running' && !this.managedElsewhere(row.key)) this.enqueue(row.key);
-    this.shutdown.abort(); await this.slackSocket?.stop();
-    if (this.directApi.listening) await new Promise<void>(resolve => this.directApi.close(() => resolve()));
-    await Promise.allSettled([...this.active.values(), ...(this.initiativeTask ? [this.initiativeTask] : [])]);
-    while (this.ticking) await new Promise(resolve => setTimeout(resolve, 10));
-    this.store.close(); if (!this.options.lease) this.lease.close();
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true; if (this.loop) clearInterval(this.loop);
+    // Install one completion before any shutdown callback can reenter close().
+    this.closeTask = Promise.resolve().then(async () => {
+      const errors: unknown[] = [];
+      // Persist unfinished ordinary work before abort can turn running into waiting.
+      try {
+        for (const row of this.store.list<Run>('runs')) {
+          try { if (row.value.status === 'running' && !this.managedElsewhere(row.key)) this.enqueue(row.key); }
+          catch (error) { errors.push(error); }
+        }
+      } catch (error) { errors.push(error); }
+      try { this.shutdown.abort(); } catch (error) { errors.push(error); }
+      try { await this.slackSocket?.stop(); } catch (error) { errors.push(error); }
+      try {
+        if (this.directApi.listening) await new Promise<void>((resolve, reject) => this.directApi.close(error => error ? reject(error) : resolve()));
+      } catch (error) { errors.push(error); }
+      await Promise.allSettled([...this.active.values(), ...(this.initiativeTask ? [this.initiativeTask] : [])]);
+      while (this.ticking) await new Promise(resolve => setTimeout(resolve, 10));
+      // Failure is not a drained-ingress/recovery claim. Keep ownership for explicit
+      // host resolution, including a live Store for any late transport callback.
+      if (errors.length) throw new AggregateError(errors, 'Application shutdown failed; Store and lease retained');
+      this.store.close(); if (!this.options.lease) this.lease.close();
+    });
+    return this.closeTask;
   }
 }
