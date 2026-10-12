@@ -110,16 +110,22 @@ function boundary(data: Uint8Array, offset: number): boolean { return offset ===
 export function projectDevelopmentReviewRead(b: DevelopmentBehavior, args: BoundedReadArguments, readOriginal: BoundedArtifactReader, bounds: { maxReceiptBytes: number; remainingReadBytes: number }): { bytes: Uint8Array; artifact: ArtifactRef; debitBytes: number } {
   profile(b); exact(args, 'version,behaviorDigest,selector,cursor'); invariant(args.version === 1 && args.behaviorDigest === identity(b), 'Read changed immutable B'); selector(args.selector);
   exact(args.cursor, 'index,offset'); safe(args.cursor.index); safe(args.cursor.offset); exact(bounds, 'maxReceiptBytes,remainingReadBytes'); safe(bounds.maxReceiptBytes); safe(bounds.remainingReadBytes);
-  invariant(bounds.maxReceiptBytes >= developmentReviewReceiptBytes && bounds.maxReceiptBytes <= Math.min(developmentOperationalArtifactBytes, b.manifest.value.limits.maxArtifactBytes), 'Invalid receipt allowance');
+  const maxReceiptBytes = bounds.maxReceiptBytes, remainingReadBytes = bounds.remainingReadBytes, maxArtifactBytes = b.manifest.value.limits.maxArtifactBytes;
+  invariant(maxReceiptBytes >= developmentReviewReceiptBytes && maxReceiptBytes <= Math.min(developmentOperationalArtifactBytes, maxArtifactBytes), 'Invalid receipt allowance');
+  // Preserve the checked call across the supplied reader without copying resident B.
+  args = { version: 1, behaviorDigest: args.behaviorDigest,
+    selector: args.selector.kind === 'original' ? { kind: 'original', artifact: { uri: args.selector.artifact.uri, sha256: args.selector.artifact.sha256 } } : { ...args.selector },
+    cursor: { index: args.cursor.index, offset: args.cursor.offset } };
   let io = 0, raw: Uint8Array | undefined;
   if (args.selector.kind === 'original') {
     const a = args.selector.artifact, entries = b.artifactIndex.filter(e => e.artifact.uri === a.uri && e.artifact.sha256 === a.sha256);
-    invariant(entries.length === 1, 'Original outside exact B membership'); const e = entries[0]!;
-    invariant(args.cursor.index === 0 && (e.bytes === 0 ? args.cursor.offset === 0 : args.cursor.offset < e.bytes), 'Invalid original cursor');
-    invariant(bounds.remainingReadBytes >= developmentReviewReceiptBytes + e.bytes, 'Insufficient original/read receipt budget');
-    const data = readOriginal(a, Math.max(1, e.bytes));
-    invariant(data.byteLength === e.bytes && hashBytes(data) === a.sha256, 'Original indexed length/digest mismatch'); raw = data; io = data.byteLength;
-  } else invariant(bounds.remainingReadBytes >= developmentReviewReceiptBytes, 'Insufficient projection receipt budget');
+    invariant(entries.length === 1, 'Original outside exact B membership'); const indexedBytes = entries[0]!.bytes;
+    invariant(args.cursor.index === 0 && (indexedBytes === 0 ? args.cursor.offset === 0 : args.cursor.offset < indexedBytes), 'Invalid original cursor');
+    invariant(remainingReadBytes >= developmentReviewReceiptBytes + indexedBytes, 'Insufficient original/read receipt budget');
+    // The reader receives its own ref; changing it cannot change authentication or receipt identity.
+    const data = readOriginal({ uri: a.uri, sha256: a.sha256 }, Math.max(1, indexedBytes));
+    invariant(data.byteLength === indexedBytes && hashBytes(data) === a.sha256, 'Original indexed length/digest mismatch'); raw = data; io = data.byteLength;
+  } else invariant(remainingReadBytes >= developmentReviewReceiptBytes, 'Insufficient projection receipt budget');
   const values: Iterator<RecordValue | Uint8Array> = raw ? [raw].values() : selected(b, args.selector as Exclude<ReviewSelector, { kind: 'original' }>);
   let current = values.next();
   for (let i = 0; i < args.cursor.index; i++) { invariant(!current.done, 'Out-of-range projection cursor'); current = values.next(); }
@@ -131,7 +137,7 @@ export function projectDevelopmentReviewRead(b: DevelopmentBehavior, args: Bound
     let index = args.cursor.index, offset = args.cursor.offset;
     while (!current.done) {
       const data = current.value instanceof Uint8Array ? current.value : Buffer.from(canonicalJson(current.value));
-      invariant(data.byteLength <= b.manifest.value.limits.maxArtifactBytes, 'Projection record exceeds signed metadata allowance');
+      invariant(data.byteLength <= maxArtifactBytes, 'Projection record exceeds signed metadata allowance');
       invariant(data.byteLength === 0 ? offset === 0 : offset < data.byteLength, 'Out-of-range record byte cursor');
       const isText = utf8(data); invariant(!isText || boundary(data, offset), 'Cursor splits UTF-8 code point');
       const following = values.next();
@@ -152,7 +158,7 @@ export function projectDevelopmentReviewRead(b: DevelopmentBehavior, args: Bound
   }
   return finish();
   function finish() {
-    const bytes = encode(); invariant(bytes.byteLength <= developmentReviewReceiptBytes && bytes.byteLength + io <= bounds.remainingReadBytes, 'Receipt exceeded finite read allowance');
+    const bytes = encode(); invariant(bytes.byteLength <= developmentReviewReceiptBytes && bytes.byteLength + io <= remainingReadBytes, 'Receipt exceeded finite read allowance');
     const sha256 = hashBytes(bytes); return { bytes, artifact: { uri: `sha256:${sha256}`, sha256 }, debitBytes: bytes.byteLength + io };
   }
 }
