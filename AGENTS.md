@@ -24,6 +24,13 @@ The lead must delegate independent investigation, implementation or review when 
 - Evaluate off-the-shelf agent shells before building equivalent machinery. Audit the full effective instruction path, including compaction, tools and delegated agents; record every retained source of instructions. Do not treat a system-prompt option as proof of control.
 - Preserve configurable personality and independent growth. Enforce resource and effect permissions in code instead of covertly programming servility into the personality prompt. Control over application prompts does not imply control over model training or vendor service policy.
 
+## Inject environmental dependencies
+
+- **Everything environmental must use dependency injection so it can be replaced in tests.** This includes wall/monotonic clocks and timers; randomness and ID generation; filesystem and database access; network/model transports; process execution and lifecycle; environment/configuration/secrets; and other external services or host state.
+- Supply explicit, narrowly typed dependencies at the composition boundary. Production composition provides concrete adapters; tests provide deterministic fakes or controlled real adapters. Keep pure domain logic independent of ambient environment. Do not introduce a general DI framework or a single oversized service container without a demonstrated need.
+- Do not hide environmental reads or effects behind direct global calls, import-time initialization, or module singletons in business logic. Global/module monkeypatching is not the normal testing interface. Make cancellation, cleanup, failures and resource accounting observable through the same injected boundaries.
+- This requirement applies to the whole rewrite, including evaluation and deployment code. New work must comply; when existing environmental coupling is discovered, record an ownable refactoring task and bring the affected boundary into compliance. Preserve existing behavioral checks and production authority: injection is a host composition capability, not a model-supplied permission or a way to bypass limits.
+
 ## Verify and evolve the whole system
 
 All components may eventually evolve, including prompts, planning artifacts, evaluation, libraries and enforcement code. A candidate cannot change the controls judging that same candidate. Separately stage control changes under previously accepted controls and retain an independently usable recovery path. Bind release evidence to the exact source, dependency, prompt, model and configuration manifest. Preserve current memory and uncertain-effect records across recovery.
