@@ -169,3 +169,72 @@ test('review: a later request row cannot substitute an older physical prompt for
     assert.ok(p.unavailable.length);
   } finally { f.close(); }
 });
+
+// Additional repair checks frozen at 5163d77. Original 18 tests above remain unchanged.
+test('re-review: unfinished checkpoint preserves exact prior producer proof without consuming later input', async () => {
+  const f = harness(); let release!: () => void; let reached!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const checkpointed = new Promise<void>(resolve => { reached = resolve; });
+  let active: Promise<unknown> | undefined;
+  try {
+    const first = message('1'), second = message('2'), before = f.capture(), run = f.core.receive(first).run;
+    await f.runtime.resume(run.id, prompt); f.advance();
+    const original = projectDevelopmentSources(f.input(before, f.capture(), f.packet([first]))).assignments[0]!.result!;
+    assert.ok(original.origin); assert.equal(f.core.receive(second).run.id, run.id);
+    f.runtime.shell.run = async (input, bridge) => {
+      await bridge.persistCheckpoint(input.run.id, input.run.revision, 'review', { observationIds: [] });
+      reached(); await waiting; throw Error('review released unfinished invocation');
+    };
+    active = f.runtime.resume(run.id, prompt); await checkpointed; f.advance();
+    const p = projectDevelopmentSources(f.input(before, f.capture(), f.packet([first, second])));
+    assert.equal(f.runtime.getRun(run.id)!.status, 'running'); assert.equal(p.assignments.length, 2);
+    assert.deepEqual(p.assignments[0]!.result, original); assert.equal(p.assignments[1]!.result, null);
+    const proof = p.assignments[0]!.proof, origin = original.origin;
+    assert.ok(proof.versions.some(v => canonicalJson(v) === canonicalJson(origin.execution)));
+    for (const event of [origin.invocation, origin.disposition]) assert.ok(proof.events.some(e => canonicalJson(e) === canonicalJson(event)));
+    const events = f.store.events();
+    assert.equal((events[origin.invocation.sequence - 1]!.data as unknown as { status: string }).status, 'running');
+    assert.equal((events[origin.disposition.sequence - 1]!.data as unknown as { status: string }).status, 'waiting');
+    const producer = events.find(e => e.type === 'document-mutation' && (e.data as unknown as { after?: { versionId: string } }).after?.versionId === origin.execution.versionId)!;
+    assert.ok(origin.invocation.sequence < producer.sequence && producer.sequence < origin.disposition.sequence);
+    assert.equal(original.messageSequence, events.find(e => e.stream === run.id && e.type === 'admitted')!.sequence);
+    assert.ok(origin.disposition.sequence < p.assignments[1]!.ingress.sequence);
+  } finally { release(); await active; f.close(); }
+});
+
+test('re-review: equal legitimate return after inherited failure cannot establish an unambiguous later producer', async () => {
+  const f = harness(); try {
+    const first = message('1'), second = message('2'), third = message('3'), before = f.capture(), run = f.core.receive(first).run;
+    await f.runtime.resume(run.id, prompt);
+    const earlier = f.store.get<{ lastResult: import('../../packages/contracts/index.ts').ShellResult }>('execution', run.id)!.value.lastResult;
+    f.core.receive(second); f.interruptAtCheckpoint(); await f.runtime.resume(run.id, prompt);
+    f.core.receive(third); f.runtime.shell.run = async () => earlier; await f.runtime.resume(run.id, prompt); f.advance();
+    assert.equal(f.runtime.getRun(run.id)!.status, 'waiting');
+    const p = projectDevelopmentSources(f.input(before, f.capture(), f.packet([first, second, third])));
+    assert.equal(p.assignments.length, 3); assert.ok(p.assignments[0]!.result);
+    assert.equal(p.assignments[1]!.result, null); assert.equal(p.assignments[2]!.result, null);
+    assert.ok(p.unavailable.some(e => e.subject === 'assignment-result:task:2'));
+  } finally { f.close(); }
+});
+
+for (const field of ['rootId', 'ceiling'] as const) test(`re-review: intermediate ${field} substitution cannot be hidden by restoring the final request`, async () => {
+  const f = harness(); try {
+    f.ready(); const before = f.capture(); await f.runner.tick();
+    const original = f.store.get<{ request: PhysicalRequest; rootId: string; ceiling: { tokens: number; costUsd: number; elapsedMs: number } }>('requests', 'review-request:1')!;
+    const corrupt = field === 'rootId' ? { ...original.value, rootId: 'foreign-allocation' } : { ...original.value, ceiling: { ...original.value.ceiling, tokens: original.value.ceiling.tokens + 1 } };
+    f.store.put('requests', 'review-request:1', corrupt, original.revision);
+    f.store.put('requests', 'review-request:1', original.value, original.revision + 1); f.advance();
+    const p = projectDevelopmentSources(f.input(before, f.capture())); assert.equal(p.cycles.length, 0); assert.match(p.unavailable[0]!.reason, /immutable physical request lineage/);
+  } finally { f.close(); }
+});
+
+test('re-review: supplied-current withdrawal of producer execution fences an earlier supported result', async () => {
+  const f = harness(); try {
+    const first = message('1'), before = f.capture(), run = f.core.receive(first).run; await f.runtime.resume(run.id, prompt); f.advance();
+    const after = f.capture(), packet = f.packet([first]), original = projectDevelopmentSources(f.input(before, after, packet));
+    assert.ok(original.assignments[0]!.result!.origin.execution.versionId);
+    f.store.withdrawDocumentJournalContent({ id: 'withdraw-exact-execution-producer', reason: 'forget', targets: [{ namespace: 'execution', key: run.id, expectedRevision: f.store.get('execution', run.id)!.revision }] }); f.advance();
+    const refused = projectDevelopmentSources(f.input(before, after, packet, f.capture()));
+    assert.equal(refused.assignments.length, 0); assert.match(refused.unavailable[0]!.reason, /withdrawn/);
+  } finally { f.close(); }
+});
