@@ -1,5 +1,11 @@
 # Joined execution failure diagnosis
 
+## Joined retention/accounting/journal receipt — 2026-10-12
+
+Exact clean source `333a2a7ad64e2266b818198462c0933bc1a0718b` integrated independently accepted retention repair `c79846c` / review `217ec7e`. Root ran pinned Node 24.13.0 strict compilation, then ten focused files with `--test --test-concurrency=1`: retention/review, both envelope suites, both witness suites, both development-accounting suites and both document-journal suites. **246 tests passed, zero failures/cancellations/skips/todos**. Strict took 1.532026 s; test wrapper took 49.525316 s (Node reported 49.465978 s), ending `2026-10-12T00:35:13.565625Z`. Source and clean status were unchanged throughout.
+
+Private external plan, exact commands/environment and logs are retained under `/home/palimpsest/migration/aeon-1-20261011/integration-evidence/joined-333a2a7/`; `test.log` SHA-256 is `993425e2cfc948485726f1b9b3993c9f256b9822d56a94ba36d0cb49b91a0e0d`. Node hash remains `53fb205ae78805130177e24bcb459a69a1518c8d98f8965f31d85aae7ea840fc`. Environment contained only pinned runtime/system PATH; no acquisition/opt-in flags, live provider or native process window. Recorder/model-review source remains in isolated review worktrees and is not included in this receipt. The journal-forgetting red regressions remain separately recorded; passing transaction tests do not erase that known missing behavior. The earlier full `746afac` aggregate remains the last full-suite result.
+
 2026-10-11. A1-L09-T04/T05; root owns this bounded diagnostic work under the active whole-Aeon goal. Source and acquisition evidence are distinct from a repaired runtime or passing aggregate.
 
 ## Observed failure and next finite task
