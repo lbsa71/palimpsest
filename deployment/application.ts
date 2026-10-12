@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort } from '../packages/contracts/index.ts';
 import type { Tool } from '../packages/agent-shell/vendor/pi/ai/types.ts';
-import { OperationalStore } from '../packages/storage/index.ts';
+import { OperationalStore, type DocumentJournalOptions } from '../packages/storage/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
 import { DurableRuntime, ResourceLedger } from '../packages/runtime/index.ts';
 import { DevelopmentalMemory } from '../packages/development/index.ts';
@@ -39,6 +39,8 @@ export interface ApplicationOptions {
   lease?: ProcessLease;
   /** Trusted finite acquisition composition; never application configuration or a model tool. */
   developmentAccounting?: (context: { store: OperationalStore; config: ApplicationConfig }) => DevelopmentAccounting;
+  /** Host-owned recorder binding, established before the first application document mutation. */
+  documentJournal?: DocumentJournalOptions | null;
   additionalTools?: (context: { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority; effectId?: string }) => ApplicationTool[];
 }
 
@@ -71,7 +73,7 @@ export class AutarkApplication {
     invariant(options.authorityStore.current()?.artifactId === config.artifactId && options.authority.controlRevision === config.controlRevision, 'Application differs from admitted authority');
     this.lease = options.lease ?? new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     try {
-    this.store = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot });
+    this.store = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot, documentJournal: options.documentJournal });
     this.memory = new DevelopmentalMemory(this.store);
     const developmentAccounting = options.developmentAccounting?.({ store: this.store, config });
     developmentAccounting?.assertApplication(config);
