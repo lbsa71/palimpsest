@@ -81,6 +81,16 @@ Root admitted the natural direct question “Nice to meet you. What is one small
 
 Fresh independent read-only Sol live review verified the exact running candidate, normal direct completion and delivery receipts, unique actual Slack host notice and cleared eyes. It reproduced the original 12-row digest `27afc454698955b45c98541203e8b5f30408353a3bb0fa5b929fc1512b42e94a`, original root start and envelope, and all four uncertain charged requests. At 07:53 UTC cumulative usage was 563,732 charged tokens and USD 0.93576836; there were zero recorded transport errors. Root submitted the authentic review through incumbent-policy probation; status confirms the replacement accepted and running at epoch 19. This is bounded engineering evidence, not full product qualification.
 
+### PILOT-07: user-requested direct messages (2026-10-12)
+
+The user cannot type in the app's Messages tab: Slack reports sending messages to the app is turned off. The repository manifest does not enable writable App Home messages, lacks `im:history` and `message.im`, and ingress admits only mentions/joined threads in explicitly configured channels. Slack's current official App Home instructions require writable Messages, `im:history` and the `message.im` subscription. Connected read-only conversation discovery identified the existing bot/user DM `D0C7NPQBTEZ`; no message is sent or new DM opened by that discovery.
+
+```text
+/goal Enable the existing user's private Slack DM as a bounded pilot conversation: prepare writable app settings and required scope/event, accept unmentioned messages only in the explicitly granted bot/user DM, preserve channel mention behavior and private audience boundaries, independently review and stage the exact successor, and record actual authorization and live evidence without resetting existing grants.
+```
+
+Root owns this specification, `config/slack-app-manifest.json`, private deployment inputs/activation and status handoff. `/root/runtime_readiness` (Sol/high) owns only `packages/communications/slack/ingress/index.ts`, `deployment/config.ts` and new `packages/communications/slack/ingress/direct-message.test.ts`: an optional `directUserId` on an explicit D-channel grant admits that user's unmentioned messages, edits and history to ordinary thread conversations; other authors and unconfigured channels remain excluded. Require a private scope for that exact user, preserve bot/duplicate/revision controls, and reuse existing recovery/speech/reactions. No general DM discovery, group-DM support or routing redesign. New causal DM checks plus existing focused communications/activity/deadline checks and strict; independent exact-artifact review before activation. The entire scheduler/model/resource profile stays unchanged. Slack app-owner reauthorization is an external dependency; runtime deployment alone cannot change writable App Home or grant its own scopes. A new actual DM exchange remains a separate live check.
+
 ## Operational handoff
 
 - Mention `@palimpsest` in the existing configured Slack channel and continue in its thread. DMs are unqualified.

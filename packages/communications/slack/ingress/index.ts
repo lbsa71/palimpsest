@@ -6,13 +6,20 @@ import type { Admission } from '../../core/index.ts';
 import type { SlackMessage } from '../client.ts';
 import { captureWallClock, createNodeCommunicationsEnvironment } from '../../environment.ts';
 
-export interface SlackChannelGrant { channel:string; scope:DataScope }
+export interface SlackChannelGrant { channel:string; scope:DataScope; directUserId?:string }
+/** Explicit one-person DM authority is private to the authenticated Slack actor. */
+export function validateSlackDirectGrant(grant:SlackChannelGrant,teamId:string,botUserId:string):void {
+  if(grant.directUserId===undefined)return;
+  nonempty(grant.directUserId,'Slack direct user');
+  invariant(grant.channel.startsWith('D') && grant.directUserId!==botUserId,'DM grant requires a D channel and nonbot direct user');
+  invariant(grant.scope.kind==='restricted' && grant.scope.principals.length===1 && grant.scope.principals[0]===`slack:${teamId}:${grant.directUserId}`,'DM grant requires the exact private direct user scope');
+}
 export interface SlackIngressOptions { core:CommunicationsCore; teamId:string; botUserId:string; channels:readonly SlackChannelGrant[]; eligibleHumanIds:readonly string[] }
 export interface SlackEvent {type:string;channel?:string;ts?:string;user?:string;text?:string;thread_ts?:string;subtype?:string;bot_id?:string;message?:SlackMessage;previous_message?:SlackMessage;deleted_ts?:string;event_ts?:string}
 export interface JoinedThread {channel:string;threadTs:string;joinedAt:string}
 export class SlackIngress {
   readonly options:SlackIngressOptions;
-  constructor(options:SlackIngressOptions){this.options=options;nonempty(options.teamId,'Slack team');nonempty(options.botUserId,'Slack bot');invariant(new Set(options.channels.map(c=>c.channel)).size===options.channels.length,'duplicate channel grant');}
+  constructor(options:SlackIngressOptions){this.options=options;nonempty(options.teamId,'Slack team');nonempty(options.botUserId,'Slack bot');invariant(new Set(options.channels.map(c=>c.channel)).size===options.channels.length,'duplicate channel grant');for(const grant of options.channels)validateSlackDirectGrant(grant,options.teamId,options.botUserId);}
   threads():JoinedThread[]{return this.options.core.store.list<JoinedThread>('communications.slack.threads').map(r=>r.value);}
   /** Called exclusively after Socket Mode authentication or signed HTTP verification. */
   acceptAuthenticated(teamId:string,event:SlackEvent):Admission|undefined {
@@ -24,10 +31,11 @@ export class SlackIngress {
     if(!message || message.bot_id || message.user===this.options.botUserId || !message.user || !message.ts)return;
     if(message.subtype && !['thread_broadcast','message_changed'].includes(message.subtype))return;
     const author=message.user;const threadTs=message.thread_ts??message.ts;
+    if(grant.directUserId!==undefined && author!==grant.directUserId)return;
     const key=`${this.options.teamId}:${grant.channel}:${threadTs}`;
     const mention=message.text?.includes(`<@${this.options.botUserId}>`)===true;
     const store=this.options.core.store;
-    if(!mention&&!store.get('communications.slack.threads',key))return;
+    if(grant.directUserId===undefined&&!mention&&!store.get('communications.slack.threads',key))return;
     return store.transaction(()=>{
       const thread=store.get('communications.slack.threads',key);
       if(!thread)store.put('communications.slack.threads',key,{channel:grant.channel,threadTs,joinedAt:message.ts},null);

@@ -5,6 +5,7 @@ import type { SchedulerPolicy } from '../packages/initiative/index.ts';
 import { validateModelProfile, type ModelProfile } from './model-grants.ts';
 import { validateDevelopmentControl, type DevelopmentControlConfig } from './development-controls.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
+import { validateSlackDirectGrant, type SlackChannelGrant } from '../packages/communications/slack/ingress/index.ts';
 
 export interface ApplicationConfig {
   developmentControl?: DevelopmentControlConfig;
@@ -29,7 +30,7 @@ export interface ApplicationConfig {
   commands: string[];
   researchHosts: string[];
   direct: { host: '127.0.0.1' | '::1'; port: number; actorId: string; scope: DataScope; modificationEligible: boolean };
-  slack?: { teamId: string; botUserId: string; channels: { channel: string; scope: DataScope }[]; eligibleHumanIds: string[]; coverageStart: string; lookbackSeconds: number; allowSpeech: boolean };
+  slack?: { teamId: string; botUserId: string; channels: SlackChannelGrant[]; eligibleHumanIds: string[]; coverageStart: string; lookbackSeconds: number; allowSpeech: boolean };
 }
 export interface ApplicationSecrets { mistralApiKey?: string; openaiApiKey?: string; directToken: string; slackBotToken?: string; slackAppToken?: string }
 export function beneath(parent: string, child: string): boolean { const path = relative(parent, child); return path === '' || !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`); }
@@ -63,7 +64,7 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   invariant(config.direct.actorId.trim().length > 0, 'Direct principal required'); validateScope(config.direct.scope);
   invariant(Array.isArray(config.commands) && config.commands.every(command => isAbsolute(command)), 'Explicit command paths required');
   invariant(Array.isArray(config.researchHosts) && config.researchHosts.every(host => /^[a-z0-9.-]+$/.test(host)), 'Explicit research hostnames required');
-  if (config.slack) { invariant(config.slack.teamId.length > 0 && config.slack.botUserId.length > 0 && config.slack.channels.length > 0, 'Explicit Slack installation and channel scopes required'); for (const channel of config.slack.channels) { invariant(channel.channel.length > 0, 'Slack channel required'); validateScope(channel.scope); } }
+  if (config.slack) { invariant(config.slack.teamId.length > 0 && config.slack.botUserId.length > 0 && config.slack.channels.length > 0, 'Explicit Slack installation and channel scopes required'); for (const channel of config.slack.channels) { invariant(channel.channel.length > 0, 'Slack channel required'); validateScope(channel.scope); validateSlackDirectGrant(channel, config.slack.teamId, config.slack.botUserId); } }
   const detached = structuredClone(config);
   if (detached.developmentControl) { const freeze = (value: unknown): void => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } }; freeze(detached); }
   return detached;
