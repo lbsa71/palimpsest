@@ -128,6 +128,8 @@ export class OperationalStore {
     invariant(!this.developmentFence, 'reentrant development acquisition forbidden');
     return this.transaction(() => { this.developmentFence = true; try { return synchronous(fn()); } finally { this.developmentFence = false; } });
   }
+  /** Synchronous read-only development use; permits ordinary nested read transactions. */
+  withDevelopmentReadOnly<T>(use: () => T): T { return this.withDevelopmentReadFence(use); }
   transaction<T>(fn: () => T): T {
     const outer = this.depth === 0; const savepoint = `nested_${this.depth}`;
     this.db.exec(outer ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`); this.depth++;

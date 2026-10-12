@@ -142,18 +142,30 @@ export class DevelopmentAcquisitionRecorder {
     invariant(typeof reasonCode === 'string' && reasonCode.length > 0 && reasonCode.length <= 128 && typeof destructionRequested === 'boolean', 'Bounded trusted withdrawal reason required');
     return this.markUse(destructionRequested ? 'destruction-pending' : 'withdrawn', reasonCode);
   }
-  private assertAuthorityOnly(): void {
+  private assertAuthorityOnly(persistDisposition = true): void {
     unavailable(!this.denied,'Source use remains conservatively refused after marker failure');
     const s = this.state(), marker = s.useDisposition;
     if (marker) { const observer = this.options.trust.envelope.behavior.observer, d = authenticate(attemptUseDomain, marker, new Map([[observer.id, observer.key]])); invariant(d.planDigest === identity(this.plan) && d.attemptDigest === identity(this.plan.manifest.value), 'Changed terminal attempt disposition'); throw new AcquisitionUseWithdrawn(d.status); }
     const disposition = DevelopmentAcquisitionRecorder.verifyCustodian(this.options, this.plan);
-    if (disposition && disposition.status !== 'active') { this.markUse(disposition.status, 'custodian-current-disposition'); throw new AcquisitionUseWithdrawn(disposition.status); }
+    if (disposition && disposition.status !== 'active') { if (persistDisposition) this.markUse(disposition.status, 'custodian-current-disposition'); throw new AcquisitionUseWithdrawn(disposition.status); }
+  }
+  private withCurrentUseReadOnly<T>(use: () => T, sources: OperationalStore[], alreadyFenced: ReadonlySet<OperationalStore> = new Set()): T {
+    const stores = [...new Set([...sources, this.options.original.store, ...(this.options.custodian ? [this.options.custodian.store] : []), this.options.state])].filter(store => !alreadyFenced.has(store));
+    const enter = (i: number): T => i < stores.length ? stores[i]!.withDevelopmentReadOnly(() => enter(i + 1)) : (() => {
+      // A newly withdrawn custodian is recorded only after all read fences exit.
+      this.assertAuthorityOnly(false);
+      const value = use();
+      invariant(!(value && (typeof value === 'object' || typeof value === 'function') && 'then' in value), 'Current-use callback must be synchronous');
+      return value;
+    })();
+    return enter(0);
   }
   assertCurrentUse(): void { this.withCurrentUse(() => {}); }
   /** Only trusted synchronous, source/ledger/state-read-only initiation; never an awaited fence. */
   withCurrentUse<T>(use: () => T): T { return this.currentUse(use, true); }
   private currentUse<T>(use: () => T, requireInitial: boolean): T {
     if(this.plan.captureLayout) return this.pagedCurrentUse(use,requireInitial);
+    unavailable(!this.options.state.transactionActive,'Owner writer transaction cannot enter current-use guard');
     this.assertAuthorityOnly();
     const s = this.state();
     if (requireInitial && this.plan.manifest.value.evidenceKind === 'live-development') unavailable(this.plan.registration.value.roles.filter(r => r.kind !== 'reviewer').every(r => s.snapshots.some(c => c.roleId === r.id)), 'Complete initial behavioral source captures required before live use');
@@ -164,7 +176,7 @@ export class DevelopmentAcquisitionRecorder {
       if (i < captures.length) { const c = captures[i]!, store = this.sourceHandles.get(c.roleId)!; return store.transaction(() => visit(i+1)); }
       // Full current graph validation precedes required old-ref availability. Suffix writes
       // are allowed, forged withdrawal membership or a restored payload are not.
-      this.assertAuthorityOnly();
+      this.assertAuthorityOnly(false);
       for (const c of captures) {
         const store = this.sourceHandles.get(c.roleId)!;
         try {
@@ -177,13 +189,16 @@ export class DevelopmentAcquisitionRecorder {
           if (ids.length) { failedSource = {roleId:c.roleId, snapshot:current, ids:[...new Set(ids)].sort()}; throw new AcquisitionUseWithdrawn('document-history-withdrawn'); }
         } catch (error) { if (!failedSource && !/snapshot exceeds bound/.test(String(error))) corruptRole = c.roleId; throw error; }
       }
-      const result = use(); invariant(!(result && (typeof result === 'object' || typeof result === 'function') && 'then' in result), 'Current-use callback must be synchronous'); return result;
+      // Snapshot validation itself forbids development-fence reentry; fence only
+      // the caller after the complete graph has been validated.
+      return this.withCurrentUseReadOnly(use, captures.map(c => this.sourceHandles.get(c.roleId)!));
     };
     try {
       const stores = [...new Set([this.options.state, ...(this.options.custodian ? [this.options.custodian.store] : [])])];
       const outer = (i:number): T => i < stores.length ? stores[i]!.transaction(() => outer(i+1)) : visit(0);
       return outer(0);
     } catch (error) {
+      if (error instanceof AcquisitionUseWithdrawn) this.assertAuthorityOnly();
       if (failedSource) {
         // A caller may own an outer source transaction. Its observation can
         // refuse use, but cannot establish committed source provenance.
@@ -574,10 +589,12 @@ export class DevelopmentAcquisitionRecorder {
   private pagedCurrentUse<T>(use:()=>T,requireInitial:boolean):T {
     unavailable(!this.options.state.transactionActive,'Owner writer transaction cannot enter current-use guard');this.assertAuthorityOnly();const s=this.state(),roles=this.plan.registration.value.roles.filter(r=>r.kind!=='reviewer');
     if(requireInitial)unavailable(roles.every(r=>s.snapshots.some(c=>c.roleId===r.id)),'Complete initial behavioral source captures required');
-    const scoped=roles.map(r=>({role:r,captures:s.snapshots.filter(c=>c.roleId===r.id)})).filter(r=>r.captures.length);let sourceFailure=false,callbackFailed=false,callbackError:unknown;
-    const authority=():T=>{const stores=[...new Set([...(this.options.custodian?[this.options.custodian.store]:[]),this.options.state])];const enter=(i:number):T=>i<stores.length?stores[i]!.transaction(()=>enter(i+1)):(()=>{this.assertAuthorityOnly();try{const value=use();invariant(!(value&&(typeof value==='object'||typeof value==='function')&&'then'in value),'Current-use callback must be synchronous');return value;}catch(error){callbackFailed=true;callbackError=error;throw error;}})();return enter(0);};
+    const scoped=roles.map(r=>({role:r,captures:s.snapshots.filter(c=>c.roleId===r.id)})).filter(r=>r.captures.length);let sourceFailure=false,authorityFailed=false,authorityError:unknown;
+    // Historical source gates wrap callback errors as corruption; preserve the
+    // actual owner/authority/callback refusal instead of invalidating evidence.
+    const authority=():T=>{try{return this.withCurrentUseReadOnly(use,[],new Set(scoped.map(item=>this.sourceHandles.get(item.role.id)!)));}catch(error){authorityFailed=true;authorityError=error;throw error;}};
     const visit=(i:number):T=>{if(i===scoped.length)return authority();const item=scoped[i]!,store=this.sourceHandles.get(item.role.id);unavailable(store,'Actual source handle must be attached after reopen');const latest=item.captures.at(-1)!;unavailable(identity(sourceIdentity(store.filename))===identity(latest.source.pathIdentity),'Operational source path replaced');try{return store.withDevelopmentVersionsAvailable(this.pagedScope(item.role.id,item.captures),()=>visit(i+1));}catch(error){if(/document-history/.test(String(error)))sourceFailure=true;throw error;}};
-    try{return visit(0);}catch(error){if(callbackFailed)throw callbackError;if(sourceFailure)this.denySource(/document-history-withdrawn/.test(String(error))?'document-history-withdrawn':'document-history-corrupt-or-missing');throw error;}
+    try{return visit(0);}catch(error){if(authorityFailed){if(authorityError instanceof AcquisitionUseWithdrawn)this.assertAuthorityOnly();throw authorityError;}if(sourceFailure)this.denySource(/document-history-withdrawn/.test(String(error))?'document-history-withdrawn':'document-history-corrupt-or-missing');throw error;}
   }
   private withFinalCuts<T>(use:()=>T):T {
     const roles=this.plan.registration.value.roles.filter(r=>r.kind!=='reviewer'),s=this.state();const enter=(i:number):T=>{if(i===roles.length){const stores=[...new Set([...(this.options.custodian?[this.options.custodian.store]:[]),this.options.state])];const authority=(j:number):T=>j<stores.length?stores[j]!.transaction(()=>authority(j+1)):(()=>{this.assertAuthorityOnly();return use();})();return authority(0);}const role=roles[i]!,capture=s.snapshots.filter(c=>c.roleId===role.id).at(-1)!,store=this.sourceHandles.get(role.id)!;unavailable(!store.transactionActive&&s.finalCaptures.includes(role.id),'B requires committed final role cut');return store.withDevelopmentSourceCut({journalDigest:capture.source.journalDigest,lastSequence:capture.cursor},()=>enter(i+1));};return enter(0);
