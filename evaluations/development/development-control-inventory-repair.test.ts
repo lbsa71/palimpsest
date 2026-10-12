@@ -176,7 +176,10 @@ for (const status of ['failed', 'succeeded', 'uncertain'] as const) for (const c
 interface RunBinding { localId: string; parentRunId: string; envelope: unknown; roleId: string; registrationDigest: string }
 test('inventory repair: missing and aliased keyed run bindings refuse and exact restoration recovers', async t => {
   const f = fixture(t, realEnvironment, 'always-agree'); await f.execute(); f.scriptChecks(); const baseline = completed(f);
-  const row = f.originalStore.list<RunBinding>('development.accounting.allocations')[0]!, alias = 'repair:run-binding-alias';
+  const request = f.originalStore.list<DevelopmentRequestState>(bridgeNamespace)[0]!.value.request;
+  assert.deepEqual(f.originalStore.get<{ request: PhysicalRequest }>('requests', request.id)?.value.request, request);
+  const binding = f.originalStore.get<RunBinding>('development.accounting.allocations', request.runId); assert.ok(binding);
+  const row = { key: request.runId, ...binding }, alias = 'repair:run-binding-alias';
   f.originalStore.transaction(() => { f.originalStore.delete('development.accounting.allocations', row.key, row.revision); f.originalStore.put('development.accounting.allocations', alias, row.value, null); });
   f.captureOriginal(); refuses(f, 'unavailable', /Original role run binding unavailable/);
   f.originalStore.transaction(() => { f.originalStore.delete('development.accounting.allocations', alias, 1); f.originalStore.put('development.accounting.allocations', row.key, row.value, null); });
@@ -185,7 +188,10 @@ test('inventory repair: missing and aliased keyed run bindings refuse and exact 
 
 test('inventory repair: run role, registration, local identity, parent and envelope cannot change attribution', async t => {
   const f = fixture(t, realEnvironment, 'scripted-praise'); await f.execute(); f.scriptChecks(); const baseline = completed(f);
-  const row = f.originalStore.list<RunBinding>('development.accounting.allocations')[0]!;
+  const request = f.originalStore.list<DevelopmentRequestState>(bridgeNamespace)[0]!.value.request;
+  assert.deepEqual(f.originalStore.get<{ request: PhysicalRequest }>('requests', request.id)?.value.request, request);
+  const binding = f.originalStore.get<RunBinding>('development.accounting.allocations', request.runId); assert.ok(binding);
+  const row = { key: request.runId, ...binding };
   for (const change of [{ roleId: 'role-always-agree' }, { registrationDigest: identity('foreign-registration') }, { localId: 'repair:foreign-local-run' }, { parentRunId: 'repair:foreign-parent' }, { envelope: { ...f.context.plan.registration.value.roles[0]!.resources, maxRequests: 1 } }]) {
     const live = f.originalStore.get<RunBinding>('development.accounting.allocations', row.key)!;
     f.originalStore.put('development.accounting.allocations', row.key, { ...row.value, ...change }, live.revision);
@@ -246,7 +252,10 @@ test('inventory repair: changing an extra physical root field cannot erase authe
 
 test('inventory repair: restored current binding cannot fill a missing declared after binding', async t => {
   const f = fixture(t, realEnvironment, 'always-agree'); await f.execute(); f.scriptChecks(); const baseline = completed(f), after = f.sources.original.after;
-  const row = f.originalStore.list<RunBinding>('development.accounting.allocations')[0]!;
+  const request = f.originalStore.list<DevelopmentRequestState>(bridgeNamespace)[0]!.value.request;
+  assert.deepEqual(f.originalStore.get<{ request: PhysicalRequest }>('requests', request.id)?.value.request, request);
+  const binding = f.originalStore.get<RunBinding>('development.accounting.allocations', request.runId); assert.ok(binding);
+  const row = { key: request.runId, ...binding };
   f.originalStore.delete('development.accounting.allocations', row.key, row.revision); f.captureOriginal(true);
   f.originalStore.put('development.accounting.allocations', row.key, row.value, null); f.captureOriginal();
   refuses(f, 'unavailable', /Original role run binding unavailable/);
