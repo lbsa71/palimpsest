@@ -42,6 +42,9 @@ type PageCaptureBounds = {
   maxPhysicalRows: number;          // <= maxPages * maxPageRows
   maxConservativeBytes: number;     // <= maxPages * maxPageBytes
   maxSerializedBytes: number;       // aggregate actual page bytes per capture
+  maxOperationalArtifacts: number; // distinct exact original URI + digest pairs
+  maxOperationalArtifactBytes: number; // per original, within artifact read ceiling
+  maxOperationalArtifactTotalBytes: number; // aggregate originals, no predicted reuse discount
 };
 type SourceCut = {
   journalBinding: DocumentJournalBinding;
@@ -50,6 +53,7 @@ type SourceCut = {
   pages: SourcePageDescriptor[];
   documentsDigest: string;          // streaming canonical row-chain commitment
   eventsDigest: string;             // streaming complete global prefix commitment
+  operationalArtifacts: { original: ArtifactRef; retained: ArtifactRef; bytes: number }[];
 };
 
 // New trusted OperationalStore method; one synchronous transaction, actual db handle.
@@ -57,6 +61,7 @@ captureDevelopmentPages(
   bounds: PageCaptureBounds,
   retainPage: (bytes: Uint8Array) => ArtifactRef,
   retainArtifact: (original: ArtifactRef, bytes: Uint8Array) => ArtifactRef,
+  resolveRetainedArtifact?: (ref: ArtifactRef, maxBytes: number) => Uint8Array,
 ): SourceCut;
 
 type PagedSourceCapture = {
@@ -73,6 +78,8 @@ type PagedSourceCapture = {
 ```
 
 The synchronous retention callbacks are trusted recorder closures, not model tools or supplied proof. They must return the SHA-256 ref of the exact bytes handed over. Storage cannot accept a callback's claimed count or changed digest. The public recorder `captureApplication` can continue returning an `ArtifactRef`, now referencing a manifest for the newly accepted paged plan. Existing full-snapshot plans retain their explicit format/refusal; no fallback after a capture fails. A changed signed plan cannot reuse a consumed claim or grant.
+
+CP1 contract refinement, root adopted before code: the original signature omitted the explicit operational-artifact bounds and returned mapping required by its own prose. The fields and optional fourth callback above correct that omission without adding allowance. Storage always resolves `aeon:artifact` on its actual connection. An exact `sha256:` ref requires the optional accepted recorder/custodian resolver; absent authority/bytes is unavailable, never silently skipped. Pass a detached ref and a remaining bounded read allowance; reject asynchronous results, excess bytes, wrong hashes or reentrant source writes. The callback must perform an authorized bounded read, not assert authority with a URI. Retention always receives actual bytes, never a null sentinel. Inventory and availability checks distinguish exact original URI/digest pairs even when hashes coincide. The recorder lifts the returned mapping into its capture manifest and charges it under existing plan reserves. Author pre-code freezes graph metadata at at most four times the accepted physical-row count and four times conservative bytes, with checked arithmetic, separately bounded decoded page/encoding buffers and no claim that canonical metadata bytes measure JavaScript heap.
 
 A document page contains **every physical document row**, including binding, payload and head namespaces. These rows are not copied again into separate hydrated arrays. Document ordering is SQLite BINARY ordering of `(namespace,key)`, matching UTF-8 byte comparison, never locale comparison. Event ordering is numeric sequence. All document pages precede event pages; neither table has empty pages. Descriptor order supplies page position, so page bytes have no clock, capture ID, ordinal or source role that unnecessarily defeats exact reuse. The manifest binds their position and provenance. Identical bytes from different roles do not imply equal authority: keep every role-to-capture/page association even if one digest occupies one raw inventory entry.
 
