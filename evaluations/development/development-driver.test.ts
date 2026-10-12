@@ -37,7 +37,7 @@ const { DevelopmentAcquisitionRecorder } = await import('./acquire.ts');
 const stop = () => ({ status: 200, body: JSON.stringify({ model: 'synthetic-model', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Public offline response' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) });
 
 /** Actual applications with NEW signed full126/156 paged plan. Only a few deliveries run. */
-function fixture(t: TestContext) {
+function fixture(t: TestContext, syntheticTransportClock = false) {
   const f = syntheticWitnessFixture(), directory = mkdtempSync(join(tmpdir(), 'aeon-ordinary-driver-'));
   const applicationRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   const promptFile = join(directory, 'mind.txt'), compactionPromptFile = join(directory, 'compaction.txt');
@@ -96,7 +96,7 @@ function fixture(t: TestContext) {
   let provider: (roleId: string, payload: string, signal: AbortSignal) => Promise<ReturnType<typeof stop>> = async () => stop();
   const descriptors: DevelopmentDriverRole[] = roles.filter(role => role.kind !== 'reviewer').map(role => {
     const config = configs.get(role.id)!, authorityStore = authorities.get(role.id)!, authority = authorityStore.bootstrap(`instance-${role.id}`, config.controlRevision, config.artifactId);
-    return { roleId: role.id, localDefaultCeiling: ceiling, transport: { id: 'transport', key: Buffer.alloc(32, 10) }, application: { config, authority, authorityStore, secrets: { mistralApiKey: 'public-offline-fixture', directToken: 'public-offline-fixture' }, performRequest: async (payload, signal) => { payloads.push({ roleId: role.id, payload }); return provider(role.id, payload, signal); } } };
+    return { roleId: role.id, localDefaultCeiling: ceiling, transport: { id: 'transport', key: Buffer.alloc(32, 10) }, application: { config, authority, authorityStore, secrets: { mistralApiKey: 'public-offline-fixture', directToken: 'public-offline-fixture' }, ...(syntheticTransportClock ? { brokerTiming: { monotonicNow: () => 0, timeoutSignal: (ms: number) => AbortSignal.timeout(ms) } } : {}), performRequest: async (payload, signal) => { payloads.push({ roleId: role.id, payload }); return provider(role.id, payload, signal); } } };
   });
   const options: DevelopmentDriverOptions = { document: signDocument(acquisitionPlanDomain, plan, 'issuer', f.keys.get('issuer')!), trust, state, raw, originalDefaultCeiling: ceiling, syntheticClock: () => ({ wallMs: now, monotonicMs: now - (base - 5000), bootId: 'public-synthetic-boot', processStart: 'public-synthetic-process' }), roles: descriptors };
   let driver: Awaited<ReturnType<typeof DevelopmentAcquisitionDriver.prepare>> | undefined;
@@ -290,7 +290,7 @@ test('ordinary application executes model-requested speech through its actual ac
 });
 
 test('freezing an open actual transport retains dispatched state in B and original unknown charge after shutdown', async t => {
-  const f = fixture(t); f.setProvider(async (_role, _payload, signal) => { await new Promise<void>((_resolve, reject) => { if (signal.aborted) reject(signal.reason); else signal.addEventListener('abort', () => reject(signal.reason), { once: true }); }); return stop(); });
+  const f = fixture(t, true); f.setProvider(async (_role, _payload, signal) => { await new Promise<void>((_resolve, reject) => { if (signal.aborted) reject(signal.reason); else signal.addEventListener('abort', () => reject(signal.reason), { once: true }); }); return stop(); });
   const driver = await f.open(); f.setTime(0); driver.ingestRegisteredAssignment('candidate', 'opportunity:0'); await until(() => f.payloads.length > 0, 'open actual transport never entered'); f.setTime(180);
   const b = driver.freezeBehavior(), originalB = canonicalJson(b); assert.equal(b.value.requests.length, 1); assert.equal(b.value.requests[0]!.request.status, 'dispatched'); assert.ok(driver.recorder.status().findings.some(finding => finding.status === 'unavailable'));
   const result = await driver.closeApplications(); assert.deepEqual(result.errors, []); assert.equal(canonicalJson(driver.recorder.status().behavior), originalB);

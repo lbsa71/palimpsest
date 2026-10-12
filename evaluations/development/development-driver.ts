@@ -1,6 +1,8 @@
 import { join } from 'node:path';
+import { types } from 'node:util';
 import { canonicalJson, identity, invariant, type ArtifactRef } from '../../packages/contracts/index.ts';
 import { AutarkApplication, type ApplicationOptions } from '../../deployment/application.ts';
+import { captureBrokerTiming } from '../../deployment/broker-shell.ts';
 import { DevelopmentAccounting } from '../../deployment/development-accounting.ts';
 import { validateConfiguration } from '../../deployment/config.ts';
 import { ResourceLedger, type RequestCeiling } from '../../packages/runtime/index.ts';
@@ -11,6 +13,7 @@ import { AcquisitionUnavailable, DevelopmentAcquisitionRecorder, type Acquisitio
 import { verifyAcquisitionPlan, type AcquisitionPlanTrust, type DevelopmentAcquisitionPlan } from './acquisition-plan.ts';
 import type { DevelopmentBehavior } from './review-envelope.ts';
 import { developmentCapacityProfile } from './witness.ts';
+import { detachRecorderSourceAdmission } from './source-admission-reservation.ts';
 
 export interface DevelopmentDriverRole {
   roleId: string;
@@ -24,6 +27,7 @@ export interface DevelopmentDriverOptions {
   state: OperationalStore;
   raw: QualificationStore;
   custodian?: AcquisitionRecorderOptions['custodian'];
+  sourceAdmission?: AcquisitionRecorderOptions['sourceAdmission'];
   originalDefaultCeiling: RequestCeiling;
   syntheticClock?: AcquisitionRecorderOptions['syntheticClock'];
   roles: readonly DevelopmentDriverRole[];
@@ -62,6 +66,10 @@ export class DevelopmentAcquisitionDriver {
   private readonly stopEntry: () => void;
 
   static async prepare(input: DevelopmentDriverOptions): Promise<DevelopmentAcquisitionDriver> {
+    invariant(input && typeof input === 'object' && !types.isProxy(input), 'Plain driver options required');
+    const admissionDescriptor = Object.getOwnPropertyDescriptor(input, 'sourceAdmission');
+    invariant(!admissionDescriptor || ('value' in admissionDescriptor && admissionDescriptor.enumerable), 'Source admission must be an own data option');
+    const sourceAdmission = admissionDescriptor?.value === undefined ? undefined : detachRecorderSourceAdmission(admissionDescriptor.value);
     // Snapshot trusted callback/service identities once. Only plain authority/configuration
     // and signed descriptors are copied; secrets retain the application's rotation semantics.
     const document = structuredClone(input.document), trust = structuredClone(input.trust), state = input.state, raw = input.raw;
@@ -69,14 +77,16 @@ export class DevelopmentAcquisitionDriver {
     const originalDefaultCeiling = structuredClone(input.originalDefaultCeiling), syntheticClock = input.syntheticClock;
     const roles = input.roles.map(descriptor => {
       const source = descriptor.application as ApplicationOptions;
+      const timing = source.brokerTiming;
       const options = { config: structuredClone(source.config), secrets: source.secrets, authority: structuredClone(source.authority), authorityStore: source.authorityStore,
-        performRequest: source.performRequest, slackBotApi: source.slackBotApi, slackAppApi: source.slackAppApi, lease: source.lease,
+        performRequest: source.performRequest, brokerTiming: timing ? captureBrokerTiming(timing) : undefined, runWorker: source.runWorker,
+        slackBotApi: source.slackBotApi, slackAppApi: source.slackAppApi, lease: source.lease,
         additionalTools: source.additionalTools, developmentAccounting: source.developmentAccounting, documentJournal: source.documentJournal };
       const transport = descriptor.transport;
       return { roleId: descriptor.roleId, options, localDefaultCeiling: structuredClone(descriptor.localDefaultCeiling), transport: { id: transport.id, key: Uint8Array.from(transport.key) } };
     });
     const now = syntheticClock ? () => syntheticClock().wallMs : Date.now;
-    const { plan } = verifyAcquisitionPlan(document, trust, (ref, bound) => raw.readArtifact(ref, bound), now());
+    const { plan } = verifyAcquisitionPlan(document, trust, (ref, bound) => raw.readArtifact(ref, bound), now(), sourceAdmission);
     invariant(plan.version === 2 && plan.captureLayout && plan.protocol && raw.profile === developmentCapacityProfile, 'Ordinary driver requires the accepted complete-page profile');
     invariant(identity(raw.identity()) === identity(plan.rawStore) && !plan.roles.some(role => role.stateFile === state.filename), 'Exact private raw store and separate recorder owner required');
     const registration = plan.registration.value, behavioral = registration.roles.filter(role => role.kind !== 'reviewer');
@@ -132,7 +142,7 @@ export class DevelopmentAcquisitionDriver {
         invariant(application.resources === accounting.resources && application.runtime.store === application.store && application.runtime.resources === accounting.resources && application.communications.options.store === application.store && application.communications.options.runtime === application.runtime, 'Actual application/runtime/communications/accounting association required');
       }
       invariant(original, 'Actual candidate original ledger required');
-      recorder = DevelopmentAcquisitionRecorder.claim({ document, trust, raw, state, original, custodian, syntheticClock });
+      recorder = DevelopmentAcquisitionRecorder.claim({ document, trust, raw, state, original, custodian, syntheticClock, sourceAdmission });
       for (const [roleId, source] of applications) recorder.captureApplication(roleId, source.application, source.accounting);
       ready = true; put('ready');
       return new DevelopmentAcquisitionDriver(recorder, applications, state, () => { entryStopped = true; });
@@ -152,6 +162,21 @@ export class DevelopmentAcquisitionDriver {
     const source = this.applications.get(roleId); invariant(source, 'Unregistered behavioral application'); return source;
   }
   private assertOpen(): void { if (this.closing) throw new AcquisitionUnavailable('Driver applications are closing'); }
+  inspectAssignment(selector: Parameters<DevelopmentAcquisitionRecorder['inspectAssignment']>[0]): ReturnType<DevelopmentAcquisitionRecorder['inspectAssignment']> {
+    this.assertOpen(); return this.recorder.inspectAssignment(selector);
+  }
+  recordCycle(selector: Parameters<DevelopmentAcquisitionRecorder['recordCycle']>[0]): ReturnType<DevelopmentAcquisitionRecorder['recordCycle']> {
+    this.assertOpen(); return this.recorder.recordCycle(selector);
+  }
+  recordExperience(selector: Parameters<DevelopmentAcquisitionRecorder['recordExperience']>[0]): ReturnType<DevelopmentAcquisitionRecorder['recordExperience']> {
+    this.assertOpen(); return this.recorder.recordExperience(selector);
+  }
+  importSourceCheck(input: Parameters<DevelopmentAcquisitionRecorder['importSourceCheck']>[0]): ReturnType<DevelopmentAcquisitionRecorder['importSourceCheck']> {
+    this.assertOpen(); return this.recorder.importSourceCheck(input);
+  }
+  importSourceSupport(input: Parameters<DevelopmentAcquisitionRecorder['importSourceSupport']>[0]): ReturnType<DevelopmentAcquisitionRecorder['importSourceSupport']> {
+    this.assertOpen(); return this.recorder.importSourceSupport(input);
+  }
   ingestRegisteredAssignment(roleId: string, assignmentId: string): string {
     this.assertOpen(); const source = this.application(roleId);
     return this.recorder.deliverAssignment(roleId, assignmentId, source.application, source.accounting);
