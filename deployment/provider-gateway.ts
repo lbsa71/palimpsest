@@ -3,19 +3,22 @@ import type { ResourceLedger } from '../packages/runtime/resources/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import type { ShellProvider } from '../packages/agent-shell/index.ts';
 import type { TransportReceipt } from './broker-shell.ts';
+import { request as httpsRequest } from 'node:https';
+import { providerHttps, type ProviderHttpsRequest } from './provider-http.ts';
 
-export function providerGateway(options: { provider?: ShellProvider; apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch }) {
+export function providerGateway(options: { provider?: ShellProvider; apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch; request?: ProviderHttpsRequest }) {
   const provider = options.provider ?? 'mistral';
   invariant(provider === 'mistral' || provider === 'openai', 'Unsupported gateway provider');
   const endpoint = provider === 'openai' ? 'https://api.openai.com/v1/responses' : 'https://api.mistral.ai/v1/chat/completions';
   invariant(Number.isSafeInteger(options.maxResponseBytes) && options.maxResponseBytes > 0, 'Response byte ceiling required');
+  const transport = providerHttps(options.request ?? httpsRequest);
   return async (payload: string, signal: AbortSignal): Promise<{ status: number; body: string }> => {
     const apiKey = options.apiKey();
     invariant(apiKey.length > 0, 'Selected provider credential unavailable');
-    const response = await (options.fetch ?? fetch)(endpoint, {
-      method: 'POST', redirect: 'error', signal,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: payload,
-    });
+    const init = { signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: payload };
+    const response = options.fetch
+      ? await options.fetch(endpoint, { ...init, method: 'POST', redirect: 'error' })
+      : await transport(endpoint, init);
     const reader = response.body?.getReader();
     if (!reader) throw new Error('Provider response has no body');
     const chunks: Uint8Array[] = [];
@@ -73,4 +76,4 @@ export function reconcileProviderReceipts(store: OperationalStore, ledger: Resou
   return reconciled;
 }
 
-export function mistralGateway(options: { apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch }) { return providerGateway({ ...options, provider: 'mistral' }); }
+export function mistralGateway(options: { apiKey(): string; maxResponseBytes: number; fetch?: typeof fetch; request?: ProviderHttpsRequest }) { return providerGateway({ ...options, provider: 'mistral' }); }
