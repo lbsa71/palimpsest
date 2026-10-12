@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import test, { mock, type TestContext } from 'node:test';
 import { createAgentShell, type ShellOptions } from '../packages/agent-shell/index.ts';
 import type { JsonValue, ShellBridge, ShellInput } from '../packages/contracts/index.ts';
@@ -71,12 +72,18 @@ test('concurrent close calls share completion until the actual interrupted trans
 for (const failure of ['pending-write', 'slack-stop'] as const) test(`${failure} failure still aborts and drains work, retaining the Store, lease and stable rejection`, { timeout: 10000 }, async t => {
   const f = fixture(t, { slack: failure === 'slack-stop' }), run = await f.begin(), injected = new Error(`injected-${failure}`);
   const grant = f.app.store.get('allocations', 'operating-envelope:v1');
-  if (failure === 'pending-write') { const put = f.app.store.put.bind(f.app.store); f.app.store.put = ((namespace, ...args) => { if (namespace === 'host.pending-runs') throw injected; return (put as any)(namespace, ...args); }) as typeof f.app.store.put; }
+  if (failure === 'pending-write') {
+    const fault = new DatabaseSync(join(f.config.stateDirectory, 'operational.sqlite'));
+    try { fault.exec("CREATE TRIGGER shutdown_write_fault BEFORE INSERT ON documents WHEN NEW.namespace='host.pending-runs' BEGIN SELECT RAISE(ABORT, 'injected-pending-write'); END"); } finally { fault.close(); }
+  }
   else f.app.slackSocket!.stop = async () => { throw injected; };
   const closing = f.app.close(); let completed = false; const result = closing.then(() => { completed = true; return undefined; }, error => { completed = true; return error; });
   await turn(); assert.equal(completed, false, 'Preparatory failure must still await active work');
   await f.aborted.promise; f.release.resolve(); const error = await result;
-  assert.ok(error instanceof AggregateError); assert.ok(error.errors.includes(injected), error.errors.map(String).join('; ')); assert.strictEqual(f.app.close(), closing); assert.strictEqual(await f.app.close().catch(value => value), error);
+  assert.ok(error instanceof AggregateError);
+  if (failure === 'pending-write') { assert.equal(error.errors.length, 1); assert.equal(error.errors[0].message, injected.message); assert.equal(error.errors[0].code, 'ERR_SQLITE_ERROR'); }
+  else assert.ok(error.errors.includes(injected));
+  assert.strictEqual(f.app.close(), closing); assert.strictEqual(await f.app.close().catch(value => value), error);
   f.app.lease.assertHeld(); assert.deepEqual(f.app.store.get('allocations', 'operating-envelope:v1'), grant); assert.notEqual(f.app.runtime.getRun(run.id)!.status, 'running');
   assert.equal(f.app.store.list('requests').length, 1); assert.equal(f.app.store.list<any>('requests')[0]!.value.request.status, 'uncertain');
   assert.throws(() => new ProcessLease(join(f.config.stateDirectory, 'process-lease.sqlite')), /Another supervisor/); await f.app.tick(); assert.equal(f.requests, 1);
