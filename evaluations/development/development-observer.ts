@@ -4,7 +4,8 @@ import type { ArtifactRef, Effect, Goal, InboundInput, Observation, PhysicalRequ
 import { inputIdentity } from '../../packages/contracts/execution/index.ts';
 import type { AuthenticatedMessage } from '../../packages/communications/core/index.ts';
 import { DOCUMENT_JOURNAL_NAMESPACE, DOCUMENT_JOURNAL_KEY } from '../../packages/storage/index.ts';
-import type { DevelopmentSnapshot, DocumentJournalBinding, JournalPayload, JournalRef, StoredEvent } from '../../packages/storage/index.ts';
+import type { DevelopmentSnapshot, Document, DocumentJournalBinding, JournalPayload, JournalRef, StoredEvent } from '../../packages/storage/index.ts';
+import type { AcquiredCaptureReader } from './acquire.ts';
 import { developmentRequestIdentity } from './review-envelope.ts';
 
 export interface DevelopmentSourceClock { kind: 'host' | 'synthetic'; wallMs: number; monotonicMs: number; bootId: string; processStart: string }
@@ -48,7 +49,17 @@ export interface DevelopmentSourceProjection {
   unavailable: { subject: string; reason: string }[];
 }
 interface Version { ref: JournalRef; start: number; end: number }
-interface Graph { capture: DevelopmentSourceCapture; versions: Version[]; payloads: Map<string, JournalPayload> }
+export type DevelopmentPageReader = Pick<AcquiredCaptureReader, 'manifest' | 'assertUsableNow' | 'forEachEvent' | 'forEachCurrentDocument' | 'resolveJournalVersion' | 'resolveEvent' | 'resolve'>;
+export interface DevelopmentPageSourceInput extends DevelopmentSourceInput {
+  metadataBounds: { maxRecords: number; maxBytes: number };
+  openAcquiredCapture(ref: ArtifactRef): DevelopmentPageReader;
+}
+interface PayloadMetadata { ref: JournalRef; state: 'available' | 'withdrawn'; withdrawalId?: string }
+interface Graph {
+  capture: { clock: DevelopmentSourceClock }; events: StoredEvent[]; eventDigests: string[]; snapshotDigest: string;
+  versions: Version[]; payloads: Map<string, PayloadMetadata>;
+  resolveVersion(ref: JournalRef): Document; assertUsable(): void; resolveArtifact?(ref: ArtifactRef, maxBytes: number): Uint8Array;
+}
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 const exact = (v: object, keys: string) => invariant(Object.keys(v).sort().join(',') === keys.split(',').sort().join(','), 'unexpected source fields');
 const key = (v: { namespace: string; key: string }) => canonicalJson([v.namespace, v.key]);
@@ -121,14 +132,80 @@ function graph(capture: DevelopmentSourceCapture, input: Omit<DevelopmentSourceI
   invariant(bindingRows.length === 1 && equal(bindingRows[0], { namespace: DOCUMENT_JOURNAL_NAMESPACE, key: DOCUMENT_JOURNAL_KEY, revision: 1, value: b }), 'binding row differs');
   const docs = s.documents.filter(d => !reserved(d.namespace)); invariant(docs.length === heads.size, 'current source inventory differs');
   for (const d of docs) { exact(d, 'namespace,key,revision,value'); const ref = heads.get(key(d))?.ref; invariant(ref && ref.revision === d.revision && ref.sha256 === identity({ revision: d.revision, value: d.value }), 'current source version differs'); }
-  return { capture, versions, payloads };
+  return { capture, events: s.events, eventDigests: s.events.map(identity), snapshotDigest: identity(s), versions, payloads,
+    resolveVersion(ref) { const p = payloads.get(ref.versionId); invariant(p?.state === 'available', 'source version missing/withdrawn at current capture'); return p.document; }, assertUsable() {} };
+}
+
+/** Counts retained metadata serialization, not engine heap or ephemeral reader pages. */
+function metadataBudget(bounds?: DevelopmentPageSourceInput['metadataBounds']): (value: unknown) => void {
+  if (!bounds) return () => {};
+  exact(bounds, 'maxRecords,maxBytes');
+  for (const n of Object.values(bounds)) invariant(Number.isSafeInteger(n) && n > 0, 'fixed metadata bounds required');
+  const maxRecords = bounds.maxRecords, maxBytes = bounds.maxBytes;
+  let records = 0, bytes = 0;
+  return value => {
+    const next = Buffer.byteLength(canonicalJson(value));
+    invariant(records < maxRecords && next <= maxBytes - bytes, 'source metadata record/byte bound exceeded');
+    records++; bytes += next;
+  };
+}
+
+/** Owner validates the complete physical graph; this adapter keeps only provenance indices. */
+function pageGraph(reader: DevelopmentPageReader, artifact: ArtifactRef, input: Omit<DevelopmentSourceInput, 'readArtifact'>, charge: (v: unknown) => void, recheck: () => void): Graph {
+  recheck();
+  const encoded = canonicalJson(reader.manifest); invariant(Buffer.byteLength(encoded) <= input.bounds.maxCaptureBytes, 'capture manifest byte bound exceeded');
+  charge(reader.manifest); const m = JSON.parse(encoded) as DevelopmentPageReader['manifest'];
+  exact(m, 'version,roleId,source,configurationDigest,clock,cut'); exact(m.source, 'pathIdentity,journalDigest');
+  digest(artifact.sha256); invariant(artifact.uri === `sha256:${artifact.sha256}` && hash(Buffer.from(encoded)) === artifact.sha256, 'exact capture manifest commitment differs');
+  invariant(m.version === 1 && m.roleId === input.roleId && m.configurationDigest === input.configurationDigest && equal(m.source.pathIdentity, input.pathIdentity), 'role/configuration/source identity differs');
+  invariant(equal(m.cut.journalBinding, input.journal) && m.source.journalDigest === identity(input.journal), 'v2 registered journal binding required');
+  invariant(Number.isSafeInteger(m.cut.lastSequence) && m.cut.lastSequence >= 0 && m.cut.events === m.cut.lastSequence, 'event cut differs');
+  const events: StoredEvent[] = [], eventDigests: string[] = [], versions: Version[] = [], payloads = new Map<string, PayloadMetadata>(), heads = new Map<string, Version>();
+  const register = (ref: JournalRef, start: number) => {
+    exact(ref, 'versionId,namespace,key,revision,sha256'); digest(ref.sha256);
+    invariant(!payloads.has(ref.versionId) && !reserved(ref.namespace) && Number.isSafeInteger(ref.revision) && ref.revision > 0, 'invalid/duplicate journal ref');
+    const v = { ref: { ...ref }, start, end: Infinity };
+    charge({ ref, start }); versions.push(v); payloads.set(ref.versionId, { ref: v.ref, state: 'available' }); heads.set(key(ref), v);
+  };
+  let visiting = true;
+  const returned: unknown = reader.forEachEvent(e => {
+    invariant(visiting, 'asynchronous event callback forbidden');
+    exact(e, 'sequence,id,stream,type,data'); invariant(e.sequence === events.length + 1, 'event prefix omitted/reordered');
+    const meta = position(e), commitment = identity(e); charge({ ...meta, sha256: commitment }); eventDigests.push(commitment);
+    // Getter is used only after the semantic callback has released its current-use fence.
+    events.push({ ...meta, get data() {
+      recheck(); const actual = reader.resolveEvent(meta.sequence);
+      invariant(equal(position(actual), meta) && identity(actual) === commitment, 'exact event resolver differs'); return actual.data;
+    } });
+    const d = e.data as unknown as { documents?: JournalRef[]; namespace: string; key: string; before: JournalRef | null; after: JournalRef | null; refs?: JournalRef[]; withdrawalId: string };
+    if (e.type === 'document-journal-anchor') for (const ref of d.documents ?? []) register(ref, e.sequence);
+    else if (e.type === 'document-mutation') {
+      const old = heads.get(key(d)); invariant(equal(old?.ref ?? null, d.before), 'journal before ref differs');
+      if (old) old.end = e.sequence;
+      if (d.after) register(d.after, e.sequence); else heads.delete(key(d));
+    } else if (e.type === 'document-journal-withdrawal') for (const ref of d.refs ?? []) {
+      const p = payloads.get(ref.versionId); invariant(p && equal(p.ref, ref), 'withdrawal ref differs');
+      charge({ versionId: ref.versionId, withdrawalId: d.withdrawalId }); p.state = 'withdrawn'; p.withdrawalId = d.withdrawalId;
+    }
+  });
+  visiting = false;
+  invariant(!returned || typeof (returned as { then?: unknown }).then !== 'function', 'asynchronous page reader forbidden');
+  invariant(events.length === m.cut.events, 'event cut omitted'); recheck();
+  return { capture: { clock: m.clock }, events, eventDigests, snapshotDigest: identity(m.cut), versions, payloads,
+    assertUsable: recheck,
+    resolveVersion(ref) {
+      recheck(); const result = reader.resolveJournalVersion(ref.versionId);
+      invariant(equal(result.ref, ref), 'exact intermediate source ref differs'); return result.document;
+    },
+    resolveArtifact(ref, maxBytes) { recheck(); return reader.resolve({ ...ref }, maxBytes); } };
 }
 
 function prefix(a: Graph, b: Graph): void {
-  invariant(equal(a.capture.snapshot.events, b.capture.snapshot.events.slice(0, a.capture.snapshot.events.length)), 'retained event prefix changed');
+  a.assertUsable(); b.assertUsable();
+  invariant(a.events.length <= b.events.length && a.eventDigests.every((d, i) => d === b.eventDigests[i]), 'retained event prefix changed');
   for (const [id, p] of a.payloads) {
     const next = b.payloads.get(id); invariant(next && equal(next.ref, p.ref), 'retained payload prefix changed');
-    invariant(p.state === 'available' ? next.state === 'withdrawn' || equal(next, p) : equal(next, p), 'withdrawn source resurrected/changed');
+    invariant(p.state === 'available' ? next.state === 'withdrawn' || next.state === 'available' : equal(next, p), 'withdrawn source resurrected/changed');
   }
   const x = a.capture.clock, y = b.capture.clock;
   for (const c of [x, y]) { exact(c, 'kind,wallMs,monotonicMs,bootId,processStart'); invariant(['host', 'synthetic'].includes(c.kind) && Number.isFinite(c.wallMs) && c.wallMs >= 0 && Number.isFinite(c.monotonicMs) && c.monotonicMs >= 0, 'invalid capture clock'); nonempty(c.bootId, 'boot id'); nonempty(c.processStart, 'process start'); }
@@ -137,21 +214,38 @@ function prefix(a: Graph, b: Graph): void {
 
 /** Caller supplies retained sources; only the recorder can authenticate plan/clock/attempt use and sign. */
 export function projectDevelopmentSources(given: DevelopmentSourceInput): DevelopmentSourceProjection {
+  return projectSources(given);
+}
+
+/** Unsigned proposal; only an actual recorder-owned reader authenticates current host use. */
+export function projectDevelopmentPageSources(given: DevelopmentPageSourceInput): DevelopmentSourceProjection {
+  return projectSources(given, given.openAcquiredCapture, given.metadataBounds);
+}
+
+function projectSources(given: DevelopmentSourceInput, open?: DevelopmentPageSourceInput['openAcquiredCapture'], metadataBounds?: DevelopmentPageSourceInput['metadataBounds']): DevelopmentSourceProjection {
   const readArtifact = given.readArtifact;
   const { readArtifact: _reader, ...descriptors } = given;
-  const input = JSON.parse(canonicalJson(descriptors)) as Omit<DevelopmentSourceInput, 'readArtifact'>;
+  // Functions are never serialized as source evidence.
+  const clean = { before: descriptors.before, after: descriptors.after, current: descriptors.current, assignmentPacket: descriptors.assignmentPacket, roleId: descriptors.roleId, configurationDigest: descriptors.configurationDigest, pathIdentity: descriptors.pathIdentity, journal: descriptors.journal, bounds: descriptors.bounds };
+  const input = JSON.parse(canonicalJson(clean)) as Omit<DevelopmentSourceInput, 'readArtifact'>;
   const output: DevelopmentSourceProjection = { version: 1, kind: 'proposed-source-facts', roleId: input.roleId, captures: [], assignmentPacket: input.assignmentPacket, interval: null, clockQualification: 'unavailable', cycles: [], assignments: [], unavailable: [] };
   const failed = (subject: string, e: unknown) => output.unavailable.push({ subject, reason: (e instanceof Error ? e.message : String(e)).slice(0, 256) });
+  let recheck = () => {};
   try {
     for (const [k, v] of Object.entries(input.bounds)) invariant(Number.isSafeInteger(v) && v > 0 && v <= (k === 'maxRows' ? 512 : 1_048_576), 'fixed source/proof bounds required');
     exact(input.bounds, 'maxCaptureBytes,maxArtifactBytes,maxRows,maxProofBytes'); nonempty(input.roleId, 'role id'); digest(input.configurationDigest);
     const read = (ref: ArtifactRef, bound: number) => { digest(ref.sha256); invariant(ref.uri === `sha256:${ref.sha256}`, 'retained content-addressed source required'); const bytes = Uint8Array.from(readArtifact({ ...ref }, bound)); invariant(bytes.byteLength <= bound && hash(bytes) === ref.sha256, 'retained artifact digest/byte bound differs'); return bytes; };
     const json = (ref: ArtifactRef, bound: number): unknown => { const bytes = read(ref, bound), value: unknown = JSON.parse(Buffer.from(bytes).toString('utf8')); invariant(Buffer.from(bytes).toString('utf8') === canonicalJson(value), 'canonical retained source required'); return value; };
-    const captures = [input.before, input.after, input.current].map(ref => graph(json(ref, input.bounds.maxCaptureBytes) as DevelopmentSourceCapture, input));
+    const refs = [input.before, input.after, input.current];
+    const readers = open ? refs.map(ref => open({ ...ref })) : [];
+    recheck = () => { for (const reader of readers) reader.assertUsableNow(); };
+    invariant(!open || metadataBounds !== undefined, 'fixed metadata bounds required');
+    const charge = metadataBudget(metadataBounds);
+    const captures = open ? readers.map((reader, i) => pageGraph(reader, refs[i]!, input, charge, recheck)) : refs.map(ref => graph(json(ref, input.bounds.maxCaptureBytes) as DevelopmentSourceCapture, input));
     const [before, after, current] = captures as [Graph, Graph, Graph]; prefix(before, after); prefix(after, current);
-    output.captures = captures.map((g, i) => ({ artifact: [input.before, input.after, input.current][i]!, snapshotDigest: identity(g.capture.snapshot), cursor: g.capture.snapshot.events.length }));
+    output.captures = captures.map((g, i) => ({ artifact: [input.before, input.after, input.current][i]!, snapshotDigest: g.snapshotDigest, cursor: g.events.length }));
     output.interval = { before: before.capture.clock, after: after.capture.clock }; output.clockQualification = after.capture.clock.kind === 'synthetic' ? 'synthetic' : 'requires-host-qualification';
-    const events = after.capture.snapshot.events, cursor = before.capture.snapshot.events.length;
+    const events = after.events, cursor = before.events.length;
     const packet = json(input.assignmentPacket, input.bounds.maxArtifactBytes) as { version: number; assignments: { id: string; roleId: string; message: AuthenticatedMessage }[] };
     exact(packet, 'version,assignments'); invariant(packet.version === 1 && Array.isArray(packet.assignments) && packet.assignments.length <= input.bounds.maxRows, 'bounded v1 assignment packet required');
     const seen = new Set<string>();
@@ -164,10 +258,12 @@ export function projectDevelopmentSources(given: DevelopmentSourceInput): Develo
     const proof = (): DevelopmentSourceProof => ({ events: [], versions: [], artifacts: [] });
     const addEvent = (p: DevelopmentSourceProof, e: StoredEvent) => { if (!p.events.some(v => v.sequence === e.sequence)) p.events.push(position(e)); };
     const value = <T>(v: Version | undefined, p: DevelopmentSourceProof): T => {
-      invariant(v, 'intermediate source version unavailable'); const payload = current.payloads.get(v.ref.versionId);
+      invariant(v, 'intermediate source version unavailable'); recheck(); const payload = current.payloads.get(v.ref.versionId);
       invariant(payload && equal(payload.ref, v.ref) && payload.state === 'available', 'source version missing/withdrawn at current capture');
       if (!p.versions.some(r => r.versionId === v.ref.versionId)) p.versions.push(v.ref);
-      return payload.document.value as unknown as T;
+      const document = current.resolveVersion(v.ref);
+      invariant(document.revision === v.ref.revision && identity(document) === v.ref.sha256, 'exact intermediate source commitment differs');
+      return document.value as unknown as T;
     };
     const at = <T>(namespace: string, name: string, seq: number, p: DevelopmentSourceProof): T => value<T>(after.versions.find(v => v.ref.namespace === namespace && v.ref.key === name && v.start <= seq && seq < v.end), p);
     const ancestry = (runId: string, seq: number, p: DevelopmentSourceProof) => events.filter(e => e.stream === runId && ['admitted', 'steering'].includes(e.type) && e.sequence <= seq).map(e => { addEvent(p, e); return { event: position(e), input: e.data as unknown as InboundInput }; });
@@ -243,7 +339,7 @@ export function projectDevelopmentSources(given: DevelopmentSourceInput): Develo
           } else {
             const prompt = at<{ manifest: PromptManifest; artifact: ArtifactRef }>('prompts', r.promptManifestId, v.start, p);
             invariant(prompt.manifest.id === r.promptManifestId && prompt.manifest.requestDigest === r.requestDigest && prompt.artifact.sha256 === r.requestDigest, 'physical prompt binding differs');
-            const retained = { uri: `sha256:${prompt.artifact.sha256}`, sha256: prompt.artifact.sha256 }; read(retained, input.bounds.maxArtifactBytes); p.artifacts.push(retained);
+            const retained = { uri: `sha256:${prompt.artifact.sha256}`, sha256: prompt.artifact.sha256 }; if (open) { recheck(); const bytes = after.resolveArtifact!(prompt.artifact, input.bounds.maxArtifactBytes); invariant(bytes.byteLength <= input.bounds.maxArtifactBytes && hash(bytes) === prompt.artifact.sha256, 'retained artifact digest/byte bound differs'); } else read(retained, input.bounds.maxArtifactBytes); p.artifacts.push(retained);
           }
           bound.push({ id: r.id, status: r.status, purpose: r.purpose });
         }
@@ -270,6 +366,7 @@ export function projectDevelopmentSources(given: DevelopmentSourceInput): Develo
         output.assignments.push({ assignmentId: entry.id, entryDigest: identity(entry), input: expected, conversation: m.conversation, runId: row.runId, runStatus: run.status, ingress: position(ingress), linkage: linked.type as 'admitted' | 'steering', result, observations: result ? recorded.filter(o => result.observationIds.includes(o.id)) : [], proof: p });
       } catch (e) { failed(`assignment:${entry.id}`, e); }
     }
+    recheck();
     invariant(Buffer.byteLength(canonicalJson(output)) <= input.bounds.maxProofBytes, 'projected proof byte bound exceeded');
   } catch (e) { output.cycles = []; output.assignments = []; failed('source', e); }
   if (Buffer.byteLength(canonicalJson(output)) > input.bounds.maxProofBytes) {
