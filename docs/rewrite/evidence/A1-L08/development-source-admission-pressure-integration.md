@@ -1,0 +1,11 @@
+# Typed support pressure fixture integration
+
+2026-10-12. Root owns only the existing author test `future proof/receipt slots remain protected from early optional pressure and q+1 support refuses` in `evaluations/development/source-admission-recorder.test.ts` and this evidence. Claim is main `9d28991`; original unaccepted test remains at `0f7b5b2`. Read-only exact repair prerequisite `b6af7da`, acquire blob `72efbca8bbf773d05910328de01b4d971dcb97ad`, imported separately as `42bdac2`.
+
+```text
+/goal Correct the unaccepted pressure fixture to use explicitly preaccepted typed support52/53 under the adopted default-deny composition, preserve original full-byte reservation and immutability checks, and provide an exact test-only join for independent recorder repair review.
+```
+
+Precode: register two support slots before irreversible claim, each with q=65,536 and a distinct public purpose. Use expected:null so the subsequent conflicting object exercises immutable occupied identity, rather than merely expected-digest mismatch. Import two distinct full-q custodian artifacts through `importSourceSupport`. Preserve the four mandatory/composition-owned generic refusals and the exact total logical+202q+future<=16MiB predicate. Require generic52/53/54 refusal; slot52 different full-q bytes must still fail immutable identity and q+1 typed support must fail before copying. Do not change other31 test bodies, source, caps, grants, fixture helper or review predicates. Strict and bounded explicitly selected serial checks only; no physical/network/provider/native/credentials/Slack/fullbenchmark/deploy.
+
+Focused changed case passes1/1, zero skips/cancellations,1.968seconds with frozen `b6af7da`: `/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test --test-concurrency=1 --test-name-pattern='future proof/receipt slots' evaluations/development/source-admission-recorder.test.ts`, log `/tmp/aeon-recorder-pressure-integration.log`. Both actual full-q typed imports succeeded after the q+1 refusal, distinct digests and occupied-slot refusal passed, and the unchanged future-byte reservation inequality passed. Final strict/diff and exact unrelated-content equality are checked before handoff. Recorder author owns the subsequent full affected join; fresh reviewer must audit this correction along with source changes.

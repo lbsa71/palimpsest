@@ -559,7 +559,7 @@ export class DevelopmentAcquisitionRecorder {
   /** Extra provenance only, never a source-derived observation or model judgment. */
   retainProtocolArtifact(kind:AcquisitionProofKind,ordinal:number,bytes:Uint8Array):ArtifactRef {
     this.assertCurrentUse();
-    invariant(!(this.admission && (kind==='cycle'||kind==='experience'||kind==='learning'||kind==='control'||kind==='task-output'||kind==='feedback'||kind==='checker'||kind==='script-receipt'||(kind==='adaptation'&&this.capacity.sourceAdmission!.slots.some(s=>s.ordinal===ordinal)))), 'Composition-owned proof requires typed source admission');
+    invariant(!(this.admission && (kind==='cycle'||kind==='experience'||kind==='learning'||kind==='control'||kind==='task-output'||kind==='feedback'||kind==='checker'||kind==='script-receipt'||kind==='adaptation')), 'Composition-owned proof requires typed source admission');
     return this.retainProof(kind,ordinal,bytes);
   }
   private retainProof(kind:AcquisitionProofKind,ordinal:number,bytes:Uint8Array):ArtifactRef {
@@ -678,10 +678,17 @@ export class DevelopmentAcquisitionRecorder {
     throw sourceError;
   }
   private admissionOperation<T>(use:()=>T):T {
+    // A refused nested invocation cannot own or terminalize the outer pending transition.
+    unavailable(!this.admissionActive,'Source admission unavailable, reentrant or inside owner transaction');
+    const pendingAtEntry=this.state().admissionPending;
     try{return use();}catch(error){
-      // The scope has unwound before terminal owner mutation; source errors are not confused with callback errors.
+      // The scope has unwound. Only this invocation's new pending transition owns failure handling.
+      if(!pendingAtEntry&&this.state().admissionPending){
+        try{this.fail('source-admission-pending',error);}catch{this.denied=true;}
+        // Callback error classes cannot reclassify durable retention failure as unavailable acquisition.
+        throw new Error(String(error instanceof Error?error.message:error),{cause:error});
+      }
       if(error instanceof AcquisitionUseWithdrawn)this.assertAuthorityOnly();
-      if(this.state().admissionPending){try{this.fail('source-admission-pending',error);}catch{this.denied=true;}}
       throw error;
     }
   }

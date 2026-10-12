@@ -56,9 +56,12 @@ test('admission descriptor, key and selector proxies/accessors execute zero trap
   assert.equal(effects,0);const r=f.claim();f.setup(r);const bracket={roleId:'candidate',before:r.status().snapshots[0]!.artifact,after:r.status().snapshots[0]!.artifact,assignmentId:'opportunity:0'};assert.equal(r.inspectAssignment(new Proxy(bracket,trap)).status,'failed');Object.defineProperty(bracket,'assignmentId',{enumerable:true,get(){effects++;return 'opportunity:0';}});assert.equal(r.inspectAssignment(bracket).status,'failed');assert.equal(effects,0);
 });
 test('future proof/receipt slots remain protected from early optional pressure and q+1 support refuses',t=>{
-  const f=sourceRecorderFixture(t,true),r=f.claim();f.setup(r);const q=65536;
+  const f=sourceRecorderFixture(t,true),q=65536,first=f.raw.putBytes(Buffer.alloc(q,1)),second=f.raw.putBytes(Buffer.alloc(q,2)),changed=f.raw.putBytes(Buffer.alloc(q,3)),over=f.raw.putBytes(Buffer.alloc(q+1,4));
+  f.admission.composition.support=[{ordinal:52,purpose:'first-public-pressure',maxBytes:q,expected:null},{ordinal:53,purpose:'second-public-pressure',maxBytes:q,expected:null}];f.accept();const r=f.claim();f.setup(r);
   for(const [kind,ordinal]of [['adaptation',16],['adaptation',4],['cycle',0],['checker',0]]as const)assert.throws(()=>r.retainProtocolArtifact(kind,ordinal,Buffer.from('arbitrary early bytes')),/Composition-owned/);
-  const one=r.retainProtocolArtifact('adaptation',52,Buffer.alloc(q,1)),two=r.retainProtocolArtifact('adaptation',53,Buffer.alloc(q,2));assert.ok(one.sha256!==two.sha256);assert.throws(()=>r.retainProtocolArtifact('adaptation',54,Buffer.from('third')),/Bounded/);assert.throws(()=>r.retainProtocolArtifact('adaptation',52,Buffer.alloc(q,3)),/Immutable/);
+  for(const ordinal of [52,53,54])assert.throws(()=>r.retainProtocolArtifact('adaptation',ordinal,Buffer.from('arbitrary early bytes')),/Composition-owned/);
+  assert.throws(()=>r.importSourceSupport({ordinal:52,purpose:'first-public-pressure',artifact:over}),/bound|Bound|budget|Budget/);
+  const one=r.importSourceSupport({ordinal:52,purpose:'first-public-pressure',artifact:first}),two=r.importSourceSupport({ordinal:53,purpose:'second-public-pressure',artifact:second});assert.ok(one.sha256!==two.sha256);assert.throws(()=>r.importSourceSupport({ordinal:52,purpose:'first-public-pressure',artifact:changed}),/Immutable|Changed occupied/);
   const logical=r.status().proofs!.reduce((n,p)=>n+p.bytes,0),future=r.capacity.sourceAdmission!.slots.filter(s=>!r.status().proofs!.some(p=>p.kind==='adaptation'&&p.ordinal===s.ordinal));assert.ok(logical+202*q+future.reduce((n,s)=>n+s.maxBytes,0)<=16777216);
 });
 test('only enabled public support intake may read preexisting custodian bytes and all copies are charged',t=>{
