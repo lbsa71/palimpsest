@@ -15,4 +15,8 @@ Positive wire builders may be adapted from the existing synthetic fixture and au
 
 ## Results and handoff
 
-Pending execution. Production/shared source and historical evidence are read-only. Concrete failures go to the exclusive author and root; fresh verification follows any repair checkpoint.
+Initial execution against implementation `fdd9134`: 40 cases, 38 pass and two fail. One failure is a reviewer expectation defect: the 513-record constructor correctly throws `Development evidence exceeds host ceiling`, outside the initially expected `/record|limit|bound/` regex. The assertion is corrected to the observed specific host-ceiling error without changing its rejection predicate. Strict compilation passes.
+
+**R1, consequential, open:** `modelExecution` checks actual ToolCall mapping only inside the supplied `execution.evidenceReads` loop. The independent test starts with an actual SQLite/QualificationStore succeeded evidence read, changes the authenticated physical reservation ID, rebuilds the signed receipt and transition links, and removes all execution access metadata. Preparation accepts all mechanical joins (only the intentional synthetic finding remains, with final accounting). With the metadata present the same wrong reservation rejects. This is an already observed request in authenticated T, so the explicitly limited completeness of unobserved streams does not justify the omission. Reconcile the observed reviewer tool-request inventory with the declared access inventory before accepting the review. Root and the exclusive author received the reproduction; production/shared source remain read-only to this reviewer.
+
+Historical fixture adaptation inspection found constructor/index-maintenance changes and actual ToolCall mapping adaptation only; no historical test body or rejection predicate changed. Historical execution and fresh repair verification remain pending.
