@@ -14,8 +14,8 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 | Current owner | Finite work and handoff |
 |---|---|
-| `/root/a1_development_acquisition_review`, `development-acquisition-review` worktree | Independent review of mechanical recorder `49f2679`; initial frozen `385a136` reproduces assignment/source/role/capacity defects; review and exclusive-author repair pending |
-| `/root/a1_development_model_review_audit`, `development-model-review-audit` worktree | Fresh review of two-session adapter `e3cc7a2`, source `4966c0e`; author reports strict and 41 passing checks with actual recorder joins; source acceptance pending |
+| `/root/a1_development_acquisition`, `development-acquisition` worktree | New finite repair goal for recorder R1–R6 from review `91a38e2` (15 cases, nine causal failures); root supplied exact original-ledger identity getter `0770f31`, strict plus 54 accounting checks pass; direct re-review follows |
+| `/root/a1_development_model_review`, `development-model-review` worktree | New finite repair goal for audit `d6ebc9c` (20 cases, three causal failures): directory ancestry, compaction-instruction ownership and mutable host descriptor; fresh re-review follows |
 | `/root/a1_journal_retention`, `journal-retention` worktree | JR1 implementation of adopted withdrawable journal payloads and atomic memory forgetting; original four root regressions remain unchanged |
 | `/root` | Integration, source-bound checks, later ordinary acquisition composition, remaining native inquiry and H1 |
 
