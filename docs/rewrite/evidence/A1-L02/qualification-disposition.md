@@ -138,3 +138,16 @@ The final engineering reviewer reported **5 passed / 1 failed** schema cases at 
 3. **L02 fresh decision owner — Q5:** after those results, accept only demonstrated shell capabilities or record concrete failed gate/maintenance evidence and invoke one bounded Rig comparison under the same contract. Live persona replacement, novel task repair/research/delegation and reconciliation judgment must remain measured outcomes. Comparator calibration, both named parity claims, actual developmental cycles, model-authored self-change and H1 remain their separately specified L08/L09 gates.
 
 Finite E3 synthesis is complete with these limits. Full L02 remains **reviewing engineering disposition / awaiting live Q3**, not accepted, live-verified, autonomously qualified or deployed.
+
+### Subsequent implementation footprint — root observation, 2026-10-12
+
+At exact clean source **`e3f66d8a626207664fd519483a5f31f03addefaf`**, root counted tracked `.ts`, `.mjs` and `.js` files under `packages`, `deployment` and `evaluations`, separating filenames containing `.test.` first, then `/vendor/`, then evaluation code. This is a reproducible text inventory (`git ls-files` plus file bytes/newline counts), not an imported-closure measurement, quality score or proof of cognition.
+
+| Category | Files | Bytes | Newline count |
+|---|---:|---:|---:|
+| Runtime and deployment, excluding vendor/tests | 96 | 855,925 | 9,657 |
+| Evaluation code, excluding tests | 45 | 571,509 | 5,427 |
+| Selected source-owned vendor code | 19 | 144,820 | 4,248 |
+| Tests | 124 | 1,800,726 | 18,263 |
+
+The developmental recorder, model-review adapter and retained-inventory corrections were still isolated and are excluded from this snapshot. Keep their growth visible when reassessing total maintenance work. The current implementation retains one selected agent loop and a locally owned provider/tool boundary; introducing a second platform would still need a measured reduction in the combined host, continuity and evaluation work. The [updated ADR](../../../adr/0032-select-pi-core-and-source-owned-dependencies.md) preserves the native instruction-path findings and the still-open live competence gates. No new shell acceptance follows from this count.
