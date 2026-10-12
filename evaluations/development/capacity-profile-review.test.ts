@@ -74,7 +74,12 @@ test('review: nested prompt fragment cannot acquire the cached metadata allowanc
   const g = fixture(), large = g.putRaw(Buffer.alloc(1000001, 5)), b = g.behavior([large]);
   const prompt = g.putRaw(Buffer.from(canonicalJson({ manifest: { fragments: [{ artifact: { ...large, uri: `aeon:artifact:${large.sha256}` } }] } })));
   const transition = { beforeDigest: null, state: { payload: g.m.configurationArtifact, prompt }, settlement: null } as unknown as DevelopmentAccountingTransition;
-  assert.throws(() => collectDevelopmentAccountingTail(identity(g.r), b, [transition], [], [], g.reader, g.m.limits), /Cached artifact exceeds caller bound/);
+  const supplied: number[] = [];
+  assert.throws(() => collectDevelopmentAccountingTail(identity(g.r), b, [transition], [], [], (ref, bound) => {
+    if (ref.sha256 === large.sha256) supplied.push(bound);
+    return g.reader(ref, bound);
+  }, g.m.limits), /read bound/);
+  assert.deepEqual(supplied, [developmentOperationalArtifactBytes]);
 });
 
 for (const site of ['transition-payload', 'review-input'] as const) test(`review: tail classifies known ${site} before generic B inventory reads`, t => {

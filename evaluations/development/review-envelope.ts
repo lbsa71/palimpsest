@@ -154,13 +154,18 @@ export function collectDevelopmentAccountingTail(registrationDigest: string, beh
   invariant(input.limits.maxArtifactBytes <= input.limits.maxEvidenceBytes, 'Tail artifact allowance exceeds total bound');
   limits = input.limits; validateIndex(input.behavior.artifactIndex, limits);
   const storage = retained(reader, limits), original = new Set(input.behavior.artifactIndex.map(e => e.artifact.sha256));
-  for (const entry of input.behavior.artifactIndex) invariant(storage.read(entry.artifact).byteLength === entry.bytes, 'Retained B index byte length changed');
   const operationalRead = (ref: ArtifactRef) => storage.read(ref, developmentOperationalArtifactBytes);
-  refs({ transitions: input.transitions, reviews: input.reviews }, operationalRead);
-  storage.scan(input.retainedArtifacts);
-  for (const transition of input.transitions) if (transition.state.prompt) {
+  // Classify known operational uses before a generic metadata inventory can load them.
+  const { artifactIndex: _index, ...behavioralSources } = input.behavior;
+  refs({ behavior: behavioralSources, transitions: input.transitions, reviews: input.reviews }, operationalRead);
+  for (const transition of [...input.behavior.transitions, ...input.transitions]) if (transition.state.prompt) {
     const captured = JSON.parse(Buffer.from(operationalRead(transition.state.prompt)).toString('utf8')); refs(captured, operationalRead);
   }
+  for (const request of input.behavior.requests) if (request.prompt) {
+    const captured = JSON.parse(Buffer.from(operationalRead(request.prompt)).toString('utf8')); refs(captured, operationalRead);
+  }
+  for (const entry of input.behavior.artifactIndex) invariant(storage.read(entry.artifact).byteLength === entry.bytes, 'Retained B index byte length changed');
+  storage.scan(input.retainedArtifacts);
   const tail: DevelopmentAccountingTail = { version: 2, registrationDigest, behaviorDigest: identity(input.behavior), transitions: input.transitions, artifactIndex: storage.index().filter(e => !original.has(e.artifact.sha256)) };
   const originalCount = input.behavior.manifest.value.grant.originalAccounting.requestIds.length;
   invariant(input.behavior.observations.length + originalCount + input.behavior.requests.length + input.behavior.transitions.length + input.behavior.artifactIndex.length + tail.transitions.length + input.reviews.length + tail.artifactIndex.length <= limits.maxRecords, 'Joined bounded record allowance exceeded');
@@ -386,7 +391,8 @@ export function collectDevelopmentBehavior(document: Signed<DevelopmentRegistrat
   const evidence = collectDevelopmentEvidenceProjection(input.manifest, input.observations, trust.behavior, storage.read, profiles(input.requests, roles), now).evidence;
   const end = input.observations.filter(o => o.value.data.kind === 'end'); invariant(end.length === 1 && at(end[0]!.value.observedAt) === at(input.frozenAt) && at(input.frozenAt) <= at(m.deadlineAt), 'B freeze must equal original behavioral stopping point');
   invariant(evidence.finalAccounting, 'Missing freeze-time A0'); accounting(evidence.finalAccounting, [...r.originalRequests, ...input.requests], m, input.frozenAt);
-  storage.scan({ manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, originalRequests: r.originalRequests, retainedArtifacts: input.retainedArtifacts });
+  refs({ manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, originalRequests: r.originalRequests }, ref => storage.read(ref, developmentOperationalArtifactBytes));
+  storage.scan(input.retainedArtifacts);
   const behavior: DevelopmentBehavior = { version: 2, registrationDigest: identity(r), frozenAt: input.frozenAt, manifest: input.manifest, observations: input.observations, requests: input.requests, transitions: input.transitions, rootCancelled: history.rootCancelled, evidence, artifactIndex: storage.index() };
   invariant(behaviorRecords(r, behavior) <= m.limits.maxRecords, 'Behavior record allowance exceeded');
   invariant(Buffer.byteLength(canonicalJson(behavior)) + behavior.artifactIndex.reduce((n, a) => n + a.bytes, 0) <= m.limits.maxEvidenceBytes, 'Behavior evidence allowance exceeded');
@@ -426,6 +432,7 @@ export function prepareDevelopmentReviewEnvelope(input: DevelopmentReviewEnvelop
     const { latest, previousTime, rootCancelled } = replay(tail.transitions, [...r.originalRequests, ...b.requests], b.rootCancelled, 'review', b.frozenAt, r.reviewDeadlineAt, r, m, roles, trust, storage.read);
     for (const binding of envelope.reviews) modelExecution(binding.value, b, r, roles, tail.transitions, latest, trust, storage.read);
     validateIndex(tail.artifactIndex, m.limits);
+    refs({ reviews: envelope.reviews, transitions: tail.transitions, closure: envelope.closure }, ref => storage.read(ref, developmentOperationalArtifactBytes));
     storage.scan(envelope);
     const originalDigests = new Set(b.artifactIndex.map(e => e.artifact.sha256));
     equal(tail.artifactIndex, storage.index().filter(e => !originalDigests.has(e.artifact.sha256)), 'Changed/missing retained T artifact index');

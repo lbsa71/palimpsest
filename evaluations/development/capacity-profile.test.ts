@@ -83,11 +83,16 @@ test('larger retained metadata is accepted, debited, and never expands the witne
   assert(failed.findings.some(f => f.detail.includes('read bound')));
 });
 
-test('tail rejects cached metadata reused as physical payload, prompt, or settlement response', () => {
+test('tail rejects metadata reused as physical payload, prompt, or settlement response before a larger read', () => {
   for (const field of ['payload', 'prompt', 'response'] as const) {
     const g = fixture(), large = g.putRaw(Buffer.alloc(1000001, 4)), b = g.behavior([large]);
     const transition = { beforeDigest: null, state: { payload: field === 'payload' ? large : g.m.configurationArtifact, prompt: field === 'prompt' ? large : null }, settlement: field === 'response' ? { value: { response: large } } : null } as unknown as DevelopmentAccountingTransition;
-    assert.throws(() => collectDevelopmentAccountingTail(identity(g.r), b, [transition], [], [], g.reader, g.m.limits), /Cached artifact exceeds caller bound/);
+    const bounds: number[] = [];
+    assert.throws(() => collectDevelopmentAccountingTail(identity(g.r), b, [transition], [], [], (ref, bound) => {
+      if (ref.sha256 === large.sha256) bounds.push(bound);
+      return g.reader(ref, bound);
+    }, g.m.limits), /read bound/);
+    assert.deepEqual(bounds, [developmentOperationalArtifactBytes]);
   }
 });
 
