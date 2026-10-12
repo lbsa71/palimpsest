@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, digest, identity, invariant, nonempty, validateGoal, validateObservation, validatePhysicalRequest, validateProvenance, validateRun, validateScope } from '../../packages/contracts/index.ts';
-import type { ArtifactRef, Effect, Goal, InboundInput, Observation, PhysicalRequest, PromptManifest, Provenance, Run } from '../../packages/contracts/index.ts';
+import type { ArtifactRef, Effect, Goal, InboundInput, Observation, PhysicalRequest, PromptManifest, Provenance, Run, ShellCheckpoint, ShellResult } from '../../packages/contracts/index.ts';
 import { inputIdentity } from '../../packages/contracts/execution/index.ts';
 import type { AuthenticatedMessage } from '../../packages/communications/core/index.ts';
 import { DOCUMENT_JOURNAL_NAMESPACE, DOCUMENT_JOURNAL_KEY } from '../../packages/storage/index.ts';
 import type { DevelopmentSnapshot, DocumentJournalBinding, JournalPayload, JournalRef, StoredEvent } from '../../packages/storage/index.ts';
+import { developmentRequestIdentity } from './review-envelope.ts';
 
 export interface DevelopmentSourceClock { kind: 'host' | 'synthetic'; wallMs: number; monotonicMs: number; bootId: string; processStart: string }
 export interface DevelopmentSourceCapture {
@@ -19,7 +20,10 @@ export interface DevelopmentSourceInput {
 }
 export type DevelopmentEventPosition = Pick<StoredEvent, 'id' | 'sequence' | 'stream' | 'type'>;
 export interface DevelopmentSourceProof { events: DevelopmentEventPosition[]; versions: JournalRef[]; artifacts: ArtifactRef[] }
-export interface DevelopmentRuntimeResultSource { status: 'completed' | 'checkpointed' | 'cancelled' | 'blocked'; messageSequence: number; observationIds: string[] }
+export interface DevelopmentRuntimeResultSource {
+  status: 'completed' | 'checkpointed' | 'cancelled' | 'blocked'; messageSequence: number; observationIds: string[];
+  origin: { invocation: DevelopmentEventPosition; execution: JournalRef; disposition: DevelopmentEventPosition };
+}
 export interface DevelopmentCycleSource {
   interval: { before: ArtifactRef; after: ArtifactRef; lowerWallMs: number; upperWallMs: number; clockKind: 'host' | 'synthetic' };
   selection: DevelopmentEventPosition; schedulerSequence: number; goal: Goal; provenance: Provenance;
@@ -168,13 +172,41 @@ export function projectDevelopmentSources(given: DevelopmentSourceInput): Develo
     const at = <T>(namespace: string, name: string, seq: number, p: DevelopmentSourceProof): T => value<T>(after.versions.find(v => v.ref.namespace === namespace && v.ref.key === name && v.start <= seq && seq < v.end), p);
     const ancestry = (runId: string, seq: number, p: DevelopmentSourceProof) => events.filter(e => e.stream === runId && ['admitted', 'steering'].includes(e.type) && e.sequence <= seq).map(e => { addEvent(p, e); return { event: position(e), input: e.data as unknown as InboundInput }; });
     const resultSource = (runId: string, end: number, inputSequence: number, p: DevelopmentSourceProof, resultAfterSequence = 0): DevelopmentRuntimeResultSource | null => {
-      const version = after.versions.find(v => v.ref.namespace === 'execution' && v.ref.key === runId && v.start <= end && end < v.end);
-      if (!version || version.start <= resultAfterSequence) return null;
-      const execution = value<{ messageSequence?: number; lastResult?: { status: DevelopmentRuntimeResultSource['status']; observations: Observation[] } }>(version, p);
-      if (!execution.lastResult || execution.messageSequence === undefined || execution.messageSequence < inputSequence) return null;
-      invariant(Number.isSafeInteger(execution.messageSequence) && execution.messageSequence <= end && ['completed', 'checkpointed', 'cancelled', 'blocked'].includes(execution.lastResult.status) && Array.isArray(execution.lastResult.observations), 'runtime result source differs');
-      for (const observation of execution.lastResult.observations) invariant(equal(at('observations', observation.id, end, p), observation) && observation.runId === runId, 'runtime result observation differs');
-      return { status: execution.lastResult.status, messageSequence: execution.messageSequence, observationIds: execution.lastResult.observations.map(o => o.id) };
+      type Execution = { messageSequence?: number; lastResult?: ShellResult; checkpoint?: ShellCheckpoint; failure?: string };
+      const history = after.versions.filter(v => v.ref.namespace === 'execution' && v.ref.key === runId && v.start <= end);
+      const latest = history.find(v => end < v.end); if (!latest) return null;
+      const currentResult = value<Execution>(latest, p).lastResult; if (!currentResult) return null;
+      // persistCheckpoint and failure writes copy lastResult. Find its producer, including
+      // the invocation cursor, instead of coupling the carried value to a newer cursor.
+      for (let i = history.length - 1; i >= 0; i--) {
+        const version = history[i]!, execution = value<Execution>(version, p);
+        if (!execution.lastResult || !equal(execution.lastResult, currentResult)) continue;
+        const next = events[version.start], disposition = events[version.start + 1];
+        if (next?.stream === runId && next.type === 'checkpoint') {
+          invariant(equal(next.data, execution.checkpoint), 'checkpoint execution source differs'); addEvent(p, next); continue;
+        }
+        // Successful saveExecution is followed synchronously by the run mutation/status.
+        // A checkpoint-owned mutation has a different event; failure writes add failure.
+        if (next?.type !== 'document-mutation' || (next.data as unknown as { namespace: string; key: string }).namespace !== 'runs' || (next.data as unknown as { key: string }).key !== runId || disposition?.stream !== runId || disposition.type !== 'status') continue;
+        const state = disposition.data as unknown as Run; validateRun(state); invariant(equal(at('runs', runId, disposition.sequence, p), state), 'result disposition source differs');
+        const previous = i > 0 ? value<Execution>(history[i - 1], p) : undefined;
+        invariant(execution.failure === undefined || typeof execution.failure === 'string', 'runtime failure source differs');
+        if (execution.failure !== previous?.failure) continue;
+        // Equal result bytes can be freshly produced. An inherited failure plus equal
+        // result and waiting/blocked disposition cannot distinguish another failure.
+        if (equal(execution.lastResult, previous?.lastResult ?? null) && execution.failure !== undefined && state.status !== 'completed') continue;
+        const invocation = events.findLast(e => e.sequence < version.start && e.stream === runId && e.type === 'status' && (e.data as unknown as Run).status === 'running');
+        if (!invocation || events.some(e => e.sequence > invocation.sequence && e.sequence < version.start && e.stream === runId && e.type === 'status' && (e.data as unknown as Run).status !== 'running')) continue;
+        invariant(equal(at('runs', runId, invocation.sequence, p), invocation.data), 'result invocation source differs');
+        const consumed = events.findLast(e => e.sequence < invocation.sequence && e.stream === runId && ['admitted', 'steering'].includes(e.type));
+        invariant(consumed && execution.messageSequence === consumed.sequence, 'result-producing invocation cursor differs');
+        if (execution.messageSequence < inputSequence || version.start <= resultAfterSequence) return null;
+        invariant(['completed', 'checkpointed', 'cancelled', 'blocked'].includes(execution.lastResult.status) && Array.isArray(execution.lastResult.observations), 'runtime result source differs');
+        for (const observation of execution.lastResult.observations) invariant(equal(at('observations', observation.id, version.start, p), observation) && observation.runId === runId, 'runtime result observation differs');
+        addEvent(p, invocation); addEvent(p, disposition); addEvent(p, consumed);
+        return { status: execution.lastResult.status, messageSequence: execution.messageSequence, observationIds: execution.lastResult.observations.map(o => o.id), origin: { invocation: position(invocation), execution: version.ref, disposition: position(disposition) } };
+      }
+      return null;
     };
     const observations = (runId: string, start: number, end: number, p: DevelopmentSourceProof) => events.filter(e => e.stream === runId && e.type === 'observation' && e.sequence > start && e.sequence <= end).map(e => {
       const o = e.data as unknown as Observation, row = at<Observation>('observations', o.id, e.sequence, p); validateObservation(o); invariant(equal(o, row) && o.runId === runId, 'observation source differs'); addEvent(p, e); return { id: o.id, kind: o.kind, sourceId: o.sourceId };
@@ -198,7 +230,13 @@ export function projectDevelopmentSources(given: DevelopmentSourceInput): Develo
           const admitted = events.find(e => e.stream === runId && e.type === 'admitted'); invariant(admitted && admitted.sequence <= v.start, 'initiative run admission unavailable');
           const a = admitted.data as unknown as InboundInput; invariant(a.source === 'initiative' && a.externalId === goal.id && a.externalRevision === String(ex.step) && a.authenticated && runId === `run:${inputIdentity(a)}` && a.actorId === at<Run>('runs', runId, v.start, p).authority.generation && equal(a.scope, goal.scope), 'initiative run admission differs');
           invariant(equal(at('inbox', inputIdentity(a), admitted.sequence, p), { input: a, runId }), 'initiative inbox source differs'); addEvent(p, admitted);
-          value(v, p); const r = at<{ request: PhysicalRequest }>('requests', v.ref.key, end, p).request; validatePhysicalRequest(r); invariant(r.id === v.ref.key && r.runId === runId && candidate.request.status === 'reserved', 'physical request binding differs');
+          const reserved = value<{ request: PhysicalRequest; rootId: string; ceiling: unknown }>(v, p); validatePhysicalRequest(reserved.request);
+          const lineage = after.versions.filter(row => row.ref.namespace === 'requests' && row.ref.key === v.ref.key && row.start >= v.start && row.start <= end);
+          for (const [i, row] of lineage.entries()) {
+            const actual = value<{ request: PhysicalRequest; rootId: string; ceiling: unknown }>(row, p); validatePhysicalRequest(actual.request);
+            invariant(developmentRequestIdentity(actual.request) === developmentRequestIdentity(reserved.request) && actual.rootId === reserved.rootId && equal(actual.ceiling, reserved.ceiling) && row.ref.revision === i + 1 && (i === 0 || lineage[i - 1]!.end === row.start), 'immutable physical request lineage differs');
+          }
+          const r = at<{ request: PhysicalRequest }>('requests', v.ref.key, end, p).request; invariant(r.id === v.ref.key && r.runId === runId && reserved.request.status === 'reserved', 'physical request binding differs');
           if (r.provider === 'effect-receiver') {
             const effect = at<Effect>('effects', r.id, v.start, p);
             invariant(effect.runId === runId && effect.kind === r.model && r.id.startsWith('tool:') && r.reservationId === r.id && r.promptManifestId === r.id && r.requestDigest === identity({ id: r.id.slice(5), runId, stepId: effect.stepId, name: effect.kind, arguments: effect.payload }), 'physical tool call binding differs');

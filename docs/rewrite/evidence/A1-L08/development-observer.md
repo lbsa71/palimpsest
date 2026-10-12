@@ -74,3 +74,29 @@ Before code, the exact repair rules are frozen:
 5. Run unchanged independent 18 and author 27 plus added actual-runtime cases for identical legitimate re-produced results, carried failure with repeated error metadata, supported recovery and intermediate request substitution/restoration. Strict compilation and review-file identity checks remain required. Signing/JR2/recorder/page adaptation, live operation, original capacity/freshness limits and all other acceptance gates remain open.
 
 This section is the repair behavioral freeze; source edits follow a separate checkpoint.
+
+## Repair execution and bounded handoff
+
+Repair freeze `3b9af13` preceded source edits. The two imported review files remain byte-for-byte unchanged from `822dd03`; neither review assertions nor its historical changes-required disposition was edited. Shared runtime, ledger, configuration and source plans remain untouched.
+
+The repaired result resolver locates the producing execution mutation using actual `running` invocation and immediately following run mutation/status disposition. It retains that producer's `JournalRef`, invocation/disposition event positions and invocation-consumed admitted/steering sequence in `DevelopmentRuntimeResultSource.origin`. Checkpoint-owned mutations are identified by their matching actual checkpoint event. Failure writes change or retain failure metadata while carrying the prior result; the resolver walks back to the supported older producer and keeps its original cursor. Later assignment revisions and later selected slices do not acquire that old result. Equal freshly returned result bytes without failure metadata still establish a new origin, avoiding a content-digest proxy for chronology. Equal content with inherited failure metadata and a waiting/blocked disposition may remain ambiguous; that unsupported later origin stays null. Canceled/unfinished or nonconforming chronology likewise cannot manufacture a producer.
+
+The request path imports `developmentRequestIdentity` from the existing accepted review-envelope module and compares every retained intermediate request version to the initial reservation's immutable identity/root/ceiling. Revision continuity and version interval continuity must hold. Status, usage and charged resource changes remain allowed. Prompt/tool binding is evaluated only after that immutable lineage check. The review's final substitution now refuses, as does an added probe that corrupts an intermediate prompt identity and then restores the final row. These probes use explicit `OperationalStore.put`; they do not suggest ordinary ResourceLedger permits such mutations.
+
+Observed checks using the same pinned Node24 binary and accepted source closure:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/development-observer.test.ts evaluations/development/development-observer-review.test.ts
+# First repair run: existing 45 checks, 45 pass / 0 fail / 0 skip.
+# Final run after four frozen additional causal cases: 49 checks, 49 pass / 0 fail / 0 skip; ~8.4 seconds.
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+# exit 0 after source repair and final added fixtures.
+git diff --exit-code 822dd03 -- evaluations/development/development-observer-review.test.ts docs/rewrite/evidence/A1-L08/development-observer-review.md
+# exit 0: independent criteria/tests/evidence unchanged.
+git diff --check
+# exit 0.
+```
+
+The final closure includes unchanged independent 18, unchanged original author 27, and four new author causal checks: identical returned result content on a new invocation; repeated failure metadata in a later initiative slice; fresh observed recovery after inherited failure; and intermediate request substitution followed by restoration. The repeated-error case uses the actual shell/checkpoint/failure/runtime path and preserves a null later result while retaining the new physical opportunity. SQLite emitted its ordinary experimental warning. No paid provider, native/host confinement, network, listener, page capture or private state was exercised.
+
+This bounded repair author goal hands off **fixture-verified source, fresh independent re-review pending**. It does not overwrite the previous changes-required review or claim independent acceptance. OD2-b signing and accepted JR2 durable attempt-use/custodian withdrawal, recorder freshness/clock ownership, full capture capacity, paged adaptation, matched controls, feedback, restart/context sensors, live development and H1 remain open. The exact repair source checkpoint and final evidence revision are supplied to root below and in the coordination handoff.

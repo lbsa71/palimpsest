@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { canonicalJson, identity } from '../../packages/contracts/index.ts';
-import type { ArtifactRef, Authority, PhysicalRequest, ResourceEnvelope, ShellPort } from '../../packages/contracts/index.ts';
+import type { ArtifactRef, Authority, Observation, PhysicalRequest, ResourceEnvelope, ShellPort } from '../../packages/contracts/index.ts';
 import { OperationalStore } from '../../packages/storage/index.ts';
 import { DurableRuntime, ResourceLedger } from '../../packages/runtime/index.ts';
 import { EffectJournal } from '../../packages/effects/index.ts';
@@ -22,6 +22,7 @@ const scope = { kind: 'restricted', principals: ['fixture-user'] } as const;
 const message = (revision = '1', text = 'bounded ordinary assignment'): AuthenticatedMessage => ({ source: 'direct', externalId: 'message', revision, conversation: 'conversation', text, actor: { id: 'fixture-user', scope: { ...scope, principals: [...scope.principals] }, modificationEligible: true } });
 function fixture(outcome: 'succeeded' | 'failed' | 'uncertain' = 'succeeded', status: 'completed' | 'checkpointed' = 'completed') {
   const directory = mkdtempSync(join(tmpdir(), 'aeon-development-observer-')), filename = join(directory, 'state.sqlite'); let now = Date.parse('2026-10-12T02:00:00Z'), ordinal = 0;
+  let mode: 'observe' | 'equal-result' | 'checkpoint-failure' | 'failure' = 'observe', lastObservation: Observation | undefined;
   const store = new OperationalStore({ filename, documentJournal: { stream: 'journal:fixture', hostId: 'fixture-host', maxAnchorDocuments: 64, maxAnchorBytes: 65536 } });
   const memory = new DevelopmentalMemory(store, () => new Date(now).toISOString()), goals = new InitiativeRegistry(store), obligations = new ObligationRegistry(store);
   const raw = new Map<string, Uint8Array>();
@@ -35,7 +36,11 @@ function fixture(outcome: 'succeeded' | 'failed' | 'uncertain' = 'succeeded', st
     await bridge.capturePrompt(prompt, payload);
     const request: PhysicalRequest = { id: `physical:${ordinal}`, runId: input.run.id, purpose: 'reasoning', provider: 'fixture', model: 'offline', promptManifestId: prompt.id, requestDigest: prompt.requestDigest, reservationId: `physical:${ordinal}`, status: 'reserved', usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
     await bridge.reserve(request); await bridge.dispatched({ ...request, status: 'dispatched' }); await bridge.settle({ ...request, status: outcome });
+    if (mode === 'checkpoint-failure') await bridge.persistCheckpoint(input.run.id, input.run.revision, 'fixture', { observationIds: [], progress: 'input read before interrupted result' });
+    if (mode === 'checkpoint-failure' || mode === 'failure') throw Error('repeated fixture interruption');
+    if (mode === 'equal-result') { assert.ok(lastObservation); return { status, observations: [lastObservation] }; }
     const observation = await bridge.execute({ id: `call:${ordinal}`, runId: input.run.id, stepId: `step:${ordinal}`, name: 'fixture-measure', arguments: { fixture: true } });
+    lastObservation = observation;
     return { status, observations: [observation] };
   } };
   const runtime = new DurableRuntime({ store, shell, effects, resources: ledger, now: () => now });
@@ -52,7 +57,7 @@ function fixture(outcome: 'succeeded' | 'failed' | 'uncertain' = 'succeeded', st
   const input = (before: ArtifactRef, after: ArtifactRef, packet = assignmentPacket(), current = after): DevelopmentSourceInput => ({ before, after, current, assignmentPacket: packet, roleId: 'candidate', configurationDigest, pathIdentity, journal, bounds: { maxCaptureBytes: 1_048_576, maxArtifactBytes: 1_048_576, maxRows: 512, maxProofBytes: 65536 }, readArtifact: read });
   const reviseCapture = (ref: ArtifactRef, mutate: (v: DevelopmentSourceCapture) => void) => { const v = JSON.parse(Buffer.from(read(ref, 1_048_576)).toString()) as DevelopmentSourceCapture; mutate(v); return retainJson(v); };
   const ready = () => { const g = goals.propose({ id: 'inquiry', origin: { kind: 'self' }, purpose: 'inspect ordinary source evidence', scope: { kind: 'public' }, successCriteria: ['retain measured uncertainty'], evidenceIds: [], dependencyIds: [], resources, priority: 1, nextAction: 'inspect fixture measurement', reviewAt: new Date(now).toISOString() }, { sourceIds: ['unresolved-host-origin'], actorId: 'fixture-generation', recordedAt: new Date(now).toISOString(), derivation: 'interpreted' }); goals.accept(g.id, g.revision, 'fixture opportunity'); };
-  return { store, raw, retainJson, capture, assignmentPacket, input, reviseCapture, core, runner, ready, runtime, scheduler, ledger, advance: (ms = 100) => { now += ms; }, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
+  return { store, raw, retainJson, capture, assignmentPacket, input, reviseCapture, core, runner, ready, runtime, scheduler, ledger, mode: (next: typeof mode) => { mode = next; }, advance: (ms = 100) => { now += ms; }, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
 test('ordinary scheduler, initiative execution, runtime, ledger and result bind exact retained versions', async () => {
@@ -178,5 +183,46 @@ test('later current capture cannot replace the earlier retained event prefix', (
   const f = fixture(); try {
     const before = f.capture(); f.core.receive(message()); f.advance(); const after = f.capture(), changed = f.reviseCapture(after, c => { c.snapshot.events.find(e => e.stream === 'communications')!.id = 'replacement'; });
     const p = projectDevelopmentSources(f.input(before, after, undefined, changed)); assert.equal(p.assignments.length, 0); assert.match(p.unavailable[0]!.reason, /prefix changed/);
+  } finally { f.close(); }
+});
+
+test('identical freshly returned result bytes bind a new invocation and consumption cursor', async () => {
+  const f = fixture('succeeded', 'checkpointed'); try {
+    const first = message(), second = message('2'), before = f.capture(), run = f.core.receive(first).run;
+    await f.runtime.resume(run.id, { id: 'runtime', fragments: [], requestDigest: identity('runtime') });
+    const earlier = f.store.get<{ lastResult: unknown }>('execution', run.id)!.value.lastResult;
+    f.core.receive(second); f.mode('equal-result'); await f.runtime.resume(run.id, { id: 'runtime', fragments: [], requestDigest: identity('runtime') });
+    assert.deepEqual(f.store.get<{ lastResult: unknown }>('execution', run.id)!.value.lastResult, earlier); f.advance();
+    const p = projectDevelopmentSources(f.input(before, f.capture(), f.assignmentPacket([first, second]))); assert.deepEqual(p.unavailable, []);
+    const result = p.assignments[1]!.result!; assert.ok(result); assert.ok(result.origin.invocation.sequence > p.assignments[1]!.ingress.sequence); assert.equal(result.messageSequence, f.store.events(run.id).find(e => e.type === 'steering')!.sequence);
+    assert.equal(result.origin.execution.namespace, 'execution'); assert.deepEqual(p.assignments[1]!.observations, [], 'returning an old issued observation is not a new observation');
+  } finally { f.close(); }
+});
+
+test('repeated failure metadata cannot make a carried equal result a new initiative result', async () => {
+  const f = fixture('succeeded', 'checkpointed'); try {
+    f.ready(); await f.runner.tick(); f.advance(); f.mode('checkpoint-failure'); await f.runner.tick(); f.advance();
+    const before = f.capture(); f.mode('failure'); await f.runner.tick(); f.advance();
+    const p = projectDevelopmentSources(f.input(before, f.capture())); assert.equal(p.cycles.length, 1); assert.equal(p.cycles[0]!.result, null); assert.equal(p.cycles[0]!.requests.length, 1);
+  } finally { f.close(); }
+});
+
+test('recovery result with fresh issued observation has its own origin despite inherited failure', async () => {
+  const f = fixture('succeeded', 'checkpointed'); try {
+    const first = message(), second = message('2'), third = message('3'), before = f.capture(), run = f.core.receive(first).run;
+    const prompt = { id: 'runtime', fragments: [], requestDigest: identity('runtime') }; await f.runtime.resume(run.id, prompt);
+    f.core.receive(second); f.mode('checkpoint-failure'); await f.runtime.resume(run.id, prompt); f.core.receive(third); f.mode('observe'); await f.runtime.resume(run.id, prompt); f.advance();
+    const p = projectDevelopmentSources(f.input(before, f.capture(), f.assignmentPacket([third]))); assert.deepEqual(p.unavailable, []); assert.equal(p.assignments.length, 1);
+    const result = p.assignments[0]!.result!; assert.ok(result); assert.ok(result.origin.invocation.sequence > p.assignments[0]!.ingress.sequence); assert.deepEqual(result.observationIds, ['tool:call:3']);
+  } finally { f.close(); }
+});
+
+test('intermediate request identity substitution remains corruption after the final identity is restored', async () => {
+  const f = fixture(); try {
+    f.ready(); await f.runner.tick(); f.advance(); const before = f.capture(); await f.runner.tick();
+    const first = f.store.get<{ request: PhysicalRequest }>('requests', 'physical:1')!.value.request, second = f.store.get<{ request: PhysicalRequest }>('requests', 'physical:2')!;
+    f.store.put('requests', 'physical:2', { ...second.value, request: { ...second.value.request, promptManifestId: first.promptManifestId, requestDigest: first.requestDigest } }, second.revision);
+    f.store.put('requests', 'physical:2', second.value, second.revision + 1); f.advance();
+    const p = projectDevelopmentSources(f.input(before, f.capture())); assert.equal(p.cycles.length, 0); assert.match(p.unavailable[0]!.reason, /immutable physical request lineage/);
   } finally { f.close(); }
 });
