@@ -26,7 +26,7 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   reservationEstimate?: (attempt: Attempt) => ResourceUsage;
   /** Host-owned model rendering; never replaces durable observations or history. */
   projectToolResult?: (message: ToolResultMessage) => ToolResultMessage;
-  compaction?: { thresholdMessages: number; retainMessages: number; instruction: PromptFragment };
+  compaction?: { thresholdMessages: number; thresholdBytes?: number; retainMessages: number; instruction: PromptFragment };
 }
 interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[] }
 function json(value: unknown): JsonValue { return asJson(value) as JsonValue; }
@@ -52,6 +52,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
   invariant(provider !== 'openai' || !!options.model, 'OpenAI requires an explicit model');
   invariant(new Set(options.tools.map(tool => tool.name)).size === options.tools.length, 'Duplicate shell tools');
   if (options.compaction) invariant(Number.isSafeInteger(options.compaction.thresholdMessages) && Number.isSafeInteger(options.compaction.retainMessages) && options.compaction.retainMessages >= 1 && options.compaction.thresholdMessages > options.compaction.retainMessages + 2, 'Invalid context budget');
+  if (options.compaction?.thresholdBytes !== undefined) invariant(Number.isSafeInteger(options.compaction.thresholdBytes) && options.compaction.thresholdBytes > 0, 'Invalid context byte budget');
   return {
     async run(input: ShellInput, bridge: ShellBridge, signal?: AbortSignal) {
       validateRun(input.run); validatePromptManifest(input.prompt);
@@ -220,8 +221,8 @@ export function createAgentShell(options: ShellOptions): ShellPort {
           finishTurn: ({ message }) => halted || message.stopReason === 'length' ? { action: 'end' } : undefined,
           async prepareRequest() {
             signal?.throwIfAborted();
-            if (options.compaction && transcript.length > options.compaction.thresholdMessages) {
-              let boundary = transcript.length - options.compaction.retainMessages;
+            if (options.compaction && (transcript.length > options.compaction.thresholdMessages || options.compaction.thresholdBytes !== undefined && Buffer.byteLength(canonicalJson(json(modelMessages([system(), ...continuationMessages()])))) > options.compaction.thresholdBytes)) {
+              let boundary = Math.max(0, transcript.length - options.compaction.retainMessages);
               while (boundary > 0 && transcript[boundary].role === 'toolResult') boundary--;
               const prefix = transcript.slice(0, boundary); const suffix = transcript.slice(boundary);
               // Stateless OpenAI native reasoning/calls cannot be discarded by a prose summary.

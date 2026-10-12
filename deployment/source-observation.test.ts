@@ -102,6 +102,19 @@ test('other tools, errors and malformed or unsuccessful inventories retain their
   for (const message of [{ ...toolMessage, toolName: 'source_check' }, { ...toolMessage, isError: true }, { ...toolMessage, content: [{ type: 'text' as const, text: canonicalJson({ ...receipt, exitCode: 1 }) }] }, { ...toolMessage, content: [{ type: 'text' as const, text: 'ordinary observation' }] }]) assert.deepEqual(projectSourceObservation(message), message);
 });
 
+test('successful workspace discovery renders a bounded directory inventory and exact digest without changing its full receipt', () => {
+  const inventory = { files: [...files.map(file => file.path), 'README.md', 'package.json', 'deployment/application.ts'] };
+  const original: ToolResultMessage = { ...toolMessage, toolName: 'workspace_discover', content: [{ type: 'text', text: canonicalJson(inventory) }] };
+  const saved = structuredClone(original), projected = projectSourceObservation(original);
+  assert.deepEqual(original, saved); assert.equal(projected.toolCallId, original.toolCallId);
+  const text = projected.content[0]; assert.equal(text.type, 'text'); if (text.type !== 'text') return;
+  assert.ok(Buffer.byteLength(text.text) <= 8192); const summary = JSON.parse(text.text);
+  assert.equal(summary.fileCount, inventory.files.length); assert.equal(summary.originalResultSha256, digest(canonicalJson(inventory)));
+  assert.deepEqual(summary.directories, [{ directory: 'deployment', fileCount: 1 }, { directory: 'packages', fileCount: 826 }]);
+  assert.deepEqual(summary.rootFiles, ['README.md', 'package.json']); assert.ok(summary.preview.length <= 8); assert.match(summary.guidance, /workspace_search.*path\/text.*workspace_read/);
+  for (const message of [{ ...original, isError: true }, { ...original, content: [{ type: 'text' as const, text: canonicalJson({ files: ['a'], error: 'denied' }) }] }, { ...original, content: [{ type: 'text' as const, text: canonicalJson({ files: ['/outside'] }) }] }]) assert.deepEqual(projectSourceObservation(message), message);
+});
+
 test('restored oversized source result fits the original grant and preserves full checkpoint with zero settled tool replay', async () => {
   const before = fixture(false), oldCheckpoint = await before.restored();
   assert.equal((await before.shell.run({ ...before.input, messages: [], checkpoint: oldCheckpoint }, before.bridge)).status, 'blocked');

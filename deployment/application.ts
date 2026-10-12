@@ -205,7 +205,7 @@ export class AutarkApplication {
     this.effects = new EffectJournal(this.store, options.authorityStore, developmentAccounting?.wrapReceiver(receiver) ?? receiver);
     const shell: ShellPort = { run: async (input, bridge, signal) => {
       this.developmentControl.assertRun(input.run.id);
-      const record = this.grant(input.run.id), context = developmentContext(this.developmentControl, this.memory, { audience: input.run.scope, query: JSON.stringify(input.messages).slice(0, 8192), maxRecords: 24, maxBytes: 32768 });
+      const record = this.grant(input.run.id), context = developmentContext(this.developmentControl, this.memory, { audience: input.run.scope, query: JSON.stringify(input.messages).slice(0, 8192), maxRecords: 24, maxBytes: 8192 });
       const descriptors = this.mindTools(input.run.id);
       const permittedTools = toolDefinitions.filter(tool => this.toolGrant(input.run.id).actions.includes(tool.name));
       const tools = [...permittedTools.map(tool => ({ ...tool, parameters: tool.parameters as unknown as Tool['parameters'] })), ...descriptors.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema as Tool['parameters'] }))];
@@ -214,7 +214,7 @@ export class AutarkApplication {
         protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
-          compaction: { thresholdMessages: 60, retainMessages: 20, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
+          compaction: { thresholdMessages: 60, thresholdBytes: 60000, retainMessages: 7, instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
         timeoutMs: Math.min(config.conversationResources.maxElapsedMs, config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
         retainToolInstructions: source => this.store.putArtifact(source),
