@@ -30,3 +30,21 @@ git diff --check
 Strict compiler and diff checks pass. The exact final-envelope byte boundary, full record count, rejected drafts, mandatory prompt fragments and metadata-present actual ToolCall cases pass. Historical equal-timestamp ordering rejection passes. The author-reported 172 checks are not used as independent evidence.
 
 Status: bounded red review handed off; **source acceptance withheld for R1**. Root has resumed the exclusive author for repair. This review's actual finite goal stays active for unchanged fresh verification at the author's exact repair source; the reviewer yields its worker slot at root request. No competence, live development, parity, H1, or automatic release was accepted.
+
+## Fresh repair verification and final disposition
+
+The preceding red checkpoint remains historical evidence. On resumption, the reviewer imported exact author pre-code `c2af4665398df8fb0bdea6512653e1b68cec196b`, repair source `c79846cca526920cd9183d6bd4a6641365cf602c`, and evidence handoff `ae0798c2eedcdcf03ac7aeab136a639c65234afe` into this isolated worktree. The checked local closure is `6d91789` (cherry-picked repair source `8c48df3`). There was no sibling-module import or resolver overlay: all verification used this worktree's actual source. Empty path-scoped diffs confirm the source and author tests equal `c79846c`, the frozen 40-case reviewer file equals `6d243eb`, and the historical 22-case review file still equals `fdd9134`.
+
+**R1 resolved.** Before iterating access metadata, the verifier now requires exact equality between its unique request IDs and every observed succeeded `effect-receiver/evidence_read` request for the assigned reviewer role. The observed side is not filtered by a claimed run or ordering assertion. Therefore an omitted recorded read rejects before it can evade the unchanged canonical payload, local-to-original request/reservation/run, step, role/root, receipt and before-final-dispatch checks. Replay already rejects repeated succeeded transitions; the metadata list already rejects duplicate IDs. The unchanged independent wrong-reservation-plus-omission reproduction now passes its rejection assertion. The author's separate plain-omission case also passes.
+
+Direct fresh execution at that closure:
+
+```sh
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit
+/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test evaluations/development/retention-review.test.ts evaluations/development/retention.test.ts evaluations/development/review-envelope.test.ts evaluations/development/review-envelope-review.test.ts evaluations/development/witness.test.ts evaluations/development/witness-review.test.ts deployment/development-accounting.test.ts deployment/development-accounting-review.test.ts
+git diff --check
+```
+
+Observed: strict compiler succeeds; **214 tests pass, zero failures, cancellations, skips or todos** (40 unchanged independent cases plus 174 focused source checks); diff check succeeds. All 22 historical rejection/positive predicates remain unchanged and pass, including equal-timestamp causal ordering. The initial failed checkpoints and their dispositions above remain preserved.
+
+Final disposition: **accepted for this finite source-level retention and actual-read composition gate**, with no unresolved finding in its reviewed scope. Root owns integration with the recorder and model-review adapter and any later acquisition qualification. A self-signed inventory still cannot reveal an omitted unobserved, unreferenced stream; external capture-completeness qualification remains required. Public synthetic judgments and the small local SQLite/QualificationStore bridge establish mechanics only. No physical/native/model/network/credential acquisition occurred, and developmental competence, live development, parity, H1 and automatic release remain unestablished. The bounded independent review goal is complete at this evidence handoff.
