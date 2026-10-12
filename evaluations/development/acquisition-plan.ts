@@ -7,6 +7,8 @@ import { collectDevelopmentEvidenceProjection, developmentCapacityProfile, devel
 import { reviewEnvelopeDomains, type DevelopmentEnvelopeTrust, type DevelopmentRegistration } from './review-envelope.ts';
 import { validateReviewAdmission, reviewAdmissionDigest, reviewAdmissionSources, developmentReviewReservation, type ReviewAdmission, type ReviewReservation, type ReviewAdmissionSource } from './review-reservation.ts';
 
+import { reserveSourceAdmission, type RecorderSourceAdmission, type SourceAdmissionReservation } from './source-admission-reservation.ts';
+
 export const evidenceRetentionDomain = 'aeon.development.evidence-retention.v1';
 export const evidenceCustodianDomain = 'aeon.development.evidence-custodian.v1';
 export const attemptUseDomain = 'aeon.development.attempt-use.v1';
@@ -46,6 +48,7 @@ export interface AcquisitionPlanTrust {
   acceptedPlanDigest: string; issuers: ReadonlyMap<string, Uint8Array>; envelope: DevelopmentEnvelopeTrust;
 }
 export interface AcquisitionCapacity {
+  sourceAdmission?: SourceAdmissionReservation;
   reviewAdmissionDigest?: string; reviewReservations?: ReviewReservation[]; reviewSources?: ReviewAdmissionSource[];
   draftBytes: number; responseBytes: number; metadataBytes: number; captureBytes: number; failureBytes: number;
   totalBytes: number; records: number; maxRequests: number;
@@ -106,7 +109,7 @@ export function validateAssignmentPacket(value: unknown, registration: Developme
 }
 
 /** No claim or dispatch occurs here. Accepted trust and exact original raw bytes are host inputs. */
-export function verifyAcquisitionPlan(document: Signed<DevelopmentAcquisitionPlan>, trust: AcquisitionPlanTrust, reader: (ref: ArtifactRef, bound: number) => Uint8Array, now = Date.now()): { plan: DevelopmentAcquisitionPlan; capacity: AcquisitionCapacity } {
+export function verifyAcquisitionPlan(document: Signed<DevelopmentAcquisitionPlan>, trust: AcquisitionPlanTrust, reader: (ref: ArtifactRef, bound: number) => Uint8Array, now = Date.now(), sourceAdmission?: RecorderSourceAdmission): { plan: DevelopmentAcquisitionPlan; capacity: AcquisitionCapacity } {
   const p = authenticate(acquisitionPlanDomain, document, trust.issuers);
   exact(p, 'version,id,manifest,registration,assignmentPacket,originalStateFile,closures,rawStore,roles,capacity' + (p.retention ? ',retention' : '') + (p.version === 2 ? ',captureLayout,protocol' : ''));
   invariant([1, 2].includes(p.version) && typeof p.id === 'string' && p.id.length > 0 && p.id.length <= 256 && identity(p) === trust.acceptedPlanDigest, 'Unaccepted acquisition plan');
@@ -211,6 +214,16 @@ export function verifyAcquisitionPlan(document: Signed<DevelopmentAcquisitionPla
     const extra = capacity.reviewReservations.reduce((n, q) => n + q.metadataBytes, 0);
     capacity.finalBaseBytes += capacity.reviewReservations.reduce((n, q) => n + q.bindingBytes + p.roles.find(rp => rp.roleId === q.roleId)!.maxDrafts * q.readEntryBytes, 0);
     capacity.ownerBaseBytes += extra + size({ reviewAdmissionDigest: capacity.reviewAdmissionDigest, reviewEntries: [], reviewReservations: capacity.reviewReservations });
+  }
+  if (sourceAdmission) {
+    try { capacity.sourceAdmission = reserveSourceAdmission(p, sourceAdmission, reader); }
+    catch(error) { throw new AcquisitionInfeasible(`Source admission preclaim cannot fit: ${String(error instanceof Error ? error.message : error)}`); }
+    const admission = capacity.sourceAdmission;
+    if(admission.observationBytes > capacity.observationBytes) throw new AcquisitionInfeasible('Source admission raw observation template exceeds unchanged singleton');
+    capacity.ownerBaseBytes += admission.ownerBytes;
+    // Existing nonrequest allowances cover each raw wrapper; account any larger signed wire in every B copy.
+    const signedBase = size(observation('x',{kind:'start'}));
+    capacity.behaviorBaseBytes += 2 * p.protocol!.nonRequestObservations * Math.max(0, admission.signedObservationBytes - signedBase);
   }
   const entryBytes = Math.max(...r.roles.map(role => size({ artifact: ref, bytes: m.limits.maxArtifactBytes, pool: 'response', roleId: role.id, slot: 'observation' })));
   const fullIndex = acquisitionMetadataUsage(p, capacity, p.capacity.maxArtifacts, []);
