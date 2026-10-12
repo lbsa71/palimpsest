@@ -2,6 +2,8 @@
 
 Status: **accepted — engineering runtime/recovery gate**. Session owner: **/root after author and fresh-review handoffs**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
+Environmental DI coordination, 2026-10-12: DI03 runtime/effects/resources passed fresh review `bddd9bf` (53/53). Root claims DI09 for `/root/a1_environment_storage`, isolated `environment-di-09` / `codex/a1-environment-di-09-20261012`: only storage index, new environment adapter, new DI09 test and lane evidence, as specified in the execution record. Original engineering acceptance remains historical evidence; storage DI and full application closure remain open.
+
 Requirements: [RW02, RW05, RW10, RW11, RW12, RW15, RW16, RW19](../../../REQUIREMENTS.md).
 
 ```text

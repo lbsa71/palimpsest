@@ -2,6 +2,8 @@
 
 Status: **reviewing** — ordinary initiative, scheduler and report integration is implemented and fixture-verified with fresh application/atomic-start review; live and independent developmental qualification open. Session owner: **Codex /root/a1_initiative**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
 
+Environmental DI update, 2026-10-12: DI05 IDs, clocks, collation and quantum timers, including preservation of simultaneous operation/cleanup failures, passed fresh review `9ad8a20` (61/61 plus exact driver preparation 1/1). Full application forwarding belongs to DI14; component acceptance does not establish live initiative or H1.
+
 Requirements: [RW06, RW07, RW10, RW19](../../../REQUIREMENTS.md).
 
 ```text
