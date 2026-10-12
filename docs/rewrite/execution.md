@@ -4,7 +4,7 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 ## Current disposition — developmental acquisition and native recovery
 
-### Current finite ownership — 03:54 UTC
+### Current finite ownership — 03:52 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
 |---|---|
@@ -443,3 +443,8 @@ Calculate all full source rows, raw payload/prompt/fragment/checkpoint copies, r
 ### OD2-b3a root mechanical driver forwarding claim
 
 Root claims NEW isolated `development-driver-source-admission` / branch `codex/a1-development-driver-source-admission-20261012`, based on this claim. Finite work under the active root goal: forward the exact b2a host descriptor through driver preclaim and recorder claim, and expose the five frozen mechanical methods without a new reader, signer, scheduler or semantic authority. Own ONLY `evaluations/development/development-driver.ts`, NEW `evaluations/development/development-driver-source-admission.test.ts`, and NEW `docs/rewrite/evidence/A1-L08/development-driver-source-admission.md`. Prior driver tests remain read-only. Readonly prerequisite is the later exact compiling b2a handoff; do not import moving source. Freeze causal positive actual-application/SQLite ingress and sourced-cycle tests, descriptor mismatch/refusal before claims, selector mutation and closing behavior. Use the recorder's own inert detachment rather than duplicating its validator. Preserve absent-option driver behavior, candidate/original Store identity, original allocations, startup readiness and shutdown. Semantic learning/opportunity/control forwarding remains b3b after b2b API freeze. No physical/native/provider/network/privatecredentials/Slack/fullbenchmark/push/deploy; module-mocked Pi and small actual SQLite fixtures only. Handoff requires focused old/new tests, strict, exact source and fresh independent review.
+
+
+### DB2-Q public prerequisite inquiry
+
+While exact b2a source is being authored, root claims ONLY NEW `docs/rewrite/evidence/A1-L02/development-tokenizer-qualification.md` for a finite read-only public-source inquiry under the active root goal. Inspect the proposed `mistral-medium-3-5` profile and actual owned Mistral serializer, then identify official tokenizer/model/serving/framing evidence and reusable dependency choices, or record exact missing relationships. Public official web documentation/source reads are permitted for this root inquiry; no package/model asset download or install, credential/account access, provider inference, physical/native child, changed source, Slack, benchmark, push or deployment. This does not adopt DB0's obsolete capacity paragraph, grant a live profile, select an unverified tokenizer or qualify token overflow. Existing live-profile proposal remains a proposal until the original account/grant gate is resolved. Return a finite dossier separating documented facts, inference, missing assets and future causal qualification steps.
