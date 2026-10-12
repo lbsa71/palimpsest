@@ -4,16 +4,16 @@ Implementation authorized 2026-10-11 by the user: “start work, set a goal to i
 
 ## Current disposition — developmental acquisition and native recovery
 
-### Current finite ownership — 03:36 UTC
+### Current finite ownership — 03:40 UTC
 
 | Owner / isolated worktree | Finite task and current boundary |
 |---|---|
-| `/root/a1_development_owner_fence_review`, `development-owner-fence-review` | Fresh P3-R1 review of bcd5921; two new independent test/evidence paths only. |
-| `/root/a1_development_control_proof`, `development-control-proof` | DC2-a unsigned actual control proof; new source/test/evidence only. Exact read-only b1 repair refresh authorized below. |
+| `/root/a1_development_control_proof_review`, `development-control-proof-review` | Fresh DC3 review of exact final09dd4be unsigned control proofs; two new independent test/evidence paths only. |
+| `/root/a1_development_compact_fixture_design`, `development-compact-fixture-design` | Complete finite compaction-fixture allocation assessment; one new document, source/tests read-only. |
 | `/root/a1_development_signing_design`, `development-signing-design` | Finite b2 artifact/retention/private-publication composition supplement; one design document, all source read-only. |
 | `/root` | Exact integration, central planning, consumer coordination and older v1 fixture inquiry; final qualification/H1 remain open. |
 
-CP2-P2 independent P3 review e72db56 preserves two owner-write failures (48/50); integrated repair bcd5921/final6eaf660 passes50/50 unchanged P2,18/18new and76/76historical/storage/retention checks, with fresh review active. OD2-b1 independent review0cab550 preserved four source-boundary failures (104/108); repair ccb640b/final b3d9951 passes141/141, and fresh review6759ade accepts it with136/136/strict. Root consumer adaptation4cae198 joins the exact P2 final handoff and passes83/83affected cases with strict and unchanged assertion bodies. This is component integration, not full-workload/semantic/H1 acceptance.
+CP2-P2 independent P3 review e72db56 preserves two owner-write failures (48/50); integrated repair bcd5921/final6eaf660 passes50/50 unchanged P2,18/18new and76/76historical/storage/retention checks; fresh5c5fbc4 accepts it with68/68 unchanged and9/9 new checks. OD2-b1 independent review0cab550 preserved four source-boundary failures (104/108); repair ccb640b/final b3d9951 passes141/141, and fresh review6759ade accepts it with136/136/strict. Root consumer adaptation4cae198 joins the exact P2 final handoff and passes83/83affected cases with strict and unchanged assertion bodies. Authored reviewer adapter53/53 and current DC2-integrated strict pass. This is component integration, not full-workload/semantic/H1 acceptance.
 
 Root additionally claims the narrowly specified [application shutdown repair](evidence/A1-L09/application-shutdown-drain.md): `deployment/application.ts` shutdown method/fields, new `deployment/application-shutdown.test.ts` and its new evidence only. Existing source owners and tests remain read-only. Preserve one shared close result, abort/drain after preparatory failures and retain Store/lease on failed teardown. Precode causal tests and independent review are required; no physical/native/provider operation.
 
