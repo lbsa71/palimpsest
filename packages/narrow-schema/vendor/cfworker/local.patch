@@ -1,18 +1,28 @@
 --- a/dereference.ts
 +++ b/dereference.ts
-@@ -1,5 +1,5 @@
+@@ -1,2 +1,2 @@
 -import { encodePointer } from './pointer.js';
 -import { Schema } from './types.js';
 +import { encodePointer } from './pointer.ts';
 +import type { Schema } from './types.ts';
- 
- export const schemaKeyword: Record<string, boolean> = {
-   additionalItems: true,
+@@ -68,8 +68 @@
+-export let initialBaseURI: URL =
+-  // @ts-ignore
+-  typeof self !== 'undefined' &&
+-  self.location &&
+-  self.location.origin !== 'null'
+-    ? //@ts-ignore
+-      new URL(self.location.origin + self.location.pathname + location.search)
+-    : new URL('https://github.com/cfworker');
++export const initialBaseURI = 'https://github.com/cfworker';
+@@ -80 +73 @@
+-  baseURI: URL = initialBaseURI,
++  baseURI: URL = new URL(initialBaseURI),
+@@ -82,0 +76 @@
++  baseURI = new URL(baseURI.href);
 --- a/types.ts
 +++ b/types.ts
-@@ -1,10 +1,10 @@
- export type SchemaDraft = '4' | '7' | '2019-09' | '2020-12';
- 
+@@ -3,5 +3,5 @@
 -export const enum OutputFormat {
 -  Flag = 1 << 0,
 -  Basic = 1 << 1,
@@ -23,12 +33,9 @@
 +  Basic: 1 << 1,
 +  Detailed: 1 << 2
 +} as const;
- 
- export type InstanceType =
-   | 'array'
 --- a/validate.ts
 +++ b/validate.ts
-@@ -1,15 +1,15 @@
+@@ -1,5 +1,5 @@
 -import { deepCompareStrict } from './deep-compare-strict.js';
 -import { dereference } from './dereference.js';
 -import { format } from './format.js';
@@ -39,136 +46,77 @@
 +import { format } from './format.ts';
 +import { encodePointer } from './pointer.ts';
 +import type {
-   InstanceType,
-   OutputUnit,
-   Schema,
-   SchemaDraft,
-   ValidationResult
+@@ -11,2 +11,2 @@
 -} from './types.js';
 -import { ucs2length } from './ucs2-length.js';
 +} from './types.ts';
 +import { ucs2length } from './ucs2-length.ts';
- 
- export type Evaluated = Record<string | number, boolean>;
- 
-@@ -480,7 +480,7 @@
-   if (instanceType === 'object') {
-     if ($required !== undefined) {
-       for (const key of $required) {
+@@ -483 +483 @@
 -        if (!(key in instance)) {
 +        if (!(Object.hasOwn(instance, key))) {
-           errors.push({
-             instanceLocation,
-             keyword: 'required',
-@@ -513,7 +513,7 @@
- 
-     if ($propertyNames !== undefined) {
-       const keywordLocation = `${schemaLocation}/propertyNames`;
+@@ -516 +516 @@
 -      for (const key in instance) {
 +      for (const key of Object.keys(instance)) {
-         const subInstancePointer = `${instanceLocation}/${encodePointer(key)}`;
-         const result = validate(
-           key,
-@@ -542,10 +542,10 @@
-     if ($dependentRequired !== undefined) {
-       const keywordLocation = `${schemaLocation}/dependantRequired`;
-       for (const key in $dependentRequired) {
+@@ -545 +545 @@
 -        if (key in instance) {
 +        if (Object.hasOwn(instance, key)) {
-           const required = $dependentRequired[key] as string[];
-           for (const dependantKey of required) {
+@@ -548 +548 @@
 -            if (!(dependantKey in instance)) {
 +            if (!(Object.hasOwn(instance, dependantKey))) {
-               errors.push({
-                 instanceLocation,
-                 keyword: 'dependentRequired',
-@@ -561,7 +561,7 @@
-     if ($dependentSchemas !== undefined) {
-       for (const key in $dependentSchemas) {
-         const keywordLocation = `${schemaLocation}/dependentSchemas`;
+@@ -564 +564 @@
 -        if (key in instance) {
 +        if (Object.hasOwn(instance, key)) {
-           const result = validate(
-             instance,
-             $dependentSchemas[key],
-@@ -591,11 +591,11 @@
-     if ($dependencies !== undefined) {
-       const keywordLocation = `${schemaLocation}/dependencies`;
-       for (const key in $dependencies) {
+@@ -594 +594 @@
 -        if (key in instance) {
 +        if (Object.hasOwn(instance, key)) {
-           const propsOrSchema = $dependencies[key] as Schema | string[];
-           if (Array.isArray(propsOrSchema)) {
-             for (const dependantKey of propsOrSchema) {
+@@ -598 +598 @@
 -              if (!(dependantKey in instance)) {
 +              if (!(Object.hasOwn(instance, dependantKey))) {
-                 errors.push({
-                   instanceLocation,
-                   keyword: 'dependencies',
-@@ -638,7 +638,7 @@
-     if ($properties !== undefined) {
-       const keywordLocation = `${schemaLocation}/properties`;
-       for (const key in $properties) {
+@@ -641 +641 @@
 -        if (!(key in instance)) {
 +        if (!(Object.hasOwn(instance, key))) {
-           continue;
-         }
-         const subInstancePointer = `${instanceLocation}/${encodePointer(key)}`;
-@@ -675,7 +675,7 @@
-       for (const pattern in $patternProperties) {
-         const regex = new RegExp(pattern, 'u');
-         const subSchema = $patternProperties[pattern];
+@@ -678 +678 @@
 -        for (const key in instance) {
 +        for (const key of Object.keys(instance)) {
-           if (!regex.test(key)) {
-             continue;
-           }
-@@ -712,7 +712,7 @@
- 
-     if (!stop && $additionalProperties !== undefined) {
-       const keywordLocation = `${schemaLocation}/additionalProperties`;
+@@ -715 +715 @@
 -      for (const key in instance) {
 +      for (const key of Object.keys(instance)) {
-         if (thisEvaluated[key]) {
-           continue;
-         }
-@@ -744,7 +744,7 @@
-       }
-     } else if (!stop && $unevaluatedProperties !== undefined) {
-       const keywordLocation = `${schemaLocation}/unevaluatedProperties`;
+@@ -747 +747 @@
 -      for (const key in instance) {
 +      for (const key of Object.keys(instance)) {
-         if (!evaluated[key]) {
-           const subInstancePointer = `${instanceLocation}/${encodePointer(
-             key
 --- a/validator.ts
 +++ b/validator.ts
-@@ -1,15 +1,22 @@
+@@ -1,3 +1,3 @@
 -import { dereference } from './dereference.js';
 -import { Schema, SchemaDraft, ValidationResult } from './types.js';
 -import { validate } from './validate.js';
-+import { dereference } from './dereference.ts';
++import { dereference, initialBaseURI } from './dereference.ts';
 +import type { Schema, SchemaDraft, ValidationResult } from './types.ts';
 +import { validate } from './validate.ts';
- 
- export class Validator {
-   private readonly lookup: ReturnType<typeof dereference>;
- 
+@@ -7,0 +8,5 @@
 +  private readonly schema: Schema | boolean;
 +  private readonly draft: SchemaDraft;
 +  private readonly shortCircuit: boolean;
++  private readonly baseURI: string;
 +
-   constructor(
+@@ -9,3 +14,4 @@
 -    private readonly schema: Schema | boolean,
 -    private readonly draft: SchemaDraft = '2019-09',
 -    private readonly shortCircuit = true
 +    schema: Schema | boolean,
 +    draft: SchemaDraft = '2019-09',
-+    shortCircuit = true
-   ) {
-+    this.schema = schema;
++    shortCircuit = true,
++    baseURI: string = initialBaseURI
+@@ -13 +19,6 @@
+-    this.lookup = dereference(schema);
++    if (typeof baseURI !== 'string') throw new TypeError('Schema base URI must be a string');
++    this.baseURI = new URL(baseURI).href;
++    this.schema = structuredClone(schema);
 +    this.draft = draft;
 +    this.shortCircuit = shortCircuit;
-     this.lookup = dereference(schema);
-   }
- 
++    this.lookup = dereference(this.schema, undefined, new URL(this.baseURI));
+@@ -26,0 +38 @@
++    schema = structuredClone(schema);
+@@ -30 +42 @@
+-    dereference(schema, this.lookup);
++    dereference(schema, this.lookup, new URL(this.baseURI));

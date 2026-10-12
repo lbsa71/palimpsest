@@ -65,21 +65,15 @@ export const ignoredKeyword: Record<string, boolean> = {
  * https://json-schema.org/draft/2019-09/json-schema-core.html#initial-base
  * https://tools.ietf.org/html/rfc3986#section-5.1
  */
-export let initialBaseURI: URL =
-  // @ts-ignore
-  typeof self !== 'undefined' &&
-  self.location &&
-  self.location.origin !== 'null'
-    ? //@ts-ignore
-      new URL(self.location.origin + self.location.pathname + location.search)
-    : new URL('https://github.com/cfworker');
+export const initialBaseURI = 'https://github.com/cfworker';
 
 export function dereference(
   schema: Schema | boolean,
   lookup: Record<string, Schema | boolean> = Object.create(null),
-  baseURI: URL = initialBaseURI,
+  baseURI: URL = new URL(initialBaseURI),
   basePointer = ''
 ): Record<string, Schema | boolean> {
+  baseURI = new URL(baseURI.href);
   if (schema && typeof schema === 'object' && !Array.isArray(schema)) {
     const id: string = schema.$id || schema.id;
     if (id) {

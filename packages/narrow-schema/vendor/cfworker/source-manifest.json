@@ -16,7 +16,7 @@
       "source": "packages/json-schema/src/dereference.ts",
       "retained": "dereference.ts",
       "upstreamSha256": "08ecb3bf8dc088525668106c79ca3cadcd5f9c361d566309a9720e7e2d6edd33",
-      "retainedSha256": "d62bf7ddad5b01f30a71127ed67952173189b3d71c3390c97d2de340087b2e94"
+      "retainedSha256": "02b3b5c74ac924c28e7fa944feb068134f4ab7857347db47436ab0453fd32810"
     },
     {
       "source": "packages/json-schema/src/format.ts",
@@ -52,13 +52,14 @@
       "source": "packages/json-schema/src/validator.ts",
       "retained": "validator.ts",
       "upstreamSha256": "5560612b491372aee121b0f9eb19acc97663fa5aa5cc2efa9adc735d2579f757",
-      "retainedSha256": "e7fadc002a41169a44e0ec15c1cd1714c7f258c9d4341641d112e1a25ad3d84a"
+      "retainedSha256": "1953629b154a296ba6dd537e3f3f0350b7ec3f13811e2489357677bce828da8a"
     }
   ],
   "patches": [
     "Import extensions .js to .ts and type-only imports for native Node TypeScript.",
     "Erasable syntax: OutputFormat enum to constant object; Validator constructor parameter properties to explicit fields/assignments.",
-    "JSON object presence uses Object.hasOwn; property iteration uses Object.keys instead of inherited JavaScript prototype membership."
+    "JSON object presence uses Object.hasOwn; property iteration uses Object.keys instead of inherited JavaScript prototype membership.",
+    "Explicit per-instance schema base URI with immutable Node default; no import-time browser location; cloned input schemas isolate private resolution metadata."
   ],
   "excluded": [
     "Generated .d.ts files",
