@@ -23,6 +23,7 @@ import { bindGoalOrigins } from './proposal-origin.ts';
 import { EvolutionContinuations } from './evolution-continuation.ts';
 import { ControlAuthorContinuations } from './control-tools.ts';
 import { communicationState, communicationTools } from './communication-state.ts';
+import { prepareDevelopmentControl, bindDevelopmentControl, developmentContext, createScriptedControlShell, createScriptedControlReceiver, type BoundDevelopmentControl } from './development-controls.ts';
 import type { DevelopmentAccounting } from './development-accounting.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
@@ -47,6 +48,7 @@ export interface ApplicationOptions {
 /** Ordinary composition: Slack, direct requests and initiative execute the same confined Pi mind. */
 export class AutarkApplication {
   readonly config: ApplicationConfig; readonly options: ApplicationOptions; readonly lease: ProcessLease;
+  readonly developmentControl: BoundDevelopmentControl;
   readonly store!: OperationalStore; readonly memory: DevelopmentalMemory; readonly resources: ResourceLedger;
   readonly delegation: DelegationCoordinator; readonly consolidation: AccountedConsolidation; readonly conversationObligations: ConversationObligations;
   readonly effects: EffectJournal; readonly runtime: DurableRuntime; readonly communications: CommunicationsCore;
@@ -68,15 +70,23 @@ export class AutarkApplication {
   private closing = false;
   private readonly rootAllocation = 'operating-envelope:v1';
   constructor(options: ApplicationOptions) {
+    // Read accepted callback/accessor values once; caller aliases cannot change the
+    // options used by constructor closures or later descriptor/receiver paths.
+    options = Object.freeze({ config: options.config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore,
+      performRequest: options.performRequest, slackBotApi: options.slackBotApi, slackAppApi: options.slackAppApi, lease: options.lease,
+      developmentAccounting: options.developmentAccounting, documentJournal: options.documentJournal, additionalTools: options.additionalTools });
     this.options = options; this.config = validateConfiguration(options.config);
     const config = this.config; options.authorityStore.assert(options.authority);
     invariant(options.authorityStore.current()?.artifactId === config.artifactId && options.authority.controlRevision === config.controlRevision, 'Application differs from admitted authority');
     this.lease = options.lease ?? new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     try {
     this.store = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot, documentJournal: options.documentJournal });
-    this.memory = new DevelopmentalMemory(this.store);
+    invariant(!config.developmentControl || !options.additionalTools, 'Additional Store extensions are unqualified for matched evaluation');
+    const controlPreparation = prepareDevelopmentControl(config, this.store);
     const developmentAccounting = options.developmentAccounting?.({ store: this.store, config });
     developmentAccounting?.assertApplication(config);
+    this.developmentControl = bindDevelopmentControl(config, this.store, developmentAccounting, controlPreparation);
+    this.memory = new DevelopmentalMemory(this.store);
     this.resources = developmentAccounting?.resources ?? new ResourceLedger(this.store, { tokens: 100_000, costUsd: 5, elapsedMs: config.model.timeoutMs });
     const allocation = this.store.get<{ envelope: unknown }>('allocations', this.rootAllocation);
     if (!allocation) this.resources.allocate(this.rootAllocation, config.resources);
@@ -156,8 +166,11 @@ export class AutarkApplication {
         return { childRunId: child.id, artifacts: [artifact] };
       }, cancelChild: (runId, reason) => this.runtime.cancel(runId, options.authority.generation, reason) });
     const physical = new ToolEffectReceiver({ store: this.store, fence: options.authorityStore, grantForRun: runId => this.toolGrant(runId), speechReceiver: speech, delegationReceiver: this.delegation });
+    const scriptReceiver = this.developmentControl.isScripted ? createScriptedControlReceiver(this.developmentControl) : undefined;
     const receiver: EffectReceiver = {
       dispatch: async (effect, signal) => {
+        try { this.developmentControl.assertEffect(effect.runId, effect.kind); } catch (error) { return { outcome: 'failed', receipt: this.store.putJsonArtifact({ error: error instanceof Error ? error.message : 'Control action denied' }) }; }
+        if (scriptReceiver) return scriptReceiver.dispatch(effect, signal);
         const descriptor = this.mindTools(effect.runId, effect.id).find(tool => tool.name === effect.kind);
         if (!descriptor) return physical.dispatch(effect, signal);
         options.authorityStore.assert(effect.authority); signal?.throwIfAborted();
@@ -168,11 +181,12 @@ export class AutarkApplication {
           return { outcome: executed || applied === true || descriptor.extension && applied !== false ? 'uncertain' : 'failed', receipt: this.store.putJsonArtifact({ error: error instanceof Error ? error.message : 'Development action rejected' }) };
         }
       },
-      reconcile: effect => physical.reconcile(effect),
+      reconcile: effect => { this.developmentControl.assertEffect(effect.runId, effect.kind); return scriptReceiver ? scriptReceiver.reconcile(effect) : physical.reconcile(effect); },
     };
     this.effects = new EffectJournal(this.store, options.authorityStore, developmentAccounting?.wrapReceiver(receiver) ?? receiver);
     const shell: ShellPort = { run: async (input, bridge, signal) => {
-      const record = this.grant(input.run.id), context = this.memory.context({ audience: input.run.scope, query: JSON.stringify(input.messages).slice(0, 8192), maxRecords: 24, maxBytes: 32768 });
+      this.developmentControl.assertRun(input.run.id);
+      const record = this.grant(input.run.id), context = developmentContext(this.developmentControl, this.memory, { audience: input.run.scope, query: JSON.stringify(input.messages).slice(0, 8192), maxRecords: 24, maxBytes: 32768 });
       const descriptors = this.mindTools(input.run.id);
       const permittedTools = toolDefinitions.filter(tool => this.toolGrant(input.run.id).actions.includes(tool.name));
       const tools = [...permittedTools.map(tool => ({ ...tool, parameters: tool.parameters as unknown as Tool['parameters'] })), ...descriptors.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema as Tool['parameters'] }))];
@@ -189,12 +203,12 @@ export class AutarkApplication {
         recordResponse: developmentAccounting ? (id, response) => developmentAccounting.recordResponse(id, response) : undefined,
         beforeRequest: developmentAccounting ? id => developmentAccounting.assertEntry(id) : undefined,
         recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
-      const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.goals.all(input.run.scope), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
+      const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
       const result = await broker.run({ ...input, messages: [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
       return this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result));
     } };
-    this.runtime = new DurableRuntime({ store: this.store, shell: developmentAccounting?.wrapShell(shell) ?? shell, effects: this.effects, resources: this.resources,
-      canResume: run => this.controls.eligibleRun(run.id, this.hasPendingSteering(run.id)) });
+    this.runtime = new DurableRuntime({ store: this.store, shell: developmentAccounting?.wrapShell(this.developmentControl.isScripted ? createScriptedControlShell(this.developmentControl) : shell) ?? shell, effects: this.effects, resources: this.resources,
+      canResume: run => { this.developmentControl.assertRun(run.id); this.developmentControl.assertRestoredState(); return this.controls.eligibleRun(run.id, this.hasPendingSteering(run.id)); } });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);
@@ -207,8 +221,9 @@ export class AutarkApplication {
         if (!this.closing) { this.ingestCommunications(run); this.enqueue(run.id); void this.tick().catch(() => undefined); }
       } });
     if (!this.store.get('allocations', 'initiative:ordinary')) this.resources.allocate('initiative:ordinary', config.scheduler.resources, this.rootAllocation);
-    this.scheduler = new FairScheduler(this.store, this.goals, this.obligations, 'ordinary', config.scheduler, Date.now(), goal => this.evolution.eligibleGoal(goal) && this.controls.eligibleGoal(goal));
+    this.scheduler = new FairScheduler(this.store, this.goals, this.obligations, 'ordinary', config.scheduler, Date.now(), goal => this.developmentControl.kind !== 'no-standing-goals' && !this.developmentControl.isScripted && this.evolution.eligibleGoal(goal) && this.controls.eligibleGoal(goal));
     this.initiative = new InitiativeRunner({ scheduler: this.scheduler, runtime: this.runtime, memory: this.memory, authority: options.authority,
+      context: request => developmentContext(this.developmentControl, this.memory, request),
       prompt: () => this.prompt, deliver: (id, signal) => this.deliverObligation(id, signal), decide: () => ({ kind: 'block', reason: 'The accounted mind did not record an observation-grounded progress decision.' }) });
     this.directApi = createDirectApi({ core: this.communications, authenticate: bearerAuthenticator([{ token: options.secrets.directToken, principal: { id: config.direct.actorId, scope: config.direct.scope, modificationEligible: config.direct.modificationEligible } }]), outputForRun: runId => this.output(runId), health: () => this.health() });
     if (config.slack) {
@@ -218,7 +233,7 @@ export class AutarkApplication {
       this.slackSocket = new SlackSocketMode({ botApi, appApi: options.slackAppApi ?? new SlackClient({ token: options.secrets.slackAppToken! }), ingress: this.slackIngress, recovery: this.slackRecovery,
         onError: kind => this.store.append({ id: randomUUID(), stream: 'host', type: 'transport-error', data: { kind, at: new Date().toISOString() } }) });
     }
-    if (config.bootstrapInitiative !== false) this.bootstrapDevelopment(base.sha256);
+    if (config.bootstrapInitiative !== false && this.developmentControl.kind !== 'no-standing-goals' && !this.developmentControl.isScripted) this.bootstrapDevelopment(base.sha256);
     const interrupted = this.runtime.recover(); reconcileProviderReceipts(this.store, this.resources);
     for (const runId of interrupted) if (!this.managedElsewhere(runId) && !this.evolution.holds(runId)) this.enqueue(runId);
     for (const row of this.store.list<Run>('runs')) if (!['completed', 'cancelled'].includes(row.value.status)) this.runtime.adopt(row.key, options.authority);
@@ -259,12 +274,15 @@ export class AutarkApplication {
   private occupied(): number { return this.active.size + (this.initiativeTask ? 1 : 0); }
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);
+    if (this.developmentControl.isScripted) return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: [], maxArgs: 64 }, research: { allowedHosts: [], timeoutMs: 15000, maxBytes: 262144, maxRedirects: 0 }, actions: ['development_control_emit'] };
     const child = this.store.get<{ allowedEffects: string[] }>('host.child-runs', runId)?.value;
     return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, ...(this.config.resourceLimits ? { resourceLimits: this.config.resourceLimits } : {}) },
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
       actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
   private mindTools(runId: string, effectId?: string): (ApplicationTool & { extension?: true })[] {
+    this.developmentControl.assertRun(runId);
+    if (this.developmentControl.isScripted) return [];
     const scope = this.grant(runId).scope;
     if (this.store.get('host.child-runs', runId)) return [];
     if (this.consolidation?.claim(runId)) return this.consolidation.tools(runId);
@@ -283,9 +301,9 @@ export class AutarkApplication {
       name: 'delegation_judge', description: 'Record the parent judgment against every declared child acceptance criterion after artifact inspection; this is not independent product qualification.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, inspection: { type: 'object' }, checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, passed: { type: 'boolean' }, evidence: { type: 'object' } }, required: ['criterion', 'passed', 'evidence'], additionalProperties: false } } }, required: ['id', 'inspection', 'checks'], additionalProperties: false }, execute: (args: JsonValue) => {
         const task = childTask(args); const a = args as Record<string, JsonValue>; return this.delegation.judge(task.task.id, a.inspection as unknown as Parameters<DelegationCoordinator['judge']>[1], a.checks as unknown as Parameters<DelegationCoordinator['judge']>[2]);
       },
-    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...mindDevelopmentTools(this.memory, scope, this.options.authority.generation), ...bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId)), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority, ...(effectId ? { effectId } : {}) }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
+    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...(this.developmentControl.kind === 'no-memory' ? [] : mindDevelopmentTools(this.memory, scope, this.options.authority.generation)), ...(this.developmentControl.kind === 'no-standing-goals' ? [] : bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId))), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority, ...(effectId ? { effectId } : {}) }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
   }
-  private enqueue(runId: string): void { const row = this.store.get('host.pending-runs', runId); this.store.put('host.pending-runs', runId, { requestedAt: Date.now() }, row?.revision ?? null); }
+  private enqueue(runId: string): void { this.developmentControl.assertRun(runId); const row = this.store.get('host.pending-runs', runId); this.store.put('host.pending-runs', runId, { requestedAt: Date.now() }, row?.revision ?? null); }
   private hasPendingSteering(runId: string): boolean {
     const sequence = this.store.get<{ messageSequence?: number }>('execution', runId)?.value.messageSequence ?? 0;
     return this.store.events(runId, sequence).some(event => event.type === 'steering');
@@ -306,6 +324,7 @@ export class AutarkApplication {
   }
   output(runId: string): JsonValue[] { return this.store.list<{ runId: string; receipt: JsonValue }>('communications.direct-outbox').filter(row => row.value.runId === runId).map(row => row.value.receipt); }
   private providerAvailable(): boolean {
+    if (this.developmentControl.isScripted) { this.developmentControl.assert(); return true; }
     try { selectedProviderKey(this.config.model, this.options.secrets); return true; } catch { return false; }
   }
   /** Process liveness is separate from permission/capacity to admit more physical work.
@@ -355,8 +374,10 @@ export class AutarkApplication {
     });
   }
   async resume(runId: string, signal: AbortSignal = this.shutdown.signal): Promise<Run> {
+    this.developmentControl.assertRun(runId);
     const existing = this.active.get(runId); if (existing) return existing;
     const run = this.runtime.getRun(runId); invariant(run, 'Unknown run');
+    this.ingestCommunications(run);
     if (!this.controls.eligibleRun(runId, this.hasPendingSteering(runId))) return run;
     if (!this.providerAvailable()) { if (!['completed', 'cancelled'].includes(run.status)) this.enqueue(runId); return run; }
     if (this.occupied() >= this.config.maxConcurrentRuns || this.closing) { this.enqueue(runId); return run; }
@@ -371,7 +392,7 @@ export class AutarkApplication {
   }
   private startDevelopment(): void {
     // Rotate consolidation and goals so either queue can progress under continuous input.
-    if (this.consolidationTurn) {
+    if (this.developmentControl.kind !== 'no-memory' && this.consolidationTurn) {
       this.consolidationTurn = false;
       const runId = this.consolidation.start(this.config.scheduler.quantumMs * 2 + 1000);
       if (runId) { void this.resume(runId).catch(() => undefined); return; }
@@ -383,12 +404,13 @@ export class AutarkApplication {
   async tick(): Promise<void> {
     if (this.ticking || this.closing) return; this.ticking = true;
     try {
+      this.developmentControl.assertRestoredState();
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
       // Offline recovery retains intake and known local reconciliation. Missing credentials
       // must not consume scheduler slices or physical reservations on repeated polling.
       if (!this.providerAvailable()) return;
       // Give development first access to a freed slot on alternating admissions.
-      if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns) { this.developmentTurn = false; this.startDevelopment(); }
+      if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns && !this.developmentControl.isScripted) { this.developmentTurn = false; this.startDevelopment(); }
       const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && this.controls.eligibleRun(row.key, this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
         .sort((a, b) => (this.store.get<{ requestedAt: number }>('host.pending-runs', a.key)?.value.requestedAt ?? 0) - (this.store.get<{ requestedAt: number }>('host.pending-runs', b.key)?.value.requestedAt ?? 0) || a.key.localeCompare(b.key));
       for (const row of pending) {

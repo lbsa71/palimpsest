@@ -1,7 +1,7 @@
 import { identity, invariant } from '../../contracts/index.ts';
 import type { Authority, Goal, InboundInput, JsonValue, Observation, PromptManifest } from '../../contracts/index.ts';
 import { DevelopmentalMemory } from '../../development/index.ts';
-import type { ClaimedJob, DevelopmentContext } from '../../development/index.ts';
+import type { ClaimedJob, ContextRequest, DevelopmentContext } from '../../development/index.ts';
 import { DurableRuntime } from '../../runtime/index.ts';
 import { applyProgress } from '../planning/index.ts';
 import type { ProgressDecision } from '../planning/index.ts';
@@ -11,6 +11,7 @@ class StartDeferred extends Error {}
 interface GoalExecution { runId: string; step: number; observationIds: string[]; stalls: number }
 export interface InitiativeRunnerOptions {
   scheduler: FairScheduler; runtime: DurableRuntime; memory: DevelopmentalMemory; authority: Authority;
+  context?: (request: ContextRequest) => DevelopmentContext;
   prompt(goal: Goal, context: DevelopmentContext): PromptManifest;
   /** Judgment is run under the executing mind, not an unaccounted second model request. */
   decide(goal: Goal, observations: Observation[], context: DevelopmentContext): ProgressDecision;
@@ -56,7 +57,7 @@ export class InitiativeRunner {
         let goal = selected.selection.goal;
         if (goal.status === 'waiting') goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'declared wakeup reached');
         goal = scheduler.goals.revise(goal.id, goal.revision, { status: 'running' }, 'selected finite runtime slice');
-        const context = memory.context({ audience: goal.scope, query: goal.purpose, maxRecords: 16, maxBytes: 32768 });
+        const context = (this.options.context ?? (request => memory.context(request)))({ audience: goal.scope, query: goal.purpose, maxRecords: 16, maxBytes: 32768 });
         let row = runtime.store.get<GoalExecution>('initiative.execution', goal.id), execution = row?.value;
         let run = execution ? runtime.getRun(execution.runId) : undefined;
         if (!run || ['completed', 'cancelled'].includes(run.status)) {
