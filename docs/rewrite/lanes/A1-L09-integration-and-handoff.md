@@ -61,6 +61,8 @@ Non-goals: reviving the old systemd process, old database migration, permanent h
 
 ## Coordination
 
+PILOT11 transport handoff: source70747a8 independently accepted and deployed as820bb1a0…/831c0624… at epoch73, preserving252 request values/six unknowns and nullable caps. New actual coding run20d7e17b… is running; source acceptance does not establish its coding outcome or cost. Private admission/progress scripts and exact evidence are listed in slack-pilot. Root still owns integration; feature paths remain Autark-only.
+
 PILOT11 transport follow-up at `c542fc3`: root reserves provider-gateway.ts/test and new provider-http.ts/test under deployment to a Sol/high author; root owns exact release/configuration,252-request admission guard and documentation. One independently reviewed adapter corrects the pinned Node five-minute header deadline while preserving caller abort, accounting, scope and failed trial evidence. No feature authorship or broad repair work. See PILOT11 behavioral gate.
 
 PILOT11 active reclaim at `184f701`: user authorizes removal of local cumulative caps to measure actual coding cost and corrects monthly allowance to EUR25. Root owns central specification/composition checks/private configuration, releases and one-shot admission. `/root/uncapped_allowance_author` (Sol/high) owns only resource module and existing amendment tests; fresh independent Sol review owns private exact-source/configuration/admission/live evidence. The Autark retains exclusive authorship of its two feature paths. This narrowly supersedes PILOT10's local spending refusal, with all history retained and provider account settings unchanged; broad historical claims remain inactive.
