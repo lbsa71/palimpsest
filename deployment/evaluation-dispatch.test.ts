@@ -242,19 +242,21 @@ const fixtureNativeId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 function fixtureProgress(messages) {
   const state = { seen: [], coding: false, evaluated: false, future: false, profile: null };
   for (const message of messages) {
-    if (message.role === 'user' && typeof message.content === 'string') {
-      if (message.content.startsWith('fixture-progress:')) {
-        const retained = JSON.parse(message.content.slice('fixture-progress:'.length));
+    const content = typeof message.content === 'string' ? message.content : message.content?.filter(block => block.type === 'text').map(block => block.text).join('') ?? '';
+    if (message.role === 'user') {
+      if (content.startsWith('fixture-progress:')) {
+        const retained = JSON.parse(content.slice('fixture-progress:'.length));
         state.seen.push(...retained.seen); state.coding ||= retained.coding; state.evaluated ||= retained.evaluated;
         state.future ||= retained.future; state.profile ??= retained.profile;
       } else {
-        state.coding ||= message.content.includes('coding-result');
-        state.evaluated ||= message.content.includes('external-evaluation-completed');
-        state.future ||= message.content.includes('fixture-future-evaluation');
+        state.coding ||= content.includes('coding-result');
+        state.evaluated ||= content.includes('external-evaluation-completed');
+        state.future ||= content.includes('fixture-future-evaluation');
       }
     }
     state.seen.push(...(message.tool_calls?.map(call => call.id) ?? []));
-    if (message.role === 'tool' && message.name === 'governance_profile') state.profile = JSON.parse(message.content);
+    if (message.role === 'assistant' && Array.isArray(message.content)) state.seen.push(...message.content.filter(block => block.type === 'toolCall').map(block => block.id));
+    if (message.role === 'tool' && message.name === 'governance_profile' || message.role === 'toolResult' && message.toolName === 'governance_profile') state.profile = JSON.parse(content);
   }
   state.seen = [...new Set(state.seen)]; return state;
 }
@@ -284,7 +286,8 @@ async function fixtureTransport(payload) {
   const request = JSON.parse(payload), messages = request.messages;
   if (!request.tools?.length) {
     const prefix = JSON.parse(messages.findLast(message => message.role === 'user').content);
-    return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'fixture-progress:' + JSON.stringify(fixtureProgress(prefix)) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
+    const progress = fixtureProgress(prefix); fixtureAssert.ok(progress.seen.length > 0, 'Compaction retains completed fixture calls');
+    return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'fixture-progress:' + JSON.stringify(progress) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
   }
   fixtureAssert.ok(request.tools.every(tool => !/^(workspace_|source_|command_run$)/.test(tool.function.name)));
   const progress = fixtureProgress(messages);
