@@ -48,14 +48,36 @@ interface Budget { envelope: ResourceEnvelope; startedAt: number; cancelled: boo
 interface Allocation { rootId: string; parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt:number; elapsedFloorMs?: number }
 interface Reservation { rootId: string; request: PhysicalRequest; ceiling: RequestCeiling; charged: RequestCeiling }
 export class BudgetExceeded extends Error { override name = 'BudgetExceeded'; }
+/** Admission may wait for this condition; spending/cancellation failures remain BudgetExceeded. */
+export class CapacityUnavailable extends BudgetExceeded { override name = 'CapacityUnavailable'; }
+export interface ConcurrencyReleaseEvidence {
+  kind: 'transport-terminal' | 'host-recovery';
+  reason: string;
+}
+interface ConcurrencyRelease {
+  requestId: string; requestRevision: number; reservation: Reservation; reservationDigest: string;
+  evidence: ConcurrencyReleaseEvidence; releasedAt: number;
+}
+interface ReleasedConcurrency { releaseId: string }
 export class ResourceLedger {
   readonly store: OperationalStore; readonly defaultCeiling: RequestCeiling; readonly now: () => number;
   private readonly observedElapsed = new Map<string, number>();
   private readonly boundAmendments = new Map<string, AllowanceAmendment>();
+  private readonly capacityListeners = new Set<() => void>();
   /** Thin host production composition facade; the existing third argument replaces wall time. */
   constructor(store: OperationalStore, defaultCeiling: RequestCeiling, now?: () => number) {
     this.store=store; this.defaultCeiling=defaultCeiling; this.validateCeiling(defaultCeiling);
     const clock=now??createProductionWallClock();this.now=()=>{const value=clock();invariant(Number.isFinite(value),'invalid wall clock reading');return value;};
+  }
+  /** Subscribe before attempting admission, then retry only CapacityUnavailable after a hint. */
+  subscribeCapacity(listener: () => void): () => void {
+    invariant(typeof listener === 'function', 'Capacity subscription requires a listener');
+    this.capacityListeners.add(listener);
+    return () => { this.capacityListeners.delete(listener); };
+  }
+  private notifyCapacity(): void {
+    // Listeners wake asynchronous admission loops; they cannot alter a committed mutation's outcome.
+    for (const listener of [...this.capacityListeners]) { try { listener(); } catch {} }
   }
   /** Binding requires accepted host authority on every startup. History alone never
    * relaxes enforcement. This method is deliberately absent from model tools. */
@@ -150,15 +172,53 @@ export class ResourceLedger {
   snapshot(runId: string): { requests: number; tokens: number; costUsd: number; elapsedMs: number; concurrent: number; cancelled: boolean } {
     return this.usage(runId,this.observeElapsed(runId,false));
   }
+  /** Financial uncertainty does not establish whether a bounded local execution is still alive. */
+  holdsConcurrency(requestId: string): boolean {
+    const row = this.store.get<Reservation>('requests', requestId);
+    return row ? this.reservationHoldsConcurrency(row.value) : false;
+  }
+  private reservationHoldsConcurrency(reservation: Reservation): boolean {
+    if (!['reserved', 'dispatched', 'uncertain'].includes(reservation.request.status)) return false;
+    const released = this.store.get<ReleasedConcurrency>('resource.concurrency-released', reservation.request.id);
+    if (!released) return true;
+    const evidence = this.store.get<ConcurrencyRelease>('resource.concurrency-releases', released.value.releaseId);
+    invariant(evidence && evidence.value.requestId === reservation.request.id && evidence.value.reservation.rootId === reservation.rootId
+      && evidence.value.reservationDigest === identity(evidence.value.reservation), 'Execution capacity release evidence unavailable');
+    this.sameRequest(evidence.value.reservation.request, reservation.request);
+    return false;
+  }
+  /** Trusted host only: the bounded transport/process has terminated, or exclusive startup
+   * ownership proves the previous host cannot still execute it. No timer or financial
+   * outcome supplies that proof. Original requests and charges remain untouched. */
+  releaseConcurrency(requestId: string, evidence: ConcurrencyReleaseEvidence): void {
+    invariant(evidence && ['transport-terminal', 'host-recovery'].includes(evidence.kind)
+      && typeof evidence.reason === 'string' && evidence.reason.trim().length > 0, 'Execution capacity release requires terminal or recovery evidence');
+    this.store.transaction(() => {
+      const row = this.store.get<Reservation>('requests', requestId);
+      invariant(row, 'Execution capacity release requires an existing physical request');
+      const current = this.store.get<ReleasedConcurrency>('resource.concurrency-released', requestId);
+      if (current) {
+        invariant(this.store.get<ConcurrencyRelease>('resource.concurrency-releases', current.value.releaseId), 'Execution capacity release evidence unavailable');
+        return;
+      }
+      const releaseId = identity({ requestId, requestRevision: row.revision });
+      const record: ConcurrencyRelease = { requestId, requestRevision: row.revision, reservation: row.value,
+        reservationDigest: identity(row.value), evidence: { kind: evidence.kind, reason: evidence.reason }, releasedAt: this.now() };
+      this.store.put('resource.concurrency-releases', releaseId, record, null);
+      this.store.put('resource.concurrency-released', requestId, { releaseId }, null);
+      this.store.append({ id: `concurrency-release:${releaseId}`, stream: row.value.request.runId, type: 'execution-capacity-released', data: record });
+    });
+    this.notifyCapacity();
+  }
   private usage(runId: string, elapsed: number): { requests: number; tokens: number; costUsd: number; elapsedMs: number; concurrent: number; cancelled: boolean } {
     const rootId=this.root(runId),budget=this.store.get<Budget>('budgets',rootId)!;
     const records=this.store.list<Reservation>('requests').map(r=>r.value).filter(r=>r.rootId===rootId);
-    return { requests:records.length,tokens:records.reduce((a,r)=>a+r.charged.tokens,0),costUsd:records.reduce((a,r)=>a+r.charged.costUsd,0),elapsedMs:Math.max(elapsed,records.reduce((a,r)=>a+r.charged.elapsedMs,0)),concurrent:records.filter(r=>['reserved','dispatched','uncertain'].includes(r.request.status)).length,cancelled:budget.value.cancelled||this.cancelled(runId) };
+    return { requests:records.length,tokens:records.reduce((a,r)=>a+r.charged.tokens,0),costUsd:records.reduce((a,r)=>a+r.charged.costUsd,0),elapsedMs:Math.max(elapsed,records.reduce((a,r)=>a+r.charged.elapsedMs,0)),concurrent:records.filter(r=>this.reservationHoldsConcurrency(r)).length,cancelled:budget.value.cancelled||this.cancelled(runId) };
   }
   private lineage(runId:string):string[] {const allocation=this.store.get<Allocation>('allocations',runId);invariant(allocation,'missing allocation');return [runId,...(allocation.value.parentRunId?this.lineage(allocation.value.parentRunId):[])];}
   private allocationUsage(runId:string): {requests:number;tokens:number;costUsd:number;elapsedMs:number;concurrent:number} {
     const allocation=this.store.get<Allocation>('allocations',runId)!.value;const ids=new Set([runId,...this.descendants(runId)]);const records=this.store.list<Reservation>('requests').map(r=>r.value).filter(r=>ids.has(r.request.runId));
-    return {requests:records.length,tokens:records.reduce((a,r)=>a+r.charged.tokens,0),costUsd:records.reduce((a,r)=>a+r.charged.costUsd,0),elapsedMs:Math.max(allocation.elapsedFloorMs??0,this.observedElapsed.get(`allocation:${runId}`)??0,records.reduce((a,r)=>a+r.charged.elapsedMs,0)),concurrent:records.filter(r=>['reserved','dispatched','uncertain'].includes(r.request.status)).length};
+    return {requests:records.length,tokens:records.reduce((a,r)=>a+r.charged.tokens,0),costUsd:records.reduce((a,r)=>a+r.charged.costUsd,0),elapsedMs:Math.max(allocation.elapsedFloorMs??0,this.observedElapsed.get(`allocation:${runId}`)??0,records.reduce((a,r)=>a+r.charged.elapsedMs,0)),concurrent:records.filter(r=>this.reservationHoldsConcurrency(r)).length};
   }
   reserve(request: PhysicalRequest): void {
     validatePhysicalRequest(request); invariant(request.status==='reserved','reserve requires reserved status');
@@ -168,8 +228,11 @@ export class ResourceLedger {
       const rootId=this.root(request.runId),limit=this.effectiveEnvelope(rootId),snapshot=this.usage(request.runId,elapsed);
       if(request.parentRequestId) { const parent=this.store.get<Reservation>('requests',request.parentRequestId); invariant(parent?.value.rootId===rootId,'foreign parent request'); }
       const ceiling: RequestCeiling={ tokens:request.usage.inputTokens===null || request.usage.outputTokens===null ? this.defaultCeiling.tokens : request.usage.inputTokens+request.usage.outputTokens,costUsd:request.usage.costUsd??this.defaultCeiling.costUsd,elapsedMs:Math.max(request.usage.elapsedMs,this.defaultCeiling.elapsedMs) }; this.validateCeiling(ceiling);
-      if(snapshot.cancelled || limit.maxRequests!==null && snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || snapshot.concurrent+1>limit.maxConcurrency) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
-      for(const allocationId of this.lineage(request.runId)) {const used=this.allocationUsage(allocationId),limit=this.effectiveEnvelope(allocationId);if(limit.maxRequests!==null && used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs || used.concurrent+1>limit.maxConcurrency)throw new BudgetExceeded('bounded allocation exhausted');}
+      if(snapshot.cancelled || limit.maxRequests!==null && snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
+      const ancestors = this.lineage(request.runId).map(id => ({ used: this.allocationUsage(id), limit: this.effectiveEnvelope(id) }));
+      for(const {used,limit} of ancestors) {if(limit.maxRequests!==null && used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs)throw new BudgetExceeded('bounded allocation exhausted');}
+      if(snapshot.concurrent+1>limit.maxConcurrency) throw new CapacityUnavailable('shared physical request execution capacity unavailable');
+      for(const {used,limit} of ancestors) if(used.concurrent+1>limit.maxConcurrency)throw new CapacityUnavailable('bounded allocation execution capacity unavailable');
       this.store.put('requests',request.id,{rootId,request,ceiling,charged:ceiling},null);
     });
   }
@@ -179,7 +242,24 @@ export class ResourceLedger {
   dispatched(request: PhysicalRequest): void {
     validatePhysicalRequest(request);
     const elapsed=this.observeElapsed(request.runId,true);
-    this.store.transaction(()=> { const row=this.store.get<Reservation>('requests',request.id); invariant(row && row.value.request.status==='reserved','request not reserved'); invariant(request.status==='dispatched','dispatch status required'); this.sameRequest(request,row.value.request); const snapshot=this.usage(request.runId,elapsed); if(snapshot.cancelled || snapshot.elapsedMs>this.store.get<Budget>('budgets',row.value.rootId)!.value.envelope.maxElapsedMs) throw new BudgetExceeded('allocation cancelled or expired'); for(const id of this.lineage(request.runId))if(this.allocationUsage(id).elapsedMs>this.store.get<Allocation>('allocations',id)!.value.envelope.maxElapsedMs)throw new BudgetExceeded('bounded allocation expired');this.store.put('requests',request.id,{...row.value,request},row.revision); });
+    this.store.transaction(()=> {
+      const row=this.store.get<Reservation>('requests',request.id); invariant(row && row.value.request.status==='reserved','request not reserved');
+      invariant(request.status==='dispatched','dispatch status required'); this.sameRequest(request,row.value.request);
+      const snapshot=this.usage(request.runId,elapsed), rootLimit=this.effectiveEnvelope(row.value.rootId);
+      if(snapshot.cancelled || snapshot.elapsedMs>rootLimit.maxElapsedMs) throw new BudgetExceeded('allocation cancelled or expired');
+      const ancestors=this.lineage(request.runId).map(id=>({used:this.allocationUsage(id),limit:this.effectiveEnvelope(id)}));
+      for(const {used,limit} of ancestors)if(used.elapsedMs>limit.maxElapsedMs)throw new BudgetExceeded('bounded allocation expired');
+      const released=this.store.get<ReleasedConcurrency>('resource.concurrency-released',request.id);
+      if(released) {
+        // The reservation is already charged; reacquisition neither resets nor charges it twice.
+        const budgets=[{used:snapshot,limit:rootLimit},...ancestors];
+        for(const {used,limit} of budgets)if(limit.maxRequests!==null && used.requests>limit.maxRequests || limit.maxTokens!==null && used.tokens>limit.maxTokens || limit.maxCostUsd!==null && used.costUsd>limit.maxCostUsd)throw new BudgetExceeded('released reservation budget exhausted');
+        for(const {used,limit} of budgets)if(used.concurrent+1>limit.maxConcurrency)throw new CapacityUnavailable('released reservation execution capacity unavailable');
+        this.store.delete('resource.concurrency-released',request.id,released.revision);
+        this.store.append({id:`concurrency-reacquired:${released.value.releaseId}`,stream:request.runId,type:'execution-capacity-reacquired',data:{requestId:request.id,releaseId:released.value.releaseId,reacquiredAt:this.now()}});
+      }
+      this.store.put('requests',request.id,{...row.value,request},row.revision);
+    });
   }
   settle(request: PhysicalRequest): void {
     validatePhysicalRequest(request); validateUsage(request.usage); invariant(['succeeded','failed','uncertain'].includes(request.status),'invalid settlement');
@@ -190,6 +270,7 @@ export class ResourceLedger {
       if (charged.tokens>row.value.ceiling.tokens || charged.costUsd>row.value.ceiling.costUsd || charged.elapsedMs>row.value.ceiling.elapsedMs) { const budget=this.store.get<Budget>('budgets',row.value.rootId)!; this.store.put('budgets',row.value.rootId,{...budget.value,cancelled:true},budget.revision); }
       this.store.put('requests',request.id,{...row.value,request,charged},row.revision);
     });
+    this.notifyCapacity();
   }
   /** An authoritative authorized effect proves the receiver was never entered. Retain
    * its original reservation and charges while repairing a pre-atomic crash gap. */
@@ -207,6 +288,6 @@ export class ResourceLedger {
     });
   }
   recoverDispatched(): void { this.store.transaction(()=>{ for(const row of this.store.list<Reservation>('requests')) if(row.value.request.status==='dispatched') this.store.put('requests',row.key,{...row.value,request:{...row.value.request,status:'uncertain'}},row.revision); }); }
-  cancel(runId: string): void { this.store.transaction(()=>{const row=this.store.get<Allocation>('allocations',runId);invariant(row,'missing allocation');this.store.put('allocations',runId,{...row.value,cancelled:true},row.revision);}); }
+  cancel(runId: string): void { this.store.transaction(()=>{const row=this.store.get<Allocation>('allocations',runId);invariant(row,'missing allocation');this.store.put('allocations',runId,{...row.value,cancelled:true},row.revision);});this.notifyCapacity(); }
   request(id: string): PhysicalRequest | undefined { return this.store.get<Reservation>('requests',id)?.value.request; }
 }
