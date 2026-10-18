@@ -45,7 +45,9 @@ function overlaps(first: string, second: string): boolean { return contains(firs
 // CLI process can start, but cannot authenticate or reach an inference endpoint. This is not an
 // executable allowlist or an independent audit of the upstream sandbox implementation.
 function managedPolicy(mode: CodingMode): string {
-  return `allowed_approval_policies = ["never"]\nallowed_sandbox_modes = ["${mode === 'inspect' ? 'read-only' : 'workspace-write'}"]\n` +
+  // Native PermissionProfile validation requires its read-only baseline even
+  // when this invocation explicitly requests workspace-write authority.
+  return `allowed_approval_policies = ["never"]\nallowed_sandbox_modes = ${mode === 'inspect' ? '["read-only"]' : '["read-only", "workspace-write"]'}\n` +
     '[permissions.filesystem]\ndeny_read = ["/coding-home/auth.json"]\n';
 }
 

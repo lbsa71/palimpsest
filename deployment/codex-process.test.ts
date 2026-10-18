@@ -68,7 +68,7 @@ test('each invocation independently selects the workspace mount and immutable al
     const running = execute({ ...invocation, mode }); await tick(); f.child.close(); await running;
     const mountIndex = f.state.args.findIndex((arg, index) => arg === '/workspace' && f.state.args[index + 1] === '/work');
     assert.equal(f.state.args[mountIndex - 1], mode === 'edit' ? '--bind' : '--ro-bind');
-    assert.match(f.state.policy, mode === 'edit' ? /allowed_sandbox_modes = \["workspace-write"\]/ : /allowed_sandbox_modes = \["read-only"\]/);
+    assert.match(f.state.policy, mode === 'edit' ? /allowed_sandbox_modes = \["read-only", "workspace-write"\]/ : /allowed_sandbox_modes = \["read-only"\]/);
   }
   const f = fixture();
   await assert.rejects(createCodexProcess(options, f.environment)({ ...invocation, mode: 'write' as CodingMode }), /mode must be inspect or edit/);
@@ -395,5 +395,20 @@ test('installed native sandbox independently denies inspect writes and permits e
     assert.equal(edit.status, 0, edit.stderr);
     assert.equal(edit.contents, 'originaledited');
     assert.equal(readFileSync(join(f.workspace, 'original'), 'utf8'), 'originaledited');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('installed native CLI loads the generated requirements for inspect and edit without inference',
+  { skip: !process.env.AEON_CODEX_TEST_BINARY && 'Set AEON_CODEX_TEST_BINARY for real native config validation; features list performs no inference' }, async () => {
+  const f = realFixture();
+  try {
+    for (const mode of ['inspect', 'edit'] as const) {
+      const receipt = await createCodexProcess({ ...f.options, codexBinary: process.env.AEON_CODEX_TEST_BINARY! })({
+        ...invocation, mode, cwd: f.workspace, timeoutMs: 10000, maxOutputBytes: 20000,
+        args: ['-c', 'approval_policy="never"', '-c', `sandbox_mode="${mode === 'edit' ? 'workspace-write' : 'read-only'}"`, '--disable', 'multi_agent', 'features', 'list'],
+      });
+      assert.equal(receipt.exitCode, 0, `${mode}: ${receipt.stderr}`);
+      assert.match(receipt.stdout, /multi_agent/);
+    }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

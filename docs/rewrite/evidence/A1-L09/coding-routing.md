@@ -49,3 +49,20 @@ The first probation candidate was rejected by independent live review and recove
 ## Acceptance and handoff
 
 Final source identity, commands/results, independent frozen review, live question/follow-up/status receipts, accepted deployment and main push are recorded here when those gates complete. Source checks do not substitute for live acceptance, and this bounded work does not qualify H1 or reactivate the hibernated backlog.
+
+
+### Replacement and live operations
+
+Replacement source `86f19c3c03cd99746c8082da8e55741c000bf251` is frozen as candidate `cf3e6cf1e2440330350baf4c3dc5276ff531c6a7c6c241d6f13e4ee43fa6be7a`, controls `75137dda97a7d35c94069c48a85adf967765dd368beff17914654a76b4f37873`, policy `fda882f30a792fa92dd7c7924d5a5d387b78e55bc00d69daf75f5fb4ee94ce50`. Fresh exact-artifact review accepted17/17 held-out cases, two offline native launcher cases and strict compilation; all1,518 frozen files verify, including866 tracked files matching that source. It preserved the rejected candidate's policy registry entry and separately installs `coding-routing-v3-policy.json`.
+
+The [live question and follow-up](https://lbsa71.slack.com/archives/D0C7NPQBTEZ/p1792336376599739) use the original native UUID `01a14e9a-f676-7f22-b71b-08cdc6111a4e`. The mind inspected and explicitly acknowledged the stopped third turn; its original uncertain result/artifact/request/charges remain unchanged. One rejected attempt passed the native UUID where the logical `coding:…` session ID was required; the mind corrected that argument without a new session. The successful enqueue then checkpointed the parent before another Mistral call; the host admitted a current-caller execution unit and resumed the exact native UUID.
+
+Native turn4 completed in22.95seconds with Sol6.1/high and read-only sandbox. Its only command read `deployment/coding-access.ts` with numbered lines; no tests or writes were performed. The Autark inspected `code_status` and delivered the source explanation and explicit prior-timeout disposition to Slack. Native per-turn token usage correctly remains unknown after the preceding timeout; the completed turn establishes a new cumulative baseline, without converting missing earlier totals into a fresh charge. No billed-cost saving is inferred from CLI cumulative usage.
+
+Editing the existing authenticated status message to exact `status` also delivered a new plan-bound host reply in the old thread while this request was processing. Its effect/reservation use the unchanged root allowance; the original conversation stays blocked and receives no inference.
+
+The actual edit attempt then failed before acknowledgement because native0.163.0 requires `read-only` in `allowed_sandbox_modes` even when `workspace-write` is requested. Turns5/7 retain that config rejection with no edits; diagnostic turn6 completed read-only in the same UUID. The host accepted exact cancellation and left no queued/active work. Independent live review rejected this candidate before probation acceptance. One transient10-second health probe timed out during this sequence; later quiescent health was200.
+
+CR09 changes only the edit mode set to `[read-only, workspace-write]`; inspect remains `[read-only]`, the CLI requests the current explicit mode, outer mounts remain per-turn and auth/network/fan-out restrictions are unchanged. A real offline native `features list` through the actual namespace and generated requirements reproduces the original inspect-pass/edit-fail and passes both modes after repair. Provider/process checks pass42/42 with all native opt-ins enabled; fresh independent native config checks pass2/2, strict/build pass. Earlier native tests exercised the sandbox helper and missed top-level config loading; their narrower scope is preserved rather than described as live edit proof.
+
+Final replacement identities, live edit, probation acceptance and main handoff are recorded after their gates complete.
