@@ -45,6 +45,9 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   /** Exact serialized tool sources retained by the trusted host before execution. */
   toolInstructions: { tools: ArtifactRef; compaction?: ArtifactRef };
   steering?: () => Promise<Message[]>;
+  /** Trusted composition may yield after a successful tool hands work elsewhere.
+   * The complete assistant tool batch is retained before returning. */
+  finishAfterSuccessfulTools?: string[];
   /** Explicit conservative host ceiling; unknown defaults require a runtime per-request ceiling. */
   reservationEstimate?: (attempt: Attempt) => ResourceUsage;
   /** Host-owned model rendering; never replaces durable observations or history. */
@@ -74,6 +77,8 @@ export function createAgentShell(options: ShellOptions): ShellPort {
   invariant(provider === 'mistral' || provider === 'openai', 'Unsupported shell provider');
   invariant(provider !== 'openai' || !!options.model, 'OpenAI requires an explicit model');
   invariant(new Set(options.tools.map(tool => tool.name)).size === options.tools.length, 'Duplicate shell tools');
+  const handoffTools = new Set(options.finishAfterSuccessfulTools ?? []);
+  invariant(handoffTools.size === (options.finishAfterSuccessfulTools?.length ?? 0) && [...handoffTools].every(name => options.tools.some(tool => tool.name === name)), 'Invalid shell handoff tools');
   if (options.compaction) invariant(Number.isSafeInteger(options.compaction.thresholdMessages) && Number.isSafeInteger(options.compaction.retainMessages) && options.compaction.retainMessages >= 1 && options.compaction.thresholdMessages > options.compaction.retainMessages + 2, 'Invalid context budget');
   if (options.compaction?.thresholdBytes !== undefined) invariant(Number.isSafeInteger(options.compaction.thresholdBytes) && options.compaction.thresholdBytes > 0, 'Invalid context byte budget');
   return {
@@ -94,6 +99,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       let observationIds: string[] = [];
       let checkpoint: ShellCheckpoint | undefined;
       let halted = false;
+      let handedOff = false;
       let status: Snapshot['status'] = 'running';
       let failure: Snapshot['failure'];
       let continuation: PhysicalRequestSliceContinuation | undefined;
@@ -197,6 +203,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
           const assistantIndex = transcript.findLastIndex(item => item.role === 'assistant');
           const observation = await execute({ id, name: tool.name, arguments: args }, assistantIndex);
           if (halted) return { content: [{ type: 'text', text: 'Tool outcome is uncertain; reconciliation required.' }], details: null, isError: true, terminate: true };
+          if (observation.kind === 'result' && handoffTools.has(tool.name)) handedOff = true;
           return { content: [{ type: 'text', text: canonicalJson(observation.value) }], details: null, isError: observation.kind === 'error' };
         } catch (error) { halted = true; status = signal?.aborted ? 'cancelled' : 'blocked'; failure = { stage: 'tool', reason: signal?.aborted ? 'Tool execution cancelled; reconcile dispatched effects.' : 'Tool receiver failed; inspect durable effect records before continuation.' }; throw error; }
       } }));
@@ -250,7 +257,12 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         await runAgentLoopContinue({ messages: [system(), ...continuationMessages()], tools: wrapped }, {
           model, clock: environment, convertToLlm: messages => modelMessages(messages), toolExecution: 'sequential',
           getSteeringMessages: options.steering ? async () => (await options.steering!()).filter(item => item.role !== 'system') : undefined,
-          finishTurn: ({ message }) => halted || message.stopReason === 'length' ? { action: 'end' } : undefined,
+          finishTurn: ({ message }) => {
+            // Called only after the entire current assistant batch. Recovery of
+            // an older enqueue is not a fresh handoff and must consume new input.
+            if (handedOff && !halted) signal?.throwIfAborted();
+            return halted || handedOff || message.stopReason === 'length' ? { action: 'end' } : undefined;
+          },
           async prepareRequest() {
             signal?.throwIfAborted();
             if (options.compaction && (transcript.length > options.compaction.thresholdMessages || options.compaction.thresholdBytes !== undefined && Buffer.byteLength(canonicalJson(json(modelMessages([system(), ...continuationMessages()])))) > options.compaction.thresholdBytes)) {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { identity, invariant, scopeAllows, validateCapturedPrompt, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
+import { canonicalJson, identity, invariant, scopeAllows, validateCapturedPrompt, validateObservation, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
   type ArtifactRef, type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
 import { completedOpenAIOutput, openaiOutput } from '../packages/agent-shell/openai.ts';
 import { physicalRequestSliceContinuation, type ShellOptions } from '../packages/agent-shell/index.ts';
@@ -80,6 +80,8 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
     async run(input, bridge, signal) {
       options.assertAuthority(input);
       const worker = structuredClone(options.worker);
+      const handoffTools = new Set(worker.finishAfterSuccessfulTools ?? []);
+      invariant(handoffTools.size === (worker.finishAfterSuccessfulTools?.length ?? 0) && [...handoffTools].every(name => worker.tools.some(tool => tool.name === name)), 'Invalid broker handoff tools');
       const fragments: Record<string, string> = {};
       for (const fragment of [...input.prompt.fragments, ...(worker.compaction ? [worker.compaction.instruction] : [])]) {
         invariant(scopeAllows(fragment.scope, input.run.scope), 'Worker prompt audience mismatch');
@@ -105,6 +107,8 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
       }
       const captured = new Map<string, { manifest: PromptManifest; payload: string; purpose: 'reasoning' | 'compaction' }>();
       const observed = new Map<string, JsonValue>();
+      const executed = new Map<string, { call: Parameters<typeof bridge.execute>[0]; observation: Awaited<ReturnType<typeof bridge.execute>> }>();
+      let handedOff = false;
       let lastCheckpoint = input.checkpoint;
       type RequestRecord = { request: PhysicalRequest; payload: string; fetched: boolean; receipt?: TransportReceipt; settled: boolean };
       const records = new Map<string, RequestRecord>();
@@ -116,6 +120,32 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         const requests = [...records.values()];
         invariant(requests.length === physicalRequests && requests.every(record => record.fetched && record.settled && (record.receipt?.status === 'succeeded' || record.receipt?.status === 'failed' && record.receipt.httpStatus === 429))
           && requests.at(-1)?.receipt?.status === 'succeeded', 'Worker slice has unfinished or uncertain physical requests');
+      }
+      function validateHandoffCheckpoint(content: JsonValue): void {
+        invariant(content && typeof content === 'object' && !Array.isArray(content) && content.status === 'completed' && content.failure === undefined && Array.isArray(content.messages) && Array.isArray(content.observationIds), 'Invalid completed tool handoff checkpoint');
+        const requests = [...records.values()];
+        invariant(requests.length === physicalRequests && requests.every(record => record.fetched && record.settled && (record.receipt?.status === 'succeeded' || record.receipt?.status === 'failed' && record.receipt.httpStatus === 429))
+          && (!requests.length || requests.at(-1)?.receipt?.status === 'succeeded'), 'Tool handoff has unfinished or uncertain physical requests');
+        invariant([...executed.values()].every(({ observation }) => observation.kind !== 'uncertain'), 'Tool handoff has an uncertain observation');
+        const handoffs = [...executed.values()].filter(({ call, observation }) => handoffTools.has(call.name) && observation.kind === 'result');
+        invariant(handoffs.length > 0, 'Tool handoff lacks a successful configured tool');
+        const messages = content.messages as unknown as { role?: string; aeonStepId?: string; stopReason?: string; content?: { type?: string; id?: string; name?: string; arguments?: JsonValue; text?: string }[]; toolCallId?: string; toolName?: string; isError?: boolean }[];
+        for (const { call } of handoffs) {
+          const assistant = messages.find(message => message.role === 'assistant' && `${input.run.id}:assistant:${message.aeonStepId}` === call.stepId);
+          invariant(assistant?.stopReason === 'toolUse' && Array.isArray(assistant.content), 'Tool handoff lacks its assistant batch');
+          const calls = assistant.content.filter(item => item.type === 'toolCall');
+          invariant(calls.some(item => `${call.stepId}:${item.id}` === call.id && item.name === call.name && identity(item.arguments!) === identity(call.arguments)), 'Tool handoff changed the executed call');
+          for (const item of calls) {
+            const result = messages.find(message => message.role === 'toolResult' && message.aeonStepId === assistant.aeonStepId && message.toolCallId === item.id && message.toolName === item.name);
+            invariant(result, 'Tool handoff omitted part of its assistant batch');
+            const actual = executed.get(`${call.stepId}:${item.id}`);
+            // A local argument/declaration rejection has no host observation.
+            // Every dispatched sibling must retain the host's exact outcome.
+            if (!actual) { invariant(result.isError === true, 'Tool handoff fabricated a successful sibling'); continue; }
+            invariant(actual.call.name === item.name && identity(actual.call.arguments) === identity(item.arguments!) && content.observationIds.includes(actual.observation.id)
+              && result.isError === (actual.observation.kind === 'error') && identity(result.content) === identity([{ type: 'text', text: canonicalJson(actual.observation.value) }]), 'Tool handoff changed or omitted its observation');
+          }
+        }
       }
       const inFlight = new Set<Promise<unknown>>();
       async function settleRecord(record: RequestRecord): Promise<void> {
@@ -135,13 +165,20 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         maxRequests: Math.max(64, worker.maxRequests * 16),
         async handle(method, args, workerSignal) {
           invariant(!continuationSealed, 'Worker continued after its checkpointed slice');
+          invariant(!handedOff || !['capturePrompt', 'reserve', 'dispatched', 'provider.fetch'].includes(method), 'Worker requested a model after a successful tool handoff');
           if (method !== 'settle') { options.assertAuthority(input); workerSignal.throwIfAborted(); }
           switch (method) {
             case 'execute': {
               const call = args[0] as unknown as Parameters<typeof bridge.execute>[0];
               invariant(call?.runId === input.run.id, 'Foreign worker tool call');
               const observation = await bridge.execute(call, workerSignal);
+              validateObservation(observation);
+              invariant(observation.runId === input.run.id && observation.stepId === call.stepId && observation.sourceId === call.id, 'Foreign worker tool observation');
               observed.set(observation.id, json(observation));
+              executed.set(call.id, { call: structuredClone(call), observation: structuredClone(observation) });
+              // Reconciled old calls run before this invocation's first model
+              // request. They cannot hide new steering behind another handoff.
+              if (physicalRequests > 0 && handoffTools.has(call.name) && observation.kind === 'result') handedOff = true;
               return json(observation);
             }
             case 'capturePrompt': {
@@ -299,10 +336,12 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               invariant(args[0] === input.run.id, 'Foreign worker checkpoint');
               const content = args[3];
               const slice = content && typeof content === 'object' && !Array.isArray(content) && (content.status === 'checkpointed' || content.continuation !== undefined);
+              const handoff = handedOff && content && typeof content === 'object' && !Array.isArray(content) && content.status === 'completed';
               // Reject a forged marker before it can enter durable runtime state.
               if (slice) validateSliceBoundary(content);
+              if (handoff) validateHandoffCheckpoint(content);
               lastCheckpoint = await bridge.persistCheckpoint(args[0], args[1] as number, args[2] as string, args[3]);
-              if (slice) continuationSealed = true;
+              if (slice || handoff) continuationSealed = true;
               return json(lastCheckpoint);
             }
             case 'readCheckpoint':
@@ -330,6 +369,10 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         // Worker classification alone cannot turn unknown transport outcomes or
         // unconsumed reservations into permission for an automatic continuation.
         validateSliceBoundary(await bridge.readCheckpoint(result.checkpoint));
+      }
+      if (handedOff && result.status === 'completed') {
+        invariant(result.checkpoint && continuationSealed, 'Worker completed a tool handoff without its validated checkpoint');
+        validateHandoffCheckpoint(await bridge.readCheckpoint(result.checkpoint));
       }
       return result;
     },
