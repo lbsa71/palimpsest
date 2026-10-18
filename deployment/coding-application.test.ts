@@ -103,24 +103,23 @@ test('ordinary mind delegates to default Codex, remains responsive, and follows 
       if (context(request).target?.channel === 'other') { otherCalls++; return response('The mind is responsive while coding is external.'); }
       mindCalls++;
       if (mindCalls === 1) return tool(1, 'code', { message: 'Implement the fixture and ask which edge case to cover.' });
-      if (mindCalls === 2 || mindCalls === 5) return response('Awaiting external coding evidence.');
-      if (mindCalls === 3 || mindCalls === 6) return tool(mindCalls, 'code_status', {});
-      if (mindCalls === 4) {
+      if (mindCalls === 2 || mindCalls === 4) return tool(mindCalls, 'code_status', {});
+      if (mindCalls === 3) {
         assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('command_execution')));
         return tool(4, 'code', { message: 'Cover the zero edge case.', sessionId: app.coding.session()!.id });
       }
-      assert.equal(mindCalls, 7); return response('Inspected the second result.');
+      assert.equal(mindCalls, 5); return response('Inspected the second result.');
     } });
   try {
     const run = input(app, 'main', 'Implement a bounded fixture.'); await app.resume(run.id);
     await until(app, () => invocations.length === 1, 'first coding dispatch');
-    assert.equal(app.runtime.getRun(run.id)?.status, 'waiting'); assert.equal(mindCalls, 2);
+    assert.equal(app.runtime.getRun(run.id)?.status, 'waiting'); assert.equal(mindCalls, 1);
     const other = input(app, 'other', 'Are you available?'); await app.resume(other.id);
     assert.equal(app.runtime.getRun(other.id)?.status, 'completed'); assert.equal(otherCalls, 1);
     assert.equal(invocations.length, 1);
     releaseFirst();
     await until(app, () => app.runtime.getRun(run.id)?.status === 'completed', 'both coding turns and parent completion');
-    assert.equal(invocations.length, 2); assert.equal(mindCalls, 7);
+    assert.equal(invocations.length, 2); assert.equal(mindCalls, 5);
     assert.equal(invocations[0]!.args.includes('resume'), false);
     assert.ok(invocations[1]!.args.includes('resume')); assert.ok(invocations[1]!.args.includes(nativeSessionId));
     assert.equal(invocations[1]!.stdin, 'Cover the zero edge case.'); assert.equal(invocations[0]!.cwd, invocations[1]!.cwd);
@@ -156,15 +155,14 @@ test('explicit Pi coding uses the existing broker and retains its transcript on 
       }
       mindCalls++;
       if (mindCalls === 1) return tool(1, 'code', { message: 'Write and run the bounded Pi fixture.' });
-      if (mindCalls === 2 || mindCalls === 5) return response('Awaiting coding evidence.');
-      if (mindCalls === 3 || mindCalls === 6) return tool(mindCalls, 'code_status', {});
-      if (mindCalls === 4) return tool(4, 'code', { message: 'Confirm the existing output.', sessionId: app.coding.session()!.id });
-      assert.equal(mindCalls, 7); return response('Observed the retained Pi result.');
+      if (mindCalls === 2 || mindCalls === 4) return tool(mindCalls, 'code_status', {});
+      if (mindCalls === 3) return tool(4, 'code', { message: 'Confirm the existing output.', sessionId: app.coding.session()!.id });
+      assert.equal(mindCalls, 5); return response('Observed the retained Pi result.');
     } });
   try {
     const run = input(app, 'pi-main', 'Use the configured coding provider.'); await app.resume(run.id);
     await until(app, () => app.runtime.getRun(run.id)?.status === 'completed', 'Pi follow-up completion');
-    assert.equal(cliCalls, 0); assert.equal(codingCalls, 4); assert.equal(mindCalls, 7);
+    assert.equal(cliCalls, 0); assert.equal(codingCalls, 4); assert.equal(mindCalls, 5);
     const session = app.coding.session()!; assert.equal(session.provider, 'pi'); assert.equal(session.nativeSessionId, session.childRunId);
     assert.equal(app.store.list('host.coding-runs').length, 2);
     assert.equal(readFileSync(join(session.workspace, 'pi-fixture.js'), 'utf8'), 'console.log(42);\n');
@@ -187,14 +185,14 @@ test('a later message in the same conversation reads the retained workspace and 
     performRequest: async payload => {
       mindCalls++; const request = JSON.parse(payload) as Request;
       if (mindCalls === 1) return tool(201, 'code', { message: 'Write the initial fixture.' });
-      if (mindCalls === 2 || mindCalls === 3 || mindCalls === 6) return response('The current coding request has been observed.');
-      if (mindCalls === 4) return tool(204, 'code_status', {});
-      if (mindCalls === 5) {
+      if (mindCalls === 2) return response('The current coding request has been observed.');
+      if (mindCalls === 3) return tool(204, 'code_status', {});
+      if (mindCalls === 4) {
         assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('Implemented it')), 'new parent must inspect the retained coding evidence');
         return tool(205, 'code', { message: 'Adjust the existing fixture.', sessionId: app.coding.session()!.id });
       }
-      if (mindCalls === 7) return tool(207, 'code_status', {});
-      assert.equal(mindCalls, 8); return response('Inspected the later coding result.');
+      if (mindCalls === 5) return tool(207, 'code_status', {});
+      assert.equal(mindCalls, 6); return response('Inspected the later coding result.');
     } };
   app = new AutarkApplication(options);
   try {
@@ -208,7 +206,7 @@ test('a later message in the same conversation reads the retained workspace and 
       actor: { id: 'operator', scope: app.config.direct.scope, modificationEligible: true } }).run;
     assert.notEqual(second.id, first.id); await app.resume(second.id);
     await until(app, () => app.runtime.getRun(second.id)?.status === 'completed', 'later parent completion');
-    assert.equal(mindCalls, 8); assert.equal(invocations.length, 2);
+    assert.equal(mindCalls, 6); assert.equal(invocations.length, 2);
     assert.equal(invocations[0]!.cwd, invocations[1]!.cwd); assert.equal(invocations[1]!.cwd, original.workspace);
     assert.ok(invocations[1]!.args.includes('resume')); assert.ok(invocations[1]!.args.includes(nativeSessionId));
     assert.equal(app.coding.session()!.childRunId, original.childRunId); assert.equal(app.store.list('host.coding-sessions').length, 1);

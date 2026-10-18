@@ -46,7 +46,12 @@ export class CodingLimb {
     this.options.store.put(sessions, 'single', created, null); return created;
   }
   get busy(): boolean { return !!this.active; }
-  workspaceLocked(workspace: string): boolean { return this.session()?.workspace === workspace && this.all().some(turn => ['queued', 'running', 'uncertain'].includes(turn.status)); }
+  private abandonment(turn: CodingTurn): JsonValue | undefined {
+    const row = this.options.store.get<{ turnId: string; resultSha256: string; nativeSessionId: string }>('host.coding-abandonments', turn.id)?.value;
+    return row && row.turnId === turn.id && row.resultSha256 === turn.result?.sha256 && row.nativeSessionId === this.session()?.nativeSessionId ? json(row) : undefined;
+  }
+  private unresolved(turn: CodingTurn): boolean { return turn.status === 'uncertain' && !this.abandonment(turn); }
+  workspaceLocked(workspace: string): boolean { return this.session()?.workspace === workspace && this.all().some(turn => ['queued', 'running'].includes(turn.status) || this.unresolved(turn)); }
   holds(runId: string): boolean { return this.all().some(turn => turn.runId === runId && !turn.notified); }
   preserveWaiting(runId: string, result: ShellResult): ShellResult { return result.status === 'completed' && this.holds(runId) ? { ...result, status: 'checkpointed' } : result; }
   submit(owner: CodingOwner, effectId: string, message: string, sessionId?: string, options: { mode?: CodingMode; target?: 'source' | 'workspace'; source?: CodingSource } = {}): JsonValue {
@@ -62,7 +67,7 @@ export class CodingLimb {
       const old = this.options.store.get<CodingTurn>(turns, effectId)?.value;
       if (old) { invariant(old.message === message && old.runId === owner.runId && old.mode === mode && old.target === target && identity(old.source ?? null) === identity(options.source ?? null), 'Coding turn identity reused'); return json({ sessionId: session.id, turnId: old.id, status: old.status }); }
       invariant(this.all().filter(turn => ['queued', 'running'].includes(turn.status)).length < 32, 'The coding turn queue is full; inspect code_status before further messages');
-      invariant(!this.all().some(turn => turn.status === 'uncertain'), 'Interrupted coding outcome requires host inspection; no automatic retry or replacement agent');
+      invariant(!this.all().some(turn => this.unresolved(turn)), 'Interrupted coding outcome requires host inspection; no automatic retry or replacement agent');
       invariant(this.all().every(turn => !turn.dispatched) || session.nativeSessionId || this.active, 'The original coding session was not established; no replacement agent will be started');
       const turn: CodingTurn = { id: effectId, sequence: this.all().length + 1, sessionId: session.id, runId: owner.runId, authority: structuredClone(owner.authority), message, mode, target, ...(options.source ? { source: structuredClone(options.source) } : {}), status: 'queued', notified: false };
       this.options.store.put(turns, turn.id, turn, null);
@@ -75,13 +80,29 @@ export class CodingLimb {
     const history = this.all(), turn = history.filter(item => item.runId === owner.runId).at(-1) ?? history.at(-1);
     const result = turn?.result ? this.options.store.readJsonArtifact<CodingResult>(turn.result) : undefined;
     return json({ sessionId: session.id, nativeSessionId: session.nativeSessionId ?? null, provider: session.provider, turn: turn ?? null,
-      history: history.map(item => ({ id: item.id, runId: item.runId, status: item.status, mode: item.mode ?? null, result: item.result ?? null })),
+      history: history.map(item => ({ id: item.id, runId: item.runId, status: item.status, mode: item.mode ?? null, result: item.result ?? null, abandonment: this.abandonment(item) ?? null })),
       result: result ? { status: result.status, summary: result.summary?.slice(0, 16384), exitCode: result.exitCode, elapsedMs: result.elapsedMs, usage: result.usage, cumulativeUsage: result.cumulativeUsage ?? null,
         events: (result.events ?? []).slice(offset, offset + limit), eventCount: (result.events ?? []).length, nextOffset: offset + limit < (result.events ?? []).length ? offset + limit : null,
         stderr: (result.stderr ?? '').slice(-8192), artifact: turn!.result } : null });
   }
-  cancel(owner: CodingOwner): JsonValue {
-    this.owned(owner);
+  cancel(owner: CodingOwner, acknowledge?: { turnId: string; resultSha256: string }): JsonValue {
+    const session = this.owned(owner);
+    if (acknowledge) return this.options.store.transaction(() => {
+      invariant(!this.active && !this.all().some(turn => ['queued', 'running'].includes(turn.status)), 'Cancel queued or running coding before acknowledging an uncertain turn');
+      const turn = this.options.store.get<CodingTurn>(turns, acknowledge.turnId)?.value;
+      invariant(turn?.sessionId === session.id && turn.status === 'uncertain' && turn.result?.sha256 === acknowledge.resultSha256, 'Exact uncertain coding result acknowledgement required');
+      const result = this.options.store.readJsonArtifact<CodingResult>(turn.result);
+      const acknowledgements = (result.events ?? []).filter(event => event && typeof event === 'object' && !Array.isArray(event) && event.type === 'thread.started') as { thread_id?: JsonValue }[];
+      invariant(session.provider === 'codex' && result.provider === 'codex' && result.processStopped === true && !!session.nativeSessionId && result.sessionId === session.nativeSessionId
+        && acknowledgements.length > 0 && acknowledgements.every(event => event.thread_id === session.nativeSessionId), 'Host-confirmed stopped process and exact native session acknowledgement required');
+      const existing = this.abandonment(turn);
+      if (existing) return existing;
+      const disposition = json({ turnId: turn.id, resultSha256: turn.result.sha256, nativeSessionId: session.nativeSessionId, actorRunId: owner.runId,
+        authority: owner.authority, at: this.options.now(), meaning: 'Explicitly abandoned after confirmed process cleanup; original uncertain outcome, charges and partial edits remain unknown. No action was retried.' });
+      this.options.store.put('host.coding-abandonments', turn.id, disposition, null);
+      this.options.store.append({ id: `coding-abandonment:${turn.id}`, stream: 'host.coding', type: 'uncertain-turn-abandoned', data: disposition });
+      return disposition;
+    });
     const turn = this.all().find(item => ['queued', 'running'].includes(item.status));
     if (!turn) return { cancelled: false, reason: 'No coding turn is active' };
     if (turn.status === 'queued') { const row = this.options.store.get<CodingTurn>(turns, turn.id)!; this.options.store.put(turns, turn.id, { ...turn, status: 'cancelled' }, row.revision); }
@@ -107,7 +128,7 @@ export class CodingLimb {
       if (!valid && turn.status === 'running') this.active?.controller.abort(new Error('Coding owner cancelled or authority withdrawn'));
       if (!valid && turn.status === 'queued') { const row = this.options.store.get<CodingTurn>(turns, turn.id)!; this.options.store.put(turns, turn.id, { ...turn, status: 'cancelled', notified: parent?.status === 'cancelled' }, row.revision); }
     }
-    if (!canStart || this.closing || this.active || this.all().some(turn => turn.status === 'uncertain')) return;
+    if (!canStart || this.closing || this.active || this.all().some(turn => this.unresolved(turn))) return;
     const turn = this.all().find(item => item.status === 'queued'); if (!turn) return;
     const parent = this.options.runtime.getRun(turn.runId);
     const effect = this.options.runtime.effects.get(turn.id);

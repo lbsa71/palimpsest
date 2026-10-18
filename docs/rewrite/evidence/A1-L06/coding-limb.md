@@ -11,15 +11,16 @@ Subsequent user-authorized deployment is now accepted: source `bd8f13e`, candida
 The mind receives three commands alongside its existing explicit speech action:
 
 ```text
-code({"message":"Inspect the source, implement the requested change and run relevant checks."})
+code({"message":"Inspect the source and explain the behavior."})
+code({"mode":"edit","target":"source","message":"Implement the requested change and run relevant checks."})
 code_status({"offset":0,"limit":20})
-code({"sessionId":"<sessionId returned by code>","message":"Clarification: also handle empty input. Adjust and rerun the checks."})
+code({"sessionId":"<sessionId returned by code>","mode":"edit","target":"source","message":"Clarification: also handle empty input. Adjust and rerun the checks."})
 code_cancel({})
 ```
 
 `code` durably queues a finite message and returns promptly. Completion wakes its waiting owner with an attributed observation. `code_status` exposes the reply, paginated CLI events, exit status, per-turn usage, cumulative native totals and an artifact reference containing exact arguments/prompt, JSONL stdout and stderr. History retains earlier result artifacts. The mind can inspect command and edit events before requesting another adjustment. `code_cancel` stops the current turn and preserves the session and partial evidence; it does not undo edits.
 
-Use `source_checkout` first when the coding task needs the accepted source. The original workspace is retained across later messages in the same conversation. Parent workspace mutations are blocked while coding is queued, running or uncertain. The worker has no speech, release or delegation tools.
+The latest routing amendment defaults `code` to read-only inspection of the accepted source. The trusted host prepares `repositories/<candidate ID>` once inside the retained workspace under the current caller’s remaining allowance; Mistral has no direct source, file or command tools. Use explicit `mode: edit` for requested changes, and `target: workspace` for retained scratch files. The native workspace and session persist across later messages, including exactly matching restricted audiences in another thread. Each explicit turn uses a new accounting execution unit under its current caller without resetting old grants. See the [routing and continuation record](../A1-L09/coding-routing.md). Parent workspace mutations are blocked while coding is queued, running or uncertain. The worker has no speech, release or delegation tools.
 
 Frozen application configuration accepts:
 

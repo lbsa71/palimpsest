@@ -163,7 +163,7 @@ test('default coding timeout admits a bounded conversation after its parent has 
       assert.ok(Date.now() < deadline, JSON.stringify({ turns: app.store.list('host.coding-turns'), execution: app.store.list('execution') }));
       await app.tick(); await new Promise<void>(resolve => setTimeout(resolve, 10));
     }
-    assert.equal(codingCalls, 1); assert.equal(mindCalls, 3);
+    assert.equal(codingCalls, 1); assert.equal(mindCalls, 2);
     assert.ok(observedTimeout > 0 && observedTimeout < config.conversationResources.maxElapsedMs);
     assert.equal(app.resources.snapshot(run.id).cancelled, false);
     assert.equal(app.store.list<CodingTurn>('host.coding-turns')[0]?.value.status, 'completed');

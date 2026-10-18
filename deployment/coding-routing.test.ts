@@ -46,12 +46,11 @@ test('code questions default to inspect/source, prepare once, and expose no dire
       for (const name of names) assert.ok(!name.startsWith('workspace_') && !name.startsWith('source_') && name !== 'command_run', name);
       assert.ok(names.includes('memory_retrieve')); assert.ok(names.includes('code')); assert.ok(names.includes('speech_send'));
       calls++; if (calls === 1) return answer('', 'code', { message: 'Explain sample.mjs with line references.' });
-      if (calls === 2) return answer('Waiting for the code limb.');
-      if (calls === 3) return answer('', 'code_status');
+      if (calls === 2) { assert.equal(invocations.length, 1, 'native work must begin before another mind inference'); return answer('', 'code_status'); }
       assert.ok(payload.includes('sample.mjs:1')); return answer('The inspected constant is 42.');
     } });
   try {
-    const run = input(app, 'question'); await app.resume(run.id); await until(app, () => app.runtime.getRun(run.id)?.status === 'completed');
+    const run = input(app, 'question'); await app.resume(run.id); assert.equal(calls, 1, 'code enqueue must hand off without another paid mind request'); await until(app, () => app.runtime.getRun(run.id)?.status === 'completed');
     assert.equal(f.snapshots, 1); assert.equal(invocations.length, 1); assert.ok(invocations[0]!.args.includes('read-only'));
     const session = app.coding.session()!, source = join(session.workspace, 'repositories', f.config.artifactId, 'sample.mjs');
     assert.equal(readFileSync(source, 'utf8'), 'export const observed = 42;\n');

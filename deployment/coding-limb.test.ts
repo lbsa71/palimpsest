@@ -239,3 +239,59 @@ test('cancelling before the first dispatch preserves the unused session for one 
     assert.equal(current(f).status, 'completed'); assert.equal(current(f).dispatched, true);
   } finally { await f.close(); }
 });
+
+test('an explicit stopped-turn acknowledgement retains uncertainty and permits only a later same-session message', async () => {
+  const nativeIds: (string | undefined)[] = [];
+  const f = fixture(async session => { nativeIds.push(session.nativeSessionId); return nativeIds.length === 1
+    ? { ...result('uncertain'), processStopped: true, exitCode: null, events: [{ type: 'thread.started', thread_id: nativeSessionId }] }
+    : result(); });
+  try {
+    await f.enqueue(); f.limb.tick(); await settled(f.limb);
+    const turn = current(f), original = f.store.get('host.coding-turns', turn.id), requests = f.store.list('requests');
+    const acknowledge = { turnId: turn.id, resultSha256: turn.result!.sha256 };
+    assert.deepEqual(f.limb.cancel(f.owner), { cancelled: false, reason: 'No coding turn is active' });
+    assert.throws(() => f.limb.submit(f.owner, 'held', 'Continue'), /requires host inspection/);
+    assert.throws(() => f.limb.cancel(f.owner, { ...acknowledge, resultSha256: '0'.repeat(64) }), /Exact uncertain/);
+    const disposition = f.limb.cancel(f.owner, acknowledge);
+    assert.deepEqual(f.limb.cancel(f.owner, acknowledge), disposition);
+    assert.deepEqual(f.store.get('host.coding-turns', turn.id), original);
+    assert.deepEqual(f.store.list('requests'), requests);
+    assert.equal(f.limb.workspaceLocked(f.owner.workspace), false);
+    f.restartLimb().tick(); await settled(f.limb); assert.equal(nativeIds.length, 1, 'abandonment never retries original work');
+    await f.enqueue('explicit-followup', 'Inspect the existing partial state.', f.limb.session()!.id);
+    f.limb.tick(); await settled(f.limb);
+    assert.deepEqual(nativeIds, [undefined, nativeSessionId]);
+    assert.equal(f.store.get<CodingTurn>('host.coding-turns', turn.id)!.value.status, 'uncertain');
+    assert.equal(f.store.list('host.coding-abandonments').length, 1);
+  } finally { await f.close(); }
+});
+
+for (const variant of ['no-cleanup', 'no-ack', 'foreign-ack', 'pi', 'wrong-audience', 'stale-authority'] as const) test(`uncertain abandonment rejects ${variant} without changing the hold`, async () => {
+  const f = fixture(async () => ({ ...result('uncertain'), provider: variant === 'pi' ? 'pi' : 'codex', processStopped: variant !== 'no-cleanup',
+    events: variant === 'no-ack' ? [] : [{ type: 'thread.started', thread_id: variant === 'foreign-ack' ? 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' : nativeSessionId }] }));
+  try {
+    await f.enqueue(); f.limb.tick(); await settled(f.limb);
+    const turn = current(f), rows = f.store.list('host.coding-turns');
+    const owner = variant === 'wrong-audience' ? { ...f.owner, scope: { kind: 'restricted' as const, principals: ['other'] } } : variant === 'stale-authority' ? { ...f.owner, authority: { ...f.owner.authority, epoch: f.owner.authority.epoch + 1 } } : f.owner;
+    assert.throws(() => f.limb.cancel(owner, { turnId: turn.id, resultSha256: turn.result!.sha256 }));
+    assert.equal(f.store.list('host.coding-abandonments').length, 0); assert.deepEqual(f.store.list('host.coding-turns'), rows);
+    assert.equal(f.limb.workspaceLocked(f.owner.workspace), true);
+  } finally { await f.close(); }
+});
+
+test('stopped uncertainty cannot release a message queued before inspection', async () => {
+  let release!: () => void, calls = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const f = fixture(async () => { calls++; await gate; return { ...result('uncertain'), processStopped: true, events: [{ type: 'thread.started', thread_id: nativeSessionId }] }; });
+  try {
+    await f.enqueue(); f.limb.tick(); await f.enqueue('pre-timeout-queue', 'A second queued request.');
+    release(); await settled(f.limb);
+    const turn = f.store.list<CodingTurn>('host.coding-turns').find(row => row.value.status === 'uncertain')!.value;
+    const acknowledgement = { turnId: turn.id, resultSha256: turn.result!.sha256 };
+    assert.throws(() => f.limb.cancel(f.owner, acknowledgement), /Cancel queued or running/);
+    assert.equal(f.store.list('host.coding-abandonments').length, 0);
+    f.restartLimb().tick(); await settled(f.limb); assert.equal(calls, 1);
+    f.limb.cancel(f.owner); f.limb.cancel(f.owner, acknowledgement); f.limb.tick(); await settled(f.limb);
+    assert.equal(calls, 1); assert.equal(current(f).status, 'cancelled');
+  } finally { release(); await f.close(); }
+});

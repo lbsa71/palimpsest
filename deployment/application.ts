@@ -263,6 +263,7 @@ export class AutarkApplication {
         protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
+          finishAfterSuccessfulTools: !codingRun && tools.some(tool => tool.name === 'code') ? ['code'] : [],
           compaction: { ...contextBudget(config), instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
         timeoutMs: codingRun ? codingTimeout : Math.min(config.conversationResources.maxElapsedMs, record.target && config.conversationTimeoutMs ? config.conversationTimeoutMs : config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
@@ -453,7 +454,12 @@ export class AutarkApplication {
         return this.coding.submit(owner, effectId, value.message, value.sessionId, { mode, target });
       } }, { name: 'code_status', description: 'Inspect the coding session response and actual command/edit events. Events are paginated; the full result artifact retains raw stdout/stderr. Agent claims require inspection.',
       inputSchema: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, additionalProperties: false }, execute: args => { const value = object(args, ['offset', 'limit']); return this.coding.status(this.codingOwner(runId), value.offset as number | undefined, value.limit as number | undefined); } },
-      { name: 'code_cancel', description: 'Stop the current coding turn while retaining its session and partial evidence. Cancellation is not an undo of edits.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, execute: args => { object(args, []); return this.coding.cancel(this.codingOwner(runId)); } }];
+      { name: 'code_cancel', description: 'Stop current coding while retaining its session and partial evidence. To explicitly abandon an inspected uncertain result, provide acknowledgeTurnId and its exact resultSha256 from code_status. This requires host-confirmed process cleanup and the same native session; it preserves uncertainty and charges and never retries work or undoes edits.',
+        inputSchema: { type: 'object', properties: { acknowledgeTurnId: { type: 'string' }, resultSha256: { type: 'string' } }, additionalProperties: false }, execute: args => {
+          const value = object(args, ['acknowledgeTurnId', 'resultSha256']);
+          invariant(value.acknowledgeTurnId === undefined && value.resultSha256 === undefined || typeof value.acknowledgeTurnId === 'string' && typeof value.resultSha256 === 'string', 'Both uncertain turn identity and result SHA are required');
+          return this.coding.cancel(this.codingOwner(runId), typeof value.acknowledgeTurnId === 'string' ? { turnId: value.acknowledgeTurnId, resultSha256: value.resultSha256 as string } : undefined);
+        } }];
   }
   private async executeCoding(session: CodingSession, turn: CodingTurn, signal: AbortSignal): Promise<CodingResult> {
     const config = this.config;

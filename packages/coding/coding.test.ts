@@ -332,3 +332,11 @@ test('trusted turn timeout may shorten but cannot expand the configured finite a
   await provider.run({ ...request, timeoutMs: 1000 });
   assert.equal(observed!.timeoutMs, 1000);
 });
+
+test('aborting an executor that throws without a cleanup receipt remains uncertain', async () => {
+  const controller = new AbortController();
+  const provider = new CodexCodingProvider({ ...limits, execute: async () => { controller.abort(); throw new Error('cleanup could not be confirmed'); } });
+  const outcome = await provider.run(request, controller.signal);
+  assert.equal(outcome.status, 'uncertain'); assert.equal(outcome.processStopped, undefined);
+  assert.match(outcome.stderr, /cleanup could not be confirmed/);
+});
