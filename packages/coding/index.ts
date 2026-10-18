@@ -1,6 +1,8 @@
 import type { JsonValue } from '../contracts/common.ts';
 
 export type CodingProviderId = 'codex' | 'pi';
+export const DEFAULT_CODEX_CODING_MODEL = 'gpt-6.1-sol' as const;
+export const CODEX_CODING_REASONING_EFFORT = 'high' as const;
 export interface CodingRequest {
   message: string;
   workspace: string;
@@ -228,12 +230,13 @@ export class CodexCodingProvider implements CodingProvider {
     const args = [
       'exec', '--json', '--color', 'never', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules',
       '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-c', 'agents.max_threads=1',
+      '-c', `model_reasoning_effort=${JSON.stringify(CODEX_CODING_REASONING_EFFORT)}`,
       '-c', 'sandbox_workspace_write.network_access=false', '-c', 'shell_environment_policy.inherit="none"',
       '-c', 'shell_environment_policy.set.PATH="/runtime:/usr/bin:/bin"',
       ...['multi_agent', 'multi_agent_v2', 'hooks', 'apps', 'plugins'].flatMap(feature => ['--disable', feature]),
       '-c', `developer_instructions=${JSON.stringify(CODING_LIMB_INSTRUCTIONS)}`,
     ];
-    if (this.options.model) args.push('--model', this.options.model);
+    args.push('--model', this.options.model ?? DEFAULT_CODEX_CODING_MODEL);
     if (request.sessionId) args.push('resume', request.sessionId, '-');
     else args.push('-');
     const invocation: CodingInvocation = {

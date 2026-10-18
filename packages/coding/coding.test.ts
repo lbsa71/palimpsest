@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CODING_LIMB_INSTRUCTIONS, CodexCodingProvider, PiCodingProvider, parseCodexResult } from './index.ts';
+import { CODEX_CODING_REASONING_EFFORT, CODING_LIMB_INSTRUCTIONS, DEFAULT_CODEX_CODING_MODEL, CodexCodingProvider, PiCodingProvider, parseCodexResult } from './index.ts';
 import type { CodingInvocation, CodingProcessReceipt, CodingResult, CodingUsage } from './index.ts';
 
 const SESSION = '0199e12a-9af2-7123-8a90-92b4f0e11b51';
@@ -42,6 +42,7 @@ test('start is a single confined CLI invocation; follow-up resumes the exact per
   for (const flag of ['--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules']) assert(first.args.includes(flag));
   assert(first.args.some((arg, index) => arg === '--sandbox' && first.args[index + 1] === 'workspace-write'));
   assert(first.args.includes('agents.max_threads=1'));
+  assert(first.args.includes('model_reasoning_effort="high"'));
   assert(first.args.includes('approval_policy="never"'));
   assert(first.args.includes('sandbox_workspace_write.network_access=false'));
   assert(first.args.includes('shell_environment_policy.inherit="none"'));
@@ -58,6 +59,28 @@ test('start is a single confined CLI invocation; follow-up resumes the exact per
   assert.equal(invocations[1]!.stdin, followup);
   assert(!invocations[1]!.args.includes('--last'));
   assert(!invocations[1]!.args.includes('fork'));
+});
+
+test('default start and resume explicitly select Sol6.1 with high effort without user configuration inheritance', async () => {
+  const invocations: CodingInvocation[] = [];
+  const provider = new CodexCodingProvider({ ...limits, execute: async invocation => { invocations.push(invocation); return receipt(); } });
+  const first = await provider.run(request);
+  await provider.run({ ...request, sessionId: SESSION, previousUsage: first.cumulativeUsage });
+  assert.equal(DEFAULT_CODEX_CODING_MODEL, 'gpt-6.1-sol');
+  assert.equal(CODEX_CODING_REASONING_EFFORT, 'high');
+  assert.equal(invocations.length, 2);
+  for (const { args } of invocations) {
+    assert.equal(args.filter(arg => arg === '--model').length, 1);
+    assert.equal(args[args.indexOf('--model') + 1], 'gpt-6.1-sol');
+    assert.equal(args.filter(arg => arg.startsWith('model_reasoning_effort=')).length, 1);
+    assert(args.some((arg, index) => arg === '-c' && args[index + 1] === 'model_reasoning_effort="high"'));
+    assert(args.includes('--ignore-user-config'));
+    assert(!args.includes('--profile'));
+  }
+  const resumed = invocations[1]!.args;
+  assert(resumed.indexOf('--model') < resumed.indexOf('resume'));
+  assert(resumed.indexOf('model_reasoning_effort="high"') < resumed.indexOf('resume'));
+  assert.deepEqual(resumed.slice(-3), ['resume', SESSION, '-']);
 });
 
 test('busy, duplicate start, changed workspace and unrelated session are refused without spawning', async () => {
