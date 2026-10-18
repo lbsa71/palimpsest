@@ -51,6 +51,9 @@ export interface BrokerShellOptions {
   recordTransport(receipt: TransportReceipt): void;
   /** Host raw retention before interpreting usage or replying to the worker. */
   recordResponse?(requestId: string, response: { status: number; body: string }): void;
+  /** Trusted host operation completion, including unknown provider outcomes.
+   * Initial/advisory receipt status alone never proves a transport has ended. */
+  onTransportFinished?(requestId: string): void;
   beforeRequest?(requestId: string): void;
 }
 
@@ -183,7 +186,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const outputTokens = worker.maxOutputTokens ?? 4096;
               const costUsd = (inputTokens * options.pricesPerMillion.input + outputTokens * options.pricesPerMillion.output) / 1_000_000;
               const reserved = { ...request, usage: { requests: 1, inputTokens, outputTokens, costUsd, elapsedMs: worker.timeoutMs ?? 60_000 } };
-              await bridge.reserve(reserved);
+              await bridge.reserve(reserved, workerSignal);
               records.set(request.id, { request: reserved, payload: capture.payload, fetched: false, settled: false });
               return null;
             }
@@ -194,7 +197,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const { status: _a, usage: _b, ...original } = record.request;
               const { status: _c, usage: _d, ...supplied } = request;
               invariant(identity(original) === identity(supplied), 'Worker request changed');
-              await bridge.dispatched({ ...record.request, status: 'dispatched' });
+              await bridge.dispatched({ ...record.request, status: 'dispatched' }, workerSignal);
               record.request.status = 'dispatched';
               return null;
             }
@@ -262,10 +265,12 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                     timingFailure = new Error('Host monotonic timing unavailable', { cause });
                   }
                 }
-                options.recordTransport(receipt);
-                // Trusted host evidence is durable before replying, even if the worker dies
-                // or omits its advisory settlement RPC.
-                await settleRecord(record);
+                try {
+                  options.recordTransport(receipt);
+                  // Trusted host evidence is durable before replying, even if the worker dies
+                  // or omits its advisory settlement RPC.
+                  await settleRecord(record);
+                } finally { options.onTransportFinished?.(record.request.id); }
                 if (timingFailure) throw timingFailure;
               } })();
               inFlight.add(operation);

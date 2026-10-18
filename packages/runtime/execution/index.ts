@@ -8,9 +8,11 @@ import { OperationalStore } from '../../storage/index.ts';
 import { EffectJournal } from '../../effects/index.ts';
 import { BudgetExceeded, ResourceLedger } from '../resources/index.ts';
 import { createProductionElapsedClock, createProductionIdSupplier, createProductionWallClock } from '../environment.ts';
+import { awaitCapacity } from './capacity.ts';
 export class UncertainEffect extends Error { override name='UncertainEffect'; }
 interface InboxEntry { input: InboundInput; runId: string }
 interface ExecutionState { checkpoint?: ShellCheckpoint; lastResult?: ShellResult; failure?: string; failedAttempt?: number; messageSequence?: number }
+export interface CapacityWait { requestId: string; runId: string; phase: 'reserve' | 'dispatch'; startedAt: number }
 export interface RuntimeOptions { store: OperationalStore; shell: ShellPort; effects: EffectJournal; resources: ResourceLedger; now?: ()=>number;
   elapsedNow?: () => number; newId?: () => string;
   /** Host eligibility, checked under the same operational write lock as the running claim. */
@@ -68,6 +70,7 @@ export class DurableRuntime {
   /** Call once on host startup, after exclusive process authority is acquired. */
   recover(): string[] {
     return this.store.transaction(()=> {this.effects.recoverDispatched();this.resources.recoverDispatched();this.resources.recoverUndispatchedEffects();
+      for(const row of this.store.list('execution.capacity-waits'))this.store.delete('execution.capacity-waits',row.key,row.revision);
       return this.store.list<Run>('runs').filter(r=>r.value.status==='running').map(r=>{this.status(r.key,this.effects.unresolved(r.key).length?'blocked':'waiting');return r.key;});
     });
   }
@@ -79,11 +82,26 @@ export class DurableRuntime {
   observations(runId:string):Observation[] {return this.store.list<Observation>('observations').map(r=>r.value).filter(o=>o.runId===runId);}
   private execution(runId:string):ExecutionState {return this.store.get<ExecutionState>('execution',runId)?.value??{};}
   private saveExecution(runId:string,value:ExecutionState):void {const row=this.store.get('execution',runId);this.store.put('execution',runId,value,row?.revision??null);}
+  private async capacity<T>(request:PhysicalRequest,phase:CapacityWait['phase'],attempt:()=>T|Promise<T>,signal?:AbortSignal):Promise<T> {
+    const parent=this.active.get(request.runId)?.signal;
+    const bounded=parent && signal && parent!==signal?AbortSignal.any([parent,signal]):signal??parent;
+    let waiting=false;
+    try {
+      return await awaitCapacity({attempt,signal:bounded,subscribe:listener=>this.resources.subscribeCapacity(listener),waiting:()=>{
+        if(waiting)return;
+        const value:CapacityWait={requestId:request.id,runId:request.runId,phase,startedAt:this.now()};
+        this.store.put('execution.capacity-waits',request.id,value,null);waiting=true;
+      }});
+    } finally {
+      if(waiting){const row=this.store.get('execution.capacity-waits',request.id);if(row)this.store.delete('execution.capacity-waits',request.id,row.revision);}
+    }
+  }
   bridge(runId:string,authority:Authority,messageSequence?:number):ShellBridge {
     const runtime=this;
     function allowed():Run {const run=runtime.getRun(runId);invariant(run?.status==='running','run ownership withdrawn');assertAuthority(run.authority,authority);runtime.effects.fence.assert(authority);return run;}
     return {
       async execute(call:ToolCall,signal?:AbortSignal):Promise<Observation> {
+        const parent=runtime.active.get(runId)?.signal;signal=parent && signal && parent!==signal?AbortSignal.any([parent,signal]):signal??parent;
         allowed();invariant(call.runId===runId,'foreign tool call');signal?.throwIfAborted();
         const existing=runtime.store.get<Observation>('observations',`tool:${call.id}`)?.value;
         const effect:Effect={id:`tool:${call.id}`,runId,stepId:call.stepId,kind:call.name,payload:call.arguments,scope:runtime.getRun(runId)!.scope,authority:runtime.effects.get(`tool:${call.id}`)?.authority??authority,status:'pending',revision:0};
@@ -92,13 +110,15 @@ export class DurableRuntime {
         if(runtime.effects.unresolved(runId).length) throw new UncertainEffect('prior effect requires reconciliation');
         if(current.status==='pending') {
           const digest=identity(call);const request:PhysicalRequest={id:`tool:${call.id}`,runId,purpose:'reasoning',provider:'effect-receiver',model:call.name,promptManifestId:`tool:${call.id}`,requestDigest:digest,reservationId:`tool:${call.id}`,status:'reserved',usage:{requests:1,inputTokens:0,outputTokens:0,costUsd:0,elapsedMs:0}};
-          runtime.store.transaction(()=>{runtime.resources.reserve(request);runtime.effects.authorize(current.id,request.reservationId,authority);});
+          await runtime.capacity(request,'reserve',()=>{allowed();return runtime.store.transaction(()=>{runtime.resources.reserve(request);runtime.effects.authorize(current.id,request.reservationId,authority);});},signal);
           current=runtime.effects.get(current.id)!;
         }
         if(current.status==='authorized') {
           const request=runtime.resources.request(current.reservationId!)!;
-          const started=runtime.elapsedNow();current=await runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));
-          runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:runtime.elapsedNow()-started}});
+          let started=0;
+          current=await runtime.capacity(request,'dispatch',()=>{allowed();started=runtime.elapsedNow();return runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));},signal);
+          try {runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:runtime.elapsedNow()-started}});}
+          finally {runtime.resources.releaseConcurrency(request.id,{kind:'transport-terminal',reason:'Effect receiver returned to the host'});}
         }
         if(current.status==='uncertain'||current.status==='dispatched')throw new UncertainEffect('tool outcome unknown; reconcile before another effect');
         let value:JsonValue={effectId:current.id,status:current.status};
@@ -107,8 +127,8 @@ export class DurableRuntime {
         runtime.store.transaction(()=>{runtime.store.put('observations',observation.id,observation,null);runtime.store.append({id:runtime.newId(),stream:runId,type:'observation',data:observation});});return observation;
       },
       async capturePrompt(manifest:PromptManifest,payload:string):Promise<void> {allowed();validateCapturedPrompt(manifest,payload);runtime.store.transaction(()=>{const artifact=runtime.store.putArtifact(payload);const row=runtime.store.get('prompts',manifest.id);const value={manifest,artifact};if(row)invariant(canonicalJson(row.value)===canonicalJson(value),'prompt id reused');else runtime.store.put('prompts',manifest.id,value,null);});},
-      async reserve(request:PhysicalRequest):Promise<void> {allowed();invariant(request.runId===runId,'foreign physical request');const prompt=runtime.store.get<{manifest:PromptManifest}>('prompts',request.promptManifestId);invariant(prompt?.value.manifest.requestDigest===request.requestDigest,'uncaptured physical payload');runtime.resources.reserve(request);},
-      async dispatched(request:PhysicalRequest):Promise<void> {allowed();invariant(request.runId===runId,'foreign physical request');runtime.resources.dispatched(request);},
+      async reserve(request:PhysicalRequest,signal?:AbortSignal):Promise<void> {request=structuredClone(request);await runtime.capacity(request,'reserve',()=>{allowed();invariant(request.runId===runId,'foreign physical request');const prompt=runtime.store.get<{manifest:PromptManifest}>('prompts',request.promptManifestId);invariant(prompt?.value.manifest.requestDigest===request.requestDigest,'uncaptured physical payload');runtime.resources.reserve(request);},signal);},
+      async dispatched(request:PhysicalRequest,signal?:AbortSignal):Promise<void> {request=structuredClone(request);await runtime.capacity(request,'dispatch',()=>{allowed();invariant(request.runId===runId,'foreign physical request');runtime.resources.dispatched(request);},signal);},
       async settle(receipt:PhysicalRequest):Promise<void> {invariant(receipt.runId===runId,'foreign physical receipt');runtime.resources.settle(receipt);},
       async persistCheckpoint(id:string,revision:number,shell:string,content:JsonValue):Promise<ShellCheckpoint> {allowed();invariant(id===runId,'foreign checkpoint');const run=runtime.getRun(id);invariant(run && revision===run.revision,'checkpoint revision changed');const index=typeof content==='object' && content!==null && !Array.isArray(content) ? content.observationIds : undefined;const ids=Array.isArray(index)?index:runtime.observations(id).map(o=>o.id);invariant(ids.every(o=>typeof o==='string' && runtime.store.get<Observation>('observations',o)?.value.runId===id),'checkpoint cites missing observation');invariant(new Set(ids).size===ids.length,'duplicate checkpoint observation');return runtime.store.transaction(()=>{const checkpoint:ShellCheckpoint={runId:id,revision,shell,artifact:runtime.store.putJsonArtifact(content),observationIds:ids as string[]};runtime.saveExecution(id,{...runtime.execution(id),checkpoint,...(messageSequence!==undefined?{messageSequence}:{})});runtime.store.append({id:runtime.newId(),stream:id,type:'checkpoint',data:checkpoint});return checkpoint;});},
       async readCheckpoint(checkpoint:ShellCheckpoint):Promise<JsonValue> {allowed();invariant(checkpoint.runId===runId,'foreign checkpoint');const saved=runtime.execution(runId).checkpoint;invariant(saved && canonicalJson(saved.artifact)===canonicalJson(checkpoint.artifact) && saved.shell===checkpoint.shell && canonicalJson(saved.observationIds)===canonicalJson(checkpoint.observationIds),'checkpoint is not assigned to this run');return runtime.store.readJsonArtifact(checkpoint.artifact);},

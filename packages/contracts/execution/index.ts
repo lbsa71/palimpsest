@@ -75,8 +75,8 @@ export interface ShellBridge {
   persistCheckpoint(runId: string, revision: number, shell: string, content: JsonValue): Promise<ShellCheckpoint>;
   readCheckpoint(checkpoint: ShellCheckpoint): Promise<JsonValue>;
   capturePrompt(manifest: PromptManifest, serializedPayload: string): Promise<void>;
-  reserve(request: PhysicalRequest): Promise<void>;
-  dispatched(request: PhysicalRequest): Promise<void>;
+  reserve(request: PhysicalRequest, signal?: AbortSignal): Promise<void>;
+  dispatched(request: PhysicalRequest, signal?: AbortSignal): Promise<void>;
   settle(receipt: PhysicalRequest): Promise<void>;
 }
 export interface ShellPort { run(input: ShellInput, bridge: ShellBridge, signal?: AbortSignal): Promise<ShellResult> }
