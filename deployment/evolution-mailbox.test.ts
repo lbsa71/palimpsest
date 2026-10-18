@@ -63,10 +63,25 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
   }
   controller.bootstrap(proof('bootstrap', accepted.manifest, { bootstrap: 'engineering fixture' }).proof, policy);
   const mailbox = new EvolutionMailbox({ store, assertAuthority: grant => authorityStore.assert(grant), waitMs: 40, pollMs: 5 });
-  let calls = 0, app: AutarkApplication | undefined, acknowledgmentLost = false;
+  let calls = 0, codingCalls = 0, app: AutarkApplication | undefined, acknowledgmentLost = false;
   const modifiedPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
   const modifiedBytes = readFileSync(join(source, modifiedPath), 'utf8') + '\nexport const hostFixtureRevision = "external-build-bound";\n';
   const createApp = () => new AutarkApplication({ config, authority, authorityStore, secrets: { mistralApiKey: 'no-provider-call', directToken: 'fixture' },
+      codingExecutor: async invocation => {
+        assert.equal(++codingCalls, 1, 'One finite coding invocation, including across author recovery');
+        assert.equal(invocation.mode, 'edit');
+        assert.equal(invocation.cwd, app!.coding.session()!.workspace);
+        const preparedSource = join(invocation.cwd, 'repositories', accepted.manifest.id);
+        assert.ok(invocation.stdin.includes(`/work/repositories/${accepted.manifest.id}`));
+        assert.equal(readFileSync(join(preparedSource, modifiedPath), 'utf8'), readFileSync(join(source, modifiedPath), 'utf8'));
+        writeFileSync(join(preparedSource, modifiedPath), modifiedBytes);
+        return { exitCode: 0, signal: null, elapsedMs: 1, stderr: '', stdout: [
+          { type: 'thread.started', thread_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+          { type: 'item.completed', item: { id: 'edit', type: 'file_change', changes: [{ path: modifiedPath, kind: 'update' }] } },
+          { type: 'item.completed', item: { id: 'reply', type: 'agent_message', text: 'Applied the finite source marker in the prepared source snapshot.' } },
+          { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 20 } },
+        ].map(event => JSON.stringify(event)).join('\n') };
+      },
       additionalTools: context => ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, evolution: { policyDigest: policy.policyDigest }, assertAuthority: grant => authorityStore.assert(grant) }).map(tool =>
         tool.name !== 'candidate_evaluate' ? tool : { ...tool, async execute(args, signal) {
           const result = await tool.execute(args, signal);
@@ -75,11 +90,16 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
         } }),
       performRequest: async payload => {
         const request = JSON.parse(payload);
-        for (const name of ['source_checkout', 'candidate_freeze', 'candidate_evaluate', 'release_submit']) assert.ok(request.tools.some((value: any) => value.function.name === name));
+        assert.ok(request.tools.some((value: any) => value.function.name === 'code'));
+        if (calls !== 1) for (const name of ['candidate_freeze', 'candidate_evaluate', 'release_submit']) assert.ok(request.tools.some((value: any) => value.function.name === name));
+        assert.ok(request.tools.every((value: any) => !/^(workspace_|source_|command_run$)/.test(value.function.name)));
         calls++;
-        if (calls === 1) return response('source_checkout');
-        if (calls === 2) return response('workspace_write', { path: modifiedPath, content: modifiedBytes, expectedSha256: hashBytes(readFileSync(join(source, modifiedPath))) });
-        if (calls === 3) return response('change_propose', { changeId: 'finite', justification: 'Verify exact candidate external build and host stage.', objective: 'Stage this bounded engineering source change.', successCriteria: ['exact candidate compiles under the accepted closure'], experienceIds: [] });
+        if (calls === 1) return response('code', { mode: 'edit', target: 'source', message: 'Apply the finite engineering source marker, then report the changed file.' });
+        if (calls === 2) return response();
+        if (calls === 3) {
+          assert.equal(codingCalls, 1); assert.ok(payload.includes('coding-result'));
+          return response('change_propose', { changeId: 'finite', justification: 'Verify exact candidate external build and host stage.', objective: 'Stage this bounded engineering source change.', successCriteria: ['exact candidate compiles under the accepted closure'], experienceIds: [] });
+        }
         if (calls === 4) return response('candidate_freeze', { changeId: 'finite' });
         if (calls === 5) return response('candidate_evaluate', { changeId: 'finite' });
         if (calls === (lostLocalAcknowledgment ? 6 : 7)) return response('change_status', { changeId: 'finite' });
@@ -91,6 +111,7 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
     // Fault injection: the dying host cannot run its local recovery tick. The new
     // application below uses the real implementation against the persisted crash gap.
     if (lostLocalAcknowledgment) app.evolution.reconcileAcknowledgments = () => [];
+    await app.start();
     const run = app.communications.receive({ source: 'direct', externalId: 'finite', revision: '1', conversation: 'finite', text: 'Make the finite engineering change.', actor: { id: 'operator', scope: config.direct.scope, modificationEligible: true } }).run;
     const execution = app.resume(run.id);
     const evaluation = await eventually(() => {
@@ -98,7 +119,8 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       if (!found && ['completed', 'blocked'].includes(app!.runtime.getRun(run.id)!.status)) throw Error(JSON.stringify({ calls, run: app!.runtime.getRun(run.id), resources: app!.resources.snapshot(run.id), lastResult: app!.store.get<{ lastResult?: { reason?: string; kind?: string; status?: string } }>('execution', run.id)?.value.lastResult?.reason, observations: app!.runtime.observations(run.id).map(value => ({ kind: value.kind, sourceId: value.sourceId, error: value.value && typeof value.value === 'object' && !Array.isArray(value.value) ? value.value.error : undefined })) }));
       return found;
     }, Boolean);
-    assert.equal((await execution).status, lostLocalAcknowledgment ? 'blocked' : 'waiting');
+    assert.equal((await execution).status, 'waiting', 'Author yields while its coding limb works');
+    await eventually(() => app!.runtime.getRun(run.id)?.status, status => status === (lostLocalAcknowledgment ? 'blocked' : 'waiting'));
     assert.equal(calls, lostLocalAcknowledgment ? 5 : 6); assert.equal(app.effects.unresolved(run.id).length, lostLocalAcknowledgment ? 1 : 0);
     assert.equal(mailbox.readEvaluation(mailbox.request(evaluation!.id) as EvaluationRequest).status, 'pending');
     const usedBeforeRestart = app.resources.snapshot(run.id);
@@ -117,6 +139,7 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
     assert.equal(app.runtime.getRun(run.id)!.status, lostLocalAcknowledgment ? 'blocked' : 'waiting');
     assert.deepEqual(app.resources.snapshot(run.id).requests, usedBeforeRestart.requests);
     assert.equal(calls, lostLocalAcknowledgment ? 5 : 6, 'Restart does not repeat the author or reviewer request');
+    assert.equal(codingCalls, 1, 'Restart retains the completed native coding result');
     await app.start();
     const submission = await eventually(() => mailbox.jobs().find(job => job.kind === 'submission'), Boolean);
     await mailbox.processSubmission(submission!.id, async (request, externalProof) => {
@@ -197,5 +220,7 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       const unavailable = ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, assertAuthority: () => {} });
       assert.throws(() => unavailable.find(value => value.name === 'candidate_evaluate')!.execute({ changeId: 'finite' }), /omitted accepted judging policy/);
     });
+  } catch (error) {
+    t.diagnostic(JSON.stringify({ calls, codingCalls, runs: app?.store.list('runs'), coding: app?.store.list('host.coding-turns'), execution: app?.store.list('execution') })); throw error;
   } finally { await app?.close(); controller.close(); lease.close(); authorityStore.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });

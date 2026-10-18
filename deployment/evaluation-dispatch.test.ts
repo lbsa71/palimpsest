@@ -209,18 +209,19 @@ function fixture(activate = false, governance = false, offline: boolean | 'revie
   const evaluator = blob(reviewerDescriptor(reviewer));
   const fields = { kind: 'engineering' as const, requiredCases: [offline === 'reviewer' ? 'concrete-reviewer' : offline ? 'validator-string-length' : 'held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
   const modifiedBytes = readFileSync(join(source, markerPath), 'utf8') + marker;
-  // Frozen fixture transport replaces the provider completely. It exercises the ordinary service child/tools.
-  const calls = [['source_checkout', {}], ['workspace_write', { path: markerPath, content: modifiedBytes, expectedSha256: hashBytes(readFileSync(join(source, markerPath))) }],
-    ...(governance ? [['governance_profile', {}],
-      ['workspace_write', { path: 'deployment/fixture-reviewer.mjs', content: futureReviewerSource, expectedSha256: null }],
-      ['workspace_write', { path: 'deployment/fixture-reviewer-rules.mjs', content: futureRules, expectedSha256: null }],
-      ['workspace_write', { path: 'deployment/governance-proposal.json', content: '__from_public_governance_profile__', expectedSha256: null }]] : []),
+  // Captured main-model and native-agent transports remain finite and offline. Only
+  // the coding executor edits the host-prepared source, before ordinary release tools.
+  const edits = [{ path: markerPath, content: modifiedBytes, expected: readFileSync(join(source, markerPath), 'utf8') },
+    ...(governance ? [{ path: 'deployment/fixture-reviewer.mjs', content: futureReviewerSource, expected: null },
+      { path: 'deployment/fixture-reviewer-rules.mjs', content: futureRules, expected: null }] : [])];
+  const calls = [...(governance ? [['governance_profile', {}]] : []),
+    ['code', { mode: 'edit', target: 'source', message: '__finite_coding_edit__' }], ['code_status', {}],
     ['change_propose', { changeId: 'finite', justification: 'Test physical hosted review dispatch.', objective: 'Stage exact source through prior controls.', successCriteria: ['held-out exact source observed by physical external process'], experienceIds: [] }],
     ['candidate_freeze', { changeId: 'finite' }], ['candidate_evaluate', { changeId: 'finite' }], ['change_status', { changeId: 'finite' }], ['release_submit', { changeId: 'finite' }],
     ...(activate ? [['control_activate', { changeId: 'finite' }]] : [])];
   // Persisted model messages select the next step across service replacement; the fixture
   // stops after enqueue and resumes only after the actual bound host result event.
-  const futureCalls = [['source_checkout', {}], ['governance_profile', {}], ['change_propose', { changeId: 'future', justification: 'Verify accepted source-owned evaluator through ordinary tools.', objective: 'Obtain a future-policy physical review.', successCriteria: ['new required case and reviewer bytes execute'], experienceIds: [] }], ['candidate_freeze', { changeId: 'future' }], ['candidate_evaluate', { changeId: 'future' }]];
+  const futureCalls = [['governance_profile', {}], ['code', { mode: 'edit', target: 'source', message: 'fixture-files:[]' }], ['code_status', {}], ['change_propose', { changeId: 'future', justification: 'Verify accepted source-owned evaluator through ordinary tools.', objective: 'Obtain a future-policy physical review.', successCriteria: ['new required case and reviewer bytes execute'], experienceIds: [] }], ['candidate_freeze', { changeId: 'future' }], ['candidate_evaluate', { changeId: 'future' }]];
   const governanceTransport = governance ? `import { createHash as fixtureCreateHash } from 'node:crypto';
 const fixtureFutureSequence = ${JSON.stringify(futureCalls)};
 function fixtureGovernance(profile) {
@@ -232,13 +233,83 @@ function fixtureGovernance(profile) {
   return canonical({ version: 1, policy: { ...profile.policy, requiredCases: ['governance-future-source'], evaluatorArtifacts: profile.policy.evaluatorArtifacts.map(([id, original]) => [id, id === reviewer.evaluatorId ? digest : original]) }, reviewer });
 }
 ` : '';
-  const transport = `${governanceTransport}const fixtureSequence = ${JSON.stringify(calls)};\nasync function fixtureTransport(payload) { const messages = JSON.parse(payload).messages; const sequence = ${governance ? "messages.some(message => message.role === 'user' && String(message.content).includes('fixture-future-evaluation')) ? fixtureFutureSequence : fixtureSequence" : 'fixtureSequence'}; const seen = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.id) ?? [])); let step = sequence.find((step, index) => !seen.has('fx' + index)); if (step?.[0] === 'change_status' && !messages.some(message => message.role === 'user' && String(message.content).includes('external-evaluation-completed'))) step = undefined; let args = step?.[1]; ${governance ? "if (args?.content === '__from_public_governance_profile__') { const profile = JSON.parse(messages.findLast(message => message.role === 'tool' && message.name === 'governance_profile').content); args = { ...args, content: fixtureGovernance(profile) }; }" : ''} return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + sequence.indexOf(step), type: 'function', function: { name: step[0], arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Engineering fixture waiting or complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }\n`;
+  const transport = `${governanceTransport}
+import fixtureAssert from 'node:assert/strict';
+import { existsSync as fixtureExists, readFileSync as fixtureRead, writeFileSync as fixtureWrite } from 'node:fs';
+const fixtureSequence = ${JSON.stringify(calls)};
+const fixtureEdits = ${JSON.stringify(edits)};
+const fixtureNativeId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+function fixtureProgress(messages) {
+  const state = { seen: [], coding: false, evaluated: false, future: false, profile: null };
+  for (const message of messages) {
+    if (message.role === 'user' && typeof message.content === 'string') {
+      if (message.content.startsWith('fixture-progress:')) {
+        const retained = JSON.parse(message.content.slice('fixture-progress:'.length));
+        state.seen.push(...retained.seen); state.coding ||= retained.coding; state.evaluated ||= retained.evaluated;
+        state.future ||= retained.future; state.profile ??= retained.profile;
+      } else {
+        state.coding ||= message.content.includes('coding-result');
+        state.evaluated ||= message.content.includes('external-evaluation-completed');
+        state.future ||= message.content.includes('fixture-future-evaluation');
+      }
+    }
+    state.seen.push(...(message.tool_calls?.map(call => call.id) ?? []));
+    if (message.role === 'tool' && message.name === 'governance_profile') state.profile = JSON.parse(message.content);
+  }
+  state.seen = [...new Set(state.seen)]; return state;
+}
+async function fixtureCoding(invocation: import('../packages/coding/index.ts').CodingInvocation) {
+  fixtureAssert.equal(invocation.mode, 'edit');
+  const source = invocation.stdin.match(new RegExp('/work/(repositories/[a-f0-9]{64})'))?.[1]; fixtureAssert.ok(source);
+  const resumed = invocation.args.includes('resume');
+  if (resumed) fixtureAssert.ok(invocation.args.includes(fixtureNativeId));
+  const task = invocation.stdin.split('fixture-files:')[1]; fixtureAssert.ok(task);
+  const changes = JSON.parse(task);
+  fixtureAssert.equal(resumed, changes.length === 0, 'Exactly one initial edit, then one same-session future inspection');
+  for (const file of changes) {
+    fixtureAssert.ok(!file.path.includes('..') && !file.path.startsWith('/'));
+    const path = invocation.cwd + '/' + source + '/' + file.path;
+    if (file.expected === null) fixtureAssert.equal(fixtureExists(path), false);
+    else fixtureAssert.equal(fixtureRead(path, 'utf8'), file.expected);
+    fixtureWrite(path, file.content);
+  }
+  return { exitCode: 0, signal: null, elapsedMs: 1, stderr: '', stdout: [
+    { type: 'thread.started', thread_id: fixtureNativeId },
+    { type: 'item.completed', item: { id: 'edit', type: 'file_change', changes: changes.map(file => ({ path: file.path, kind: file.expected === null ? 'add' : 'update' })) } },
+    { type: 'item.completed', item: { id: 'reply', type: 'agent_message', text: changes.length ? 'Applied the finite source change in the prepared snapshot.' : 'Inspected the newly accepted source without further changes.' } },
+    { type: 'turn.completed', usage: { input_tokens: resumed ? 200 : 100, cached_input_tokens: 0, output_tokens: resumed ? 40 : 20 } },
+  ].map(event => JSON.stringify(event)).join('\\n') };
+}
+async function fixtureTransport(payload) {
+  const request = JSON.parse(payload), messages = request.messages;
+  if (!request.tools?.length) {
+    const prefix = JSON.parse(messages.findLast(message => message.role === 'user').content);
+    return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'fixture-progress:' + JSON.stringify(fixtureProgress(prefix)) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
+  }
+  fixtureAssert.ok(request.tools.every(tool => !/^(workspace_|source_|command_run$)/.test(tool.function.name)));
+  const progress = fixtureProgress(messages);
+  const sequence = ${governance ? 'progress.future ? fixtureFutureSequence : fixtureSequence' : 'fixtureSequence'};
+  const seen = new Set(progress.seen);
+  let step = sequence.find((step, index) => !seen.has('fx' + index));
+  if (step?.[0] === 'code_status' && !progress.coding) step = undefined;
+  if (step?.[0] === 'change_status' && !progress.evaluated) step = undefined;
+  let args = step?.[1];
+  if (args?.message === '__finite_coding_edit__') {
+    const files = [...fixtureEdits];
+    ${governance ? "fixtureAssert.ok(progress.profile); files.push({ path: 'deployment/governance-proposal.json', content: fixtureGovernance(progress.profile), expected: null });" : ''}
+    args = { ...args, message: 'fixture-files:' + JSON.stringify(files) };
+  }
+  return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: step ? 'tool_calls' : 'stop', message: step ? { role: 'assistant', content: null, tool_calls: [{ id: 'fx' + sequence.indexOf(step), type: 'function', function: { name: step[0], arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Engineering fixture waiting or complete.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
+}
+`;
   const childPath = join(source, 'deployment/service-child.ts');
-  writeFileSync(childPath, transport + readFileSync(childPath, 'utf8').replace('new AutarkApplication({ config,', 'new AutarkApplication({ performRequest: fixtureTransport, config,'));
+  const child = readFileSync(childPath, 'utf8'), composition = 'new AutarkApplication({ config, codingExecutor,';
+  assert.equal(child.split(composition).length, 2, 'Exactly one host composition receives both offline transports');
+  writeFileSync(childPath, transport + child.replace(composition, 'new AutarkApplication({ performRequest: fixtureTransport, config, codingExecutor: fixtureCoding,'));
   const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: activate ? 1 : 2 };
   const inputs: DeploymentInputs = { createdBy: 'engineering-fixture-author', policy: policyDescriptor(fields), runtime: { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch }, prompts: { mind: 'Finite captured transport fixture.', compaction: 'Retain state.' },
     configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
-      scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture-operator', scope: { kind: 'public' }, modificationEligible: true } } };
+      scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture-operator', scope: { kind: 'restricted', principals: ['fixture-operator'] }, modificationEligible: true } } };
   const incumbent = freezeApplication(source, host.artifactStore, inputs);
   if (offline) for (const path of ['deployment/evaluation-dispatch.test.ts', 'evaluations/offline-review/plan.test.ts', 'evaluations/offline-review/governance.test.ts']) assert.equal(incumbent.files.some(file => file.path === path), false);
   const policy = { ...fields, controlRevision: incumbent.manifest.controls, policyDigest: admissionPolicyIdentity({ ...fields, controlRevision: incumbent.manifest.controls }) };
@@ -506,7 +577,7 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
   } finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 120000 }, async t => {
+test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 180000 }, async t => {
   const scenario = async (name: string, body: () => Promise<void>): Promise<void> => {
     t.signal.throwIfAborted();
     let running: Promise<void> | undefined;
@@ -526,7 +597,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     const submission = await eventually(() => {
       if (mailbox.jobs().some(job => job.status === 'uncertain')) throw Error(JSON.stringify(supervisor!.status().evaluation));
       return mailbox.jobs().find(job => job.kind === 'submission');
-    }, value => value?.status === 'completed');
+    }, value => value?.status === 'completed', 60000);
     const receipt = store.readJsonArtifact<any>(submission!.receipt!);
     assert.equal(receipt.status, 'staged'); assert.equal(receipt.receipt.policyDigest, f.nextPolicy.policyDigest);
     assert.equal(supervisor.status().release?.phase, 'accepted'); assert.equal(supervisor.status().release?.active.candidateId, f.incumbent.manifest.id);
@@ -537,18 +608,30 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     const physical = ledger.request(reviewPhysicalId(evaluation.id))!;
     assert.equal(physical.runId, original.proposal.runId); assert.equal(physical.purpose, 'review'); assert.equal(physical.status, 'succeeded');
     assert.ok(physical.usage.elapsedMs > 0, 'Actual reviewer wall time is charged separately from the author effect receiver');
+    const coding = store.list<import('./coding-limb.ts').CodingTurn>('host.coding-turns');
+    assert.equal(coding.length, 1); assert.equal(coding[0]!.value.status, 'completed');
+    assert.equal(coding[0]!.value.runId, original.proposal.runId);
+    const codingResult = store.readJsonArtifact<import('../packages/coding/index.ts').CodingResult>(coding[0]!.value.result!);
+    assert.equal(codingResult.sessionId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    assert.ok(codingResult.events.some(event => JSON.stringify(event).includes(markerPath)));
+    const native = store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').map(row => row.value.request).filter(request => request.provider === 'codex-cli');
+    assert.equal(native.length, 1); assert.equal(native[0]!.status, 'succeeded');
+    assert.equal(native[0]!.usage.inputTokens, 100); assert.equal(native[0]!.usage.outputTokens, 20);
     // Additional fault jobs have explicit engineering author allocations; no completed generation
     // silently gains a successor's authority or borrows an unrelated requester's budget.
     const faultRequest = (requestId: string): EvaluationRequest => {
       const authority = supervisor!.status().ready!.authority, runId = `engineering-fault:${requestId}`;
       ledger.allocate(runId, f.resources, 'operating-envelope:v1');
-      store.put('runs', runId, { id: runId, status: 'completed', revision: 0, scope: { kind: 'public' }, authority }, null);
+      store.put('runs', runId, { id: runId, status: 'completed', revision: 0, scope: original.proposal.scope, authority }, null);
       return { ...original, requestId, proposal: { ...original.proposal, runId, authority } };
     };
     const proof = store.readJsonArtifact<ReleaseProof>(evaluation.proof!);
     const observation = JSON.parse(Buffer.from(mailbox.readArtifact(proof.proposal.evidence[0]!.artifact.uri)).toString());
     assert.equal(observation.inheritedKeys, false); assert.match(observation.kind, /H1 unaccepted/);
-    await eventually(() => store.list('host-transport').length, value => value === 9);
+    await eventually(() => store.get<{ status: string }>('runs', original.proposal.runId)?.value.status, status => status === 'completed');
+    const compacted = store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').filter(row => row.value.request.purpose === 'compaction');
+    assert.ok(compacted.every(row => row.value.request.status === 'succeeded'), 'Any required compaction is a successful accounted physical request');
+    assert.equal(store.list('host-transport').length, 10 + compacted.length, 'Seven coordination tools and three waits, plus each actual compaction');
 
     await scenario('lost actual staged controller reply is retained as uncertain and never restaged after restart', async () => {
       const request = { ...(mailbox.request(submission!.id) as SubmissionRequest), requestId: 'lost-submission' };
