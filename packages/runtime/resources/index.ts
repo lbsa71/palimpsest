@@ -1,8 +1,8 @@
-import { invariant, validateUsage, validateAuthority, canonicalJson, identity } from '../../contracts/common.ts';
-import type { Authority, ResourceEnvelope } from '../../contracts/common.ts';
+import { invariant, validateUsage, validateAuthority, assertAuthority, canonicalJson, identity } from '../../contracts/common.ts';
+import type { Authority, DataScope, JsonValue, ResourceEnvelope } from '../../contracts/common.ts';
 import { validatePhysicalRequest } from '../../contracts/control/index.ts';
 import type { PhysicalRequest } from '../../contracts/control/index.ts';
-import type { Effect } from '../../contracts/execution/index.ts';
+import { validateEffect, type Effect } from '../../contracts/execution/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 import { createProductionWallClock } from '../environment.ts';
 export interface RequestCeiling { tokens: number; costUsd: number; elapsedMs: number }
@@ -47,6 +47,14 @@ interface AmendmentRecord {
 interface Budget { envelope: ResourceEnvelope; startedAt: number; cancelled: boolean; elapsedFloorMs?: number }
 interface Allocation { rootId: string; parentRunId?: string; cancelled: boolean; envelope: ResourceEnvelope; startedAt:number; elapsedFloorMs?: number }
 interface Reservation { rootId: string; request: PhysicalRequest; ceiling: RequestCeiling; charged: RequestCeiling }
+interface HostControlPlan {
+  id: string; inputId: string; runId: string; control: 'status' | 'cancel';
+  target: { channel: string; threadTs: string; transport: 'slack'; scope: DataScope };
+  payload: JsonValue;
+}
+interface HostEffectAccountingBinding {
+  effect: Effect; reservation: Reservation; plan: HostControlPlan; authority: Authority; boundAt: number;
+}
 export class BudgetExceeded extends Error { override name = 'BudgetExceeded'; }
 /** Admission may wait for this condition; spending/cancellation failures remain BudgetExceeded. */
 export class CapacityUnavailable extends BudgetExceeded { override name = 'CapacityUnavailable'; }
@@ -239,6 +247,73 @@ export class ResourceLedger {
   private sameRequest(a: PhysicalRequest,b: PhysicalRequest):void {
     const {status:as,usage:au,...ai}=a;const {status:bs,usage:bu,...bi}=b;invariant(canonicalJson(ai)===canonicalJson(bi),'physical request identity changed');
   }
+  private hostEffectPlan(effect: Effect, reservation: Reservation): HostControlPlan {
+    validateEffect(effect); validatePhysicalRequest(reservation.request);
+    const request = reservation.request, allocation = this.store.get<Allocation>('allocations', request.runId)?.value;
+    invariant(allocation && !allocation.parentRunId && allocation.rootId === request.runId && reservation.rootId === request.runId
+      && effect.runId !== request.runId && this.lineage(effect.runId).includes(request.runId), 'Host effect accounting requires its conversation root allocation');
+    invariant(/^host:slack-control:[a-f0-9]{64}$/.test(effect.id) && effect.kind === 'speech_send' && effect.stepId === effect.id
+      && effect.reservationId === effect.id && request.id === effect.id && request.reservationId === effect.id
+      && request.provider === 'effect-receiver' && request.model === effect.kind && request.purpose === 'reasoning'
+      && request.parentRequestId === undefined && request.promptManifestId === effect.id && request.requestDigest === identity(effect.payload),
+    'Host effect accounting requires an exact control reply reservation');
+    const plan = this.store.get<HostControlPlan>('host.slack-control-replies', effect.id)?.value;
+    invariant(plan && plan.id === effect.id && plan.id === `host:slack-control:${plan.inputId}` && plan.runId === effect.runId
+      && ['status', 'cancel'].includes(plan.control) && plan.target?.transport === 'slack'
+      && identity(plan.payload) === identity(effect.payload) && identity(plan.target.scope) === identity(effect.scope),
+    'Host effect accounting requires its retained host control plan');
+    const payload = effect.payload as { channel?: unknown; threadTs?: unknown; kind?: unknown; text?: unknown } | null;
+    invariant(payload && typeof plan.target.channel === 'string' && plan.target.channel.length > 0
+      && typeof plan.target.threadTs === 'string' && /^\d+(?:\.\d+)?$/.test(plan.target.threadTs)
+      && payload.channel === plan.target.channel && payload.threadTs === plan.target.threadTs
+      && payload.kind === 'message' && typeof payload.text === 'string', 'Host control reply recipient changed');
+    return plan;
+  }
+  private hostEffectBindingId(effect: Effect): string { return identity({ effectId: effect.id, authority: effect.authority }); }
+  private assertHostEffectAccounting(effect: Effect, reservation: Reservation): void {
+    const plan = this.hostEffectPlan(effect, reservation), currentId = this.hostEffectBindingId(effect);
+    const retained = this.store.get<HostEffectAccountingBinding>('resource.host-effect-accounting', currentId)
+      ?? this.store.list<HostEffectAccountingBinding>('resource.host-effect-accounting').find(row => row.value.effect.id === effect.id);
+    const binding = retained?.value;
+    invariant(binding, 'Host effect accounting evidence unavailable');
+    const id = this.hostEffectBindingId(binding.effect);
+    const event = this.store.events<HostEffectAccountingBinding>(`host-effect-accounting:${id}`)
+      .find(event => event.id === `host-effect-accounting-bound:${id}` && event.type === 'host-effect-accounting-bound');
+    invariant(event && identity(event.data) === identity(binding), 'Host effect accounting evidence unavailable');
+    // Adoption can commit before a replacement host rebinds accounting. It changes
+    // authority/revision only, never the already authorized recipient or intent.
+    const { authority: originalAuthority, revision: originalRevision, ...originalIntent } = binding.effect;
+    const { authority: currentAuthority, revision: currentRevision, ...currentIntent } = effect;
+    invariant(identity(originalIntent) === identity(currentIntent) && identity(binding.plan) === identity(plan)
+      && identity(binding.authority) === identity(originalAuthority) && binding.reservation.rootId === reservation.rootId
+      && identity(binding.reservation.ceiling) === identity(reservation.ceiling), 'Host effect accounting binding changed');
+    invariant(binding.effect.status === 'authorized' && !binding.effect.receipt && binding.reservation.request.status === 'reserved',
+      'Host effect accounting requires an undispatched binding');
+    this.sameRequest(binding.reservation.request, reservation.request);
+  }
+  /** Trusted host only. Call inside the transaction that reserves and authorizes the
+   * deterministic reply, and again after adopting an undispatched reply's authority.
+   * The recipient remains the original conversation; only its root pays for this
+   * fixed host acknowledgement. Each authority generation retains its own evidence. */
+  bindHostEffectAccounting(effect: Effect, request: PhysicalRequest, host: { authority: Authority; assertAuthority: () => void }): void {
+    invariant(host && typeof host.assertAuthority === 'function', 'Host effect accounting requires host authority');
+    const acceptedEffect = structuredClone(effect), acceptedRequest = structuredClone(request), authority = structuredClone(host.authority);
+    validateAuthority(authority); validateEffect(acceptedEffect); validatePhysicalRequest(acceptedRequest);
+    assertAuthority(acceptedEffect.authority, authority);
+    this.store.transaction(() => {
+      invariant(host.assertAuthority() === undefined, 'Host effect authority validation must be synchronous');
+      const reservation = this.store.get<Reservation>('requests', acceptedRequest.id)?.value;
+      const retainedEffect = this.store.get<Effect>('effects', acceptedEffect.id)?.value;
+      invariant(reservation && identity(reservation.request) === identity(acceptedRequest) && retainedEffect
+        && identity(retainedEffect) === identity(acceptedEffect) && acceptedEffect.status === 'authorized' && !acceptedEffect.receipt
+        && acceptedRequest.status === 'reserved', 'Host effect accounting requires the exact retained undispatched reservation');
+      const plan = this.hostEffectPlan(acceptedEffect, reservation), id = this.hostEffectBindingId(acceptedEffect);
+      if (this.store.get('resource.host-effect-accounting', id)) { this.assertHostEffectAccounting(acceptedEffect, reservation); return; }
+      const binding: HostEffectAccountingBinding = { effect: acceptedEffect, reservation, plan, authority, boundAt: this.now() };
+      this.store.put('resource.host-effect-accounting', id, binding, null);
+      this.store.append({ id: `host-effect-accounting-bound:${id}`, stream: `host-effect-accounting:${id}`, type: 'host-effect-accounting-bound', data: binding });
+    });
+  }
   dispatched(request: PhysicalRequest): void {
     validatePhysicalRequest(request);
     const elapsed=this.observeElapsed(request.runId,true);
@@ -279,7 +354,8 @@ export class ResourceLedger {
       for (const effect of this.store.list<Effect>('effects').map(row => row.value)) {
         if (effect.status !== 'authorized') continue;
         const row = this.store.get<Reservation>('requests', effect.reservationId!);
-        invariant(row && row.value.request.provider === 'effect-receiver' && row.value.request.runId === effect.runId && row.value.request.id === effect.id, 'effect reservation mismatch');
+        invariant(row && row.value.request.provider === 'effect-receiver' && row.value.request.id === effect.id, 'effect reservation mismatch');
+        if (row.value.request.runId !== effect.runId) this.assertHostEffectAccounting(effect, row.value);
         if (!['dispatched', 'uncertain'].includes(row.value.request.status)) continue;
         invariant(!effect.receipt, 'undispatched effect has an unexpected receipt');
         this.store.put('requests', row.value.request.id, { ...row.value, request: { ...row.value.request, status: 'reserved' } }, row.revision);
