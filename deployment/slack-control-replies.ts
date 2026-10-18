@@ -12,6 +12,8 @@ export interface SlackControlReply {
 }
 export interface SlackControlReplyOptions {
   store: OperationalStore; teamId: string; botUserId: string;
+  /** Trusted accounting identity used by the deterministic host speech receiver. */
+  accountingRunId?: string;
   getRun(id: string): Run | undefined;
   targetForRun(id: string): SlackControlTarget | undefined;
   getEffect(id: string): Effect | undefined;
@@ -102,7 +104,7 @@ export class SlackControlReplies {
     invariant(retained && identity(retained) === identity(plan), 'Slack control reply was not prepared by the host');
     const effect = this.options.getEffect(plan.id);
     if (!effect) return 'dispatch';
-    invariant(effect.runId === plan.runId && effect.kind === 'speech_send' && identity(effect.payload) === identity(plan.payload)
+    invariant(effect.runId === (this.options.accountingRunId ?? plan.runId) && effect.kind === 'speech_send' && identity(effect.payload) === identity(plan.payload)
       && identity(effect.scope) === identity(plan.target.scope), 'Slack control reply effect changed');
     if (effect.status === 'pending' || effect.status === 'authorized') return 'dispatch';
     if (effect.status === 'uncertain') return 'reconcile';

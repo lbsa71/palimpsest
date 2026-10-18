@@ -1,0 +1,35 @@
+# Coding routing, slice continuation and Slack controls — 2026-10-18
+
+Status: implemented with focused checks and independent review in progress; live acceptance is recorded in the final handoff below. User direction: delegate repository questions as well as coding work to the existing Sol 6.1/high coding agent, remove direct file/command access from Mistral, fix the exhausted execution slice and silent Slack status controls, test actual operations, deploy and push to main. This is the finite CR01–CR05 L06/L09 task in the [coordination record](../../lanes/A1-L09-integration-and-handoff.md#coordination). The broader Aeon backlog remains hibernated.
+
+## Behavior and enforcement
+
+`code` defaults to `mode: inspect, target: source`. Source preparation copies the accepted source once into `repositories/<candidate ID>` inside the retained coding workspace. A durable receipt identifies the exact copy; later requests reuse it without overwriting edits. Partial or lost preparation requires inspection rather than an automatic copy over an unknown workspace. `target: workspace` addresses retained scratch files. The host snapshot adapter is injected for deterministic tests.
+
+Both the native Codex sandbox and the outer host namespace enforce a read-only workspace for inspect turns. `mode: edit` restores the existing bounded writable workspace for requested implementation work. The current turn's mode is recorded with its prompt, argv, result and accounting; resumes can alternate modes on the exact same native UUID. Sol 6.1/high and disabled fan-out remain enforced. The coding home and temporary storage remain writable where needed for native session persistence; read-only describes the inspected workspace.
+
+Mistral's tool descriptors and physical receiver grants both reject `workspace_*`, `source_*` and `command_run`, including dotted aliases and stale checkpoint calls. Memory, agenda, speech, research and release coordination remain available. Questions needing source inspection go directly to `code`; Mistral inspects `code_status` evidence and handles the conversation. A later release-coordination step uses the source or scratch target selected by the retained authorized coding turn, including a later conversational run.
+
+The agent/session/workspace remain singleton. Explicit coding messages queue behind one active turn, with a finite queue bound; no new native agent is started. Cross-thread reuse requires exactly equal restricted audiences. Public, overlapping, subset, superset or different-principal scopes do not acquire the private session. Each explicit turn receives an accounting execution unit under its current caller's existing allocation. Old allocation starts, limits, cancellation and charges remain unchanged. Pi remains explicit; its current-turn read grants are attenuated, and only a known completed transcript can seed the next execution unit. Unknown tools or model transports hold the session for inspection.
+
+## Slices and controls
+
+A model request slice now ends before the next physical dispatch with a durable `physical-request-slice` marker. Completed observations remain recorded; no failed assistant reply is invented. The broker independently verifies actual dispatch counts and known settled receipts before accepting that marker, and seals further worker operations. The application schedules continuation only for the successful current checkpoint with no execution failure or failed-attempt marker. The original overall allowance, cancellation and time bounds remain enforced. Unknown transport, uncertain effect and permanent allowance failures remain blocked and are never reinterpreted as a safe slice yield.
+
+New authenticated Slack `status` and `cancel` controls retain an admission snapshot and one immutable reply plan. The host delivers the observed state to the exact registered thread without inference; duplicates do not send another reply. Unknown delivery reconciles by receipt rather than resending. Old control inputs without the snapshot remain unchanged and are not replayed as historical replies.
+
+Status speech and its reservation both belong to the existing root allowance. A dedicated host receiver validates the retained plan, original conversation/target/audience, exact payload, request binding and current authority. It can acknowledge a cancelled conversation without reviving its allocation. Scoped authority adoption touches only that specific pending host reply. The matched effect/request identity also remains readable by the prior accepted runtime, which can preserve the new records without dispatching unfamiliar host work.
+
+## Independent findings retained
+
+Fresh review reproduced an unsafe Pi continuation: a lost tool acknowledgement left a pending assistant call, which was imported into a new accounting run and dispatched again under another effect ID. The original causal check observed two actions where one was permitted. Only completed transcripts are now transferred, and an uncertain prior action holds the coding session. The independent regression passes after repair.
+
+Review also reproduced startup failure after a root-charged status reservation whose effect still named the cancelled conversational run. An explicit ledger binding fixed the new runtime, but the retained accepted runtime could not read the mismatch. That alternative was committed as `27031c8` and reverted as `9c4402e` before deployment. The final composition uses matching root identities and a plan-bound speech receiver; no ledger exception or grant reset is required.
+
+Existing release integration fixtures were adapted to delegate actual source edits through a finite fake Codex executor. Their evaluator, loss-of-acknowledgement and no-replay assertions remain in place. A separate probation-lineage assertion already fails at untouched base `2d89802` because a monotone elapsed-floor update changes the frozen lineage comparison. Its baseline reproduction is retained; this task does not weaken that assertion or claim autonomous control activation qualification.
+
+Private evidence root: `/home/palimpsest/migration/coding-routing-20261018/`. Fresh independent tests and retained failure reproductions live in `/home/palimpsest/migration/coding-routing-20261018-review/`; the untouched-base probation reproductions live in `/home/palimpsest/migration/coding-limb-deploy-20261018/cr05-baseline-2d89802/`. No authentication or raw private Slack transcripts belong in the checkout.
+
+## Acceptance and handoff
+
+Final source identity, commands/results, independent frozen review, live question/follow-up/status receipts, accepted deployment and main push are recorded here when those gates complete. Source checks do not substitute for live acceptance, and this bounded work does not qualify H1 or reactivate the hibernated backlog.

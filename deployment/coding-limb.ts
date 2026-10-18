@@ -1,11 +1,12 @@
 import { identity, invariant, type ArtifactRef, type Authority, type DataScope, type JsonValue, type ShellResult } from '../packages/contracts/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import type { DurableRuntime } from '../packages/runtime/index.ts';
-import type { CodingResult, CodingUsage } from '../packages/coding/index.ts';
+import type { CodingMode, CodingResult, CodingUsage } from '../packages/coding/index.ts';
 
 export interface CodingOwner { key: string; runId: string; workspace: string; scope: DataScope; authority: Authority }
 export interface CodingSession { id: string; owner: string; workspace: string; scope: DataScope; provider: 'codex' | 'pi'; nativeSessionId?: string; childRunId?: string; cumulativeUsage?: CodingUsage | null }
-export interface CodingTurn { id: string; sequence: number; sessionId: string; runId: string; authority: Authority; message: string; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'uncertain'; notified: boolean; dispatched?: boolean; result?: ArtifactRef }
+export interface CodingSource { candidateId: string; path: string; receipt: ArtifactRef }
+export interface CodingTurn { id: string; sequence: number; sessionId: string; runId: string; authority: Authority; message: string; mode?: CodingMode; target?: 'source' | 'workspace'; source?: CodingSource; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'uncertain'; notified: boolean; dispatched?: boolean; result?: ArtifactRef }
 export interface CodingLimbOptions {
   store: OperationalStore; runtime: DurableRuntime; provider: 'codex' | 'pi'; now(): number;
   assertAuthority(authority: Authority): void;
@@ -32,41 +33,49 @@ export class CodingLimb {
   }
   private owned(owner: CodingOwner): CodingSession {
     this.options.assertAuthority(owner.authority);
-    const session = this.session(); invariant(session && session.owner === owner.key && identity(session.scope) === identity(owner.scope), 'Coding session belongs to another conversation or scope'); return session;
+    const session = this.session();
+    invariant(session && identity(session.scope) === identity(owner.scope) &&
+      (session.owner === owner.key || session.scope.kind === 'restricted'), 'Coding session belongs to another conversation or scope'); return session;
   }
   private all(): CodingTurn[] { return this.options.store.list<CodingTurn>(turns).map(row => row.value).sort((a, b) => a.sequence - b.sequence); }
+  bind(owner: CodingOwner, effectId: string): CodingSession {
+    this.options.assertAuthority(owner.authority);
+    const session = this.session();
+    if (session) { this.owned(owner); invariant(session.provider === this.options.provider, 'Existing coding session uses another provider'); return session; }
+    const created: CodingSession = { id: `coding:${identity(effectId)}`, owner: owner.key, workspace: owner.workspace, scope: structuredClone(owner.scope), provider: this.options.provider };
+    this.options.store.put(sessions, 'single', created, null); return created;
+  }
   get busy(): boolean { return !!this.active; }
   workspaceLocked(workspace: string): boolean { return this.session()?.workspace === workspace && this.all().some(turn => ['queued', 'running', 'uncertain'].includes(turn.status)); }
   holds(runId: string): boolean { return this.all().some(turn => turn.runId === runId && !turn.notified); }
   preserveWaiting(runId: string, result: ShellResult): ShellResult { return result.status === 'completed' && this.holds(runId) ? { ...result, status: 'checkpointed' } : result; }
-  submit(owner: CodingOwner, effectId: string, message: string, sessionId?: string): JsonValue {
+  submit(owner: CodingOwner, effectId: string, message: string, sessionId?: string, options: { mode?: CodingMode; target?: 'source' | 'workspace'; source?: CodingSource } = {}): JsonValue {
     invariant(!this.closing, 'Coding limb is closing'); this.options.assertAuthority(owner.authority);
     invariant(typeof message === 'string' && message.trim().length > 0 && Buffer.byteLength(message) <= 32768, 'Coding message must contain 1–32768 UTF-8 bytes');
+    const mode = options.mode ?? 'inspect', target = options.target ?? 'workspace';
+    invariant(mode === 'inspect' || mode === 'edit', 'Coding mode must be inspect or edit');
+    invariant(target === 'source' || target === 'workspace', 'Coding target must be source or workspace');
     return this.options.store.transaction(() => {
-      let session = this.session();
-      if (!session) {
-        invariant(sessionId === undefined, 'Unknown coding session');
-        session = { id: `coding:${identity(effectId)}`, owner: owner.key, workspace: owner.workspace, scope: structuredClone(owner.scope), provider: this.options.provider };
-        this.options.store.put(sessions, 'single', session, null);
-      } else { this.owned(owner); invariant(session.provider === this.options.provider, 'Existing coding session uses another provider'); }
+      invariant(this.session() || sessionId === undefined, 'Unknown coding session');
+      const session = this.bind(owner, effectId);
       invariant(sessionId === undefined || sessionId === session.id, 'Follow-up must address the existing coding session');
       const old = this.options.store.get<CodingTurn>(turns, effectId)?.value;
-      if (old) { invariant(old.message === message && old.runId === owner.runId, 'Coding turn identity reused'); return json({ sessionId: session.id, turnId: old.id, status: old.status }); }
-      invariant(!this.all().some(turn => ['queued', 'running'].includes(turn.status)), 'The single coding agent is busy; inspect code_status before following up');
+      if (old) { invariant(old.message === message && old.runId === owner.runId && old.mode === mode && old.target === target && identity(old.source ?? null) === identity(options.source ?? null), 'Coding turn identity reused'); return json({ sessionId: session.id, turnId: old.id, status: old.status }); }
+      invariant(this.all().filter(turn => ['queued', 'running'].includes(turn.status)).length < 32, 'The coding turn queue is full; inspect code_status before further messages');
       invariant(!this.all().some(turn => turn.status === 'uncertain'), 'Interrupted coding outcome requires host inspection; no automatic retry or replacement agent');
-      invariant(this.all().every(turn => !turn.dispatched) || session.nativeSessionId, 'The original coding session was not established; no replacement agent will be started');
-      const turn: CodingTurn = { id: effectId, sequence: this.all().length + 1, sessionId: session.id, runId: owner.runId, authority: structuredClone(owner.authority), message, status: 'queued', notified: false };
+      invariant(this.all().every(turn => !turn.dispatched) || session.nativeSessionId || this.active, 'The original coding session was not established; no replacement agent will be started');
+      const turn: CodingTurn = { id: effectId, sequence: this.all().length + 1, sessionId: session.id, runId: owner.runId, authority: structuredClone(owner.authority), message, mode, target, ...(options.source ? { source: structuredClone(options.source) } : {}), status: 'queued', notified: false };
       this.options.store.put(turns, turn.id, turn, null);
-      return json({ sessionId: session.id, turnId: turn.id, status: turn.status, provider: session.provider, message: 'Coding is queued. Finish this thought; the result will return as an observation. Use code with this sessionId for clarification or adjustment.' });
+      return json({ sessionId: session.id, turnId: turn.id, status: turn.status, provider: session.provider, mode, target, source: options.source ?? null, message: 'Coding is queued. Finish this thought; the result will return as an observation. Use code with this sessionId for clarification or adjustment.' });
     });
   }
   status(owner: CodingOwner, offset = 0, limit = 20): JsonValue {
     const session = this.owned(owner);
     invariant(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit > 0 && limit <= 50, 'Bounded event offset/limit required');
-    const history = this.all(), turn = history.at(-1);
+    const history = this.all(), turn = history.filter(item => item.runId === owner.runId).at(-1) ?? history.at(-1);
     const result = turn?.result ? this.options.store.readJsonArtifact<CodingResult>(turn.result) : undefined;
     return json({ sessionId: session.id, nativeSessionId: session.nativeSessionId ?? null, provider: session.provider, turn: turn ?? null,
-      history: history.map(item => ({ id: item.id, status: item.status, result: item.result ?? null })),
+      history: history.map(item => ({ id: item.id, runId: item.runId, status: item.status, mode: item.mode ?? null, result: item.result ?? null })),
       result: result ? { status: result.status, summary: result.summary?.slice(0, 16384), exitCode: result.exitCode, elapsedMs: result.elapsedMs, usage: result.usage, cumulativeUsage: result.cumulativeUsage ?? null,
         events: (result.events ?? []).slice(offset, offset + limit), eventCount: (result.events ?? []).length, nextOffset: offset + limit < (result.events ?? []).length ? offset + limit : null,
         stderr: (result.stderr ?? '').slice(-8192), artifact: turn!.result } : null });
@@ -98,13 +107,14 @@ export class CodingLimb {
       if (!valid && turn.status === 'running') this.active?.controller.abort(new Error('Coding owner cancelled or authority withdrawn'));
       if (!valid && turn.status === 'queued') { const row = this.options.store.get<CodingTurn>(turns, turn.id)!; this.options.store.put(turns, turn.id, { ...turn, status: 'cancelled', notified: parent?.status === 'cancelled' }, row.revision); }
     }
-    if (!canStart || this.closing || this.active) return;
+    if (!canStart || this.closing || this.active || this.all().some(turn => turn.status === 'uncertain')) return;
     const turn = this.all().find(item => item.status === 'queued'); if (!turn) return;
     const parent = this.options.runtime.getRun(turn.runId);
     const effect = this.options.runtime.effects.get(turn.id);
     if (!parent || parent.status === 'running' || effect?.status !== 'succeeded') return;
     this.options.assertAuthority(turn.authority);
     const session = this.session()!;
+    if (this.all().some(item => item.dispatched) && !session.nativeSessionId) return;
     const row = this.options.store.get<CodingTurn>(turns, turn.id)!;
     this.options.store.put(turns, turn.id, { ...turn, status: 'running', dispatched: true }, row.revision);
     const controller = new AbortController();

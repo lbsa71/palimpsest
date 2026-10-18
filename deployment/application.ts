@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort, type ShellCheckpoint, type ShellResult } from '../packages/contracts/index.ts';
 import type { Tool } from '../packages/agent-shell/vendor/pi/ai/types.ts';
@@ -31,6 +31,11 @@ import { CodingLimb, type CodingOwner, type CodingSession, type CodingTurn } fro
 import { CodexCodingProvider, type CodingExecutor, type CodingResult } from '../packages/coding/index.ts';
 import { codexCodingShell } from './coding-shell.ts';
 import { bindSpeechTarget } from './speech-target.ts';
+import { CodingSources } from './coding-source.ts';
+import { sourceWorkspaceTools } from './source-workspace.ts';
+import { physicalRequestSliceContinuation } from '../packages/agent-shell/index.ts';
+import { SlackControlReplies, type SlackControlDiagnosis } from './slack-control-replies.ts';
+import { codingAccess } from './coding-access.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 interface Target { channel: string; threadTs?: string; transport: 'direct' | 'slack'; scope: DataScope }
@@ -44,6 +49,8 @@ export interface ApplicationOptions {
   performRequest?: Parameters<typeof createBrokerShell>[0]['performRequest'];
   brokerTiming?: Parameters<typeof createBrokerShell>[0]['brokerTiming'];
   codingExecutor?: CodingExecutor;
+  /** Trusted bounded source snapshot adapter; the mind cannot call it directly. */
+  codingSnapshot?: (workspace: string, path: string, signal?: AbortSignal) => Promise<JsonValue>;
   runWorker?: Parameters<typeof createBrokerShell>[0]['runWorker'];
   slackBotApi?: SlackApi; slackAppApi?: SlackApi;
   lease?: ProcessLease;
@@ -61,6 +68,8 @@ export class AutarkApplication {
   readonly store!: OperationalStore; readonly memory: DevelopmentalMemory; readonly resources: ResourceLedger;
   readonly delegation: DelegationCoordinator; readonly consolidation: AccountedConsolidation; readonly conversationObligations: ConversationObligations;
   readonly coding: CodingLimb;
+  readonly codingSources: CodingSources;
+  readonly slackControlReplies?: SlackControlReplies;
   readonly effects: EffectJournal; readonly runtime: DurableRuntime; readonly communications: CommunicationsCore;
   readonly goals: InitiativeRegistry; readonly drives: DriveRegistry; readonly plans: PlanRegistry; readonly obligations: ObligationRegistry;
   readonly scheduler: FairScheduler; readonly initiative: InitiativeRunner;
@@ -74,6 +83,7 @@ export class AutarkApplication {
   private active = new Map<string, Promise<Run>>();
   private readonly checkedFailureNotices = new Set<string>();
   private readonly reconciledFailureNotices = new Set<string>();
+  private readonly reconciledControlReplies = new Set<string>();
   private readonly noticeElapsedNow: () => number;
   private shutdown = new AbortController();
   private initiativeTask?: Promise<unknown>;
@@ -90,7 +100,7 @@ export class AutarkApplication {
     // Read accepted callback/accessor values once; caller aliases cannot change the
     // options used by constructor closures or later descriptor/receiver paths.
     options = Object.freeze({ config: options.config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore,
-      performRequest: options.performRequest, brokerTiming: suppliedTiming ? brokerTiming : undefined, runWorker: options.runWorker, codingExecutor: options.codingExecutor,
+      performRequest: options.performRequest, brokerTiming: suppliedTiming ? brokerTiming : undefined, runWorker: options.runWorker, codingExecutor: options.codingExecutor, codingSnapshot: options.codingSnapshot,
       slackBotApi: options.slackBotApi, slackAppApi: options.slackAppApi, lease: options.lease,
       developmentAccounting: options.developmentAccounting, documentJournal: options.documentJournal, additionalTools: options.additionalTools });
     this.options = options; this.config = validateConfiguration(options.config);
@@ -99,7 +109,7 @@ export class AutarkApplication {
     this.lease = options.lease ?? new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     try {
     this.store = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot, documentJournal: options.documentJournal });
-    invariant(!config.developmentControl || !options.additionalTools && !options.codingExecutor, 'Additional Store extensions are unqualified for matched evaluation');
+    invariant(!config.developmentControl || !options.additionalTools && !options.codingExecutor && !options.codingSnapshot, 'Additional Store extensions are unqualified for matched evaluation');
     const controlPreparation = prepareDevelopmentControl(config, this.store);
     const developmentAccounting = options.developmentAccounting?.({ store: this.store, config });
     developmentAccounting?.assertApplication(config);
@@ -203,6 +213,15 @@ export class AutarkApplication {
     const scriptReceiver = this.developmentControl.isScripted ? createScriptedControlReceiver(this.developmentControl) : undefined;
     const receiver: EffectReceiver = {
       dispatch: async (effect, signal) => {
+        if (effect.id.startsWith('host:slack-control:')) {
+          let plan: import('./slack-control-replies.ts').SlackControlReply;
+          try {
+            plan = this.controlReplyPlan(effect); options.authorityStore.assert(effect.authority); signal?.throwIfAborted();
+          } catch (error) {
+            return { outcome: 'failed', receipt: this.store.putJsonArtifact({ delivered: false, reason: error instanceof Error ? error.message : 'Host control speech unavailable' }) };
+          }
+          return createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi!, botUserId: config.slack!.botUserId, grants: [plan.target] }).dispatch({ ...effect, kind: 'speech.send' }, signal);
+        }
         try { this.developmentControl.assertEffect(effect.runId, effect.kind); } catch (error) { return { outcome: 'failed', receipt: this.store.putJsonArtifact({ error: error instanceof Error ? error.message : 'Control action denied' }) }; }
         if (scriptReceiver) return scriptReceiver.dispatch(effect, signal);
         const descriptor = this.mindTools(effect.runId, effect.id).find(tool => tool.name === effect.kind);
@@ -215,7 +234,13 @@ export class AutarkApplication {
           return { outcome: executed || applied === true || descriptor.extension && applied !== false ? 'uncertain' : 'failed', receipt: this.store.putJsonArtifact({ error: error instanceof Error ? error.message : 'Development action rejected' }) };
         }
       },
-      reconcile: effect => { this.developmentControl.assertEffect(effect.runId, effect.kind); return scriptReceiver ? scriptReceiver.reconcile(effect) : physical.reconcile(effect); },
+      reconcile: effect => {
+        if (effect.id.startsWith('host:slack-control:')) {
+          const plan = this.controlReplyPlan(effect); options.authorityStore.assert(options.authority);
+          return createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi!, botUserId: config.slack!.botUserId, grants: [plan.target] }).reconcile({ ...effect, kind: 'speech.send' });
+        }
+        this.developmentControl.assertEffect(effect.runId, effect.kind); return scriptReceiver ? scriptReceiver.reconcile(effect) : physical.reconcile(effect);
+      },
     };
     this.effects = new EffectJournal(this.store, options.authorityStore, developmentAccounting?.wrapReceiver(receiver) ?? receiver);
     const codingTimeout = Math.min(config.coding?.timeoutMs ?? 900000, config.conversationResources.maxElapsedMs);
@@ -247,7 +272,17 @@ export class AutarkApplication {
         onTransportFinished: requestId => this.resources.releaseConcurrency(requestId, { kind: 'transport-terminal', reason: 'Host provider transport completed or aborted and local settlement finished' }),
         recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
-      const result = await broker.run({ ...input, messages: codingRun ? input.messages : [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
+      let messages = codingRun ? input.messages : [frame, ...input.messages];
+      if (codingRun?.provider === 'pi' && !input.checkpoint) {
+        const session = this.coding.session()!, context = this.store.get<{ sessionId: string; scope: DataScope; checkpoint: ShellCheckpoint }>('host.pi-coding-context', session.id)?.value;
+        if (context) {
+          invariant(context.sessionId === session.id && identity(context.scope) === identity(session.scope), 'Pi coding context audience changed');
+          const retained = this.store.readJsonArtifact<{ messages: JsonValue[]; status?: string; failure?: unknown }>(context.checkpoint.artifact);
+          invariant(Array.isArray(retained.messages) && retained.status === 'completed' && !retained.failure, 'Pi coding context must be a known completed transcript');
+          messages = [...retained.messages, ...messages];
+        }
+      }
+      const result = await broker.run({ ...input, messages }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
       if (codingRun) return result.status === 'completed' ? { ...result, status: 'checkpointed' } : result;
       return this.coding.preserveWaiting(input.run.id, this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result)));
     } };
@@ -258,6 +293,15 @@ export class AutarkApplication {
       const goal = execution ? this.goals.goal(execution.key) : undefined;
       if (goal && ['waiting', 'blocked'].includes(goal.status)) this.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'External coding result is ready for inspection');
     }, now: () => this.runtime.now(), assertAuthority: authority => options.authorityStore.assert(authority), execute: (session, turn, signal) => this.executeCoding(session, turn, signal) });
+    this.codingSources = new CodingSources({ store: this.store, snapshot: options.codingSnapshot ?? (async (workspace, path, signal) => {
+      invariant(realpathSync(workspace) === workspace, 'Canonical coding workspace required');
+      const directory = join(workspace, 'repositories');
+      try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      invariant(lstatSync(directory).isDirectory() && realpathSync(directory) === directory, 'Coding repository directory must not be a link');
+      const destination = join(workspace, path); mkdirSync(destination, { mode: 0o700 });
+      return sourceWorkspaceTools({ applicationRoot: config.applicationRoot, workspace: destination, protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary,
+        maxFiles: 10000, maxBytes: 50_000_000, timeoutMs: 30000, resourceLimits: config.resourceLimits })[0]!.execute({}, signal);
+    }) });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);
@@ -278,6 +322,10 @@ export class AutarkApplication {
     if (config.slack) {
       invariant(botApi && (options.slackAppApi || options.secrets.slackAppToken), 'Configured Slack requires host credentials');
       this.slackIngress = new SlackIngress({ core: this.communications, ...config.slack });
+      this.slackControlReplies = new SlackControlReplies({ store: this.store, teamId: config.slack.teamId, botUserId: config.slack.botUserId, accountingRunId: this.rootAllocation,
+        getRun: id => this.runtime.getRun(id), getEffect: id => this.effects.get(id),
+        targetForRun: id => { const target = this.store.get<GrantRecord>('host.run-grants', id)?.value.target; return target?.transport === 'slack' && target.threadTs ? { ...target, threadTs: target.threadTs, transport: 'slack' as const } : undefined; },
+        diagnose: run => this.conversationDiagnosis(run) });
       this.slackRecovery = new SlackRecovery({ store: this.store, api: botApi, ingress: this.slackIngress, coverageStart: config.slack.coverageStart, lookbackSeconds: config.slack.lookbackSeconds });
       this.slackSocket = new SlackSocketMode({ botApi, appApi: options.slackAppApi ?? new SlackClient({ token: options.secrets.slackAppToken! }), ingress: this.slackIngress, recovery: this.slackRecovery,
         onError: kind => this.store.append({ id: randomUUID(), stream: 'host', type: 'transport-error', data: { kind, at: new Date().toISOString() } }) });
@@ -292,6 +340,7 @@ export class AutarkApplication {
       this.resources.releaseConcurrency(row.key, { kind: 'host-recovery', reason: `Exclusive host recovery under generation ${options.authority.generation} epoch ${options.authority.epoch}` });
     for (const runId of interrupted) if (!this.managedElsewhere(runId) && !this.evolution.holds(runId)) this.enqueue(runId);
     for (const row of this.store.list<Run>('runs')) if (!['completed', 'cancelled'].includes(row.value.status)) this.runtime.adopt(row.key, options.authority);
+    for (const row of this.store.list<Run>('runs')) if (row.value.status === 'waiting' && !this.managedElsewhere(row.key) && this.hasSliceContinuation(row.key)) this.enqueue(row.key);
     this.initiative.recover(); this.delegation.recover(); this.conversationObligations.confirm();
     } catch (error) { try { this.store?.close(); } finally { if (!options.lease) this.lease.close(); } throw error; }
   }
@@ -327,13 +376,22 @@ export class AutarkApplication {
     return allocations;
   }
   private occupied(): number { return this.active.size + (this.initiativeTask ? 1 : 0) + (this.coding?.busy ? 1 : 0); }
+  private coordinatedWorkspace(runId: string): { workspace: string; locked: boolean } {
+    const grant = this.grant(runId), session = this.coding.session();
+    const turns = this.store.list<CodingTurn>('host.coding-turns').map(row => row.value).sort((a, b) => b.sequence - a.sequence);
+    const visible = session && identity(session.scope) === identity(grant.scope) && (grant.scope.kind === 'restricted' || session.owner === identity({ scope: grant.scope, conversation: grant.target ?? runId }));
+    const turn = turns.find(item => item.runId === runId) ?? (visible ? turns[0] : undefined);
+    return { workspace: session && turn ? turn.source ? join(session.workspace, turn.source.path) : session.workspace : grant.workspace,
+      locked: this.coding.workspaceLocked(grant.workspace) || !!session && this.coding.workspaceLocked(session.workspace) && identity(session.scope) === identity(grant.scope) };
+  }
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);
     if (this.developmentControl.isScripted) return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: [], maxArgs: 64 }, research: { allowedHosts: [], timeoutMs: 15000, maxBytes: 262144, maxRedirects: 0 }, actions: ['development_control_emit'] };
     const child = this.store.get<{ allowedEffects: string[] }>('host.child-runs', runId)?.value;
+    const coding = this.store.get<{ turn: CodingTurn }>('host.coding-runs', runId)?.value;
     return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, ...(this.config.resourceLimits ? { resourceLimits: this.config.resourceLimits } : {}) },
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
-      actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (child || !this.coding?.workspaceLocked(grant.workspace) || ['workspace_read', 'workspace_search', 'workspace_discover', 'workspace_diff', 'research_fetch', 'speech_send'].includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
+      actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => codingAccess(name, coding ? coding.turn.mode ?? 'inspect' : undefined) && (!child || child.allowedEffects.includes(name)) && (child || !this.coding?.workspaceLocked(grant.workspace) || ['workspace_read', 'workspace_search', 'workspace_discover', 'workspace_diff', 'research_fetch', 'speech_send'].includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
   private mindTools(runId: string, effectId?: string): (ApplicationTool & { extension?: true })[] {
     this.developmentControl.assertRun(runId);
@@ -341,6 +399,7 @@ export class AutarkApplication {
     const scope = this.grant(runId).scope;
     if (this.store.get('host.child-runs', runId)) return [];
     if (this.consolidation?.claim(runId)) return this.consolidation.tools(runId);
+    const coordinated = this.coordinatedWorkspace(runId);
     const childTask = (args: JsonValue) => { invariant(args && typeof args === 'object' && !Array.isArray(args) && typeof args.id === 'string', 'Child task ID required'); const task = this.delegation.get(args.id); invariant(task?.task.parentRunId === runId, 'Child task is not owned by this parent'); return task; };
     return [...(this.developmentControl.isEvaluation ? [] : this.codingTools(runId, effectId)), ...communicationTools(() => communicationState(scope, this.grant(runId).target, this.slackRecovery)), { name: 'delegation_prepare', description: 'Allocate a fresh exclusive child workspace and return its host-approved bounded delegation grant; preparing does not start a child.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, execute: (args: JsonValue) => {
       invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 0, 'No prepare arguments');
@@ -356,7 +415,7 @@ export class AutarkApplication {
       name: 'delegation_judge', description: 'Record the parent judgment against every declared child acceptance criterion after artifact inspection; this is not independent product qualification.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, inspection: { type: 'object' }, checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, passed: { type: 'boolean' }, evidence: { type: 'object' } }, required: ['criterion', 'passed', 'evidence'], additionalProperties: false } } }, required: ['id', 'inspection', 'checks'], additionalProperties: false }, execute: (args: JsonValue) => {
         const task = childTask(args); const a = args as Record<string, JsonValue>; return this.delegation.judge(task.task.id, a.inspection as unknown as Parameters<DelegationCoordinator['judge']>[1], a.checks as unknown as Parameters<DelegationCoordinator['judge']>[2]);
       },
-    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...(this.developmentControl.kind === 'no-memory' ? [] : mindDevelopmentTools(this.memory, scope, this.options.authority.generation)), ...(this.developmentControl.kind === 'no-standing-goals' ? [] : bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId))), ...(this.coding.workspaceLocked(this.grant(runId).workspace) ? [] : this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority, ...(effectId ? { effectId } : {}) }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
+    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...(this.developmentControl.kind === 'no-memory' ? [] : mindDevelopmentTools(this.memory, scope, this.options.authority.generation)), ...(this.developmentControl.kind === 'no-standing-goals' ? [] : bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId))), ...(coordinated.locked ? [] : this.options.additionalTools?.({ runId, scope, workspace: coordinated.workspace, store: this.store, authority: this.options.authority, ...(effectId ? { effectId } : {}) }) ?? []).filter(tool => codingAccess(tool.name)).map(tool => ({ ...tool, extension: true as const }))];
   }
   private codingBudget(runId: string, maximumMs: number): { timeoutMs: number; reservationElapsedMs: number; maxTokens: number } {
     // Whole-CLI aggregate reservations differ from the mind's single HTTP request.
@@ -375,15 +434,21 @@ export class AutarkApplication {
   }
   private codingOwner(runId: string): CodingOwner {
     const grant = this.grant(runId), run = this.runtime.getRun(runId); invariant(run, 'Unknown coding owner');
-    return { key: identity({ scope: grant.scope, conversation: grant.target ?? runId }), runId, workspace: grant.workspace, scope: grant.scope, authority: run.authority };
+    const session = this.coding.session(), sameAudience = session && grant.scope.kind === 'restricted' && identity(session.scope) === identity(grant.scope);
+    return { key: identity({ scope: grant.scope, conversation: grant.target ?? runId }), runId, workspace: sameAudience ? session.workspace : grant.workspace, scope: grant.scope, authority: run.authority };
   }
   private codingTools(runId: string, effectId?: string): ApplicationTool[] {
     const object = (args: JsonValue, keys: string[]): Record<string, JsonValue> => { invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).every(key => keys.includes(key)), 'Invalid coding arguments'); return args; };
-    return [{ name: 'code', description: 'Send a finite task or follow-up to the single external coding agent. Use source_checkout first when it needs your source. Returns promptly; coding observations wake this run. Further messages reuse the same session. The coding agent cannot speak for you or release changes.',
-      inputSchema: { type: 'object', properties: { message: { type: 'string' }, sessionId: { type: 'string' } }, required: ['message'], additionalProperties: false }, execute: args => {
-        const value = object(args, ['message', 'sessionId']); invariant(effectId && typeof value.message === 'string' && (value.sessionId === undefined || typeof value.sessionId === 'string'), 'Coding message and durable effect identity required');
+    return [{ name: 'code', description: 'Ask the one external coding agent any repository/code question or implementation task. Defaults: mode=inspect (enforced read-only), target=source (host prepares accepted repository). Use mode=edit for requested changes; target=workspace for existing scratch files. Returns promptly; results wake this run. Follow-ups reuse the same native session. It cannot speak for you or release changes.',
+      inputSchema: { type: 'object', properties: { message: { type: 'string' }, sessionId: { type: 'string' }, mode: { type: 'string', enum: ['inspect', 'edit'] }, target: { type: 'string', enum: ['source', 'workspace'] } }, required: ['message'], additionalProperties: false }, execute: async (args, signal) => {
+        const value = object(args, ['message', 'sessionId', 'mode', 'target']); invariant(effectId && typeof value.message === 'string' && value.message.trim() && Buffer.byteLength(value.message) <= 32768 && (value.sessionId === undefined || typeof value.sessionId === 'string'), 'Coding message and durable effect identity required');
+        const mode = value.mode ?? 'inspect', target = value.target ?? 'source';
+        invariant(mode === 'inspect' || mode === 'edit', 'Coding mode must be inspect or edit'); invariant(target === 'source' || target === 'workspace', 'Coding target must be source or workspace');
         invariant((this.config.coding?.provider ?? 'codex') !== 'codex' || this.options.codingExecutor, 'Codex CLI is the default coding provider; configure host codexBinary and a dedicated authenticated codexHome before coding');
-        return this.coding.submit(this.codingOwner(runId), effectId, value.message, value.sessionId);
+        const owner = this.codingOwner(runId), session = this.coding.bind(owner, effectId);
+        invariant(value.sessionId === undefined || value.sessionId === session.id, 'Follow-up must address the existing coding session');
+        signal?.throwIfAborted();
+        return this.coding.submit(owner, effectId, value.message, value.sessionId, { mode, target });
       } }, { name: 'code_status', description: 'Inspect the coding session response and actual command/edit events. Events are paginated; the full result artifact retains raw stdout/stderr. Agent claims require inspection.',
       inputSchema: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, additionalProperties: false }, execute: args => { const value = object(args, ['offset', 'limit']); return this.coding.status(this.codingOwner(runId), value.offset as number | undefined, value.limit as number | undefined); } },
       { name: 'code_cancel', description: 'Stop the current coding turn while retaining its session and partial evidence. Cancellation is not an undo of edits.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, execute: args => { object(args, []); return this.coding.cancel(this.codingOwner(runId)); } }];
@@ -391,8 +456,8 @@ export class AutarkApplication {
   private async executeCoding(session: CodingSession, turn: CodingTurn, signal: AbortSignal): Promise<CodingResult> {
     const config = this.config;
     this.options.authorityStore.assert(turn.authority);
-    let child = session.childRunId ? this.runtime.getRun(session.childRunId) : undefined;
-    const value = json({ message: turn.message, role: 'external coding limb', sessionId: session.id });
+    let child: Run | undefined;
+    const value = json({ message: turn.message, mode: turn.mode ?? 'inspect', source: turn.source ?? null, role: 'external coding limb', sessionId: session.id });
     const inbound = { id: turn.id, source: 'host.coding-message', externalId: turn.id, externalRevision: '1', actorId: turn.authority.generation, authenticated: true, scope: session.scope, value };
     if (!child) {
       child = this.store.transaction(() => {
@@ -401,23 +466,43 @@ export class AutarkApplication {
         const run = this.runtime.admit(inbound, turn.authority, resources, turn.runId);
         this.store.put('host.run-grants', run.id, { scope: session.scope, workspace: session.workspace }, null);
         this.store.put('host.child-runs', run.id, { taskId: session.id, depth: 1, allowedEffects: toolDefinitions.map(tool => tool.name).filter(name => name.startsWith('workspace_') || ['command_run', 'research_fetch'].includes(name)) }, null);
-        this.coding.updateSession({ childRunId: run.id }); return run;
+        if (!session.childRunId) this.coding.updateSession({ childRunId: run.id }); return run;
       });
     } else this.runtime.steer(child.id, inbound);
+    // Source preparation shares the single coding turn's exclusive workspace and
+    // current caller allowance; it cannot race an active native edit or hold up
+    // the mind's enqueue acknowledgement.
+    if (turn.target === 'source' && !turn.source) {
+      try {
+        const source = await this.codingSources.prepare(session.workspace, this.config.artifactId, signal);
+        const queued = this.store.get<CodingTurn>('host.coding-turns', turn.id)!;
+        this.store.put('host.coding-turns', turn.id, { ...queued.value, source }, queued.revision);
+        turn = { ...turn, source };
+      } catch (error) {
+        this.runtime.cancel(child.id, turn.authority.generation, 'Source preparation stopped before coding execution');
+        throw error;
+      }
+    }
     const record = this.store.get('host.coding-runs', child.id);
     this.store.put('host.coding-runs', child.id, { turn, provider: session.provider }, record?.revision ?? null);
-    const instruction = this.store.putArtifact('You are an external coding limb working on the supplied finite task in this workspace. You are not the continuing mind and do not speak to its user. Inspect code, make the requested changes, run relevant checks, and report actual results or a concise clarification question. Do not create agents, invoke another agent CLI, release changes, or alter your instructions. Follow-up messages continue this same session.');
+    const instruction = this.store.putArtifact(`You are an external coding limb working on the supplied finite task in this workspace. You are not the continuing mind and do not speak to its user. Current mode: ${turn.mode ?? 'inspect'}. ${turn.mode === 'edit' ? 'Make the requested changes and run relevant checks.' : 'Inspect and explain code; do not change files or run arbitrary commands.'} ${turn.source ? `Accepted source is at /work/${turn.source.path}, candidate ${turn.source.candidateId}.` : ''} Report file/line references, actual command results or a concise clarification question. Do not create agents, invoke another agent CLI, release changes, or alter your instructions. Follow-up messages continue this same session.`);
     const prompt: PromptManifest = { id: `coding-limb:${instruction.sha256}`, requestDigest: '0'.repeat(64), fragments: [{ id: 'coding.limb', owner: 'application', role: 'system', order: 0, artifact: instruction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [] }] };
-    const result = await this.runtime.resume(child.id, prompt, signal);
+    let result = await this.runtime.resume(child.id, prompt, signal);
+    while (session.provider === 'pi' && result.status === 'waiting' && !signal.aborted && this.hasSliceContinuation(child.id)) result = await this.runtime.resume(child.id, prompt, signal);
     const saved = this.store.get<{ artifact: import('../packages/contracts/index.ts').ArtifactRef }>('host.coding-results', turn.id)?.value;
     if (saved) return this.store.readJsonArtifact<CodingResult>(saved.artifact);
     const execution = this.store.get<{ failure?: string; checkpoint?: ShellCheckpoint }>('execution', child.id)?.value;
     if (session.provider === 'codex') throw new Error(execution?.failure ?? `Coding invocation ended ${result.status} without a retained result`);
     const checkpoint = execution?.checkpoint ? this.store.readJsonArtifact<{ messages?: JsonValue[]; status?: string; failure?: { reason: string } }>(execution.checkpoint.artifact) : undefined;
+    const uncertain = this.effects.unresolved(child.id).length > 0 || this.store.list<{ request: PhysicalRequest }>('requests').some(row => row.value.request.runId === child.id && ['dispatched', 'uncertain'].includes(row.value.request.status));
+    if (execution?.checkpoint && checkpoint?.status === 'completed' && !uncertain) {
+      const context = this.store.get('host.pi-coding-context', session.id);
+      this.store.put('host.pi-coding-context', session.id, json({ sessionId: session.id, scope: session.scope, checkpoint: execution.checkpoint }), context?.revision ?? null);
+    }
     const events = this.runtime.observations(child.id).map(observation => json(observation));
     const messages = checkpoint?.messages ?? [];
     const last = [...messages].reverse().find(message => message && typeof message === 'object' && !Array.isArray(message) && message.role === 'assistant') as { content?: { text?: string }[] } | undefined;
-    return { provider: 'pi', sessionId: child.id, status: signal.aborted ? 'cancelled' : checkpoint?.status === 'completed' ? 'completed' : 'failed',
+    return { provider: 'pi', sessionId: session.nativeSessionId ?? child.id, mode: turn.mode ?? 'inspect', status: uncertain ? 'uncertain' : signal.aborted ? 'cancelled' : checkpoint?.status === 'completed' ? 'completed' : 'failed',
       summary: execution?.failure ?? checkpoint?.failure?.reason ?? last?.content?.map(content => content.text ?? '').join('') ?? 'No coding reply', events, stdout: JSON.stringify(messages), stderr: execution?.failure ?? '', exitCode: null, elapsedMs: 0,
       usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, costUsd: null, physicalRequests: null } };
   }
@@ -455,6 +540,83 @@ export class AutarkApplication {
       try { this.store.put('communications.slack.activity-status', 'storage', { error: 'activity_state_unavailable' }, this.store.get('communications.slack.activity-status', 'storage')?.revision ?? null); } catch {}
     }
   }
+  private hasSliceContinuation(runId: string): boolean {
+    const state = this.store.get<{ failure?: string; failedAttempt?: number; checkpoint?: ShellCheckpoint; lastResult?: ShellResult }>('execution', runId)?.value;
+    if (state?.failure || state?.failedAttempt !== undefined || state?.lastResult?.status !== 'checkpointed' || !state.checkpoint || state.lastResult.checkpoint?.artifact.sha256 !== state.checkpoint.artifact.sha256) return false;
+    try { return !!physicalRequestSliceContinuation(this.store.readJsonArtifact(state.checkpoint.artifact)); } catch { return false; }
+  }
+  private conversationDiagnosis(run: Run): SlackControlDiagnosis | undefined {
+    if (this.store.list<{ runId: string }>('execution.capacity-waits').some(row => row.value.runId === run.id)) return 'capacity-wait';
+    if (this.coding.holds(run.id)) return 'coding-running';
+    if (this.effects.unresolved(run.id).length) return 'uncertain-effect';
+    const state = this.store.get<{ failure?: string; checkpoint?: ShellCheckpoint }>('execution', run.id)?.value;
+    if (state?.failure === 'Worker deadline exceeded') return 'time-limit';
+    if (this.hasSliceContinuation(run.id)) return 'slice-limit';
+    if (state?.checkpoint) try {
+      const snapshot = this.store.readJsonArtifact<{ failure?: { stage?: string; reason?: string } }>(state.checkpoint.artifact);
+      if (snapshot.failure?.reason === 'Physical request budget exhausted') return 'slice-limit';
+      const stages: Record<string, SlackControlDiagnosis> = { model: 'model-step', tool: 'tool-step', recovery: 'recovery-step', compaction: 'compaction-step' };
+      if (snapshot.failure?.stage && Object.hasOwn(stages, snapshot.failure.stage)) return stages[snapshot.failure.stage];
+    } catch { /* Status remains useful when an old checkpoint is unavailable. */ }
+    return undefined;
+  }
+  private controlReplyPlan(effect: Effect): import('./slack-control-replies.ts').SlackControlReply {
+    const plan = this.store.get<import('./slack-control-replies.ts').SlackControlReply>('host.slack-control-replies', effect.id)?.value;
+    invariant(this.config.slack?.allowSpeech && plan && plan.id === effect.id && /^host:slack-control:[a-f0-9]{64}$/.test(effect.id)
+      && plan.id === `host:slack-control:${plan.inputId}` && effect.runId === this.rootAllocation && effect.stepId === effect.id
+      && effect.kind === 'speech_send' && effect.reservationId === effect.id && identity(effect.payload) === identity(plan.payload)
+      && identity(effect.scope) === identity(plan.target.scope), 'Host control reply has no trusted intent');
+    const target = this.store.get<GrantRecord>('host.run-grants', plan.runId)?.value.target, run = this.runtime.getRun(plan.runId);
+    invariant(run && target?.transport === 'slack' && identity(target) === identity(plan.target)
+      && scopeAllows(run.scope, target.scope), 'Host control reply audience or destination changed');
+    const request = this.resources.request(effect.id);
+    invariant(request && request.runId === this.rootAllocation && request.reservationId === effect.id && request.requestDigest === identity(plan.payload)
+      && request.provider === 'effect-receiver' && request.model === 'speech_send' && request.promptManifestId === effect.id, 'Host control reply accounting changed');
+    return plan;
+  }
+  private async notifySlackControls(): Promise<void> {
+    if (!this.slackControlReplies || !this.config.slack?.allowSpeech) return;
+    for (const plan of this.slackControlReplies.prepare()) {
+      if (this.closing) return;
+      try {
+        const action = this.slackControlReplies.nextAction(plan);
+        if (action === 'reconcile') {
+          if (this.reconciledControlReplies.has(plan.id)) continue;
+          this.reconciledControlReplies.add(plan.id);
+          const effect = await this.effects.reconcile(plan.id, this.options.authority), request = this.resources.request(plan.id);
+          if (request && ['dispatched', 'uncertain'].includes(request.status) && ['succeeded', 'failed'].includes(effect.status))
+            this.resources.settle({ ...request, status: effect.status === 'succeeded' ? 'succeeded' : 'failed' });
+          continue;
+        }
+        if (action !== 'dispatch') continue;
+        this.store.transaction(() => {
+          this.options.authorityStore.assert(this.options.authority);
+          if (!this.effects.get(plan.id)) {
+            // Deterministic host acknowledgements use the existing root allowance;
+            // even a cancelled conversation can receive its status without reviving it.
+            const request: PhysicalRequest = { id: plan.id, runId: this.rootAllocation, purpose: 'reasoning', provider: 'effect-receiver', model: 'speech_send',
+              promptManifestId: plan.id, requestDigest: identity(plan.payload), reservationId: plan.id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
+            this.resources.reserve(request);
+            this.effects.create({ id: plan.id, runId: this.rootAllocation, stepId: plan.id, kind: 'speech_send', payload: plan.payload, scope: plan.target.scope, authority: this.options.authority, status: 'pending', revision: 0 });
+            this.effects.authorize(plan.id, plan.id, this.options.authority);
+          } else {
+            this.effects.adoptUndispatched(this.rootAllocation, this.options.authority, [plan.id]);
+            if (this.effects.get(plan.id)?.status === 'pending') {
+              if (!this.resources.request(plan.id)) this.resources.reserve({ id: plan.id, runId: this.rootAllocation, purpose: 'reasoning', provider: 'effect-receiver', model: 'speech_send',
+                promptManifestId: plan.id, requestDigest: identity(plan.payload), reservationId: plan.id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } });
+              this.effects.authorize(plan.id, plan.id, this.options.authority);
+            }
+          }
+        });
+        const request = this.resources.request(plan.id)!, started = this.noticeElapsedNow();
+        const effect = await this.effects.dispatch(plan.id, this.options.authority, this.shutdown.signal, () => this.resources.dispatched({ ...request, status: 'dispatched' }));
+        this.resources.settle({ ...request, status: effect.status === 'succeeded' ? 'succeeded' : effect.status === 'failed' ? 'failed' : 'uncertain', usage: { ...request.usage, elapsedMs: Math.max(0, this.noticeElapsedNow() - started) } });
+      } catch {
+        const row = this.store.get('host.slack-control-reply-status', plan.id);
+        this.store.put('host.slack-control-reply-status', plan.id, { status: 'pending', runId: plan.runId }, row?.revision ?? null);
+      }
+    }
+  }
   /** A host interruption is speech, never a new inference attempt or a grant reset. */
   private async notifyConversationFailures(): Promise<void> {
     const ids = new Set(this.store.list<Effect>('effects').filter(row => row.key.startsWith('host:deadline:') || row.key.startsWith('host:blocked:')).map(row => row.key));
@@ -475,7 +637,9 @@ export class AutarkApplication {
         const stage = stages[name];
         // Publish a fixed stage description, never private provider diagnostics or context.
         id = `host:blocked:${identity({ runId: run.id, checkpoint: state.checkpoint.artifact.sha256, messageSequence: state.messageSequence ?? 0 })}`;
-        text = `[Host status] This turn stopped at the ${stage} step. No automatic retry has been started. Your message and recorded work are retained.`;
+        text = snapshot.failure.reason === 'Physical request budget exhausted'
+          ? '[Host status] This earlier turn reached its finite model request allowance. Its checkpoint and work are retained; no failed request has been retried.'
+          : `[Host status] This turn stopped at the ${stage} step. No automatic retry has been started. Your message and recorded work are retained.`;
       } else continue;
       const target = this.store.get<GrantRecord>('host.run-grants', run.id)?.value.target;
       if (!target || target.transport === 'slack' && !this.config.slack?.allowSpeech) continue;
@@ -587,6 +751,7 @@ export class AutarkApplication {
     const task = this.runtime.resume(runId, bootstrapRun === runId && this.bootstrapPrompt ? this.bootstrapPrompt : this.prompt, signal).then(result => {
       for (const observation of this.runtime.observations(runId)) this.ingestObservation(observation);
       if (!this.closing) this.consolidation.finish(runId);
+      if (!this.closing && !signal.aborted && result.status === 'waiting' && !this.managedElsewhere(runId) && this.hasSliceContinuation(runId)) this.enqueue(runId);
       return result;
     }).finally(() => { this.active.delete(runId); if (!this.closing) void this.tick().catch(() => undefined); });
     this.active.set(runId, task); return task;
@@ -609,6 +774,7 @@ export class AutarkApplication {
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
       this.coding.tick(this.occupied() < this.config.maxConcurrentRuns); this.coding.wake();
       this.activity(() => this.slackActivity?.tick());
+      await this.notifySlackControls();
       await this.notifyConversationFailures();
       // Offline recovery retains intake and known local reconciliation. Missing credentials
       // must not consume scheduler slices or physical reservations on repeated polling.

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PhysicalRequest, ShellInput } from '../packages/contracts/index.ts';
+import type { JsonValue, PhysicalRequest, ShellInput } from '../packages/contracts/index.ts';
 import type { SlackApi } from '../packages/communications/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { AutarkApplication, type ApplicationOptions } from './application.ts';
@@ -100,16 +100,25 @@ test('ordinary checkpoint waiting, cancellation, steering, and shutdown do not p
   }
 });
 
-test('a fresh attempt clears stale deadline metadata even when it checkpoints normally', async () => {
+test('a fresh attempt clears stale deadline metadata when it saves a new checkpoint', async () => {
   let attempts = 0;
-  const f = fixture(async () => { if (++attempts === 1) throw Error('Worker deadline exceeded'); return { status: attempts === 2 ? 'checkpointed' : 'completed', observations: [] }; });
+  const f = fixture(async (options): Promise<JsonValue> => {
+    if (++attempts === 1) throw Error('Worker deadline exceeded');
+    if (attempts !== 2) return { status: 'completed', observations: [] };
+    const start = options.initial as unknown as { input: ShellInput };
+    const checkpoint = await options.handle('persistCheckpoint', [start.input.run.id, start.input.run.revision, 'fixture-shell', {
+      schema: 'fixture-shell', status: 'blocked', messages: [], observationIds: [], failure: { stage: 'model', reason: 'Explicit fixture checkpoint' },
+    }], new AbortController().signal);
+    return { status: 'blocked', checkpoint, observations: [] };
+  });
   try {
     const run = await f.admit(); await f.app.runtime.resume(run.id, f.app.prompt);
     assert.equal(f.app.store.get<{ failure?: string }>('execution', run.id)!.value.failure, 'Worker deadline exceeded');
-    await f.app.runtime.resume(run.id, f.app.prompt); await f.app.tick();
+    await f.app.runtime.resume(run.id, f.app.prompt);
     assert.equal(f.app.store.get<{ failure?: string; failedAttempt?: number }>('execution', run.id)!.value.failure, undefined);
     assert.equal(f.app.store.get<{ failedAttempt?: number }>('execution', run.id)!.value.failedAttempt, undefined);
     await f.app.runtime.resume(run.id, f.app.prompt);
+    await f.app.tick();
     assert.equal(f.app.runtime.getRun(run.id)!.status, 'completed');
     assert.equal(f.calls.filter(call => call.method === 'chat.postMessage').length, 0);
   } finally { await f.close(); }

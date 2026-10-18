@@ -66,7 +66,6 @@ test('coding acknowledgement is durable before dispatch; repeated identity canno
     assert.equal(duplicate.sessionId, session.id);
     assert.equal(f.store.list('host.coding-sessions').length, 1);
     assert.equal(f.store.list('host.coding-turns').length, 1);
-    assert.throws(() => f.limb.submit(f.owner, 'tool:another', 'Another task'), /busy/);
     f.limb.tick(false); assert.equal(calls, 0);
     f.limb.tick(); await settled(f.limb);
     assert.equal(calls, 1); assert.equal(current(f).status, 'completed');
@@ -161,7 +160,7 @@ test('queued cancellation never launches a provider and active cancellation reac
   });
   try {
     await active.enqueue(); active.limb.tick(); await started;
-    assert.throws(() => active.limb.submit(active.owner, 'parallel', 'A second agent'), /busy/);
+    active.limb.tick(); assert.equal(active.limb.busy, true, 'an active turn retains the one execution slot');
     active.limb.cancel(active.owner); await settled(active.limb);
     assert.equal(current(active).status, 'cancelled'); assert.equal(active.limb.session()?.nativeSessionId, nativeSessionId);
   } finally { await active.close(); }

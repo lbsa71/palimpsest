@@ -60,7 +60,7 @@ test('exclusive application recovery releases old execution slots while preservi
   } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 function tool(id: number, name: string, args: unknown) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null,
-  tool_calls: [{ id: String(id).padStart(9, '0'), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
+  tool_calls: [{ id: String(id).padStart(9, '0'), type: 'function', function: { name, arguments: JSON.stringify(name === 'code' ? { mode: 'edit', target: 'workspace', ...args as object } : args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
 interface Request { messages: Array<{ role: string; content: string }>; tools?: Array<{ function: { name: string } }> }
 function context(request: Request): { target?: { channel?: string } } {
   for (const message of request.messages) if (message.role === 'user') { try { const parsed = JSON.parse(message.content); if (parsed.hostContext) return parsed.hostContext; } catch {} }
@@ -125,7 +125,7 @@ test('ordinary mind delegates to default Codex, remains responsive, and follows 
     assert.ok(invocations[1]!.args.includes('resume')); assert.ok(invocations[1]!.args.includes(nativeSessionId));
     assert.equal(invocations[1]!.stdin, 'Cover the zero edge case.'); assert.equal(invocations[0]!.cwd, invocations[1]!.cwd);
     assert.equal(readFileSync(join(invocations[1]!.cwd, 'fixture.js'), 'utf8'), 'console.log(2);\n');
-    assert.equal(app.store.list('host.coding-sessions').length, 1); assert.equal(app.store.list('host.coding-runs').length, 1);
+    assert.equal(app.store.list('host.coding-sessions').length, 1); assert.equal(app.store.list('host.coding-runs').length, 2, 'one native session has distinct turn accounting units');
     const turns = app.store.list<CodingTurn>('host.coding-turns'); assert.equal(turns.length, 2);
     assert.ok(turns.every(turn => turn.value.status === 'completed' && turn.value.notified));
     // Shell-generated durable call IDs are namespaced; inspect semantic receipts.
@@ -166,7 +166,7 @@ test('explicit Pi coding uses the existing broker and retains its transcript on 
     await until(app, () => app.runtime.getRun(run.id)?.status === 'completed', 'Pi follow-up completion');
     assert.equal(cliCalls, 0); assert.equal(codingCalls, 4); assert.equal(mindCalls, 7);
     const session = app.coding.session()!; assert.equal(session.provider, 'pi'); assert.equal(session.nativeSessionId, session.childRunId);
-    assert.equal(app.store.list('host.coding-runs').length, 1);
+    assert.equal(app.store.list('host.coding-runs').length, 2);
     assert.equal(readFileSync(join(session.workspace, 'pi-fixture.js'), 'utf8'), 'console.log(42);\n');
     const childObservations: Observation[] = app.runtime.observations(session.childRunId!);
     assert.equal(childObservations.length, 2); assert.match(JSON.stringify(childObservations), /42/);
@@ -188,9 +188,9 @@ test('a later message in the same conversation reads the retained workspace and 
       mindCalls++; const request = JSON.parse(payload) as Request;
       if (mindCalls === 1) return tool(201, 'code', { message: 'Write the initial fixture.' });
       if (mindCalls === 2 || mindCalls === 3 || mindCalls === 6) return response('The current coding request has been observed.');
-      if (mindCalls === 4) return tool(204, 'workspace_read', { path: 'fixture.js' });
+      if (mindCalls === 4) return tool(204, 'code_status', {});
       if (mindCalls === 5) {
-        assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('console.log(1)')), 'new parent must observe the original coding workspace');
+        assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('Implemented it')), 'new parent must inspect the retained coding evidence');
         return tool(205, 'code', { message: 'Adjust the existing fixture.', sessionId: app.coding.session()!.id });
       }
       if (mindCalls === 7) return tool(207, 'code_status', {});
@@ -219,7 +219,7 @@ test('a later message in the same conversation reads the retained workspace and 
     const lastResult = app.store.readJsonArtifact<CodingResult>(lastTurn.result!);
     assert.equal(lastResult.usage.inputTokens, 30902); assert.equal(lastResult.usage.outputTokens, 404); assert.equal(lastResult.usage.cachedInputTokens, 500);
     assert.equal(lastResult.cumulativeUsage?.inputTokens, 89241); assert.deepEqual(app.coding.session()?.cumulativeUsage, lastResult.cumulativeUsage);
-    const read = app.runtime.observations(second.id).find(item => JSON.stringify(item.value).includes('console.log(1)'));
+    const read = app.runtime.observations(second.id).find(item => JSON.stringify(item.value).includes('Implemented it'));
     assert.equal(read?.kind, 'result');
     assert.equal(app.runtime.getRun(first.id)?.status, 'completed');
   } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }

@@ -151,7 +151,7 @@ test('default coding timeout admits a bounded conversation after its parent has 
       mindCalls++;
       const call = mindCalls === 1;
       return { status: 200, body: JSON.stringify({ model: config.model.id, choices: [{ finish_reason: call ? 'tool_calls' : 'stop', message: { role: 'assistant', content: call ? null : 'Observed the coding result.',
-        ...(call ? { tool_calls: [{ id: '000000001', type: 'function', function: { name: 'code', arguments: JSON.stringify({ message: 'Run one bounded fixture task.' }) } }] } : {}) } }], usage: { prompt_tokens: 20, completion_tokens: 10 } }) };
+        ...(call ? { tool_calls: [{ id: '000000001', type: 'function', function: { name: 'code', arguments: JSON.stringify({ message: 'Run one bounded fixture task.', target: 'workspace' }) } }] } : {}) } }], usage: { prompt_tokens: 20, completion_tokens: 10 } }) };
     } });
   try {
     assert.equal(config.coding, undefined);

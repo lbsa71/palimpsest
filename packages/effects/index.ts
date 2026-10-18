@@ -36,11 +36,11 @@ export class EffectJournal {
   }
   authorize(id: string, reservationId: string, authority: Authority): Effect { this.fence.assert(authority); return this.transition(id,{kind:'authorize',reservationId},authority); }
   /** Explicit takeover only reauthorizes intents that never crossed the durable dispatch boundary. */
-  adoptUndispatched(runId: string, currentAuthority: Authority): void {
+  adoptUndispatched(runId: string, currentAuthority: Authority, effectIds?: readonly string[]): void {
     this.fence.assert(currentAuthority);
     this.store.transaction(() => {
       for (const row of this.store.list<Effect>('effects')) {
-        if (row.value.runId !== runId || !['pending', 'authorized'].includes(row.value.status)) continue;
+        if (row.value.runId !== runId || effectIds && !effectIds.includes(row.key) || !['pending', 'authorized'].includes(row.value.status)) continue;
         invariant(!row.value.receipt, 'undispatched effect has an unexpected receipt');
         const next = { ...row.value, authority: currentAuthority, revision: row.value.revision + 1 };
         validateEffect(next); this.store.put('effects', row.key, next, row.revision); this.event(next, 'reauthorized-undispatched');
