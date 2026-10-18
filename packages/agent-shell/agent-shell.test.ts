@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { identity, validateCapturedPrompt, validatePhysicalRequest } from '../contracts/index.ts';
 import type { JsonValue, Observation, PhysicalRequest, PromptFragment, PromptManifest, ShellBridge, ShellCheckpoint, ShellInput, ToolCall } from '../contracts/index.ts';
-import { SHELL_REVISION } from './index.ts';
+import { physicalRequestSliceContinuation, SHELL_REVISION } from './index.ts';
 import { createMistralTransport, digest, mistralModel } from './mistral.ts';
 import { normalizeContext } from './vendor/pi/ai/index.ts';
 
@@ -63,7 +63,7 @@ test('physical 429 retry receives its own reservation; uncertain network failure
   assert.equal(error.stopReason, 'error'); assert.equal(uncertain.attempts(), 1); assert.ok(!error.errorMessage!.includes('secret'));
 });
 
-test('reservation and dispatch-fence failure prevents fetch; physical request limit blocks continuation', async () => {
+test('reservation and dispatch-fence failure prevents fetch; physical slice limit checkpoints continuation', async () => {
   let dispatched = 0;
   for (const phase of ['reserve', 'dispatch']) {
     const transport = createMistralTransport({ apiKey: () => 'key', maxRequests: 1, reserve: async () => { if (phase === 'reserve') throw Error('denied'); }, dispatched: async () => { if (phase === 'dispatch') throw Error('denied'); }, settle: async () => {}, fetch: async () => { dispatched++; return response('wrong'); } });
@@ -71,7 +71,79 @@ test('reservation and dispatch-fence failure prevents fetch; physical request li
   }
   assert.equal(dispatched, 0);
   const f = fixture(); const shell = createTestShell({ resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: 1, fetch: async () => response(null, [call()]) });
-  assert.equal((await shell.run(input(), f.bridge)).status, 'blocked'); assert.equal(f.requests.size, 1);
+  assert.equal((await shell.run(input(), f.bridge)).status, 'checkpointed'); assert.equal(f.requests.size, 1);
+});
+
+for (const provider of ['mistral', 'openai'] as const) test(`${provider} slice resumes the next request without repeating completed tools or inventing an assistant failure`, async () => {
+  const f = fixture(); const limit = provider === 'mistral' ? 12 : 2; let calls = 0, sequence = 0;
+  const shell = createTestShell({ provider, model: 'fixture-v1', resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: limit,
+    environment: { wallNow: () => 0, monotonicNow: () => 0, newId: () => `slice-${++sequence}`, scheduleTimeout: () => () => {} },
+    fetch: async (_url, init) => {
+      calls++; const done = calls > limit;
+      if (done) {
+        const payload = JSON.parse(String(init?.body));
+        assert.match(JSON.stringify(payload), /observed/);
+        assert.doesNotMatch(JSON.stringify(payload), /Physical request budget exhausted/);
+      }
+      return provider === 'mistral' ? response(done ? 'finished' : null, done ? [] : [call(`change-${calls}`, `call${calls}`)]) : Response.json({
+        id: `response-${calls}`, model: 'fixture-v1', status: 'completed', usage: { input_tokens: 12, output_tokens: 3 },
+        output: done ? [{ type: 'message', id: `msg-${calls}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'finished', annotations: [] }] }]
+          : [{ type: 'function_call', id: `fc-${calls}`, call_id: `call${calls}`, name: 'edit', arguments: JSON.stringify({ value: `change-${calls}` }), status: 'completed' }],
+      });
+    } });
+  const first = await shell.run(input(), f.bridge);
+  assert.equal(first.status, 'checkpointed'); assert.equal(calls, limit); assert.equal(f.tools.length, limit); assert.equal(f.requests.size, limit);
+  const snapshot = await f.bridge.readCheckpoint(first.checkpoint!) as unknown as { messages: { role: string; stopReason?: string }[]; failure?: unknown };
+  assert.deepEqual(physicalRequestSliceContinuation(snapshot as unknown as JsonValue), { kind: 'physical-request-slice', physicalRequests: limit, maxRequests: limit, nextPurpose: 'reasoning' });
+  assert.equal(snapshot.failure, undefined); assert.equal(snapshot.messages.some(m => m.stopReason === 'error'), false);
+  assert.equal(snapshot.messages.filter(m => m.role === 'toolResult').length, limit);
+  const retained = structuredClone([...f.requests.values()]);
+  const resumed = await shell.run({ ...input(), messages: [], checkpoint: first.checkpoint }, f.bridge);
+  assert.equal(resumed.status, 'completed'); assert.equal(calls, limit + 1); assert.equal(f.tools.length, limit);
+  assert.deepEqual([...f.requests.values()].slice(0, limit), retained);
+  assert.equal(resumed.checkpoint!.observationIds.length, limit);
+  assert.equal(physicalRequestSliceContinuation(await f.bridge.readCheckpoint(resumed.checkpoint!)), undefined);
+});
+
+test('slice boundaries before compaction and after a successful summary preserve observations without rerunning the summary', async () => {
+  const f = fixture(); let calls = 0, sequence = 0;
+  const shell = createTestShell({ resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: 1,
+    environment: { wallNow: () => 0, monotonicNow: () => 0, newId: () => `compact-slice-${++sequence}`, scheduleTimeout: () => () => {} },
+    compaction: { thresholdMessages: 4, retainMessages: 1, instruction: fragment('summary', 'Summarize observed task state and uncertainties.', 1) },
+    fetch: async (_url, init) => {
+      const payload = JSON.parse(String(init?.body)); calls++;
+      if (calls === 1) return response(null, [call()]);
+      if (calls === 2) { assert.match(payload.messages[0].content, /Summarize/); return response('The earlier requirements remain applicable.'); }
+      assert.doesNotMatch(payload.messages[0].content, /Summarize/); assert.match(JSON.stringify(payload), /earlier requirements/); assert.match(JSON.stringify(payload), /observed/);
+      return response('finished');
+    } });
+  const first = await shell.run({ ...input(), messages: [0, 1, 2].map(i => ({ role: 'user', content: `requirement-${i}`, timestamp: i })) }, f.bridge);
+  assert.equal(first.status, 'checkpointed'); assert.equal(calls, 1);
+  assert.equal(physicalRequestSliceContinuation(await f.bridge.readCheckpoint(first.checkpoint!))?.nextPurpose, 'compaction');
+  const second = await shell.run({ ...input(), messages: [], checkpoint: first.checkpoint }, f.bridge);
+  assert.equal(second.status, 'checkpointed'); assert.equal(calls, 2);
+  const snapshot = await f.bridge.readCheckpoint(second.checkpoint!) as unknown as { compactions: unknown[]; rejectedCompactions?: unknown[]; messages: { stopReason?: string }[] };
+  assert.equal(physicalRequestSliceContinuation(snapshot as unknown as JsonValue)?.nextPurpose, 'reasoning');
+  assert.equal(snapshot.compactions.length, 1); assert.equal(snapshot.rejectedCompactions, undefined); assert.equal(snapshot.messages.some(m => m.stopReason === 'error'), false);
+  assert.equal((await shell.run({ ...input(), messages: [], checkpoint: second.checkpoint }, f.bridge)).status, 'completed');
+  assert.equal(calls, 3); assert.equal(f.tools.length, 1); assert.equal(f.requests.size, 3);
+});
+
+for (const failure of ['overall-budget', 'unknown-transport', 'retry-ceiling', 'unknown-compaction', 'cancelled-boundary'] as const) test(`${failure} never becomes an automatically resumable slice`, async () => {
+  const f = fixture(); const controller = new AbortController(); let calls = 0;
+  if (failure === 'overall-budget') f.bridge.reserve = async () => { throw Error('Physical request budget exhausted'); };
+  if (failure === 'cancelled-boundary') f.setReceiver(async request => {
+    controller.abort();
+    return { id: `obs:${request.id}`, runId: request.runId, stepId: request.stepId, sourceId: request.id, kind: 'result', value: 'completed before cancellation', provenance: { sourceIds: [request.id], actorId: 'fixture', recordedAt: '1970-01-01T00:00:00.000Z', derivation: 'observed' } };
+  });
+  const shell = createTestShell({ resolveFragment, tools: [tool], apiKey: () => 'key', maxRequests: 1, maxRetries: 1,
+    ...(failure === 'unknown-compaction' ? { compaction: { thresholdMessages: 4, retainMessages: 1, instruction: fragment('summary', 'Summarize observed task state and uncertainties.', 1) } } : {}),
+    fetch: async () => { calls++; if (failure === 'unknown-transport' || failure === 'unknown-compaction') throw Error('Connection lost after dispatch'); return failure === 'retry-ceiling' ? new Response('', { status: 429 }) : response(null, [call()]); } });
+  const first = await shell.run(failure === 'unknown-compaction' ? { ...input(), messages: Array.from({ length: 5 }, (_, i) => ({ role: 'user', content: `fact-${i}`, timestamp: i })) } : input(), f.bridge, controller.signal);
+  assert.equal(first.status, failure === 'cancelled-boundary' ? 'cancelled' : 'blocked');
+  assert.equal(calls, failure === 'overall-budget' ? 0 : 1);
+  assert.equal(physicalRequestSliceContinuation(await f.bridge.readCheckpoint(first.checkpoint!)), undefined);
+  if (failure === 'unknown-transport' || failure === 'unknown-compaction') assert.equal([...f.requests.values()][0].status, 'uncertain');
 });
 
 test('cancel propagates to fetch and accounts ambiguous dispatched outcome', async () => {

@@ -15,6 +15,29 @@ export { createOpenAITransport, openaiModel, openaiPayload } from './openai.ts';
 export type ShellProvider = 'mistral' | 'openai';
 
 export const SHELL_REVISION = 'pi-89e5c2c/aeon-bridge-v1';
+export interface PhysicalRequestSliceContinuation {
+  kind: 'physical-request-slice';
+  physicalRequests: number;
+  maxRequests: number;
+  nextPurpose: Attempt['purpose'];
+}
+/** Recognizes a durable scheduling boundary, not permission to renew an allowance. */
+export function physicalRequestSliceContinuation(content: JsonValue): PhysicalRequestSliceContinuation | undefined {
+  if (!content || typeof content !== 'object' || Array.isArray(content) || content.schema !== SHELL_REVISION || content.status !== 'checkpointed' || content.failure !== undefined) return undefined;
+  const value = content.continuation;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== 'kind,maxRequests,nextPurpose,physicalRequests'
+    || value.kind !== 'physical-request-slice' || !Number.isSafeInteger(value.maxRequests) || Number(value.maxRequests) < 1
+    || value.physicalRequests !== value.maxRequests || !['reasoning', 'compaction'].includes(String(value.nextPurpose))) return undefined;
+  return { kind: 'physical-request-slice', physicalRequests: Number(value.physicalRequests), maxRequests: Number(value.maxRequests), nextPurpose: value.nextPurpose as Attempt['purpose'] };
+}
+class PhysicalRequestSliceExhausted extends Error {
+  readonly continuation: PhysicalRequestSliceContinuation;
+  constructor(physicalRequests: number, maxRequests: number, nextPurpose: Attempt['purpose']) {
+    super('Physical request slice completed before the next dispatch');
+    this.continuation = { kind: 'physical-request-slice', physicalRequests, maxRequests, nextPurpose };
+  }
+}
 export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 'dispatched' | 'settle'> {
   provider?: ShellProvider;
   resolveFragment(fragment: PromptFragment): Promise<string>;
@@ -28,7 +51,7 @@ export interface ShellOptions extends Omit<MistralTransportOptions, 'reserve' | 
   projectToolResult?: (message: ToolResultMessage) => ToolResultMessage;
   compaction?: { thresholdMessages: number; thresholdBytes?: number; retainMessages: number; instruction: PromptFragment };
 }
-interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled'; failure?: { stage: string; reason: string }; compactions: { sourceDigest: string; summary: AssistantMessage }[]; rejectedCompactions?: { sourceDigest: string; summary: AssistantMessage }[] }
+interface Snapshot { provider?: ShellProvider; schema: typeof SHELL_REVISION; messages: Message[]; observationIds: string[]; status: 'running' | 'completed' | 'blocked' | 'cancelled' | 'checkpointed'; failure?: { stage: string; reason: string }; continuation?: PhysicalRequestSliceContinuation; compactions: { sourceDigest: string; summary: AssistantMessage }[]; rejectedCompactions?: { sourceDigest: string; summary: AssistantMessage }[] }
 function json(value: unknown): JsonValue { return asJson(value) as JsonValue; }
 function message(value: JsonValue): Message {
   invariant(typeof value === 'object' && value !== null && !Array.isArray(value), 'Invalid shell message');
@@ -73,6 +96,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
       let halted = false;
       let status: Snapshot['status'] = 'running';
       let failure: Snapshot['failure'];
+      let continuation: PhysicalRequestSliceContinuation | undefined;
       let stage = 'recovery';
       let compactions: Snapshot['compactions'] = [];
       let rejectedCompactions: NonNullable<Snapshot['rejectedCompactions']> = [];
@@ -112,7 +136,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         });
       }
       async function save(): Promise<void> {
-        const content = json({ schema: SHELL_REVISION, provider, messages: transcript, observationIds, status, compactions, ...(rejectedCompactions.length ? { rejectedCompactions } : {}), ...(failure ? { failure } : {}) });
+        const content = json({ schema: SHELL_REVISION, provider, messages: transcript, observationIds, status, compactions, ...(rejectedCompactions.length ? { rejectedCompactions } : {}), ...(failure ? { failure } : {}), ...(continuation ? { continuation } : {}) });
         checkpoint = await bridge.persistCheckpoint(input.run.id, input.run.revision, SHELL_REVISION, content);
         validateCheckpoint(checkpoint, input.run);
         invariant(checkpoint.shell === SHELL_REVISION && checkpoint.artifact.sha256 === identity(content), 'Checkpoint receiver returned another artifact');
@@ -149,6 +173,12 @@ export function createAgentShell(options: ShellOptions): ShellPort {
           throwShellFailures(failures);
         },
       });
+      function requireRequestSlice(nextPurpose: Attempt['purpose']): void {
+        signal?.throwIfAborted();
+        // This runs outside the transport/Pi assistant stream: no request was
+        // reserved and no failed assistant reply is invented at a slice boundary.
+        if (transport.attempts() >= options.maxRequests) throw new PhysicalRequestSliceExhausted(transport.attempts(), options.maxRequests, nextPurpose);
+      }
       async function execute(call: { id: string; name: string; arguments: unknown }, assistantIndex: number): Promise<Observation> {
         invariant(!halted, 'Shell halted pending reconciliation');
         signal?.throwIfAborted();
@@ -195,7 +225,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         }
         if (status === 'completed' && input.messages.length === 0) return { status: 'completed', checkpoint: input.checkpoint, observations };
         const last = transcript.at(-1);
-        if (input.checkpoint && input.messages.length === 0 && last?.role === 'assistant' && last.stopReason === 'stop') {
+        if (status !== 'checkpointed' && input.checkpoint && input.messages.length === 0 && last?.role === 'assistant' && last.stopReason === 'stop') {
           status = 'completed'; await save(); return { status, checkpoint, observations };
         }
         status = 'running';
@@ -231,6 +261,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
               // Compact only when user-history reduction actually removes entries.
               const retainedNative = provider === 'openai' ? prefix.filter(item => item.role === 'assistant' || item.role === 'toolResult') : [];
               if (prefix.length - retainedNative.length > (provider === 'openai' ? 1 : 0)) {
+                requireRequestSlice('compaction');
                 stage = 'compaction';
                 const fragment = options.compaction.instruction; const instruction = await resolve(fragment);
                 currentFragments = [...fragments, { ...fragment, order: Math.max(-1, ...fragments.map(item => item.order)) + 1 }];
@@ -247,6 +278,7 @@ export function createAgentShell(options: ShellOptions): ShellPort {
                 stage = 'model';
               }
             }
+            requireRequestSlice('reasoning');
             return { context: { messages: [system(), ...continuationMessages()], tools: wrapped } };
           },
         }, emit, signal, transport.stream);
@@ -254,9 +286,13 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         status = halted ? status : final?.role === 'assistant' && final.stopReason === 'aborted' ? 'cancelled' : final?.role === 'assistant' && (final.stopReason === 'error' || final.stopReason === 'length') ? 'blocked' : 'completed';
         if (!halted && final?.role === 'assistant' && status !== 'completed') failure = { stage: 'model', reason: final.errorMessage ?? 'Model output reached its limit; truncated calls were not executed.' };
       } catch (error) {
-        status = signal?.aborted ? 'cancelled' : 'blocked';
-        const safeReasons = ['Compaction failed; original context retained', 'Pending tool is unavailable in successor', 'Truncated or incomplete tools cannot replay', 'Assistant lacks durable step identity', 'Tool observation does not match dispatched call'];
-        failure ??= { stage, reason: error instanceof Error && safeReasons.includes(error.message) ? error.message : signal?.aborted ? 'Shell cancelled; inspect durable dispatched records.' : 'Shell boundary failed; inspect durable request, checkpoint and effect records.' };
+        if (error instanceof PhysicalRequestSliceExhausted && !signal?.aborted && !halted) {
+          status = 'checkpointed'; continuation = error.continuation;
+        } else {
+          status = signal?.aborted ? 'cancelled' : 'blocked';
+          const safeReasons = ['Compaction failed; original context retained', 'Pending tool is unavailable in successor', 'Truncated or incomplete tools cannot replay', 'Assistant lacks durable step identity', 'Tool observation does not match dispatched call'];
+          failure ??= { stage, reason: error instanceof Error && safeReasons.includes(error.message) ? error.message : signal?.aborted ? 'Shell cancelled; inspect durable dispatched records.' : 'Shell boundary failed; inspect durable request, checkpoint and effect records.' };
+        }
       }
       await save();
       return { status: status === 'running' ? 'checkpointed' : status, checkpoint, observations };

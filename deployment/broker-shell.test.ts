@@ -13,7 +13,7 @@ import { DurableRuntime } from '../packages/runtime/execution/index.ts';
 import type { PromptManifest, ShellBridge, ShellInput } from '../packages/contracts/index.ts';
 import { createBrokerShell, type TransportReceipt } from './broker-shell.ts';
 
-for (const compact of [false, true]) test(`real isolated Pi worker uses durable host tools and trusted model receipts (compaction: ${compact})`, async () => {
+for (const [compact, slice] of [[false, false], [true, false], [false, true]] as const) test(`real isolated Pi worker uses durable host tools and trusted model receipts (compaction: ${compact}, slice: ${slice})`, async () => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-broker-'));
   const state = join(root, 'state'); const workspace = join(root, 'work');
   mkdirSync(state); mkdirSync(workspace); writeFileSync(join(workspace, 'observed.txt'), 'retained actual file');
@@ -31,7 +31,7 @@ for (const compact of [false, true]) test(`real isolated Pi worker uses durable 
   const applicationRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const shell = createBrokerShell({ applicationRoot, entrypoint: 'deployment/shell-worker.ts', workspace: () => workspace,
     protectedPaths: [state], nodeBinary: process.execPath, timeoutMs: 10000, maxPayloadBytes: 1024 * 1024,
-    pricesPerMillion: { input: 1, output: 2 }, worker: { model: 'mistral-fixture-v1', maxRequests: 4, timeoutMs: 5000,
+    pricesPerMillion: { input: 1, output: 2 }, worker: { model: 'mistral-fixture-v1', maxRequests: slice ? 1 : 4, timeoutMs: 5000,
       maxOutputTokens: 512, ...(compact ? { compaction: { thresholdMessages: 5, retainMessages: 1, instruction: summaryFragment } } : {}), tools: [{ name: 'inspect', description: 'Read the assigned fixture', parameters: { type: 'object', properties: {} } }] },
     retainToolInstructions: source => store.putArtifact(source),
     async resolveFragment(fragment) { return Buffer.from(store.readArtifact(fragment.artifact)).toString(); },
@@ -59,7 +59,11 @@ for (const compact of [false, true]) test(`real isolated Pi worker uses durable 
       authenticated: true, scope: { kind: 'public' }, value: 'Inspect the fixture.' }, authority,
     { maxRequests: 10, maxTokens: 200_000, maxCostUsd: 3, maxElapsedMs: 60_000, maxConcurrency: 3 });
     if (compact) for (let index = 0; index < 5; index++) runtime.steer(run.id, { id: `steer-${index}`, source: 'direct', externalId: `steer-${index}`, externalRevision: '1', actorId: 'tester', authenticated: true, scope: { kind: 'public' }, value: `Retained detail ${index}` });
-    const result = await runtime.resume(run.id, prompt);
+    let result = await runtime.resume(run.id, prompt);
+    if (slice) {
+      assert.equal(result.status, 'waiting'); assert.equal(calls, 1); assert.equal(inspections, 1);
+      result = await runtime.resume(run.id, prompt);
+    }
     assert.equal(result.status, 'completed', JSON.stringify(store.get('execution', run.id)));
     assert.equal(inspections, 1); assert.equal(calls, 2);
     assert.equal(runtime.observations(run.id).length, 1);

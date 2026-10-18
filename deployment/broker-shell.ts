@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { identity, invariant, scopeAllows, validateCapturedPrompt, validatePhysicalRequest, type JsonValue, type PhysicalRequest,
   type ArtifactRef, type PromptFragment, type PromptManifest, type ShellInput, type ShellPort, type ShellResult } from '../packages/contracts/index.ts';
 import { completedOpenAIOutput, openaiOutput } from '../packages/agent-shell/openai.ts';
-import type { ShellOptions } from '../packages/agent-shell/index.ts';
+import { physicalRequestSliceContinuation, type ShellOptions } from '../packages/agent-shell/index.ts';
 import { runWorker } from '../packages/supervisor/worker-process.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
@@ -109,6 +109,14 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
       type RequestRecord = { request: PhysicalRequest; payload: string; fetched: boolean; receipt?: TransportReceipt; settled: boolean };
       const records = new Map<string, RequestRecord>();
       let physicalRequests = 0;
+      let continuationSealed = false;
+      function validateSliceBoundary(content: JsonValue): void {
+        const continuation = physicalRequestSliceContinuation(content);
+        invariant(continuation && continuation.maxRequests === worker.maxRequests && continuation.physicalRequests === physicalRequests, 'Worker fabricated a physical request slice boundary');
+        const requests = [...records.values()];
+        invariant(requests.length === physicalRequests && requests.every(record => record.fetched && record.settled && (record.receipt?.status === 'succeeded' || record.receipt?.status === 'failed' && record.receipt.httpStatus === 429))
+          && requests.at(-1)?.receipt?.status === 'succeeded', 'Worker slice has unfinished or uncertain physical requests');
+      }
       const inFlight = new Set<Promise<unknown>>();
       async function settleRecord(record: RequestRecord): Promise<void> {
         if (record.settled) return;
@@ -126,6 +134,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         initial: json({ input, options: { ...worker, toolInstructions }, fragments }), maxMessageBytes: options.maxPayloadBytes,
         maxRequests: Math.max(64, worker.maxRequests * 16),
         async handle(method, args, workerSignal) {
+          invariant(!continuationSealed, 'Worker continued after its checkpointed slice');
           if (method !== 'settle') { options.assertAuthority(input); workerSignal.throwIfAborted(); }
           switch (method) {
             case 'execute': {
@@ -181,6 +190,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const capture = captured.get(request.promptManifestId);
               invariant(capture?.manifest.requestDigest === request.requestDigest, 'Uncaptured worker request');
               invariant(request.purpose === capture.purpose, 'Worker request purpose changed instruction surface');
+              invariant(physicalRequests < worker.maxRequests, 'Host physical request ceiling exhausted before reservation');
               // A conservative byte bound includes framing; actual trusted provider usage settles later.
               const inputTokens = Buffer.byteLength(capture.payload) + 1024;
               const outputTokens = worker.maxOutputTokens ?? 4096;
@@ -197,6 +207,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
               const { status: _a, usage: _b, ...original } = record.request;
               const { status: _c, usage: _d, ...supplied } = request;
               invariant(identity(original) === identity(supplied), 'Worker request changed');
+              invariant(physicalRequests < worker.maxRequests, 'Host physical request ceiling exhausted before dispatch');
               await bridge.dispatched({ ...record.request, status: 'dispatched' }, workerSignal);
               record.request.status = 'dispatched';
               return null;
@@ -286,7 +297,12 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
             }
             case 'persistCheckpoint': {
               invariant(args[0] === input.run.id, 'Foreign worker checkpoint');
+              const content = args[3];
+              const slice = content && typeof content === 'object' && !Array.isArray(content) && (content.status === 'checkpointed' || content.continuation !== undefined);
+              // Reject a forged marker before it can enter durable runtime state.
+              if (slice) validateSliceBoundary(content);
               lastCheckpoint = await bridge.persistCheckpoint(args[0], args[1] as number, args[2] as string, args[3]);
+              if (slice) continuationSealed = true;
               return json(lastCheckpoint);
             }
             case 'readCheckpoint':
@@ -308,6 +324,13 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
         invariant(actual && identity(actual) === identity(observation), 'Worker fabricated or changed an observation');
       }
       if (result.checkpoint) invariant(lastCheckpoint && identity(result.checkpoint) === identity(lastCheckpoint), 'Worker fabricated a checkpoint receipt');
+      if (result.status === 'checkpointed') {
+        invariant(result.checkpoint, 'Worker checkpointed without durable continuation');
+        invariant(continuationSealed, 'Worker continuation was not sealed by the host');
+        // Worker classification alone cannot turn unknown transport outcomes or
+        // unconsumed reservations into permission for an automatic continuation.
+        validateSliceBoundary(await bridge.readCheckpoint(result.checkpoint));
+      }
       return result;
     },
   };
