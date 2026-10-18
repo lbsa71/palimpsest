@@ -1,5 +1,9 @@
 # Aeon 1 execution record
 
+## 2026-10-18 accepted coding limb deployment
+
+The user-authorized coding limb, one-session follow-up, model/effort pin and temporary-capacity queuing work is complete. Frozen source `bd8f13e` is accepted as candidate `5b1930c8…` at epoch 89 under previously accepted judging controls. Actual Slack coding and adjustment used one Sol 6.1/high native session. The Autark inspected the edits/events, ran 41 passing tests and delivered both reports; independent artifact inspection passed 117 further cases. History and unknown accounting survived both retained failed probation attempts and the final release. Separate-thread speech arrived during native execution, followed by an explicitly retained Mistral transport failure. [Full evidence, identities, checks and limitations](evidence/A1-L09/coding-limb-live.md). This scoped ownership is closed; the broad Aeon backlog and H1 gates remain unchanged.
+
 ## 2026-10-12 scoped live Slack pilot
 
 The later user instruction supersedes the repair-first restart order for the bounded [Slack pilot](slack-pilot.md). Branch `codex/aeon-slack-pilot-20261012` starts at hibernation checkpoint `debadd9`; all delegates use `gpt-6.1-sol` / high. The rest of the backlog remains paused.

@@ -4,6 +4,8 @@ Implemented and exercised through the ordinary `AutarkApplication` runtime. Code
 
 Scope: [L06 coding claim](../../lanes/A1-L06-tools-and-delegation.md#coding-limb-claim--2026-10-18), requirements RW13/RW17. Base revision `d9a1b08b5c62d9fb5e90f7f6de3d37859dbccf76`; exact handoff is the commit containing this record. This is implementation and test evidence, not a deployment of the pilot service or completion of the hibernated Aeon backlog.
 
+Subsequent user-authorized deployment is now accepted: source `bd8f13e`, candidate `5b1930c8…`, epoch 89. The real Slack task and adjustment used one production native session, both pinned to Sol 6.1/high; the Autark inspected the results and delivered both reports. Capacity waiting, trusted occupancy recovery, 41 authored tests, 117 independent cases and the retained transport failures are documented in the separate [live deployment record](../A1-L09/coding-limb-live.md). The isolated five-turn evidence below remains unchanged.
+
 ## Commands and configuration
 
 The mind receives three commands alongside its existing explicit speech action:

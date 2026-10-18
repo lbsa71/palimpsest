@@ -1,5 +1,7 @@
 # First live Slack pilot
 
+Latest accepted deployment, 2026-10-18: source `bd8f13e`, candidate `5b1930c8…`, epoch 89 adds the default external Codex coding limb pinned to Sol 6.1/high, one retained session for adjustments and temporary-capacity queuing. A live coding question and follow-up completed with inspected file/event/test evidence and actual Slack reports. The mind remains Mistral Large 4/none; all prior grants, uncertain accounting and lived state are retained. [Exact live evidence and limitations](evidence/A1-L09/coding-limb-live.md) supersede the runtime identity in the historical records below. The finite deployment task is complete; the broader backlog remains paused.
+
 Status: live Slack pilot, user-confirmed ingestion indicator and conversational deadline repair deployed, 2026-10-12. Actual Slack timeout notice cleared the stalled indicators; a fresh natural direct conversation delivered model speech and completed. Private DM runtime support is deployed; Slack app-owner authorization and an actual DM exchange remain pending. Handoff: `/root`, branch `codex/aeon-slack-pilot-20261012`, base `debadd9`. User instruction: get the reworked Autark running and usable through Slack; repair only actual launch/conversation blockers, plus subsequent explicit conversational feature requests. All delegated work uses `gpt-6.1-sol` / high. The broader Aeon 1 repair, DI and qualification backlog remains paused.
 
 ## Finite outcome and ownership

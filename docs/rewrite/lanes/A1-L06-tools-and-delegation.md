@@ -57,6 +57,8 @@ Ordinary parallel-child delta status: **implemented and integrated through deter
 
 ## Coding limb claim — 2026-10-18
 
+Subsequent deployment extension completed: the user's explicit live-service authorization superseded the original source-only scope below. Source `bd8f13e` is independently accepted on the pilot at epoch 89. One production native session handled the coding question and adjustment using only `gpt-6.1-sol` / `high`; actual result inspection and delivered reports passed. Temporary capacity waits and trusted occupancy recovery preserve old uncertain accounting. [Exact deployment, tests, failures and handoff](../evidence/A1-L09/coding-limb-live.md). The scoped deployment owners are released; no new coding turn or broader backlog task is queued.
+
 Status: completed for the finite implementation, inspected live test and review. Owner `/root`, branch `codex/aeon-slack-pilot-20261012`, checkout `/home/palimpsest/src/palimpsest`, base `d9a1b08b5c62d9fb5e90f7f6de3d37859dbccf76`. This user-requested finite task reclaims L06 coding and narrow L09 integration only; the broader backlog remains hibernated.
 
 /goal Implement an external coding limb with Codex CLI as default and Pi as an explicit alternative; permit only one coding agent, retain its session for follow-up messages, and inspect a real start/follow-up test with retained event, file and command evidence.
