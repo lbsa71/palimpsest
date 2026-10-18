@@ -6,6 +6,8 @@ Scope: [L06 coding claim](../../lanes/A1-L06-tools-and-delegation.md#coding-limb
 
 Subsequent user-authorized deployment is now accepted: source `bd8f13e`, candidate `5b1930c8…`, epoch 89. The real Slack task and adjustment used one production native session, both pinned to Sol 6.1/high; the Autark inspected the results and delivered both reports. Capacity waiting, trusted occupancy recovery, 41 authored tests, 117 independent cases and the retained transport failures are documented in the separate [live deployment record](../A1-L09/coding-limb-live.md). The isolated five-turn evidence below remains unchanged.
 
+Latest routing deployment: source `847fd39`, candidate `b1de53a5…`, accepted epoch 105 supersedes the earlier deployment identity. The mind delegates questions as well as edits, with no direct source/file/command tools. Final read-only and edit turns resumed the original native UUID with Sol 6.1/high; 41 native and independent tests pass. Explicit receipt acknowledgement preserves stopped uncertainty; a successful enqueue ends the mind turn promptly. The final edit report required an explicit follow-up. [Exact release, retained failures and limitations](../A1-L09/coding-routing.md).
+
 ## Commands and configuration
 
 The mind receives three commands alongside its existing explicit speech action:
@@ -16,9 +18,10 @@ code({"mode":"edit","target":"source","message":"Implement the requested change 
 code_status({"offset":0,"limit":20})
 code({"sessionId":"<sessionId returned by code>","mode":"edit","target":"source","message":"Clarification: also handle empty input. Adjust and rerun the checks."})
 code_cancel({})
+code_cancel({"acknowledgeTurnId":"<inspected uncertain turn ID>","resultSha256":"<exact result artifact SHA>"})
 ```
 
-`code` durably queues a finite message and returns promptly. Completion wakes its waiting owner with an attributed observation. `code_status` exposes the reply, paginated CLI events, exit status, per-turn usage, cumulative native totals and an artifact reference containing exact arguments/prompt, JSONL stdout and stderr. History retains earlier result artifacts. The mind can inspect command and edit events before requesting another adjustment. `code_cancel` stops the current turn and preserves the session and partial evidence; it does not undo edits.
+`code` durably queues a finite message and returns promptly. Completion wakes its waiting owner with an attributed observation. `code_status` exposes the reply, paginated CLI events, exit status, per-turn usage, cumulative native totals and an artifact reference containing exact arguments/prompt, JSONL stdout and stderr. History retains earlier result artifacts. The mind can inspect command and edit events before requesting another adjustment. Follow-up `sessionId` is the logical value returned as `code_status.sessionId`, not `nativeSessionId`; omitting it reuses the already bound session. An explicit stopped-turn acknowledgement appends an abandonment only after host-confirmed cleanup and matching raw native acknowledgement; it preserves the uncertain result and all charges, requires no active/queued work and does not retry anything. Only a later explicit message resumes work. `code_cancel` stops the current turn and preserves the session and partial evidence; it does not undo edits.
 
 The latest routing amendment defaults `code` to read-only inspection of the accepted source. The trusted host prepares `repositories/<candidate ID>` once inside the retained workspace under the current caller’s remaining allowance; Mistral has no direct source, file or command tools. Use explicit `mode: edit` for requested changes, and `target: workspace` for retained scratch files. The native workspace and session persist across later messages, including exactly matching restricted audiences in another thread. Each explicit turn uses a new accounting execution unit under its current caller without resetting old grants. See the [routing and continuation record](../A1-L09/coding-routing.md). Parent workspace mutations are blocked while coding is queued, running or uncertain. The worker has no speech, release or delegation tools.
 
