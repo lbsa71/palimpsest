@@ -8,7 +8,7 @@ import { OperationalStore } from '../../storage/index.ts';
 export interface Principal { id: string; scope: DataScope; modificationEligible: boolean; controlledRunIds?:readonly string[] }
 export interface AuthenticatedMessage { source: string; externalId: string; revision: string; conversation: string; text: string; actor: Principal; targetRunId?: string; control?: 'cancel' | 'status' }
 export interface Admission { run: Run; duplicate: boolean; modificationEligible: boolean }
-interface MessageRecord { input: InboundInput; runId: string; conversation: string; operation: string }
+interface MessageRecord { input: InboundInput; runId: string; conversation: string; operation: string; controlResult?: { status: Run['status']; revision: number } }
 interface Conversation { runId: string; scope: DataScope }
 export interface CommunicationsOptions { store: OperationalStore; runtime: DurableRuntime; grant: (actor: Principal) => { authority: Authority; resources: ResourceEnvelope;parentRunId?:string }; onReady?: (run: Run) => void }
 
@@ -51,7 +51,8 @@ export class CommunicationsCore {
         const grant = this.options.grant(message.actor);
         run = this.options.runtime.admit(input,grant.authority,grant.resources,grant.parentRunId); ready = run;
       }
-      const record: MessageRecord = {input,runId:run.id,conversation:message.conversation,operation};
+      const record: MessageRecord = {input,runId:run.id,conversation:message.conversation,operation,
+        ...(message.control ? { controlResult: { status: run.status, revision: run.revision } } : {})};
       this.store.put('communications.inputs',input.id,record,null);
       this.store.put('communications.origins',originKey,record,origin?.revision ?? null);
       if(!message.control || !conversation || conversation.value.runId===run.id)this.store.put('communications.conversations',message.conversation,{runId:run.id,scope:input.scope},conversation?.revision ?? null);
