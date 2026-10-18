@@ -168,7 +168,7 @@ export class AutarkApplication {
         }
         for (const allocation of this.delegationAllocations(tasks[0]!.parentRunId)) {
           const ids = new Set([allocation.runId, ...this.resources.descendants(allocation.runId)]);
-          const concurrent = this.store.list<{ request: { runId: string; status: string } }>('requests').filter(row => ids.has(row.value.request.runId) && ['reserved', 'dispatched', 'uncertain'].includes(row.value.request.status)).length;
+          const concurrent = this.store.list<{ request: { runId: string } }>('requests').filter(row => ids.has(row.value.request.runId) && this.resources.holdsConcurrency(row.key)).length;
           invariant(!allocation.cancelled && concurrent + tasks.length <= allocation.envelope.maxConcurrency, 'Ancestor delegation concurrency exhausted or cancelled');
         }
       },
@@ -213,7 +213,8 @@ export class AutarkApplication {
     const codingTimeout = Math.min(config.coding?.timeoutMs ?? 900000, config.conversationResources.maxElapsedMs);
     const codingProvider = new CodexCodingProvider({ execute: options.codingExecutor ?? (async () => { throw new Error('Codex CLI host binding unavailable: configure codexBinary and a dedicated authenticated codexHome'); }), timeoutMs: codingTimeout, maxOutputBytes: config.coding?.maxOutputBytes ?? 2000000, ...(config.coding?.model ? { model: config.coding.model } : {}) });
     const codingShell = codexCodingShell({ provider: codingProvider, store: this.store, session: () => this.coding.session()!,
-      turn: runId => { const record = this.store.get<{ turn: CodingTurn }>('host.coding-runs', runId); invariant(record, 'Coding turn unavailable'); return record.value.turn; }, timeoutMs: codingTimeout, model: config.coding?.model, executionBudget: runId => this.codingBudget(runId, codingTimeout) });
+      turn: runId => { const record = this.store.get<{ turn: CodingTurn }>('host.coding-runs', runId); invariant(record, 'Coding turn unavailable'); return record.value.turn; }, timeoutMs: codingTimeout, model: config.coding?.model, executionBudget: runId => this.codingBudget(runId, codingTimeout),
+      onProcessStopped: requestId => this.resources.releaseConcurrency(requestId, { kind: 'transport-terminal', reason: 'Bounded Codex process returned after host cleanup' }) });
     const shell: ShellPort = { run: async (input, bridge, signal) => {
       const codingRun = this.store.get<{ turn: CodingTurn; provider: string }>('host.coding-runs', input.run.id)?.value;
       if (codingRun?.provider === 'codex') return codingShell.run(input, bridge, signal);
@@ -235,6 +236,7 @@ export class AutarkApplication {
         performRequest: options.performRequest ?? providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, options.secrets), maxResponseBytes: developmentAccounting?.maxResponseBytes ?? 2_000_000 }),
         recordResponse: developmentAccounting ? (id, response) => developmentAccounting.recordResponse(id, response) : providerResponseRecorder({ store: this.store, ledger: this.resources, runId: input.run.id, scope: input.run.scope, maxBytes: 2_000_000 }),
         beforeRequest: developmentAccounting ? id => developmentAccounting.assertEntry(id) : undefined,
+        onTransportFinished: requestId => this.resources.releaseConcurrency(requestId, { kind: 'transport-terminal', reason: 'Host provider transport completed or aborted and local settlement finished' }),
         recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
       const result = await broker.run({ ...input, messages: codingRun ? input.messages : [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
@@ -274,6 +276,12 @@ export class AutarkApplication {
     }
     if (config.bootstrapInitiative !== false && this.developmentControl.kind !== 'no-standing-goals' && !this.developmentControl.isScripted) this.bootstrapDevelopment(base.sha256);
     const interrupted = this.runtime.recover(); reconcileProviderReceipts(this.store, this.resources);
+    // Production composition acquires the exclusive process lease and drains old
+    // command cgroups before constructing the application. Financial uncertainty
+    // remains intact; the preceding host can no longer occupy execution slots.
+    this.lease.assertHeld();
+    for (const row of this.store.list<{ request: PhysicalRequest }>('requests')) if (this.resources.holdsConcurrency(row.key))
+      this.resources.releaseConcurrency(row.key, { kind: 'host-recovery', reason: `Exclusive host recovery under generation ${options.authority.generation} epoch ${options.authority.epoch}` });
     for (const runId of interrupted) if (!this.managedElsewhere(runId) && !this.evolution.holds(runId)) this.enqueue(runId);
     for (const row of this.store.list<Run>('runs')) if (!['completed', 'cancelled'].includes(row.value.status)) this.runtime.adopt(row.key, options.authority);
     this.initiative.recover(); this.delegation.recover(); this.conversationObligations.confirm();
@@ -527,6 +535,7 @@ export class AutarkApplication {
       if (usage.concurrent >= limit.maxConcurrency || this.occupied() >= this.config.maxConcurrentRuns) reasons.push('capacity-occupied');
     } catch { reasons.push('accounting-unavailable'); }
     return { alive: true, execution: { admission: reasons.length ? 'held' : 'available', reasons,
+      queued: this.store.list('host.pending-runs').length + this.store.list('execution.capacity-waits').length,
       meaning: 'Local authority and allowance check; each physical request still requires its full reservation.', providerConnectivity: 'not-probed' },
       kernelLimitsConfigured: !!this.config.resourceLimits, slack: { configured: !!this.config.slack,
         connectivity: this.config.slack ? 'not-probed' : 'disabled', ...(this.slackActivity ? { activity: this.slackActivity.diagnosis() } : {}) } };

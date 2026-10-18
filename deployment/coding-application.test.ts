@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AutarkApplication } from './application.ts';
-import type { ApplicationConfig } from './config.ts';
+import { validateConfiguration, type ApplicationConfig } from './config.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { CodingInvocation, CodingResult } from '../packages/coding/index.ts';
 import type { CodingTurn } from './coding-limb.ts';
@@ -30,6 +30,35 @@ function fixture(provider?: 'pi') {
   return { root, config, authorityStore, authority };
 }
 function response(text: string) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: text } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
+
+test('Codex configuration accepts only Sol 6.1 while retaining explicit Pi selection', () => {
+  const f = fixture();
+  try {
+    assert.equal(validateConfiguration({ ...f.config, coding: { model: 'gpt-6.1-sol' } }).coding?.model, 'gpt-6.1-sol');
+    assert.throws(() => validateConfiguration({ ...f.config, coding: { model: 'different-model' } }), /requires gpt-6.1-sol/);
+    assert.equal(validateConfiguration({ ...f.config, coding: { provider: 'pi' } }).coding?.provider, 'pi');
+  } finally { f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('exclusive application recovery releases old execution slots while preserving uncertain accounting', async () => {
+  const f = fixture(); let app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'fixture', directToken: 'fixture' } });
+  try {
+    const root = 'operating-envelope:v1';
+    const request: PhysicalRequest = { id: 'old-unknown', runId: root, purpose: 'reasoning', provider: 'mistral', model: f.config.model.id,
+      promptManifestId: 'old-prompt', requestDigest: 'a'.repeat(64), reservationId: 'old-unknown', status: 'reserved',
+      usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 10 } };
+    app.resources.reserve(request); app.resources.dispatched({ ...request, status: 'dispatched' }); app.resources.settle({ ...request, status: 'uncertain' });
+    const original = app.store.get('requests', request.id), usage = app.resources.snapshot(root);
+    assert.equal(usage.concurrent, 1); await app.close();
+    app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'fixture', directToken: 'fixture' } });
+    assert.deepEqual(app.store.get('requests', request.id), original);
+    assert.equal(app.resources.snapshot(root).concurrent, 0);
+    assert.equal(app.resources.snapshot(root).costUsd, usage.costUsd);
+    assert.equal(app.resources.snapshot(root).tokens, usage.tokens);
+    assert.equal(app.resources.snapshot(root).requests, usage.requests);
+    assert.equal(app.resources.request(request.id)?.status, 'uncertain');
+  } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
 function tool(id: number, name: string, args: unknown) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null,
   tool_calls: [{ id: String(id).padStart(9, '0'), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
 interface Request { messages: Array<{ role: string; content: string }>; tools?: Array<{ function: { name: string } }> }

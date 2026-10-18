@@ -36,6 +36,8 @@ export interface CodingResult {
   cumulativeUsage?: CodingUsage;
   /** Exact provider arguments and prompt, retained for host audit without credentials. */
   invocation?: Pick<CodingInvocation, 'args' | 'stdin'>;
+  /** Host executor returned after bounded process cleanup; independent of model outcome. */
+  processStopped?: boolean;
 }
 export interface CodingProvider {
   readonly id: CodingProviderId;
@@ -248,7 +250,7 @@ export class CodexCodingProvider implements CodingProvider {
       const receipt = await this.options.execute(invocation, signal);
       const result = parseCodexResult(receipt, request.sessionId, request.previousUsage);
       if (result.sessionId) this.sessionId = result.sessionId;
-      return { ...result, invocation: audit };
+      return { ...result, invocation: audit, processStopped: true };
     } catch (error) {
       return {
         provider: this.id, ...(this.sessionId ? { sessionId: this.sessionId } : {}), status: signal?.aborted ? 'cancelled' : 'uncertain',

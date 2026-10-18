@@ -36,7 +36,8 @@ function shellFixture(budget: { timeoutMs: number; maxTokens: number; reservatio
   const turn = (): CodingTurn => ({ id: 'turn-1', sequence: 1, sessionId: 'session-1', runId, authority, message: 'Run the bounded task.', status: 'running', notified: false });
   const shell = codexCodingShell({ store, timeoutMs: 5000, provider: { id: 'codex', async run(request) { requests.push(request); return outcome; } },
     session: () => ({ id: 'session-1', owner: 'owner', provider: 'codex', workspace: join(root, 'work'), scope: { kind: 'public' } }), turn,
-    executionBudget(id) { budgetRunIds.push(id); return { reservationElapsedMs: budget.timeoutMs + 500, ...budget }; } });
+    executionBudget(id) { budgetRunIds.push(id); return { reservationElapsedMs: budget.timeoutMs + 500, ...budget }; },
+    onProcessStopped: id => resources.releaseConcurrency(id, { kind: 'transport-terminal', reason: 'Test host confirmed process cleanup' }) });
   const runtime = new DurableRuntime({ store, effects, resources, shell, now: () => now, elapsedNow: () => 0, newId: (() => { let count = 0; return () => `event-${++count}`; })() });
   const run = runtime.admit({ id: 'coding-1', source: 'host.coding', externalId: 'coding-1', externalRevision: '1', actorId: 'host', authenticated: true,
     scope: { kind: 'public' }, value: 'Run coding' }, authority, envelope, 'parent');
@@ -56,6 +57,10 @@ test('coding shell reserves the granted remaining tokens and time instead of its
     const reservation = f.store.get<{ request: PhysicalRequest; ceiling: { tokens: number; costUsd: number; elapsedMs: number } }>('requests', 'coding-invocation:turn-1')!.value;
     assert.deepEqual(reservation.ceiling, { tokens: 800, costUsd: 5, elapsedMs: 2000 });
     assert.equal(reservation.request.status, 'succeeded');
+    assert.equal(reservation.request.model, 'gpt-6.1-sol');
+    const prompt = f.store.get<{ artifact: { uri: string; sha256: string } }>('prompts', reservation.request.promptManifestId)!.value;
+    const payload = JSON.parse(Buffer.from(f.store.readArtifact(prompt.artifact)).toString());
+    assert.equal(payload.model, 'gpt-6.1-sol'); assert.equal(payload.reasoningEffort, 'high');
     assert.equal(reservation.request.usage.costUsd, null);
     assert.equal(reservation.request.usage.inputTokens, 30); assert.equal(reservation.request.usage.outputTokens, 10);
     assert.equal(f.resources.snapshot('parent').cancelled, false);
@@ -85,6 +90,21 @@ test('aggregate CLI usage above the ordinary 100k call ceiling does not cancel i
     assert.equal(snapshot.tokens, 130000); assert.equal(snapshot.cancelled, false);
     assert.equal(f.resources.request('coding-invocation:turn-1')?.usage.costUsd, null);
   } finally { f.close(); }
+});
+
+test('uncertain coding frees capacity only with confirmed process cleanup and retains unknown charges', async () => {
+  for (const processStopped of [false, true]) {
+    const outcome: CodingResult = { ...finished, status: 'uncertain', processStopped,
+      usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, costUsd: null, physicalRequests: null } };
+    const f = shellFixture({ timeoutMs: 1500, maxTokens: 800 }, 2000, outcome);
+    try {
+      await f.execute();
+      assert.equal(f.resources.request('coding-invocation:turn-1')?.status, 'uncertain');
+      assert.equal(f.resources.snapshot('parent').concurrent, processStopped ? 0 : 1);
+      assert.equal(f.resources.snapshot('parent').costUsd, 5);
+      assert.equal(f.resources.snapshot('parent').tokens, 800);
+    } finally { f.close(); }
+  }
 });
 
 for (const budget of [{ timeoutMs: 0, maxTokens: 800 }, { timeoutMs: 1500, maxTokens: 0 }, { timeoutMs: 5001, maxTokens: 800 }, { timeoutMs: NaN, maxTokens: 800 }]) {
