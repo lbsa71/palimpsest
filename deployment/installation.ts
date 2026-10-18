@@ -146,7 +146,9 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   const configFields = ['evidenceDirectory', 'host', 'mode', 'policyFiles', ...(config.bootstrap ? ['bootstrap'] : []), ...(config.evaluationDispatcher !== undefined ? ['evaluationDispatcher'] : []), ...(config.allowedModelProfiles !== undefined ? ['allowedModelProfiles'] : [])].sort().join(',');
   invariant(Object.keys(config).sort().join(',') === configFields && ['product', 'engineering'].includes(config.mode), 'Exact supervisor configuration required');
   invariant(config.host.stateDirectory === value.stateDirectory && config.host.artifactStore === value.artifactStore && config.host.nodeBinary === value.nodeBinary && config.host.workspaceDirectory === workspacePath(value) && config.host.cgroupRoot === `/sys/fs/cgroup/system.slice/${value.unitName}`, 'Host bindings must match installed resources and delegated unit');
-  invariant(Object.keys(config.host).sort().join(',') === 'artifactStore,cgroupRoot,nodeBinary,stateDirectory,workspaceDirectory', 'Exact installed host bindings required');
+  const hostFields = ['artifactStore', 'cgroupRoot', 'nodeBinary', 'stateDirectory', 'workspaceDirectory', ...['codexBinary', 'codexHome', 'codexCodeModeHost'].filter(key => key in config.host)].sort().join(',');
+  invariant(Object.keys(config.host).sort().join(',') === hostFields && !!config.host.codexBinary === !!config.host.codexHome, 'Exact installed host bindings required');
+  if (config.host.codexHome) privateDirectory(config.host.codexHome, value.uid);
   privateDirectory(config.host.stateDirectory, value.uid); privateDirectory(value.artifactStore, value.uid); safePath(config.evidenceDirectory);
   invariant(config.evidenceDirectory === join(hostDataPath(value), 'evidence'), 'Evidence must occupy the exact bounded host-data layout');
   if (existsSync(config.evidenceDirectory)) privateDirectory(config.evidenceDirectory, value.uid);

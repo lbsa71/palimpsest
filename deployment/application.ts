@@ -27,6 +27,9 @@ import { ControlAuthorContinuations } from './control-tools.ts';
 import { communicationState, communicationTools } from './communication-state.ts';
 import { prepareDevelopmentControl, bindDevelopmentControl, developmentContext, createScriptedControlShell, createScriptedControlReceiver, type BoundDevelopmentControl } from './development-controls.ts';
 import type { DevelopmentAccounting } from './development-accounting.ts';
+import { CodingLimb, type CodingOwner, type CodingSession, type CodingTurn } from './coding-limb.ts';
+import { CodexCodingProvider, type CodingExecutor, type CodingResult } from '../packages/coding/index.ts';
+import { codexCodingShell } from './coding-shell.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 interface Target { channel: string; threadTs?: string; transport: 'direct' | 'slack'; scope: DataScope }
@@ -39,6 +42,7 @@ export interface ApplicationOptions {
   authority: Authority; authorityStore: AuthorityStore;
   performRequest?: Parameters<typeof createBrokerShell>[0]['performRequest'];
   brokerTiming?: Parameters<typeof createBrokerShell>[0]['brokerTiming'];
+  codingExecutor?: CodingExecutor;
   runWorker?: Parameters<typeof createBrokerShell>[0]['runWorker'];
   slackBotApi?: SlackApi; slackAppApi?: SlackApi;
   lease?: ProcessLease;
@@ -55,6 +59,7 @@ export class AutarkApplication {
   readonly developmentControl: BoundDevelopmentControl;
   readonly store!: OperationalStore; readonly memory: DevelopmentalMemory; readonly resources: ResourceLedger;
   readonly delegation: DelegationCoordinator; readonly consolidation: AccountedConsolidation; readonly conversationObligations: ConversationObligations;
+  readonly coding: CodingLimb;
   readonly effects: EffectJournal; readonly runtime: DurableRuntime; readonly communications: CommunicationsCore;
   readonly goals: InitiativeRegistry; readonly drives: DriveRegistry; readonly plans: PlanRegistry; readonly obligations: ObligationRegistry;
   readonly scheduler: FairScheduler; readonly initiative: InitiativeRunner;
@@ -84,7 +89,7 @@ export class AutarkApplication {
     // Read accepted callback/accessor values once; caller aliases cannot change the
     // options used by constructor closures or later descriptor/receiver paths.
     options = Object.freeze({ config: options.config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore,
-      performRequest: options.performRequest, brokerTiming: suppliedTiming ? brokerTiming : undefined, runWorker: options.runWorker,
+      performRequest: options.performRequest, brokerTiming: suppliedTiming ? brokerTiming : undefined, runWorker: options.runWorker, codingExecutor: options.codingExecutor,
       slackBotApi: options.slackBotApi, slackAppApi: options.slackAppApi, lease: options.lease,
       developmentAccounting: options.developmentAccounting, documentJournal: options.documentJournal, additionalTools: options.additionalTools });
     this.options = options; this.config = validateConfiguration(options.config);
@@ -93,7 +98,7 @@ export class AutarkApplication {
     this.lease = options.lease ?? new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     try {
     this.store = new OperationalStore({ filename: join(config.stateDirectory, 'operational.sqlite'), checkoutRoot: config.applicationRoot, documentJournal: options.documentJournal });
-    invariant(!config.developmentControl || !options.additionalTools, 'Additional Store extensions are unqualified for matched evaluation');
+    invariant(!config.developmentControl || !options.additionalTools && !options.codingExecutor, 'Additional Store extensions are unqualified for matched evaluation');
     const controlPreparation = prepareDevelopmentControl(config, this.store);
     const developmentAccounting = options.developmentAccounting?.({ store: this.store, config });
     developmentAccounting?.assertApplication(config);
@@ -205,7 +210,13 @@ export class AutarkApplication {
       reconcile: effect => { this.developmentControl.assertEffect(effect.runId, effect.kind); return scriptReceiver ? scriptReceiver.reconcile(effect) : physical.reconcile(effect); },
     };
     this.effects = new EffectJournal(this.store, options.authorityStore, developmentAccounting?.wrapReceiver(receiver) ?? receiver);
+    const codingTimeout = Math.min(config.coding?.timeoutMs ?? 900000, config.conversationResources.maxElapsedMs);
+    const codingProvider = new CodexCodingProvider({ execute: options.codingExecutor ?? (async () => { throw new Error('Codex CLI host binding unavailable: configure codexBinary and a dedicated authenticated codexHome'); }), timeoutMs: codingTimeout, maxOutputBytes: config.coding?.maxOutputBytes ?? 2000000, ...(config.coding?.model ? { model: config.coding.model } : {}) });
+    const codingShell = codexCodingShell({ provider: codingProvider, store: this.store, session: () => this.coding.session()!,
+      turn: runId => { const record = this.store.get<{ turn: CodingTurn }>('host.coding-runs', runId); invariant(record, 'Coding turn unavailable'); return record.value.turn; }, timeoutMs: codingTimeout, model: config.coding?.model, executionBudget: runId => this.codingBudget(runId, codingTimeout) });
     const shell: ShellPort = { run: async (input, bridge, signal) => {
+      const codingRun = this.store.get<{ turn: CodingTurn; provider: string }>('host.coding-runs', input.run.id)?.value;
+      if (codingRun?.provider === 'codex') return codingShell.run(input, bridge, signal);
       this.developmentControl.assertRun(input.run.id);
       const record = this.grant(input.run.id), context = developmentContext(this.developmentControl, this.memory, { audience: input.run.scope, query: JSON.stringify(input.messages).slice(0, 8192), maxRecords: 24, maxBytes: 8192 });
       const descriptors = this.mindTools(input.run.id);
@@ -217,7 +228,7 @@ export class AutarkApplication {
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
           compaction: { ...contextBudget(config), instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
-        timeoutMs: Math.min(config.conversationResources.maxElapsedMs, record.target && config.conversationTimeoutMs ? config.conversationTimeoutMs : config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
+        timeoutMs: codingRun ? codingTimeout : Math.min(config.conversationResources.maxElapsedMs, record.target && config.conversationTimeoutMs ? config.conversationTimeoutMs : config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
         retainToolInstructions: source => this.store.putArtifact(source),
         assertAuthority: () => options.authorityStore.assert(input.run.authority),
@@ -226,11 +237,17 @@ export class AutarkApplication {
         beforeRequest: developmentAccounting ? id => developmentAccounting.assertEntry(id) : undefined,
         recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
       const frame = { role: 'user', timestamp: Date.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery), target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
-      const result = await broker.run({ ...input, messages: [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
-      return this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result));
+      const result = await broker.run({ ...input, messages: codingRun ? input.messages : [frame, ...input.messages] }, { ...bridge, execute: async (call, toolSignal) => { const observation = await bridge.execute(call, toolSignal); this.ingestObservation(observation); this.conversationObligations.confirm(); return observation; } }, signal);
+      if (codingRun) return result.status === 'completed' ? { ...result, status: 'checkpointed' } : result;
+      return this.coding.preserveWaiting(input.run.id, this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result)));
     } };
     this.runtime = new DurableRuntime({ store: this.store, shell: developmentAccounting?.wrapShell(this.developmentControl.isScripted ? createScriptedControlShell(this.developmentControl) : shell) ?? shell, effects: this.effects, resources: this.resources,
       canResume: run => { this.developmentControl.assertRun(run.id); this.developmentControl.assertRestoredState(); return this.controls.eligibleRun(run.id, this.hasPendingSteering(run.id)); } });
+    this.coding = new CodingLimb({ store: this.store, runtime: this.runtime, provider: config.coding?.provider ?? 'codex', onWake: runId => {
+      const execution = this.store.list<{ runId: string }>('initiative.execution').find(row => row.value.runId === runId);
+      const goal = execution ? this.goals.goal(execution.key) : undefined;
+      if (goal && ['waiting', 'blocked'].includes(goal.status)) this.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'External coding result is ready for inspection');
+    }, now: () => this.runtime.now(), assertAuthority: authority => options.authorityStore.assert(authority), execute: (session, turn, signal) => this.executeCoding(session, turn, signal) });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);
@@ -282,7 +299,7 @@ export class AutarkApplication {
     const value: GrantRecord = { scope: run.scope, workspace };
     this.store.put('host.run-grants', runId, value, null); return value;
   }
-  private managedElsewhere(runId: string): boolean { return !!this.store.get('host.child-runs', runId) || [...this.store.list<{ runId: string }>('initiative.execution'), ...this.store.list<{ runId: string }>('host.delivery-runs')].some(row => row.value.runId === runId); }
+  private managedElsewhere(runId: string): boolean { return !!this.store.get('host.child-runs', runId) || !!this.store.get('host.coding-runs', runId) || [...this.store.list<{ runId: string }>('initiative.execution'), ...this.store.list<{ runId: string }>('host.delivery-runs')].some(row => row.value.runId === runId); }
   private delegationAllocations(runId: string): { runId: string; envelope: ResourceEnvelope; cancelled: boolean }[] {
     const allocations: { runId: string; envelope: ResourceEnvelope; cancelled: boolean }[] = [];
     for (let id: string | undefined = runId; id;) {
@@ -293,14 +310,14 @@ export class AutarkApplication {
     }
     return allocations;
   }
-  private occupied(): number { return this.active.size + (this.initiativeTask ? 1 : 0); }
+  private occupied(): number { return this.active.size + (this.initiativeTask ? 1 : 0) + (this.coding?.busy ? 1 : 0); }
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);
     if (this.developmentControl.isScripted) return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: [], maxArgs: 64 }, research: { allowedHosts: [], timeoutMs: 15000, maxBytes: 262144, maxRedirects: 0 }, actions: ['development_control_emit'] };
     const child = this.store.get<{ allowedEffects: string[] }>('host.child-runs', runId)?.value;
     return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, ...(this.config.resourceLimits ? { resourceLimits: this.config.resourceLimits } : {}) },
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
-      actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
+      actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => (!child || child.allowedEffects.includes(name)) && (child || !this.coding?.workspaceLocked(grant.workspace) || ['workspace_read', 'workspace_search', 'workspace_discover', 'workspace_diff', 'research_fetch', 'speech_send'].includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
   private mindTools(runId: string, effectId?: string): (ApplicationTool & { extension?: true })[] {
     this.developmentControl.assertRun(runId);
@@ -309,7 +326,7 @@ export class AutarkApplication {
     if (this.store.get('host.child-runs', runId)) return [];
     if (this.consolidation?.claim(runId)) return this.consolidation.tools(runId);
     const childTask = (args: JsonValue) => { invariant(args && typeof args === 'object' && !Array.isArray(args) && typeof args.id === 'string', 'Child task ID required'); const task = this.delegation.get(args.id); invariant(task?.task.parentRunId === runId, 'Child task is not owned by this parent'); return task; };
-    return [...communicationTools(() => communicationState(scope, this.grant(runId).target, this.slackRecovery)), { name: 'delegation_prepare', description: 'Allocate a fresh exclusive child workspace and return its host-approved bounded delegation grant; preparing does not start a child.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, execute: (args: JsonValue) => {
+    return [...(this.developmentControl.isEvaluation ? [] : this.codingTools(runId, effectId)), ...communicationTools(() => communicationState(scope, this.grant(runId).target, this.slackRecovery)), { name: 'delegation_prepare', description: 'Allocate a fresh exclusive child workspace and return its host-approved bounded delegation grant; preparing does not start a child.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, execute: (args: JsonValue) => {
       invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 0, 'No prepare arguments');
       const grant = this.delegation.options.grantForParent(runId); const root = grant.writableRoots[0]!;
       const count = this.store.list<{ runId: string }>('host.prepared-workspaces').filter(row => row.value.runId === runId).length; invariant(count < grant.maxChildren, 'Prepared child workspace ceiling reached');
@@ -323,7 +340,70 @@ export class AutarkApplication {
       name: 'delegation_judge', description: 'Record the parent judgment against every declared child acceptance criterion after artifact inspection; this is not independent product qualification.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, inspection: { type: 'object' }, checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, passed: { type: 'boolean' }, evidence: { type: 'object' } }, required: ['criterion', 'passed', 'evidence'], additionalProperties: false } } }, required: ['id', 'inspection', 'checks'], additionalProperties: false }, execute: (args: JsonValue) => {
         const task = childTask(args); const a = args as Record<string, JsonValue>; return this.delegation.judge(task.task.id, a.inspection as unknown as Parameters<DelegationCoordinator['judge']>[1], a.checks as unknown as Parameters<DelegationCoordinator['judge']>[2]);
       },
-    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...(this.developmentControl.kind === 'no-memory' ? [] : mindDevelopmentTools(this.memory, scope, this.options.authority.generation)), ...(this.developmentControl.kind === 'no-standing-goals' ? [] : bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId))), ...(this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority, ...(effectId ? { effectId } : {}) }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
+    }, ...this.conversationObligations.tools(runId, this.grant(runId).target), ...(this.developmentControl.kind === 'no-memory' ? [] : mindDevelopmentTools(this.memory, scope, this.options.authority.generation)), ...(this.developmentControl.kind === 'no-standing-goals' ? [] : bindGoalOrigins({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority }, initiativeTools(this.goals, this.drives, this.plans, scope, this.options.authority.generation, this.config.scheduler.resources, runId))), ...(this.coding.workspaceLocked(this.grant(runId).workspace) ? [] : this.options.additionalTools?.({ runId, scope, workspace: this.grant(runId).workspace, store: this.store, authority: this.options.authority, ...(effectId ? { effectId } : {}) }) ?? []).map(tool => ({ ...tool, extension: true as const }))];
+  }
+  private codingBudget(runId: string, maximumMs: number): { timeoutMs: number; reservationElapsedMs: number; maxTokens: number } {
+    // Whole-CLI aggregate reservations differ from the mind's single HTTP request.
+    // Root usage conservatively bounds each ancestor; leave time for process drain and the result reply.
+    const used = this.resources.snapshot(runId);
+    invariant(!used.cancelled, 'Coding allowance is cancelled');
+    let remainingMs = Infinity, remainingTokens = 1000000;
+    for (const allocation of this.delegationAllocations(runId)) {
+      const envelope = this.resources.effectiveEnvelope(allocation.runId);
+      remainingMs = Math.min(remainingMs, envelope.maxElapsedMs - used.elapsedMs);
+      if (envelope.maxTokens !== null) remainingTokens = Math.min(remainingTokens, envelope.maxTokens - used.tokens);
+    }
+    const timeoutMs = Math.min(maximumMs, Math.floor((remainingMs - 7000) * 0.8));
+    invariant(timeoutMs > 0 && remainingTokens > 0, 'Coding allowance exhausted');
+    return { timeoutMs, reservationElapsedMs: timeoutMs + 5000, maxTokens: Math.floor(remainingTokens) };
+  }
+  private codingOwner(runId: string): CodingOwner {
+    const grant = this.grant(runId), run = this.runtime.getRun(runId); invariant(run, 'Unknown coding owner');
+    return { key: identity({ scope: grant.scope, conversation: grant.target ?? runId }), runId, workspace: grant.workspace, scope: grant.scope, authority: run.authority };
+  }
+  private codingTools(runId: string, effectId?: string): ApplicationTool[] {
+    const object = (args: JsonValue, keys: string[]): Record<string, JsonValue> => { invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).every(key => keys.includes(key)), 'Invalid coding arguments'); return args; };
+    return [{ name: 'code', description: 'Send a finite task or follow-up to the single external coding agent. Use source_checkout first when it needs your source. Returns promptly; coding observations wake this run. Further messages reuse the same session. The coding agent cannot speak for you or release changes.',
+      inputSchema: { type: 'object', properties: { message: { type: 'string' }, sessionId: { type: 'string' } }, required: ['message'], additionalProperties: false }, execute: args => {
+        const value = object(args, ['message', 'sessionId']); invariant(effectId && typeof value.message === 'string' && (value.sessionId === undefined || typeof value.sessionId === 'string'), 'Coding message and durable effect identity required');
+        invariant((this.config.coding?.provider ?? 'codex') !== 'codex' || this.options.codingExecutor, 'Codex CLI is the default coding provider; configure host codexBinary and a dedicated authenticated codexHome before coding');
+        return this.coding.submit(this.codingOwner(runId), effectId, value.message, value.sessionId);
+      } }, { name: 'code_status', description: 'Inspect the coding session response and actual command/edit events. Events are paginated; the full result artifact retains raw stdout/stderr. Agent claims require inspection.',
+      inputSchema: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, additionalProperties: false }, execute: args => { const value = object(args, ['offset', 'limit']); return this.coding.status(this.codingOwner(runId), value.offset as number | undefined, value.limit as number | undefined); } },
+      { name: 'code_cancel', description: 'Stop the current coding turn while retaining its session and partial evidence. Cancellation is not an undo of edits.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, execute: args => { object(args, []); return this.coding.cancel(this.codingOwner(runId)); } }];
+  }
+  private async executeCoding(session: CodingSession, turn: CodingTurn, signal: AbortSignal): Promise<CodingResult> {
+    const config = this.config;
+    this.options.authorityStore.assert(turn.authority);
+    let child = session.childRunId ? this.runtime.getRun(session.childRunId) : undefined;
+    const value = json({ message: turn.message, role: 'external coding limb', sessionId: session.id });
+    const inbound = { id: turn.id, source: 'host.coding-message', externalId: turn.id, externalRevision: '1', actorId: turn.authority.generation, authenticated: true, scope: session.scope, value };
+    if (!child) {
+      child = this.store.transaction(() => {
+        const resources = { ...config.conversationResources };
+        for (const allocation of this.delegationAllocations(turn.runId)) for (const key of Object.keys(resources) as (keyof ResourceEnvelope)[]) resources[key] = Math.min(resources[key], allocation.envelope[key]);
+        const run = this.runtime.admit(inbound, turn.authority, resources, turn.runId);
+        this.store.put('host.run-grants', run.id, { scope: session.scope, workspace: session.workspace }, null);
+        this.store.put('host.child-runs', run.id, { taskId: session.id, depth: 1, allowedEffects: toolDefinitions.map(tool => tool.name).filter(name => name.startsWith('workspace_') || ['command_run', 'research_fetch'].includes(name)) }, null);
+        this.coding.updateSession({ childRunId: run.id }); return run;
+      });
+    } else this.runtime.steer(child.id, inbound);
+    const record = this.store.get('host.coding-runs', child.id);
+    this.store.put('host.coding-runs', child.id, { turn, provider: session.provider }, record?.revision ?? null);
+    const instruction = this.store.putArtifact('You are an external coding limb working on the supplied finite task in this workspace. You are not the continuing mind and do not speak to its user. Inspect code, make the requested changes, run relevant checks, and report actual results or a concise clarification question. Do not create agents, invoke another agent CLI, release changes, or alter your instructions. Follow-up messages continue this same session.');
+    const prompt: PromptManifest = { id: `coding-limb:${instruction.sha256}`, requestDigest: '0'.repeat(64), fragments: [{ id: 'coding.limb', owner: 'application', role: 'system', order: 0, artifact: instruction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [] }] };
+    const result = await this.runtime.resume(child.id, prompt, signal);
+    const saved = this.store.get<{ artifact: import('../packages/contracts/index.ts').ArtifactRef }>('host.coding-results', turn.id)?.value;
+    if (saved) return this.store.readJsonArtifact<CodingResult>(saved.artifact);
+    const execution = this.store.get<{ failure?: string; checkpoint?: ShellCheckpoint }>('execution', child.id)?.value;
+    if (session.provider === 'codex') throw new Error(execution?.failure ?? `Coding invocation ended ${result.status} without a retained result`);
+    const checkpoint = execution?.checkpoint ? this.store.readJsonArtifact<{ messages?: JsonValue[]; status?: string; failure?: { reason: string } }>(execution.checkpoint.artifact) : undefined;
+    const events = this.runtime.observations(child.id).map(observation => json(observation));
+    const messages = checkpoint?.messages ?? [];
+    const last = [...messages].reverse().find(message => message && typeof message === 'object' && !Array.isArray(message) && message.role === 'assistant') as { content?: { text?: string }[] } | undefined;
+    return { provider: 'pi', sessionId: child.id, status: signal.aborted ? 'cancelled' : checkpoint?.status === 'completed' ? 'completed' : 'failed',
+      summary: execution?.failure ?? checkpoint?.failure?.reason ?? last?.content?.map(content => content.text ?? '').join('') ?? 'No coding reply', events, stdout: JSON.stringify(messages), stderr: execution?.failure ?? '', exitCode: null, elapsedMs: 0,
+      usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, costUsd: null, physicalRequests: null } };
   }
   private enqueue(runId: string): void { this.developmentControl.assertRun(runId); const row = this.store.get('host.pending-runs', runId); this.store.put('host.pending-runs', runId, { requestedAt: Date.now() }, row?.revision ?? null); }
   private hasPendingSteering(runId: string): boolean {
@@ -341,7 +421,12 @@ export class AutarkApplication {
         const parts = record.conversation.split(':'); const channel = parts[2], threadTs = parts[3];
         if (channel && threadTs && this.config.slack.channels.some(grant => grant.channel === channel && scopeAllows(run.scope, grant.scope))) target = { channel, threadTs, transport: 'slack', scope: run.scope };
       }
-      if (target) { const grant = this.grant(run.id), row = this.store.get('host.run-grants', run.id)!; if (grant.target) invariant(identity(grant.target) === identity(target), 'Conversation destination changed'); else this.store.put('host.run-grants', run.id, { ...grant, target }, row.revision); }
+      if (target) {
+        const grant = this.grant(run.id), row = this.store.get('host.run-grants', run.id)!, session = this.coding?.session();
+        if (grant.target) invariant(identity(grant.target) === identity(target), 'Conversation destination changed');
+        const workspace = session?.owner === identity({ scope: grant.scope, conversation: target }) && identity(session.scope) === identity(grant.scope) ? session.workspace : grant.workspace;
+        if (!grant.target || workspace !== grant.workspace) this.store.put('host.run-grants', run.id, { ...grant, target, workspace }, row.revision);
+      }
       if (target?.transport === 'slack' && record.input.authenticated && record.operation && JSON.parse(record.operation).control === null) {
         const [channel, timestamp] = record.input.externalId.split(':');
         if (channel === target.channel && timestamp) this.activity(() => this.slackActivity?.observe(run.id, channel, timestamp));
@@ -358,7 +443,7 @@ export class AutarkApplication {
   private async notifyConversationFailures(): Promise<void> {
     const ids = new Set(this.store.list<Effect>('effects').filter(row => row.key.startsWith('host:deadline:') || row.key.startsWith('host:blocked:')).map(row => row.key));
     for (const { value: run } of this.store.list<Run>('runs')) {
-      if (!['waiting', 'blocked'].includes(run.status) || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+      if (!['waiting', 'blocked'].includes(run.status) || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || this.coding.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
       const state = this.store.get<{ failure?: string; failedAttempt?: number; checkpoint?: ShellCheckpoint; lastResult?: ShellResult; messageSequence?: number }>('execution', run.id)?.value;
       let id: string, text: string;
       if (run.status === 'waiting' && state?.failure === 'Worker deadline exceeded') {
@@ -401,7 +486,7 @@ export class AutarkApplication {
       try {
         if (effect.status === 'authorized') {
           const run = this.runtime.getRun(effect.runId);
-          if (!run || this.hasPendingSteering(effect.runId) || this.managedElsewhere(run.id) || this.evolution.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+          if (!run || this.hasPendingSteering(effect.runId) || this.managedElsewhere(run.id) || this.evolution.holds(run.id) || this.coding.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
           if (id.startsWith('host:deadline:') && run.status !== 'waiting') continue;
           if (id.startsWith('host:blocked:')) {
             const current = this.store.get<{ checkpoint?: ShellCheckpoint; messageSequence?: number }>('execution', run.id)?.value;
@@ -505,6 +590,7 @@ export class AutarkApplication {
     try {
       this.developmentControl.assertRestoredState();
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
+      this.coding.tick(this.occupied() < this.config.maxConcurrentRuns); this.coding.wake();
       this.activity(() => this.slackActivity?.tick());
       await this.notifyConversationFailures();
       // Offline recovery retains intake and known local reconciliation. Missing credentials
@@ -512,7 +598,7 @@ export class AutarkApplication {
       if (!this.providerAvailable()) return;
       // Give development first access to a freed slot on alternating admissions.
       if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns && !this.developmentControl.isScripted) { this.developmentTurn = false; this.startDevelopment(); }
-      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && this.controls.eligibleRun(row.key, this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
+      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && (!this.coding.holds(row.key) || this.hasPendingSteering(row.key)) && this.controls.eligibleRun(row.key, this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
         .sort((a, b) => (this.store.get<{ requestedAt: number }>('host.pending-runs', a.key)?.value.requestedAt ?? 0) - (this.store.get<{ requestedAt: number }>('host.pending-runs', b.key)?.value.requestedAt ?? 0) || a.key.localeCompare(b.key));
       for (const row of pending) {
         if (this.occupied() >= this.config.maxConcurrentRuns) break;
@@ -548,6 +634,7 @@ export class AutarkApplication {
         }
       } catch (error) { errors.push(error); }
       try { this.shutdown.abort(); } catch (error) { errors.push(error); }
+      try { await this.coding.close(); } catch (error) { errors.push(error); }
       try { await this.slackSocket?.stop(); } catch (error) { errors.push(error); }
       try { await this.slackActivity?.close(); } catch (error) { errors.push(error); }
       try {

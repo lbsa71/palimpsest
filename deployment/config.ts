@@ -8,7 +8,10 @@ import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 import { validateSlackDirectGrant, type SlackChannelGrant } from '../packages/communications/slack/ingress/index.ts';
 import { validateAllowanceAmendment, type AllowanceAmendment } from '../packages/runtime/resources/index.ts';
 
+export interface CodingConfig { provider?: 'codex' | 'pi'; model?: string; timeoutMs?: number; maxOutputBytes?: number }
 export interface ApplicationConfig {
+  /** Coding is an external limb, independent of the mind model. Defaults to Codex CLI. */
+  coding?: CodingConfig;
   developmentControl?: DevelopmentControlConfig;
   stateDirectory: string;
   workspaceDirectory: string;
@@ -54,6 +57,14 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
   invariant(statSync(config.nodeBinary).isFile() && statSync(config.applicationRoot).isDirectory(), 'Missing application/runtime');
   invariant(config.artifactId.length > 0 && config.controlRevision.length > 0, 'Qualified release identities required');
   validateModelProfile(config.model);
+  if (config.coding !== undefined) {
+    invariant(config.coding && Object.keys(config.coding).every(key => ['provider', 'model', 'timeoutMs', 'maxOutputBytes'].includes(key)), 'Invalid coding configuration');
+    invariant(config.coding.provider === undefined || ['codex', 'pi'].includes(config.coding.provider), 'Unsupported coding provider');
+    invariant(config.coding.model === undefined || typeof config.coding.model === 'string' && /^[a-zA-Z0-9_.-]+$/.test(config.coding.model), 'Invalid coding model');
+    invariant(config.coding.provider !== 'pi' || config.coding.model === undefined, 'Pi coding uses the configured mind model profile');
+    for (const [key, maximum] of [['timeoutMs', 1800000], ['maxOutputBytes', 8000000]] as const) invariant(config.coding[key] === undefined || Number.isSafeInteger(config.coding[key]) && config.coding[key]! > 0 && config.coding[key]! <= maximum, 'Coding limits must be finite and bounded');
+    invariant(!config.developmentControl, 'External coding is not qualified for matched development evaluation');
+  }
   if (config.developmentControl !== undefined) validateDevelopmentControl(config.developmentControl);
   invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');
   validateEnvelope(config.resources); validateEnvelope(config.conversationResources); validateEnvelope(config.scheduler.resources);

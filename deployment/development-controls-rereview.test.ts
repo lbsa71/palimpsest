@@ -80,7 +80,7 @@ for (const representation of ['own', 'inherited'] as const) test(`rereview: ever
   const bot: NonNullable<ApplicationOptions['slackBotApi']> = { async call() { throw Error('Unexpected Slack call'); } };
   const appApi: NonNullable<ApplicationOptions['slackAppApi']> = { async call() { throw Error('Unexpected Slack app call'); } };
   const values = { config: f.options.config, secrets: f.options.secrets, authority: f.options.authority, authorityStore: f.options.authorityStore,
-    performRequest: f.options.performRequest, brokerTiming: undefined, runWorker: undefined, slackBotApi: bot, slackAppApi: appApi, lease,
+    performRequest: f.options.performRequest, brokerTiming: undefined, runWorker: undefined, codingExecutor: undefined, slackBotApi: bot, slackAppApi: appApi, lease,
     developmentAccounting: f.options.developmentAccounting, documentJournal: null, additionalTools: undefined } satisfies Record<keyof ApplicationOptions, unknown>;
   const reads = new Map<keyof ApplicationOptions, number>();
   const holder = Object.create(null) as ApplicationOptions;
