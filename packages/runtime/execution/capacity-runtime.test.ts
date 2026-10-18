@@ -14,7 +14,7 @@ const envelope: ResourceEnvelope = { maxRequests: 10, maxTokens: 10000, maxCostU
 const prompt = { id: 'base', requestDigest: identity('base'), fragments: [] };
 function gate<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
-function fixture(t: TestContext, uncertain = false) {
+function fixture(t: TestContext, uncertain: boolean | 'cleanup-error' = false, cancelAfterReservation = false) {
   const directory = mkdtempSync(join(tmpdir(), 'aeon-effect-capacity-'));
   const store = new OperationalStore({ filename: join(directory, 'state.sqlite') });
   t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
@@ -26,6 +26,7 @@ function fixture(t: TestContext, uncertain = false) {
     async dispatch(effect) {
       calls.push(effect.id);
       if (calls.length === 1) { entered.resolve(); await release.promise; }
+      if (uncertain === 'cleanup-error' && calls.length === 1) throw Error('Fixture receiver process cleanup failed');
       return { outcome: uncertain && calls.length === 1 ? 'uncertain' : 'succeeded' };
     }, async reconcile() { throw Error('unexpected reconciliation'); },
   }, () => `effect-${++sequence}`);
@@ -34,6 +35,7 @@ function fixture(t: TestContext, uncertain = false) {
       // Deliberately omit an explicit signal: runtime cancellation must still
       // reach capacity waiting and the effect receiver through the active run.
       const pending = bridge.execute({ id: run.id, runId: run.id, stepId: 'step', name: 'inspect', arguments: null });
+      if (cancelAfterReservation) runtime.cancel(run.id, 'fixture', 'cancel after authorization before receiver entry');
       const wait = store.get<CapacityWait>('execution.capacity-waits', `tool:${run.id}`)?.value;
       if (wait) queued.resolve(wait);
       return { status: 'completed', observations: [await pending] };
@@ -43,12 +45,19 @@ function fixture(t: TestContext, uncertain = false) {
   return { store, resources, effects, runtime, first: admit('first'), second: admit('second'), entered, release, queued, calls };
 }
 
-for (const uncertain of [false, true]) test(`effect reservation queues and resumes after receiver returns ${uncertain ? 'uncertain' : 'success'}`, async t => {
+for (const uncertain of [false, true, 'cleanup-error'] as const) test(`effect reservation queues until ${uncertain ? `host recovery releases ${uncertain === 'cleanup-error' ? 'a failed cleanup' : 'an uncertain effect'}` : 'the receiver succeeds'}`, async t => {
   const f = fixture(t, uncertain), first = f.runtime.resume(f.first.id, prompt); await f.entered.promise;
   const second = f.runtime.resume(f.second.id, prompt), waiting = await f.queued.promise;
   assert.equal(waiting.phase, 'reserve'); assert.equal(f.effects.get(waiting.requestId)?.status, 'pending');
   assert.equal(f.resources.request(waiting.requestId), undefined); assert.equal(f.calls.length, 1);
-  f.release.resolve(); assert.equal((await first).status, uncertain ? 'blocked' : 'completed'); assert.equal((await second).status, 'completed');
+  f.release.resolve(); assert.equal((await first).status, uncertain ? 'blocked' : 'completed');
+  if (uncertain) {
+    assert.equal(f.calls.length, 1); assert.equal(f.resources.snapshot('root').concurrent, 1);
+    assert.equal(f.resources.holdsConcurrency(`tool:${f.first.id}`), true);
+    assert.equal(f.store.list('execution.capacity-waits').length, 1);
+    f.resources.releaseConcurrency(`tool:${f.first.id}`, { kind: 'host-recovery', reason: 'Fixture previous host and receiver tree are confirmed stopped' });
+  }
+  assert.equal((await second).status, 'completed');
   assert.equal(f.calls.length, 2); assert.equal(new Set(f.calls).size, 2);
   assert.equal(f.resources.snapshot('root').requests, 2); assert.equal(f.resources.snapshot('root').concurrent, 0);
   assert.equal(f.store.list('execution.capacity-waits').length, 0);
@@ -62,6 +71,16 @@ test('cancelling a queued command leaves its effect undispatched and clears its 
   assert.equal(f.effects.get(waiting.requestId)?.status, 'pending'); assert.equal(f.resources.request(waiting.requestId), undefined);
   assert.equal(f.store.list('execution.capacity-waits').length, 0);
   f.release.resolve(); await first; assert.equal(f.calls.length, 1);
+});
+
+test('cancellation after authorization releases only occupancy for the never-entered receiver', async t => {
+  const f = fixture(t, false, true);
+  assert.equal((await f.runtime.resume(f.first.id, prompt)).status, 'cancelled');
+  const id = `tool:${f.first.id}`;
+  assert.equal(f.effects.get(id)?.status, 'authorized'); assert.equal(f.resources.request(id)?.status, 'reserved');
+  assert.equal(f.calls.length, 0); assert.equal(f.resources.holdsConcurrency(id), false);
+  assert.equal(f.resources.snapshot('root').concurrent, 0); assert.equal(f.resources.snapshot('root').requests, 1);
+  assert.equal(f.store.list('execution.capacity-waits').length, 0);
 });
 
 test('host recovery clears stale queue observations without reserving or replaying work', t => {

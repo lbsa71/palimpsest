@@ -116,9 +116,17 @@ export class DurableRuntime {
         if(current.status==='authorized') {
           const request=runtime.resources.request(current.reservationId!)!;
           let started=0;
-          current=await runtime.capacity(request,'dispatch',()=>{allowed();started=runtime.elapsedNow();return runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));},signal);
-          try {runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:runtime.elapsedNow()-started}});}
-          finally {runtime.resources.releaseConcurrency(request.id,{kind:'transport-terminal',reason:'Effect receiver returned to the host'});}
+          try {current=await runtime.capacity(request,'dispatch',()=>{allowed();started=runtime.elapsedNow();return runtime.effects.dispatch(current.id,authority,signal,()=>runtime.resources.dispatched({...request,status:'dispatched'}));},signal);}
+          catch(error) {
+            // Both durable intents still precede receiver entry, including a
+            // rolled-back dispatch or cancellation after authorization.
+            if(runtime.effects.get(current.id)?.status==='authorized' && runtime.resources.request(request.id)?.status==='reserved')
+              runtime.resources.releaseConcurrency(request.id,{kind:'transport-terminal',reason:'Effect execution stopped before receiver dispatch'});
+            throw error;
+          }
+          // A generic receiver may report uncertainty after failed process cleanup.
+          // Only trusted transport cleanup or host recovery may release that slot.
+          runtime.resources.settle({...request,status:current.status==='succeeded'?'succeeded':current.status==='failed'?'failed':'uncertain',usage:{...request.usage,elapsedMs:runtime.elapsedNow()-started}});
         }
         if(current.status==='uncertain'||current.status==='dispatched')throw new UncertainEffect('tool outcome unknown; reconcile before another effect');
         let value:JsonValue={effectId:current.id,status:current.status};
