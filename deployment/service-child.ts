@@ -11,7 +11,7 @@ import { validateEvolutionMetadata, type EvolutionMetadata } from './service-pro
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { assertResourceConfinement, initializeResourceDelegation } from '../packages/supervisor/resource-limits.ts';
 import { invariant } from '../packages/contracts/index.ts';
-import { createCodexProcess } from './codex-process.ts';
+import { createCodexProcess, nodeCodexProcessDependencies } from './codex-process.ts';
 
 let app: AutarkApplication | undefined; let authorityStore: AuthorityStore | undefined; let lease: ProcessLease | undefined; let starting = false; let closing: Promise<void> | undefined;
 function close(): Promise<void> { return closing ??= (async () => { try { await app?.close(); } finally { lease?.close(); authorityStore?.close(); if (process.connected) process.disconnect?.(); } })(); }
@@ -32,7 +32,7 @@ process.on('message', (message: { kind: string; mode?: 'engineering' | 'product'
     if (config.resourceLimits) { await initializeResourceDelegation(config.resourceLimits.cgroupRoot); assertResourceConfinement(config.workspaceDirectory, config.resourceLimits); }
     invariant(!closing, 'Application stopped during startup');
     invariant(!!message.bindings.codexBinary === !!message.bindings.codexHome, 'Codex host binary and dedicated home must be supplied together');
-    const codingExecutor = message.bindings.codexBinary && message.bindings.codexHome ? createCodexProcess({ codexBinary: message.bindings.codexBinary, codexHome: message.bindings.codexHome, codeModeHost: message.bindings.codexCodeModeHost, nodeBinary: config.nodeBinary, toolchainDirectory: join(config.applicationRoot, 'node_modules'), protectedPaths: [config.stateDirectory, config.applicationRoot], resourceLimits: config.resourceLimits }) : undefined;
+    const codingExecutor = message.bindings.codexBinary && message.bindings.codexHome ? createCodexProcess({ codexBinary: message.bindings.codexBinary, codexHome: message.bindings.codexHome, codeModeHost: message.bindings.codexCodeModeHost, nodeBinary: config.nodeBinary, toolchainDirectory: join(config.applicationRoot, 'node_modules'), protectedPaths: [config.stateDirectory, config.applicationRoot], resourceLimits: config.resourceLimits }, nodeCodexProcessDependencies(config.stateDirectory)) : undefined;
     app = new AutarkApplication({ config, codingExecutor, secrets: message.secrets, authority: message.authority, authorityStore, lease,
       additionalTools: context => [...ordinaryServiceTools(context, { config, artifactStore: message.bindings!.artifactStore, evolution: message.evolution, assertAuthority: authority => authorityStore!.assert(authority) }), ...handoffTools(context, { applicationRoot: config.applicationRoot, artifactId: config.artifactId })] });
     await app.start(); if (!closing && process.connected) process.send?.({ kind: 'ready', candidateId: candidate.manifest.id, authority: message.authority, address: app.directApi.address() });

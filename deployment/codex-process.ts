@@ -22,9 +22,10 @@ export interface CodexProcessDependencies extends ExecutionEnvironment {
   policyFile(contents: string): { path: string; remove(): void };
 }
 
-export function nodeCodexProcessDependencies(): CodexProcessDependencies {
+/** Production supplies protected writable state because systemd may make the host /tmp read-only. */
+export function nodeCodexProcessDependencies(temporaryDirectory = tmpdir()): CodexProcessDependencies {
   return { ...nodeExecutionEnvironment(), policyFile: contents => {
-    const directory = mkdtempSync(join(tmpdir(), 'aeon-codex-policy-'));
+    const directory = mkdtempSync(join(temporaryDirectory, 'aeon-codex-policy-'));
     const path = join(directory, 'requirements.toml');
     try { writeFileSync(path, contents, { mode: 0o600, flag: 'wx' }); }
     catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
-import { linkSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -234,6 +234,32 @@ test('production policy file has private permissions and explicit cleanup', () =
   const policy = nodeCodexProcessDependencies().policyFile('fixture policy');
   assert.equal(statSync(policy.path).mode & 0o777, 0o600); assert.equal(readFileSync(policy.path, 'utf8'), 'fixture policy');
   policy.remove(); assert.throws(() => statSync(policy.path), /ENOENT/);
+});
+
+test('explicit protected policy root supports execution and cleans only its temporary subtree', async () => {
+  const f = realFixture(), dependencies = nodeCodexProcessDependencies(f.state), policyFile = dependencies.policyFile;
+  let observedPath = '';
+  dependencies.policyFile = contents => {
+    const policy = policyFile(contents); observedPath = policy.path;
+    assert.ok(policy.path.startsWith(f.state + '/aeon-codex-policy-'));
+    assert.equal(statSync(join(policy.path, '..')).mode & 0o777, 0o700);
+    assert.equal(statSync(policy.path).mode & 0o777, 0o600);
+    return policy;
+  };
+  try {
+    const execute = createCodexProcess(f.options, dependencies);
+    const receipt = await execute({ ...invocation, cwd: f.workspace, timeoutMs: 5000, maxOutputBytes: 4096,
+      args: ['-e', `const fs=require('node:fs');
+        if(!fs.readFileSync('/etc/codex/requirements.toml','utf8').includes('deny_read'))throw Error('policy absent');
+        if(fs.existsSync(${JSON.stringify(f.state)}))throw Error('protected policy root exposed');
+        fs.writeFileSync('/work/policy-verified','protected policy mounted');`] });
+    assert.equal(receipt.exitCode, 0, receipt.stderr);
+    assert.equal(readFileSync(join(f.workspace, 'policy-verified'), 'utf8'), 'protected policy mounted');
+    assert.throws(() => statSync(observedPath), /ENOENT/); assert.deepEqual(readdirSync(f.state), ['private']);
+    await assert.rejects(execute({ ...invocation, cwd: f.workspace, executable: '/bin/sh' }), /host-bound/);
+    assert.throws(() => statSync(observedPath), /ENOENT/); assert.deepEqual(readdirSync(f.state), ['private']);
+    assert.equal(readFileSync(join(f.state, 'private'), 'utf8'), 'private state');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test('installed native Linux launcher requires explicit PATH after shell environment sanitization',
