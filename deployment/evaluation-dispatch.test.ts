@@ -634,7 +634,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
     await eventually(() => store.get<{ status: string }>('runs', original.proposal.runId)?.value.status, status => status === 'completed');
     const compacted = store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').filter(row => row.value.request.purpose === 'compaction');
     assert.ok(compacted.every(row => row.value.request.status === 'succeeded'), 'Any required compaction is a successful accounted physical request');
-    assert.equal(store.list('host-transport').length, 10 + compacted.length, 'Seven coordination tools and three waits, plus each actual compaction');
+    assert.equal(store.list('host-transport').length, 9 + compacted.length, 'Seven coordination tools and two terminal waits; code hands off without another model request, plus each actual compaction');
 
     await scenario('lost actual staged controller reply is retained as uncertain and never restaged after restart', async () => {
       const request = { ...(mailbox.request(submission!.id) as SubmissionRequest), requestId: 'lost-submission' };

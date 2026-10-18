@@ -91,13 +91,16 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       performRequest: async payload => {
         const request = JSON.parse(payload);
         assert.ok(request.tools.some((value: any) => value.function.name === 'code'));
-        if (calls !== 1) for (const name of ['candidate_freeze', 'candidate_evaluate', 'release_submit']) assert.ok(request.tools.some((value: any) => value.function.name === name));
+        for (const name of ['candidate_freeze', 'candidate_evaluate', 'release_submit']) assert.ok(request.tools.some((value: any) => value.function.name === name));
         assert.ok(request.tools.every((value: any) => !/^(workspace_|source_|command_run$)/.test(value.function.name)));
         calls++;
         if (calls === 1) return response('code', { mode: 'edit', target: 'source', message: 'Apply the finite engineering source marker, then report the changed file.' });
-        if (calls === 2) return response();
-        if (calls === 3) {
+        if (calls === 2) {
           assert.equal(codingCalls, 1); assert.ok(payload.includes('coding-result'));
+          return response('code_status');
+        }
+        if (calls === 3) {
+          assert.ok(payload.includes('Applied the finite source marker in the prepared source snapshot.'));
           return response('change_propose', { changeId: 'finite', justification: 'Verify exact candidate external build and host stage.', objective: 'Stage this bounded engineering source change.', successCriteria: ['exact candidate compiles under the accepted closure'], experienceIds: [] });
         }
         if (calls === 4) return response('candidate_freeze', { changeId: 'finite' });
