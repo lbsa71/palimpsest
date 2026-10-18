@@ -4,7 +4,7 @@ Status: implemented with focused checks and independent review in progress; live
 
 ## Behavior and enforcement
 
-`code` defaults to `mode: inspect, target: source`. Source preparation copies the accepted source once into `repositories/<candidate ID>` inside the retained coding workspace. A durable receipt identifies the exact copy; later requests reuse it without overwriting edits. Partial or lost preparation requires inspection rather than an automatic copy over an unknown workspace. `target: workspace` addresses retained scratch files. The host snapshot adapter is injected for deterministic tests.
+`code` defaults to `mode: inspect, target: source`. Source preparation copies the accepted source once into `repositories/<candidate ID>` inside the retained coding workspace. A durable receipt identifies the exact copy; later requests reuse it without overwriting edits. Partial or lost preparation requires inspection rather than an automatic copy over an unknown workspace. `target: workspace` addresses retained scratch files. The host snapshot adapter is injected for deterministic tests. Uncached preparation first checks the current caller’s remaining allowance, reserves a physical host-source request and receives a cancellation signal plus a deadline capped by that unchanged allowance. Cached ready source does not repeat the copy charge.
 
 Both the native Codex sandbox and the outer host namespace enforce a read-only workspace for inspect turns. `mode: edit` restores the existing bounded writable workspace for requested implementation work. The current turn's mode is recorded with its prompt, argv, result and accounting; resumes can alternate modes on the exact same native UUID. Sol 6.1/high and disabled fan-out remain enforced. The coding home and temporary storage remain writable where needed for native session persistence; read-only describes the inspected workspace.
 
@@ -23,6 +23,8 @@ Status speech and its reservation both belong to the existing root allowance. A 
 ## Independent findings retained
 
 Fresh review reproduced an unsafe Pi continuation: a lost tool acknowledgement left a pending assistant call, which was imported into a new accounting run and dispatched again under another effect ID. The original causal check observed two actions where one was permitted. Only completed transcripts are now transferred, and an uncertain prior action holds the coding session. The independent regression passes after repair.
+
+A later-thread release-coordination check initially selected the original workspace root rather than the retained turn’s source subdirectory. The final lookup follows the authorized retained turn and its target. A held-out queued-source check then observed one snapshot after the caller’s original elapsed allowance had expired (expected zero). The source-budget admission and deadline check above repairs that ordering; the causal check now passes.
 
 Review also reproduced startup failure after a root-charged status reservation whose effect still named the cancelled conversational run. An explicit ledger binding fixed the new runtime, but the retained accepted runtime could not read the mismatch. That alternative was committed as `27031c8` and reverted as `9c4402e` before deployment. The final composition uses matching root identities and a plan-bound speech receiver; no ledger exception or grant reset is required.
 

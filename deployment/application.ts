@@ -50,7 +50,7 @@ export interface ApplicationOptions {
   brokerTiming?: Parameters<typeof createBrokerShell>[0]['brokerTiming'];
   codingExecutor?: CodingExecutor;
   /** Trusted bounded source snapshot adapter; the mind cannot call it directly. */
-  codingSnapshot?: (workspace: string, path: string, signal?: AbortSignal) => Promise<JsonValue>;
+  codingSnapshot?: (workspace: string, path: string, signal?: AbortSignal, timeoutMs?: number) => Promise<JsonValue>;
   runWorker?: Parameters<typeof createBrokerShell>[0]['runWorker'];
   slackBotApi?: SlackApi; slackAppApi?: SlackApi;
   lease?: ProcessLease;
@@ -85,6 +85,7 @@ export class AutarkApplication {
   private readonly reconciledFailureNotices = new Set<string>();
   private readonly reconciledControlReplies = new Set<string>();
   private readonly noticeElapsedNow: () => number;
+  private readonly sourceTimeoutSignal: (timeoutMs: number) => AbortSignal;
   private shutdown = new AbortController();
   private initiativeTask?: Promise<unknown>;
   private developmentTurn = true;
@@ -97,6 +98,7 @@ export class AutarkApplication {
   constructor(options: ApplicationOptions) {
     const suppliedTiming = options.brokerTiming, brokerTiming = captureBrokerTiming(suppliedTiming);
     this.noticeElapsedNow = brokerTiming.monotonicNow;
+    this.sourceTimeoutSignal = brokerTiming.timeoutSignal;
     // Read accepted callback/accessor values once; caller aliases cannot change the
     // options used by constructor closures or later descriptor/receiver paths.
     options = Object.freeze({ config: options.config, secrets: options.secrets, authority: options.authority, authorityStore: options.authorityStore,
@@ -293,14 +295,14 @@ export class AutarkApplication {
       const goal = execution ? this.goals.goal(execution.key) : undefined;
       if (goal && ['waiting', 'blocked'].includes(goal.status)) this.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'External coding result is ready for inspection');
     }, now: () => this.runtime.now(), assertAuthority: authority => options.authorityStore.assert(authority), execute: (session, turn, signal) => this.executeCoding(session, turn, signal) });
-    this.codingSources = new CodingSources({ store: this.store, snapshot: options.codingSnapshot ?? (async (workspace, path, signal) => {
+    this.codingSources = new CodingSources({ store: this.store, snapshot: options.codingSnapshot ?? (async (workspace, path, signal, timeoutMs) => {
       invariant(realpathSync(workspace) === workspace, 'Canonical coding workspace required');
       const directory = join(workspace, 'repositories');
       try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
       invariant(lstatSync(directory).isDirectory() && realpathSync(directory) === directory, 'Coding repository directory must not be a link');
       const destination = join(workspace, path); mkdirSync(destination, { mode: 0o700 });
       return sourceWorkspaceTools({ applicationRoot: config.applicationRoot, workspace: destination, protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary,
-        maxFiles: 10000, maxBytes: 50_000_000, timeoutMs: 30000, resourceLimits: config.resourceLimits })[0]!.execute({}, signal);
+        maxFiles: 10000, maxBytes: 50_000_000, timeoutMs: timeoutMs ?? 30000, resourceLimits: config.resourceLimits })[0]!.execute({}, signal);
     }) });
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore });
@@ -474,7 +476,25 @@ export class AutarkApplication {
     // the mind's enqueue acknowledgement.
     if (turn.target === 'source' && !turn.source) {
       try {
-        const source = await this.codingSources.prepare(session.workspace, this.config.artifactId, signal);
+        let source = this.codingSources.prepared(session.workspace, this.config.artifactId);
+        if (!source) {
+          const budget = this.codingBudget(child.id, 30000), id = `coding-source:${turn.id}`;
+          const payload = { candidateId: this.config.artifactId, workspace: session.workspace, timeoutMs: budget.timeoutMs };
+          const request: PhysicalRequest = { id, runId: child.id, purpose: 'delegation', provider: 'host-source', model: 'source_snapshot', promptManifestId: id,
+            requestDigest: identity(payload), reservationId: id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: budget.reservationElapsedMs } };
+          this.options.authorityStore.assert(turn.authority); signal.throwIfAborted();
+          this.store.transaction(() => { this.resources.reserve(request); this.resources.dispatched({ ...request, status: 'dispatched' }); });
+          const started = this.noticeElapsedNow();
+          try {
+            const deadline = AbortSignal.any([signal, this.sourceTimeoutSignal(budget.timeoutMs)]);
+            this.store.put('host.coding-source-invocations', id, json(payload), null);
+            source = await this.codingSources.prepare(session.workspace, this.config.artifactId, deadline, budget.timeoutMs);
+            this.resources.settle({ ...request, status: 'succeeded', usage: { ...request.usage, elapsedMs: Math.max(0, this.noticeElapsedNow() - started) } });
+          } catch (error) {
+            this.resources.settle({ ...request, status: 'uncertain', usage: { ...request.usage, elapsedMs: Math.max(0, this.noticeElapsedNow() - started) } });
+            throw error;
+          }
+        }
         const queued = this.store.get<CodingTurn>('host.coding-turns', turn.id)!;
         this.store.put('host.coding-turns', turn.id, { ...queued.value, source }, queued.revision);
         turn = { ...turn, source };
