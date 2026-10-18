@@ -30,6 +30,7 @@ import type { DevelopmentAccounting } from './development-accounting.ts';
 import { CodingLimb, type CodingOwner, type CodingSession, type CodingTurn } from './coding-limb.ts';
 import { CodexCodingProvider, type CodingExecutor, type CodingResult } from '../packages/coding/index.ts';
 import { codexCodingShell } from './coding-shell.ts';
+import { bindSpeechTarget } from './speech-target.ts';
 
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 interface Target { channel: string; threadTs?: string; transport: 'direct' | 'slack'; scope: DataScope }
@@ -119,15 +120,20 @@ export class AutarkApplication {
     if (config.slack?.allowSpeech && botApi) this.slackActivity = new SlackActivity({ store: this.store, api: botApi, fence: options.authorityStore, authority: options.authority });
     const speech: EffectReceiver = {
       dispatch: async (effect, signal) => {
-        const target = this.grant(effect.runId).target; invariant(target, 'No conversational destination for this run');
+        let target: Target;
+        try {
+          const granted = this.grant(effect.runId).target; invariant(granted, 'No conversational destination for this run'); target = granted;
+          effect = bindSpeechTarget(effect, target);
+          options.authorityStore.assert(effect.authority); signal?.throwIfAborted();
+          if (target.transport === 'slack') invariant(config.slack?.allowSpeech && botApi, 'Slack speech is not enabled in host configuration');
+          this.conversationObligations.beforeSpeech(effect, target);
+        } catch (error) {
+          return { outcome: 'failed', receipt: this.store.putJsonArtifact({ delivered: false, reason: error instanceof Error ? error.message : 'Speech preparation failed' }) };
+        }
         const p = effect.payload as Record<string, JsonValue>;
-        invariant(p && typeof p === 'object' && p.channel === target.channel && p.threadTs === target.threadTs && typeof p.text === 'string' && p.text.trim().length > 0, 'Speech target or content invalid');
-        options.authorityStore.assert(effect.authority); signal?.throwIfAborted();
-        this.conversationObligations.beforeSpeech(effect, target);
         if (target.transport === 'slack') {
-          invariant(config.slack?.allowSpeech && botApi, 'Slack speech is not enabled in host configuration');
           this.activity(() => this.slackActivity?.capture(effect.id, effect.runId));
-          const result = await createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi, botUserId: config.slack.botUserId, grants: [target] }).dispatch(effect, signal);
+          const result = await createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi!, botUserId: config.slack!.botUserId, grants: [target] }).dispatch(effect, signal);
           if (result.outcome === 'succeeded') this.activity(() => this.slackActivity?.delivered(effect.id));
           return result;
         }
@@ -138,6 +144,8 @@ export class AutarkApplication {
       },
       reconcile: async effect => {
         const target = this.grant(effect.runId).target;
+        try { invariant(target, 'No conversational destination for this run'); effect = bindSpeechTarget(effect, target); }
+        catch { return { outcome: 'unresolved', receipt: this.store.putJsonArtifact({ effectId: effect.id, reason: 'Speech destination cannot be verified' }) }; }
         if (target?.transport === 'slack' && botApi && config.slack) {
           const result = await createSpeechHandler({ store: this.store, fence: options.authorityStore, api: botApi, botUserId: config.slack.botUserId, grants: [target] }).reconcile(effect);
           if (result.outcome === 'succeeded') this.activity(() => this.slackActivity?.delivered(effect.id));

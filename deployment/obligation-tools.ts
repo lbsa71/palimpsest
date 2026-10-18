@@ -30,7 +30,8 @@ export class ConversationObligations {
     invariant(identity(this.target(payload.obligationId) ?? null) === identity(target), 'Report belongs to another conversation');
     const obligation = this.registry.obligation(payload.obligationId)!;
     invariant(payload.obligationRevision === obligation.revision && obligation.status === 'owed', 'Report revision is not owed');
-    this.registry.beginDelivery(obligation.id, obligation.revision, effect.id);
+    invariant(payload.channel === target.channel && payload.threadTs === target.threadTs, 'Report destination was not bound to this conversation');
+    this.registry.beginDelivery(obligation.id, obligation.revision, effect.id, { channel: target.channel, ...(target.threadTs !== undefined ? { threadTs: target.threadTs } : {}) });
   }
   confirm(): void {
     for (const obligation of this.registry.all()) if (obligation.status === 'delivering' && obligation.effectId && this.registry.store.get<Effect>('effects', obligation.effectId)?.value.status === 'succeeded') this.registry.confirmDelivery(obligation.id, obligation.revision);

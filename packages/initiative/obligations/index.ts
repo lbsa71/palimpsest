@@ -2,6 +2,7 @@ import { invariant, nonempty, scopeAllows, validateObligation } from '../../cont
 import type { DataScope, Effect, JsonValue, Obligation, ObligationPort } from '../../contracts/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 const NS = 'initiative.obligations';
+interface DeliveryDestination { channel: string; threadTs?: string }
 function object(value: JsonValue): { [key: string]: JsonValue } { invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'delivery requires structured receipt'); return value; }
 /** Independent of goal completion; only confirmed report delivery settles an owed outcome. */
 export class ObligationRegistry implements ObligationPort {
@@ -24,9 +25,16 @@ export class ObligationRegistry implements ObligationPort {
     this.store.put(NS, value.id, value, expected); return value;
   }
   owe(value: Omit<Obligation, 'revision' | 'status'>): Obligation { return this.save({ ...value, revision: 1, status: 'owed' }, null); }
-  beginDelivery(id: string, expected: number, effectId: string): Obligation {
+  beginDelivery(id: string, expected: number, effectId: string, destination?: DeliveryDestination): Obligation {
     nonempty(effectId, 'delivery effect');
-    return this.store.transaction(() => { const old = this.obligation(id); invariant(old && old.status === 'owed', 'obligation not owed'); const saved = this.save({ ...old, revision: expected + 1, status: 'delivering', effectId }, expected); this.store.put('initiative.delivery-intents', `${id}:${saved.revision}`, { obligationRevision: expected, effectId }, null); return saved; });
+    let bound: DeliveryDestination | undefined;
+    if (destination !== undefined) {
+      invariant(destination && typeof destination === 'object' && !Array.isArray(destination) && Object.keys(destination).every(key => key === 'channel' || key === 'threadTs'), 'Invalid delivery destination');
+      nonempty(destination.channel, 'delivery channel');
+      if (destination.threadTs !== undefined) nonempty(destination.threadTs, 'delivery thread');
+      bound = { channel: destination.channel, ...(destination.threadTs !== undefined ? { threadTs: destination.threadTs } : {}) };
+    }
+    return this.store.transaction(() => { const old = this.obligation(id); invariant(old && old.status === 'owed', 'obligation not owed'); const saved = this.save({ ...old, revision: expected + 1, status: 'delivering', effectId }, expected); this.store.put('initiative.delivery-intents', `${id}:${saved.revision}`, { obligationRevision: expected, effectId, ...(bound ? { destination: bound } : {}) }, null); return saved; });
   }
   confirmDelivery(id: string, expected: number): Obligation {
     return this.store.transaction(() => {
@@ -35,10 +43,14 @@ export class ObligationRegistry implements ObligationPort {
       invariant(effect?.status === 'succeeded' && effect.receipt, 'delivery lacks confirmed receipt');
       invariant(scopeAllows(old.audience, effect.scope) && scopeAllows(effect.scope, old.audience), 'delivery audience mismatch');
       const payload = object(effect.payload), receipt = object(this.store.readJsonArtifact(effect.receipt));
-      const intent = this.store.get<{ obligationRevision: number }>('initiative.delivery-intents', `${id}:${old.revision}`)?.value;
+      const intent = this.store.get<{ obligationRevision: number; destination?: DeliveryDestination }>('initiative.delivery-intents', `${id}:${old.revision}`)?.value;
       invariant(intent && payload.kind === 'report' && receipt.kind === 'report' && receipt.delivered === true, 'progress acknowledgement is not an outcome report');
       invariant(payload.obligationId === id && receipt.obligationId === id && payload.obligationRevision === intent.obligationRevision && receipt.obligationRevision === intent.obligationRevision, 'report does not match obligation revision');
-      nonempty(payload.channel, 'report channel'); invariant(receipt.channel === payload.channel && receipt.threadTs === payload.threadTs, 'report receipt target mismatch');
+      nonempty(payload.channel, 'report channel');
+      const destination = intent.destination;
+      const channel = destination?.channel ?? payload.channel, threadTs = destination ? destination.threadTs : payload.threadTs;
+      invariant(payload.channel === channel && (!destination || payload.threadTs === undefined || payload.threadTs === threadTs)
+        && receipt.channel === channel && receipt.threadTs === threadTs, 'report receipt target mismatch');
       nonempty(payload.text, 'report text'); invariant(receipt.text === payload.text && receipt.reportRevision === payload.reportRevision, 'report receipt content/revision mismatch');
       nonempty(receipt.clientMsgId, 'host generated delivery identity');
       if (payload.clientMsgId !== undefined) invariant(receipt.clientMsgId === payload.clientMsgId, 'report receipt identity mismatch');

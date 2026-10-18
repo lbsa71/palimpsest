@@ -143,6 +143,36 @@ test('owes outcome independently of goal; confirmed report receipt alone clears 
   assert.equal(f.obligations.confirmDelivery(owed.id, owed.revision).status, 'delivered'); assert.equal((await f.obligations.owed(scope)).length, 0); f.store.close();
 });
 
+test('bound delivery destinations preserve omitted-thread intent while rejecting forged routes and old unbound mismatches', () => {
+  for (const mode of ['omitted', 'explicit-match', 'explicit-mismatch', 'wrong-receipt', 'old-unbound'] as const) {
+    const f = fixture();
+    try {
+      const owed = f.obligations.owe({ id: 'report', inputId: 'input', audience: scope, promisedOutcome: 'verified report', dueAt: at });
+      const payload = { channel: 'C1', ...(mode.startsWith('explicit') ? { threadTs: mode === 'explicit-match' ? '10.0' : '99.0' } : {}), text: 'verified', kind: 'report', obligationId: owed.id, obligationRevision: owed.revision };
+      const effect: Effect = { id: 'delivery', runId: 'run', stepId: 'step', kind: 'speech_send', payload, scope, authority, status: 'succeeded', revision: 3, reservationId: 'reservation',
+        receipt: f.store.putJsonArtifact({ ...payload, threadTs: mode === 'wrong-receipt' ? '99.0' : '10.0', delivered: true, messageTs: '11.0', clientMsgId: 'host-identity' }) };
+      f.store.put('effects', effect.id, effect, null);
+      const destination = { channel: 'C1', threadTs: '10.0' };
+      const delivering = f.obligations.beginDelivery(owed.id, owed.revision, effect.id, mode === 'old-unbound' ? undefined : destination);
+      destination.threadTs = '99.0';
+      if (mode === 'omitted' || mode === 'explicit-match') assert.equal(f.obligations.confirmDelivery(owed.id, delivering.revision).status, 'delivered');
+      else assert.throws(() => f.obligations.confirmDelivery(owed.id, delivering.revision), /receipt target mismatch/);
+      assert.deepEqual(f.store.get<Effect>('effects', effect.id)!.value.payload, payload);
+    } finally { f.store.close(); }
+  }
+});
+
+test('malformed delivery destination cannot begin or mutate an obligation intent', () => {
+  const f = fixture();
+  try {
+    const owed = f.obligations.owe({ id: 'report', inputId: 'input', audience: scope, promisedOutcome: 'verified report', dueAt: at });
+    for (const destination of [{ channel: '' }, { channel: 'C1', threadTs: '' }, { channel: 'C1', threadTs: null }, { channel: 'C1', privileged: true }, []]) {
+      assert.throws(() => f.obligations.beginDelivery(owed.id, owed.revision, 'effect', destination as unknown as { channel: string; threadTs?: string }));
+      assert.deepEqual(f.obligations.obligation(owed.id), owed); assert.equal(f.store.list('initiative.delivery-intents').length, 0);
+    }
+  } finally { f.store.close(); }
+});
+
 test('machine plan retains Aeon Lane Task ownership/evidence and rejects dependency loops', () => {
   const file = filename(); let f = fixture(file); const g = ready(f, 'plan-goal'); const plan = { id: 'plan', goalId: g.id, scope, aeon: 'Aeon 2', lane: 'A2-L02', owner: 'autark-test', slashGoal: '/goal Compare observed symmetries and retain uncertainty', dependencyIds: [], status: 'ready' as const, reason: null, handoff: null, tasks: [{ id: 'T01', objective: 'compare two artifacts', dependencyIds: [], writablePaths: [], inputs: ['artifact-a'], acceptance: ['record observed differences'], model: 'fixture-mistral', effort: null, status: 'ready' as const, evidenceIds: [], reason: null }] };
   f.plans.put(plan, null); f.store.close(); f = fixture(file); assert.equal(f.plans.get('plan', scope)?.owner, authority.generation);
