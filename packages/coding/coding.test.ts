@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CODEX_CODING_REASONING_EFFORT, CODING_LIMB_INSTRUCTIONS, DEFAULT_CODEX_CODING_MODEL, CodexCodingProvider, PiCodingProvider, parseCodexResult } from './index.ts';
-import type { CodingInvocation, CodingProcessReceipt, CodingResult, CodingUsage } from './index.ts';
+import type { CodingInvocation, CodingMode, CodingProcessReceipt, CodingResult, CodingUsage } from './index.ts';
 
 const SESSION = '0199e12a-9af2-7123-8a90-92b4f0e11b51';
 const OTHER_SESSION = '0199e12a-9af2-7123-8a90-92b4f0e11b52';
@@ -23,8 +23,8 @@ const receipt = (overrides: Partial<CodingProcessReceipt> = {}): CodingProcessRe
 
 test('start is a single confined CLI invocation; follow-up resumes the exact persisted native session', async () => {
   const invocations: CodingInvocation[] = [];
-  const provider = new CodexCodingProvider({ ...limits, model: 'host-selected-model', execute: async invocation => { invocations.push(invocation); return receipt(); } });
-  const result = await provider.run(request);
+  const provider = new CodexCodingProvider({ ...limits, model: DEFAULT_CODEX_CODING_MODEL, execute: async invocation => { invocations.push(invocation); return receipt(); } });
+  const result = await provider.run({ ...request, mode: 'edit' });
   assert.equal(result.status, 'completed');
   assert.equal(result.sessionId, SESSION);
   assert.deepEqual(result.events, events);
@@ -47,13 +47,14 @@ test('start is a single confined CLI invocation; follow-up resumes the exact per
   assert(first.args.includes('sandbox_workspace_write.network_access=false'));
   assert(first.args.includes('shell_environment_policy.inherit="none"'));
   assert(first.args.includes('shell_environment_policy.set.PATH="/runtime:/usr/bin:/bin"'));
-  assert(first.args.includes(`developer_instructions=${JSON.stringify(CODING_LIMB_INSTRUCTIONS)}`));
-  assert.deepEqual(first.args.slice(-3), ['--model', 'host-selected-model', '-']);
+  assert(JSON.parse(first.args.find(arg => arg.startsWith('developer_instructions='))!.slice('developer_instructions='.length)).startsWith(CODING_LIMB_INSTRUCTIONS));
+  assert.deepEqual(first.args.slice(-3), ['--model', DEFAULT_CODEX_CODING_MODEL, '-']);
   assert(!first.args.includes('--ephemeral'));
   assert(!first.args.includes(request.message));
-  assert.deepEqual(result.invocation, { args: first.args, stdin: request.message });
+  assert.equal(result.mode, 'edit');
+  assert.deepEqual(result.invocation, { args: first.args, stdin: request.message, mode: 'edit' });
   const followup = '--config agents.max_threads=99; clarify why the fix works';
-  await provider.run({ ...request, message: followup, sessionId: SESSION });
+  await provider.run({ ...request, message: followup, sessionId: SESSION, mode: 'edit' });
   assert.equal(invocations.length, 2);
   assert.deepEqual(invocations[1]!.args, [...first.args.slice(0, -1), 'resume', SESSION, '-']);
   assert.equal(invocations[1]!.stdin, followup);
@@ -65,11 +66,14 @@ test('default start and resume explicitly select Sol6.1 with high effort without
   const invocations: CodingInvocation[] = [];
   const provider = new CodexCodingProvider({ ...limits, execute: async invocation => { invocations.push(invocation); return receipt(); } });
   const first = await provider.run(request);
+  assert.equal(first.mode, 'inspect');
   await provider.run({ ...request, sessionId: SESSION, previousUsage: first.cumulativeUsage });
   assert.equal(DEFAULT_CODEX_CODING_MODEL, 'gpt-6.1-sol');
   assert.equal(CODEX_CODING_REASONING_EFFORT, 'high');
   assert.equal(invocations.length, 2);
-  for (const { args } of invocations) {
+  for (const { args, mode } of invocations) {
+    assert.equal(mode, 'inspect');
+    assert.equal(args[args.indexOf('--sandbox') + 1], 'read-only');
     assert.equal(args.filter(arg => arg === '--model').length, 1);
     assert.equal(args[args.indexOf('--model') + 1], 'gpt-6.1-sol');
     assert.equal(args.filter(arg => arg.startsWith('model_reasoning_effort=')).length, 1);
@@ -210,9 +214,42 @@ test('finite limits are required and Pi remains an explicit injected alternative
   const result: CodingResult = { ...parseCodexResult(receipt()), provider: 'pi', sessionId: 'pi-native-session' };
   const provider = new PiCodingProvider({ run: async input => { passed = input; return result; } });
   const piRequest = { ...request, sessionId: 'pi-native-session' };
-  assert.equal(await provider.run(piRequest), result);
-  assert.equal(passed, piRequest);
+  assert.deepEqual(await provider.run(piRequest), { ...result, mode: 'inspect' });
+  assert.deepEqual(passed, { ...piRequest, mode: 'inspect' });
   await assert.rejects(new PiCodingProvider({ run: async () => parseCodexResult(receipt()) }).run(request), /different provider/);
+});
+
+test('one retained session alternates inspect and edit authority per turn and omission restores inspect', async () => {
+  const invocations: CodingInvocation[] = [];
+  const provider = new CodexCodingProvider({ ...limits, execute: async invocation => { invocations.push(invocation); return receipt(); } });
+  let previousUsage: CodingUsage | undefined;
+  for (const [index, mode] of ([undefined, 'edit', undefined, 'inspect'] as const).entries()) {
+    const result = await provider.run({ ...request, ...(mode ? { mode } : {}), ...(index ? { sessionId: SESSION, previousUsage } : {}) });
+    assert.equal(result.sessionId, SESSION);
+    assert.equal(result.mode, mode ?? 'inspect');
+    assert.equal(result.invocation?.mode, mode ?? 'inspect');
+    const invocation = invocations[index]!;
+    assert.equal(invocation.mode, mode ?? 'inspect');
+    assert.equal(invocation.args[invocation.args.indexOf('--sandbox') + 1], mode === 'edit' ? 'workspace-write' : 'read-only');
+    if (index) {
+      assert.deepEqual(invocation.args.slice(-3), ['resume', SESSION, '-']);
+      assert.equal(result.usage.inputTokens, 0);
+    }
+    previousUsage = result.cumulativeUsage;
+  }
+  assert.equal(invocations.length, 4);
+});
+
+test('invalid modes and non-Sol model overrides cannot dispatch or grant write authority', async () => {
+  let calls = 0;
+  const execute = async () => { calls += 1; return receipt(); };
+  assert.throws(() => new CodexCodingProvider({ ...limits, execute, model: 'another-model' }), /requires gpt-6.1-sol/);
+  const provider = new CodexCodingProvider({ ...limits, execute });
+  for (const mode of ['', 'write', 'danger-full-access', null]) {
+    await assert.rejects(provider.run({ ...request, mode: mode as CodingMode }), /mode must be inspect or edit/);
+  }
+  assert.equal(calls, 0);
+  assert.equal((await provider.run(request)).mode, 'inspect');
 });
 
 const usage = (inputTokens: number | null, outputTokens: number | null, cachedInputTokens: number | null): CodingUsage => ({

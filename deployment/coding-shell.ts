@@ -1,20 +1,30 @@
 import { createHash } from 'node:crypto';
 import { identity, invariant, type JsonValue, type PhysicalRequest, type ShellPort } from '../packages/contracts/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
-import { DEFAULT_CODEX_CODING_MODEL, CODEX_CODING_REASONING_EFFORT, type CodingProvider, type CodingResult } from '../packages/coding/index.ts';
+import { DEFAULT_CODEX_CODING_MODEL, CODEX_CODING_REASONING_EFFORT, resolveCodingMode, type CodingProvider, type CodingResult } from '../packages/coding/index.ts';
 import type { CodingSession, CodingTurn } from './coding-limb.ts';
 
 export function codexCodingShell(options: { provider: CodingProvider; store: OperationalStore; session(): CodingSession; turn(runId: string): CodingTurn;
   executionBudget(runId: string): { timeoutMs: number; reservationElapsedMs: number; maxTokens: number }; timeoutMs: number; model?: string; onProcessStopped?(requestId: string): void }): ShellPort {
+  invariant(options.model === undefined || options.model === DEFAULT_CODEX_CODING_MODEL, `Codex coding requires ${DEFAULT_CODEX_CODING_MODEL}`);
   return { async run(input, bridge, signal) {
     const session = options.session(), turn = options.turn(input.run.id);
+    const mode = resolveCodingMode(turn.mode);
+    if (turn.source) invariant(/^[a-f0-9]{64}$/.test(turn.source.candidateId) && turn.source.path === `repositories/${turn.source.candidateId}`,
+      'Coding source context requires the exact trusted candidate workspace path');
+    const message = turn.source ? [
+      `Trusted host context: accepted source snapshot ${turn.source.candidateId} is available at /work/${turn.source.path}.`,
+      'Use that directory for repository inspection and verification. Cite file paths, line numbers and actual observed command results when answering repository questions.',
+      `Current turn authority: ${mode}. Any authorized edits must target that source subdirectory.`,
+      '', 'Coding request:', turn.message,
+    ].join('\n') : turn.message;
     const budget = options.executionBudget(input.run.id);
     invariant(Number.isSafeInteger(budget.timeoutMs) && budget.timeoutMs > 0 && budget.timeoutMs <= options.timeoutMs,
       'Coding execution requires a positive remaining time budget within its configured timeout');
     invariant(Number.isSafeInteger(budget.maxTokens) && budget.maxTokens > 0, 'Coding execution requires a positive remaining token budget');
     invariant(Number.isSafeInteger(budget.reservationElapsedMs) && budget.reservationElapsedMs >= budget.timeoutMs,
       'Coding execution requires an elapsed reservation covering its deadline and process cleanup');
-    const request = { message: turn.message, workspace: session.workspace, timeoutMs: budget.timeoutMs,
+    const request = { message, workspace: session.workspace, mode, timeoutMs: budget.timeoutMs,
       ...(session.nativeSessionId ? { sessionId: session.nativeSessionId } : {}), ...(session.cumulativeUsage ? { previousUsage: session.cumulativeUsage } : {}) };
     const payload = JSON.stringify({ provider: 'codex-cli', invocation: request, model: options.model ?? DEFAULT_CODEX_CODING_MODEL, reasoningEffort: CODEX_CODING_REASONING_EFFORT, singleAgent: true });
     const manifest = { ...input.prompt, id: `coding:${identity(turn.id)}`, requestDigest: identity(JSON.parse(payload)) };
@@ -27,7 +37,7 @@ export function codexCodingShell(options: { provider: CodingProvider; store: Ope
     await bridge.dispatched({ ...physical, status: 'dispatched' }, signal);
     let result: CodingResult;
     try { result = await options.provider.run(request, signal); }
-    catch (error) { result = { provider: 'codex', status: 'uncertain', summary: error instanceof Error ? error.message : String(error), events: [], stdout: '', stderr: '', exitCode: null, elapsedMs: 0,
+    catch (error) { result = { provider: 'codex', mode, status: 'uncertain', summary: error instanceof Error ? error.message : String(error), events: [], stdout: '', stderr: '', exitCode: null, elapsedMs: 0,
       usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null, costUsd: null, physicalRequests: null } }; }
     const artifact = options.store.putJsonArtifact(JSON.parse(JSON.stringify(result)) as JsonValue);
     options.store.put('host.coding-results', turn.id, { artifact }, null);

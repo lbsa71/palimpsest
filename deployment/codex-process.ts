@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
-import type { CodingExecutor, CodingInvocation, CodingProcessReceipt } from '../packages/coding/index.ts';
+import { resolveCodingMode, type CodingExecutor, type CodingInvocation, type CodingMode, type CodingProcessReceipt } from '../packages/coding/index.ts';
 import { capture, executionKeys, monotonicReader, nodeExecutionEnvironment, scheduleTimer, throwFailures,
   type ExecutionEnvironment, type Timer } from '../packages/supervisor/environment.ts';
 import { spawnBounded, type ResourceLimits } from '../packages/supervisor/resource-limits.ts';
@@ -44,11 +44,14 @@ function overlaps(first: string, second: string): boolean { return contains(firs
 // file instead. Native tool network is disabled separately by the provider. A nested unauthenticated
 // CLI process can start, but cannot authenticate or reach an inference endpoint. This is not an
 // executable allowlist or an independent audit of the upstream sandbox implementation.
-const MANAGED_POLICY = 'allowed_approval_policies = ["never"]\nallowed_sandbox_modes = ["read-only", "workspace-write"]\n' +
-  '[permissions.filesystem]\ndeny_read = ["/coding-home/auth.json"]\n';
+function managedPolicy(mode: CodingMode): string {
+  return `allowed_approval_policies = ["never"]\nallowed_sandbox_modes = ["${mode === 'inspect' ? 'read-only' : 'workspace-write'}"]\n` +
+    '[permissions.filesystem]\ndeny_read = ["/coding-home/auth.json"]\n';
+}
 
 function confinementArguments(options: CodexProcessOptions, invocation: CodingInvocation, policyPath: string,
   environment: ExecutionEnvironment): string[] {
+  const mode = resolveCodingMode(invocation.mode);
   if (environment.platform() !== 'linux') throw new Error('Codex coding requires Linux namespace isolation');
   if (invocation.executable !== 'codex' && invocation.executable !== '/runtime/codex') throw new Error('Only the host-bound Codex executable is permitted');
   if (!Number.isSafeInteger(invocation.timeoutMs) || invocation.timeoutMs < 1 ||
@@ -95,7 +98,7 @@ function confinementArguments(options: CodexProcessOptions, invocation: CodingIn
   const args = ['--unshare-all', '--share-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL',
     '--ro-bind', readOnly('/usr'), '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
     '--proc', '/proc', '--dev', '/dev', '--size', '67108864', '--tmpfs', '/tmp',
-    '--bind', workspace, '/work', '--bind', home, '/coding-home',
+    mode === 'inspect' ? '--ro-bind' : '--bind', workspace, '/work', '--bind', home, '/coding-home',
     '--ro-bind', binary(options.codexBinary), '/runtime/codex', '--ro-bind', binary(options.nodeBinary), '/runtime/node',
     '--ro-bind', policyPath, '/etc/codex/requirements.toml'];
   if (options.codeModeHost) args.push('--ro-bind', binary(options.codeModeHost), '/runtime/codex-code-mode-host');
@@ -126,7 +129,7 @@ export function createCodexProcess(options: CodexProcessOptions,
   return async (invocation, signal) => {
     if (active) throw new Error('A coding process is already active');
     signal?.throwIfAborted();
-    invocation = { ...invocation, args: [...invocation.args] };
+    invocation = { ...invocation, args: [...invocation.args], mode: resolveCodingMode(invocation.mode) };
     active = true;
     let policy: ReturnType<CodexProcessDependencies['policyFile']> | undefined;
     let confined: Awaited<ReturnType<typeof spawnBounded>> | undefined;
@@ -146,7 +149,7 @@ export function createCodexProcess(options: CodexProcessOptions,
     };
     let started = 0;
     try {
-      policy = policyFile(MANAGED_POLICY);
+      policy = policyFile(managedPolicy(invocation.mode!));
       const args = confinementArguments(options, invocation, policy.path, environment);
       signal?.throwIfAborted(); started = environment.monotonicNow();
       confined = await spawnBounded(args, { workspace: invocation.cwd, timeoutMs: invocation.timeoutMs, resourceLimits: options.resourceLimits, input: 'pipe' }, environment);

@@ -6,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import type { CodingInvocation } from '../packages/coding/index.ts';
+import { CodexCodingProvider, type CodingInvocation, type CodingMode } from '../packages/coding/index.ts';
 import { nodeExecutionEnvironment, type ProcessChild } from '../packages/supervisor/environment.ts';
 import { createCodexProcess, nodeCodexProcessDependencies, type CodexProcessDependencies, type CodexProcessOptions } from './codex-process.ts';
 
-const invocation: CodingInvocation = { executable: 'codex', args: ['exec', '--json', '-'], cwd: '/workspace', stdin: 'finite coding task', timeoutMs: 100, maxOutputBytes: 64 };
+// Existing write/lifecycle scenarios explicitly request edit; omitted modes are tested as inspect below.
+const invocation: CodingInvocation = { executable: 'codex', args: ['exec', '--json', '-'], cwd: '/workspace', stdin: 'finite coding task', mode: 'edit', timeoutMs: 100, maxOutputBytes: 64 };
 const options: CodexProcessOptions = { codexBinary: '/host/codex', nodeBinary: '/host/node', codeModeHost: '/host/helper', codexHome: '/coding', protectedPaths: ['/state', '/source'] };
 class Child extends EventEmitter {
   pid = 700;
@@ -59,6 +60,19 @@ test('host binding uses isolated mounts, explicit environment and managed auth d
   assert.ok(f.state.args.includes('/etc/codex/requirements.toml')); assert.ok(f.state.args.includes('/runtime/codex-code-mode-host'));
   assert.match(f.state.policy, /deny_read = \["\/coding-home\/auth.json"\]/);
   assert.ok(!f.state.args.includes('/state')); assert.ok(!f.state.args.includes('/source')); assert.ok(!f.state.args.includes('/home'));
+});
+
+test('each invocation independently selects the workspace mount and immutable allowed native sandbox mode', async () => {
+  for (const mode of [undefined, 'inspect', 'edit'] as const) {
+    const f = fixture(), execute = createCodexProcess(options, f.environment);
+    const running = execute({ ...invocation, mode }); await tick(); f.child.close(); await running;
+    const mountIndex = f.state.args.findIndex((arg, index) => arg === '/workspace' && f.state.args[index + 1] === '/work');
+    assert.equal(f.state.args[mountIndex - 1], mode === 'edit' ? '--bind' : '--ro-bind');
+    assert.match(f.state.policy, mode === 'edit' ? /allowed_sandbox_modes = \["workspace-write"\]/ : /allowed_sandbox_modes = \["read-only"\]/);
+  }
+  const f = fixture();
+  await assert.rejects(createCodexProcess(options, f.environment)({ ...invocation, mode: 'write' as CodingMode }), /mode must be inspect or edit/);
+  assert.equal(f.state.launches, 0);
 });
 
 for (const reason of ['timeout', 'cancelled', 'output-limit'] as const) test(`coding ${reason} kills and drains the full namespace`, async () => {
@@ -117,6 +131,75 @@ function realFixture() {
   writeFileSync(join(home, 'auth.json'), '{"fixture":true}', { mode: 0o600 }); writeFileSync(join(state, 'private'), 'private state');
   return { root, workspace, home, state, options: { codexBinary: process.execPath, nodeBinary: process.execPath, codexHome: home, protectedPaths: [state] } satisfies CodexProcessOptions };
 }
+
+test('default inspect namespace reads files but rejects direct, aliased and metadata writes while persisting session state', async () => {
+  const f = realFixture();
+  try {
+    writeFileSync(join(f.workspace, 'original'), 'retained source');
+    mkdirSync(join(f.workspace, 'nested')); symlinkSync('original', join(f.workspace, 'alias'));
+    const beforeMode = statSync(join(f.workspace, 'original')).mode;
+    const receipt = await createCodexProcess(f.options)({ ...invocation, mode: undefined, cwd: f.workspace, timeoutMs: 5000, maxOutputBytes: 4096,
+      args: ['-e', `const fs=require('node:fs');
+        if(fs.readFileSync('/work/original','utf8')!=='retained source')throw Error('inspection unreadable');
+        fs.symlinkSync('/work/original','/coding-home/workspace-alias');
+        const attempts=[
+          ()=>fs.writeFileSync('/work/original','changed'),
+          ()=>fs.appendFileSync('/work/alias','changed'),
+          ()=>fs.writeFileSync('/coding-home/workspace-alias','changed'),
+          ()=>fs.writeFileSync('/proc/self/cwd/original','changed'),
+          ()=>fs.writeFileSync('/work/new-file','new'),
+          ()=>fs.writeFileSync('/work/nested/new-file','new'),
+          ()=>fs.unlinkSync('/work/original'),
+          ()=>fs.renameSync('/work/original','/work/renamed'),
+          ()=>fs.chmodSync('/work/original',0o777),
+          ()=>fs.mkdirSync('/work/new-directory')];
+        for(const attempt of attempts){let denied=false;try{attempt()}catch(error){if(!['EROFS','EACCES','EPERM'].includes(error.code))throw error;denied=true}if(!denied)throw Error('inspect permitted a workspace mutation')}
+        fs.writeFileSync('/coding-home/fixture-session','same native session');
+        console.log(JSON.stringify({read:true,denied:attempts.length,sessionPersisted:true}));`] });
+    assert.equal(receipt.exitCode, 0, receipt.stderr);
+    assert.deepEqual(JSON.parse(receipt.stdout), { read: true, denied: 10, sessionPersisted: true });
+    assert.equal(readFileSync(join(f.workspace, 'original'), 'utf8'), 'retained source');
+    assert.equal(statSync(join(f.workspace, 'original')).mode, beforeMode);
+    assert.deepEqual(readdirSync(f.workspace).sort(), ['alias', 'nested', 'original']);
+    assert.deepEqual(readdirSync(join(f.workspace, 'nested')), []);
+    assert.equal(readFileSync(join(f.home, 'fixture-session'), 'utf8'), 'same native session');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('one fixture native session resumes through inspect, edit and inspect with host write authority changing each turn', async () => {
+  const f = realFixture(), sessionId = '0199e12a-9af2-7123-8a90-92b4f0e11b51', executable = join(f.root, 'fixture-codex');
+  try {
+    writeFileSync(join(f.workspace, 'target'), 'original');
+    writeFileSync(executable, `#!/runtime/node
+      const fs=require('node:fs'),args=process.argv.slice(2),session=${JSON.stringify(sessionId)},path='/coding-home/fixture-session.json';
+      fs.readFileSync(0,'utf8');
+      const resume=args.indexOf('resume');
+      if(resume<0&&fs.existsSync(path))throw Error('second native session started');
+      const previous=resume<0?{session,turn:0}:JSON.parse(fs.readFileSync(path,'utf8'));
+      if(resume>=0&&(args[resume+1]!==session||previous.session!==session))throw Error('foreign session resumed');
+      const next={session,turn:previous.turn+1};fs.writeFileSync(path,JSON.stringify(next));
+      const sandbox=args[args.indexOf('--sandbox')+1];let wrote=false;
+      try{fs.appendFileSync('/work/target',' edited');wrote=true}catch(error){if(!['EROFS','EACCES','EPERM'].includes(error.code))throw error}
+      if(wrote!==(sandbox==='workspace-write'))throw Error('host and native requested authority diverged');
+      for(const event of [{type:'thread.started',thread_id:session},{type:'item.completed',item:{type:'agent_message',text:JSON.stringify({sandbox,wrote,turn:next.turn})}},
+        {type:'turn.completed',usage:{input_tokens:next.turn*10,output_tokens:next.turn,cached_input_tokens:0}}])console.log(JSON.stringify(event));
+    `, { mode: 0o755 });
+    const provider = new CodexCodingProvider({ execute: createCodexProcess({ ...f.options, codexBinary: executable }), timeoutMs: 5000, maxOutputBytes: 4096 });
+    let previousUsage;
+    for (const [index, mode] of ([undefined, 'edit', undefined] as const).entries()) {
+      const result = await provider.run({ message: 'Inspect or edit the fixture as authorized.', workspace: f.workspace, mode,
+        ...(index ? { sessionId, previousUsage } : {}) });
+      assert.equal(result.status, 'completed', result.stderr + result.summary);
+      assert.equal(result.sessionId, sessionId);
+      assert.equal(result.mode, mode ?? 'inspect');
+      assert.deepEqual(JSON.parse(result.summary), { sandbox: mode === 'edit' ? 'workspace-write' : 'read-only', wrote: mode === 'edit', turn: index + 1 });
+      assert.equal(readFileSync(join(f.workspace, 'target'), 'utf8'), index ? 'original edited' : 'original');
+      assert.equal(result.usage.inputTokens, 10);
+      previousUsage = result.cumulativeUsage;
+    }
+    assert.deepEqual(JSON.parse(readFileSync(join(f.home, 'fixture-session.json'), 'utf8')), { session: sessionId, turn: 3 });
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
 
 test('real namespace accepts stdin and edits only the selected workspace without host environment', async () => {
   const f = realFixture();
@@ -281,5 +364,36 @@ test('installed native Linux launcher requires explicit PATH after shell environ
     const [missing, supplied] = JSON.parse(readFileSync(join(f.workspace, 'launcher-receipts.json'), 'utf8'));
     assert.equal(missing.status, 101); assert.match(missing.stderr, /no system bwrap was found on PATH/);
     assert.equal(supplied.status, 0, supplied.stderr); assert.equal(supplied.stdout, 'sandbox-command-ran');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('installed native sandbox independently denies inspect writes and permits edit writes inside an editable outer fixture',
+  { skip: !process.env.AEON_CODEX_TEST_BINARY && 'Set AEON_CODEX_TEST_BINARY for the offline native sandbox regression; no model request is made' }, async () => {
+  const f = realFixture();
+  try {
+    writeFileSync(join(f.workspace, 'original'), 'original');
+    const source = `const fs=require('node:fs'),{spawnSync}=require('node:child_process');
+      const run=edit=>{
+        const entries=[{path:{type:'special',value:{kind:'root'}},access:'read'}];
+        if(edit)entries.push({path:{type:'path',path:'/work'},access:'write'});
+        const policy={type:'managed',file_system:{type:'restricted',entries},network:'restricted'};
+        const command=edit?'printf edited >> /work/original':'cat /work/original; printf forbidden > /work/original; touch /work/new-file';
+        const result=spawnSync('/runtime/codex-code-mode-host',['--sandbox-policy-cwd','/work','--permission-profile',JSON.stringify(policy),'--','/bin/sh','-c',command],
+          {argv0:'codex-linux-sandbox',env:{PATH:'/runtime:/usr/bin:/bin'},encoding:'utf8',timeout:3000});
+        return {status:result.status,stdout:result.stdout,stderr:result.stderr,contents:fs.readFileSync('/work/original','utf8'),created:fs.existsSync('/work/new-file')};
+      };console.log(JSON.stringify([run(false),run(true)]));`;
+    const receipt = await createCodexProcess({ ...f.options, codeModeHost: process.env.AEON_CODEX_TEST_BINARY! })({
+      ...invocation, mode: 'edit', cwd: f.workspace, timeoutMs: 8000, maxOutputBytes: 4096, args: ['-e', source],
+    });
+    assert.equal(receipt.exitCode, 0, receipt.stderr);
+    const [inspection, edit] = JSON.parse(receipt.stdout);
+    assert.notEqual(inspection.status, 0);
+    assert.equal(inspection.stdout, 'original');
+    assert.equal(inspection.contents, 'original');
+    assert.equal(inspection.created, false);
+    assert.match(inspection.stderr, /[Pp]ermission denied|[Rr]ead-only file system/);
+    assert.equal(edit.status, 0, edit.stderr);
+    assert.equal(edit.contents, 'originaledited');
+    assert.equal(readFileSync(join(f.workspace, 'original'), 'utf8'), 'originaledited');
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
