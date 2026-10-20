@@ -31,7 +31,7 @@ process.on('message', (message: { kind: string; mode?: 'engineering' | 'product'
     lease = new ProcessLease(join(config.stateDirectory, 'process-lease.sqlite'));
     if (config.resourceLimits) { await initializeResourceDelegation(config.resourceLimits.cgroupRoot); assertResourceConfinement(config.workspaceDirectory, config.resourceLimits); }
     invariant(!closing, 'Application stopped during startup');
-    invariant(!!message.bindings.codexBinary === !!message.bindings.codexHome, 'Codex host binary and dedicated home must be supplied together');
+    invariant(!!message.bindings.codexBinary === !!message.bindings.codexHome, 'Codex host binary and home must be supplied together');
     const codingExecutor = message.bindings.codexBinary && message.bindings.codexHome ? createCodexProcess({ codexBinary: message.bindings.codexBinary, codexHome: message.bindings.codexHome, codeModeHost: message.bindings.codexCodeModeHost, nodeBinary: config.nodeBinary, toolchainDirectory: join(config.applicationRoot, 'node_modules'), protectedPaths: [config.stateDirectory, config.applicationRoot], resourceLimits: config.resourceLimits }, nodeCodexProcessDependencies(config.stateDirectory)) : undefined;
     app = new AutarkApplication({ config, codingExecutor, secrets: message.secrets, authority: message.authority, authorityStore, lease,
       additionalTools: context => [...ordinaryServiceTools(context, { config, artifactStore: message.bindings!.artifactStore, evolution: message.evolution, assertAuthority: authority => authorityStore!.assert(authority) }), ...handoffTools(context, { applicationRoot: config.applicationRoot, artifactId: config.artifactId })] });

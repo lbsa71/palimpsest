@@ -69,8 +69,8 @@ function confinementArguments(options: CodexProcessOptions, invocation: CodingIn
   const protectedPaths = options.protectedPaths.map(canonical);
   if (!environment.stat(workspace).isDirectory()) throw new Error('Coding workspace must be a directory');
   const homeStat = environment.stat(home);
-  if (!homeStat.isDirectory() || (homeStat.mode & 0o077) !== 0 || homeStat.uid !== environment.uid() || basename(home) === '.codex') {
-    throw new Error('Codex requires a dedicated owner-private coding home, not the user .codex directory');
+  if (!homeStat.isDirectory() || (homeStat.mode & 0o077) !== 0 || homeStat.uid !== environment.uid()) {
+    throw new Error('Codex requires an owner-private host-selected home');
   }
   if (overlaps(workspace, home)) throw new Error('Coding workspace overlaps credential/session storage');
   const assertMount = (path: string) => {
@@ -85,10 +85,12 @@ function confinementArguments(options: CodexProcessOptions, invocation: CodingIn
       else if (!stat.isSymbolicLink() && (!stat.isFile() || stat.nlink !== 1)) throw new Error('Coding mount contains a special file or hardlink');
     }
   };
-  assertMount(workspace); assertMount(home); inspect(workspace); inspect(home);
+  // The host-selected home is trusted shared Codex state, including live sockets,
+  // caches and SQLite WAL files. Only workspaces/toolchains need recursive policing.
+  assertMount(workspace); assertMount(home); inspect(workspace);
   const auth = environment.lstat(join(home, 'auth.json'));
   if (!auth.isFile() || auth.isSymbolicLink() || auth.nlink !== 1 || auth.uid !== environment.uid() || (auth.mode & 0o077) !== 0) {
-    throw new Error('Provision owner-private auth.json in the dedicated coding home');
+    throw new Error('Provision owner-private auth.json in the selected Codex home');
   }
   const readOnly = (path: string) => { const result = canonical(path); assertMount(result); return result; };
   const binary = (path: string) => {

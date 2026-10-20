@@ -303,13 +303,14 @@ test('unexpected host death kills the namespace and detached descendants', async
   } finally { host.kill('SIGKILL'); await closed; rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('real preexisting hardlinks and full user Codex homes are refused', async () => {
+test('real workspace hardlinks are refused with either a separate or shared Codex home', async () => {
   const f = realFixture();
   try {
     linkSync(join(f.state, 'private'), join(f.workspace, 'alias'));
     await assert.rejects(createCodexProcess(f.options)({ ...invocation, cwd: f.workspace }), /hardlink/);
     const home = join(f.root, '.codex'); mkdirSync(home, { mode: 0o700 });
-    await assert.rejects(createCodexProcess({ ...f.options, codexHome: home })({ ...invocation, cwd: f.workspace }), /dedicated/);
+    writeFileSync(join(home, 'auth.json'), '{"fixture":true}', { mode: 0o600 });
+    await assert.rejects(createCodexProcess({ ...f.options, codexHome: home })({ ...invocation, cwd: f.workspace }), /hardlink/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

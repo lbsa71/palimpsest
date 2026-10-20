@@ -64,7 +64,7 @@ export type SupervisorCommand =
 export function validateHostBindings(host: HostBindings): void {
   for (const path of Object.values(host).filter((value): value is string => value !== undefined)) invariant(path === resolve(path) && realpathSync(path) === path, 'Canonical existing host bindings required');
   for (const path of [host.stateDirectory, host.artifactStore]) assertPrivateHostDirectory(path);
-  invariant(!!host.codexBinary === !!host.codexHome, 'Codex binary and dedicated home must be configured together');
+  invariant(!!host.codexBinary === !!host.codexHome, 'Codex binary and home must be configured together');
   if (host.codexHome) assertPrivateHostDirectory(host.codexHome);
   const roots = [host.stateDirectory, host.workspaceDirectory, host.artifactStore, ...(host.codexHome ? [host.codexHome] : [])];
   invariant(new Set(roots).size === roots.length && roots.every(a => roots.every(b => a === b || !beneath(a, b))), 'Host state, source artifacts and workspaces must be disjoint');
