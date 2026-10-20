@@ -428,7 +428,7 @@ export class AutarkApplication {
     let remainingMs = Infinity, remainingTokens = 1000000;
     for (const allocation of this.delegationAllocations(runId)) {
       const envelope = this.resources.effectiveEnvelope(allocation.runId);
-      remainingMs = Math.min(remainingMs, envelope.maxElapsedMs - used.elapsedMs);
+      if (envelope.maxElapsedMs !== null) remainingMs = Math.min(remainingMs, envelope.maxElapsedMs - used.elapsedMs);
       if (envelope.maxTokens !== null) remainingTokens = Math.min(remainingTokens, envelope.maxTokens - used.tokens);
     }
     const timeoutMs = Math.min(maximumMs, Math.floor((remainingMs - 7000) * 0.8));
@@ -729,7 +729,7 @@ export class AutarkApplication {
     try {
       const usage = this.resources.snapshot(this.rootAllocation), limit = this.resources.effectiveEnvelope(this.rootAllocation);
       if (usage.cancelled) reasons.push('allowance-cancelled');
-      if (limit.maxRequests !== null && usage.requests >= limit.maxRequests || limit.maxTokens !== null && usage.tokens >= limit.maxTokens || limit.maxCostUsd !== null && usage.costUsd >= limit.maxCostUsd || usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
+      if (limit.maxRequests !== null && usage.requests >= limit.maxRequests || limit.maxTokens !== null && usage.tokens >= limit.maxTokens || limit.maxCostUsd !== null && usage.costUsd >= limit.maxCostUsd || limit.maxElapsedMs !== null && usage.elapsedMs >= limit.maxElapsedMs) reasons.push('allowance-exhausted');
       if (usage.concurrent >= limit.maxConcurrency || this.occupied() >= this.config.maxConcurrentRuns) reasons.push('capacity-occupied');
     } catch { reasons.push('accounting-unavailable'); }
     return { alive: true, execution: { admission: reasons.length ? 'held' : 'available', reasons,

@@ -11,7 +11,7 @@ export interface AllowanceAmendment {
   id: string; authorizationRef: string; rootId: string; expectedEnvelopeDigest: string;
   cumulativeTokenLimit: null; scope: 'root-and-descendants'; descendantCostLimit: 'root';
   descendantRequestLimit?: 'root';
-  cumulativeCostLimit?: null; cumulativeRequestLimit?: null;
+  cumulativeCostLimit?: null; cumulativeRequestLimit?: null; cumulativeElapsedLimit?: null;
   resumeAfterElapsedOverrun?: { requestId: string; expectedRequestDigest: string };
 }
 export function validateAllowanceAmendment(amendment: AllowanceAmendment): void {
@@ -19,7 +19,7 @@ export function validateAllowanceAmendment(amendment: AllowanceAmendment): void 
   const sharesRequests = Object.hasOwn(amendment, 'descendantRequestLimit');
   const expectedKeys = ['authorizationRef', 'cumulativeTokenLimit', 'descendantCostLimit', 'expectedEnvelopeDigest', 'id', 'rootId', 'scope'];
   if (sharesRequests) expectedKeys.push('descendantRequestLimit');
-  for (const field of ['cumulativeCostLimit', 'cumulativeRequestLimit'] as const) {
+  for (const field of ['cumulativeCostLimit', 'cumulativeRequestLimit', 'cumulativeElapsedLimit'] as const) {
     if (Object.hasOwn(amendment, field)) {
       expectedKeys.push(field);
       invariant(amendment[field] === null, 'Invalid allowance amendment');
@@ -37,8 +37,8 @@ export function validateAllowanceAmendment(amendment: AllowanceAmendment): void 
     && typeof amendment.expectedEnvelopeDigest === 'string' && /^[a-f0-9]{64}$/.test(amendment.expectedEnvelopeDigest)
     && amendment.cumulativeTokenLimit === null && amendment.scope === 'root-and-descendants' && amendment.descendantCostLimit === 'root', 'Invalid allowance amendment');
 }
-export type EffectiveResourceEnvelope = Omit<ResourceEnvelope, 'maxTokens' | 'maxCostUsd' | 'maxRequests'> & {
-  maxTokens: number | null; maxCostUsd: number | null; maxRequests: number | null;
+export type EffectiveResourceEnvelope = Omit<ResourceEnvelope, 'maxTokens' | 'maxCostUsd' | 'maxRequests' | 'maxElapsedMs'> & {
+  maxTokens: number | null; maxCostUsd: number | null; maxRequests: number | null; maxElapsedMs: number | null;
 };
 interface AmendmentRecord {
   amendment: AllowanceAmendment; originalEnvelope: ResourceEnvelope; authority: Authority; appliedAt: number;
@@ -131,6 +131,7 @@ export class ResourceLedger {
     invariant(retained && canonicalJson(retained.value.amendment) === canonicalJson(amendment), 'Bound allowance amendment history unavailable');
     const budget = this.store.get<Budget>('budgets', allocation.value.rootId); invariant(budget, 'missing root budget');
     return { ...allocation.value.envelope, maxTokens: null,
+      maxElapsedMs: amendment.cumulativeElapsedLimit === null ? null : allocation.value.envelope.maxElapsedMs,
       maxCostUsd: amendment.cumulativeCostLimit === null ? null : budget.value.envelope.maxCostUsd,
       maxRequests: amendment.cumulativeRequestLimit === null ? null
         : amendment.descendantRequestLimit === 'root' ? budget.value.envelope.maxRequests : allocation.value.envelope.maxRequests };
@@ -228,9 +229,9 @@ export class ResourceLedger {
       const rootId=this.root(request.runId),limit=this.effectiveEnvelope(rootId),snapshot=this.usage(request.runId,elapsed);
       if(request.parentRequestId) { const parent=this.store.get<Reservation>('requests',request.parentRequestId); invariant(parent?.value.rootId===rootId,'foreign parent request'); }
       const ceiling: RequestCeiling={ tokens:request.usage.inputTokens===null || request.usage.outputTokens===null ? this.defaultCeiling.tokens : request.usage.inputTokens+request.usage.outputTokens,costUsd:request.usage.costUsd??this.defaultCeiling.costUsd,elapsedMs:Math.max(request.usage.elapsedMs,this.defaultCeiling.elapsedMs) }; this.validateCeiling(ceiling);
-      if(snapshot.cancelled || limit.maxRequests!==null && snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
+      if(snapshot.cancelled || limit.maxRequests!==null && snapshot.requests+1>limit.maxRequests || limit.maxTokens!==null && snapshot.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && snapshot.costUsd+ceiling.costUsd>limit.maxCostUsd || limit.maxElapsedMs!==null && snapshot.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs) throw new BudgetExceeded('shared physical request budget exhausted or cancelled');
       const ancestors = this.lineage(request.runId).map(id => ({ used: this.allocationUsage(id), limit: this.effectiveEnvelope(id) }));
-      for(const {used,limit} of ancestors) {if(limit.maxRequests!==null && used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && used.costUsd+ceiling.costUsd>limit.maxCostUsd || used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs)throw new BudgetExceeded('bounded allocation exhausted');}
+      for(const {used,limit} of ancestors) {if(limit.maxRequests!==null && used.requests+1>limit.maxRequests || limit.maxTokens!==null && used.tokens+ceiling.tokens>limit.maxTokens || limit.maxCostUsd!==null && used.costUsd+ceiling.costUsd>limit.maxCostUsd || limit.maxElapsedMs!==null && used.elapsedMs+ceiling.elapsedMs>limit.maxElapsedMs)throw new BudgetExceeded('bounded allocation exhausted');}
       if(snapshot.concurrent+1>limit.maxConcurrency) throw new CapacityUnavailable('shared physical request execution capacity unavailable');
       for(const {used,limit} of ancestors) if(used.concurrent+1>limit.maxConcurrency)throw new CapacityUnavailable('bounded allocation execution capacity unavailable');
       this.store.put('requests',request.id,{rootId,request,ceiling,charged:ceiling},null);
@@ -246,9 +247,9 @@ export class ResourceLedger {
       const row=this.store.get<Reservation>('requests',request.id); invariant(row && row.value.request.status==='reserved','request not reserved');
       invariant(request.status==='dispatched','dispatch status required'); this.sameRequest(request,row.value.request);
       const snapshot=this.usage(request.runId,elapsed), rootLimit=this.effectiveEnvelope(row.value.rootId);
-      if(snapshot.cancelled || snapshot.elapsedMs>rootLimit.maxElapsedMs) throw new BudgetExceeded('allocation cancelled or expired');
+      if(snapshot.cancelled || rootLimit.maxElapsedMs!==null && snapshot.elapsedMs>rootLimit.maxElapsedMs) throw new BudgetExceeded('allocation cancelled or expired');
       const ancestors=this.lineage(request.runId).map(id=>({used:this.allocationUsage(id),limit:this.effectiveEnvelope(id)}));
-      for(const {used,limit} of ancestors)if(used.elapsedMs>limit.maxElapsedMs)throw new BudgetExceeded('bounded allocation expired');
+      for(const {used,limit} of ancestors)if(limit.maxElapsedMs!==null && used.elapsedMs>limit.maxElapsedMs)throw new BudgetExceeded('bounded allocation expired');
       const released=this.store.get<ReleasedConcurrency>('resource.concurrency-released',request.id);
       if(released) {
         // The reservation is already charged; reacquisition neither resets nor charges it twice.
@@ -267,7 +268,11 @@ export class ResourceLedger {
       const row=this.store.get<Reservation>('requests',request.id); invariant(row && (['dispatched','uncertain'].includes(row.value.request.status) || (row.value.request.status==='reserved' && request.status==='failed')),'request was not dispatched');
       this.sameRequest(request,row.value.request);
       const charged=row.value.request.status==='reserved'?{tokens:0,costUsd:0,elapsedMs:0}:{tokens:request.usage.inputTokens===null || request.usage.outputTokens===null ? row.value.ceiling.tokens : request.usage.inputTokens+request.usage.outputTokens,costUsd:request.usage.costUsd??row.value.ceiling.costUsd,elapsedMs:request.status==='uncertain'?Math.max(request.usage.elapsedMs,row.value.ceiling.elapsedMs):request.usage.elapsedMs};
-      if (charged.tokens>row.value.ceiling.tokens || charged.costUsd>row.value.ceiling.costUsd || charged.elapsedMs>row.value.ceiling.elapsedMs) { const budget=this.store.get<Budget>('budgets',row.value.rootId)!; this.store.put('budgets',row.value.rootId,{...budget.value,cancelled:true},budget.revision); }
+      // In the explicit fully unlimited policy, a reservation is an accounting estimate,
+      // not a hidden lifetime kill switch. Preserve actual/unknown charges either way.
+      const limit=this.effectiveEnvelope(row.value.rootId);
+      const unlimited=limit.maxTokens===null && limit.maxCostUsd===null && limit.maxRequests===null && limit.maxElapsedMs===null;
+      if (!unlimited && (charged.tokens>row.value.ceiling.tokens || charged.costUsd>row.value.ceiling.costUsd || charged.elapsedMs>row.value.ceiling.elapsedMs)) { const budget=this.store.get<Budget>('budgets',row.value.rootId)!; this.store.put('budgets',row.value.rootId,{...budget.value,cancelled:true},budget.revision); }
       this.store.put('requests',request.id,{...row.value,request,charged},row.revision);
     });
     this.notifyCapacity();

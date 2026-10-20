@@ -526,3 +526,51 @@ test('enclosing rollback restores the cancelled budget, charges and missing reco
   f.ledger.applyAllowanceAmendment(policy, host);
   f.ledger.reserve(request('recorded-recovery'));
 });
+
+test('explicit unlimited lifetime admits work after original root and descendant deadlines without resetting history', t => {
+  const f = fixture(t, { maxElapsedMs: 1000 }, { maxElapsedMs: 10 });
+  const r = request('reserved-before-expiry');
+  f.ledger.reserve(r);
+  const original = f.store.list<{ envelope: ResourceEnvelope; startedAt: number }>('allocations');
+  f.setNow(1000000);
+  assert.throws(() => f.ledger.dispatched({ ...r, status: 'dispatched' }), BudgetExceeded);
+  const amendment = { ...uncapped(f.amendment), id: 'unlimited-lifetime', cumulativeElapsedLimit: null };
+  f.ledger.applyAllowanceAmendment(amendment, host);
+  assert.equal(f.ledger.effectiveEnvelope('root').maxElapsedMs, null);
+  assert.equal(f.ledger.effectiveEnvelope('child').maxElapsedMs, null);
+  f.ledger.dispatched({ ...r, status: 'dispatched' });
+  f.ledger.settle({ ...r, status: 'succeeded', usage: { ...r.usage, elapsedMs: 1 } });
+  f.settle(request('new-work'));
+  for (const row of original) {
+    const current = f.store.get<{ envelope: ResourceEnvelope; startedAt: number }>('allocations', row.key)!.value;
+    assert.deepEqual(current.envelope, row.value.envelope);
+    assert.equal(current.startedAt, row.value.startedAt);
+  }
+  const retained = f.store.list('requests');
+  f.reopen();
+  assert.throws(() => f.ledger.reserve(request('unbound')), BudgetExceeded);
+  f.ledger.applyAllowanceAmendment(amendment, host);
+  f.ledger.reserve(request('rebound'));
+  for (const row of retained) assert.deepEqual(f.store.get('requests', row.key), { revision: row.revision, value: row.value });
+});
+
+for (const outcome of ['succeeded', 'uncertain'] as const) test(`fully unlimited allowance retains ${outcome} estimate overruns without cancelling future work`, t => {
+  const f = fixture(t);
+  f.ledger.applyAllowanceAmendment({ ...uncapped(f.amendment), cumulativeElapsedLimit: null }, host);
+  const r = request('overrun');
+  f.ledger.reserve(r); f.ledger.dispatched({ ...r, status: 'dispatched' });
+  f.ledger.settle({ ...r, status: outcome, usage: { requests: 1, inputTokens: 100, outputTokens: 10, costUsd: 12, elapsedMs: 2000 } });
+  const retained = f.store.get('requests', r.id);
+  const usage = f.ledger.snapshot('root');
+  assert.equal(usage.tokens, 110); assert.equal(usage.costUsd, 12); assert.equal(usage.elapsedMs, 2000); assert.equal(usage.cancelled, false);
+  f.ledger.reserve(request('next'));
+  assert.deepEqual(f.store.get('requests', r.id), retained);
+  f.ledger.cancel('child');
+  assert.throws(() => f.ledger.reserve(request('cancelled')), BudgetExceeded);
+});
+
+test('unlimited elapsed policy rejects non-null substitutes', () => {
+  const base: AllowanceAmendment = { id: 'unlimited', authorizationRef: 'explicit-user', rootId: 'root', expectedEnvelopeDigest: identity(envelope), cumulativeTokenLimit: null, descendantCostLimit: 'root', scope: 'root-and-descendants', cumulativeElapsedLimit: null };
+  validateAllowanceAmendment(base);
+  for (const value of [0, 1, Infinity, 'unlimited', undefined]) assert.throws(() => validateAllowanceAmendment({ ...base, cumulativeElapsedLimit: value } as AllowanceAmendment), /Invalid allowance amendment/);
+});
