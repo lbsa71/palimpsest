@@ -8,6 +8,8 @@ Subsequent user-authorized deployment is now accepted: source `bd8f13e`, candida
 
 Latest routing deployment: source `847fd39`, candidate `b1de53a5…`, accepted epoch 105 supersedes the earlier deployment identity. The mind delegates questions as well as edits, with no direct source/file/command tools. Final read-only and edit turns resumed the original native UUID with Sol 6.1/high; 41 native and independent tests pass. Explicit receipt acknowledgement preserves stopped uncertainty; a successful enqueue ends the mind turn promptly. The final edit report required an explicit follow-up. [Exact release, retained failures and limitations](../A1-L09/coding-routing.md).
 
+Latest operations amendment, 2026-10-20: accepted source `e2ab522`, candidate `8d7d088c…`, epoch 117 uses the existing `/home/palimpsest/.codex` home and login directly. Its original native UUID resumes unchanged; no auth cache or database is copied. Root/descendant cumulative cost/token/request/lifetime caps and the optional process resource profile are disabled under explicit user authority. The final live read-only question and clarification both completed and reached Slack. [Exact checks, preserved failures and operational boundaries](../A1-L09/unlimited-allowance.md).
+
 ## Commands and configuration
 
 The mind receives three commands alongside its existing explicit speech action:
