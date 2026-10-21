@@ -5,7 +5,7 @@ import { canonicalJson, identity, invariant, validateEvaluation, type ArtifactRe
 import { admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes, type FrozenCandidate } from '../packages/release/artifacts.ts';
 import { runConfined, type CommandReceipt, type ConfinedCommand } from '../packages/supervisor/confinement.ts';
-import { verifyApplication } from './candidate.ts';
+import { candidateNodeBinary, verifyApplication } from './candidate.ts';
 import { reviewerDescriptor, type ReviewerFile, type ReviewResponse } from './evaluation-dispatch.ts';
 import { accountedReview, assertReviewLineage, reviewOperationId, type ReviewResourceOptions } from './evaluation-resources.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
@@ -190,7 +190,7 @@ export async function runEngineeringReview(config: ReviewerFile, host: HostBindi
     command = await accountedReview(options, async gate => {
       let pending: Promise<CommandReceipt> | undefined;
       gate.dispatch(() => { assertExecution(); pending = (options.runCommand ?? runConfined)({ workspace,
-        applicationRoot: join(host.artifactStore, accepted.manifest.id, 'payload'), nodeBinary: host.nodeBinary,
+        applicationRoot: join(host.artifactStore, accepted.manifest.id, 'payload'), nodeBinary: candidateNodeBinary(accepted, host.artifactStore, host.nodeBinary),
         protectedPaths: [host.stateDirectory, config.keyFile, ...config.files.map(file => file.path)], executable: '/runtime/node',
         args: ['/app/node_modules/typescript/bin/tsc', '--project', '/work/tsconfig.json', '--typeRoots', '/app/node_modules/@types', '--noEmit'],
         timeoutMs: Math.min(plan.buildTimeoutMs, config.maxElapsedMs), maxOutputBytes: Math.min(config.maxOutputBytes, 262144), signal: gate.signal,
