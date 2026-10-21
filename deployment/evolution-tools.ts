@@ -174,13 +174,18 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     invariant(run && !['cancelled', 'completed'].includes(run.status) && identity(run.scope) === identity(bound.scope), 'Run no longer authorized'); assertAuthority(run.authority, bound.authority);
   };
   const idArgs = (args: JsonValue): string => text(object(args, ['changeId']).changeId);
-  const requestId = (proposal: ChangeRecord, action: string): string => {
+  const frozenRequestId = (proposal: ChangeRecord, action: string): string => {
     invariant(proposal.candidate, 'Candidate has not been frozen');
-    invariant(proposal.judgingPolicyDigest === options.policyDigest, 'Frozen judging policy changed; reconcile using the original host policy');
+    invariant(typeof proposal.judgingPolicyDigest === 'string' && proposal.judgingPolicyDigest.length > 0, 'Frozen judging policy required');
     return identity({ change: proposals.key(proposal.id), candidate: proposal.candidate.id, action, policy: proposal.judgingPolicyDigest });
   };
-  const validateReceipt = (receipt: EvaluationReceipt, proposal: ChangeRecord): void => {
-    invariant(receipt.requestId === requestId(proposal, 'evaluate') && receipt.candidateId === proposal.candidate!.id && receipt.policyDigest === proposal.judgingPolicyDigest && receipt.evidence.length > 0, 'External evaluator returned a mismatched receipt');
+  const requestId = (proposal: ChangeRecord, action: string): string => {
+    invariant(proposal.judgingPolicyDigest === options.policyDigest, 'Frozen judging policy changed; reconcile using the original host policy');
+    return frozenRequestId(proposal, action);
+  };
+  const validateReceipt = (receipt: EvaluationReceipt, proposal: ChangeRecord, mode: 'current' | 'retained' = 'current'): void => {
+    const expected = mode === 'retained' ? frozenRequestId(proposal, 'evaluate') : requestId(proposal, 'evaluate');
+    invariant(receipt.requestId === expected && receipt.candidateId === proposal.candidate!.id && receipt.policyDigest === proposal.judgingPolicyDigest && receipt.evidence.length > 0, 'External evaluator returned a mismatched receipt');
     receipt.evidence.forEach(evidence => { validateEvaluation(evidence); invariant(evidence.candidateId === receipt.candidateId && evidence.controlRevision === proposal.authority.controlRevision && evidence.independent && evidence.evaluatorId !== proposal.candidate!.createdBy, 'Author/self or mismatched evaluator evidence rejected'); });
   };
   const validateState = (state: EvaluationState, req: EvaluationRequest): void => {
@@ -316,7 +321,7 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
           if (state.status === 'completed') proposal = acceptEvaluation(proposal, req, state.evaluation);
         }
         const evaluation = proposal.evaluation ? bound.store.readJsonArtifact<EvaluationReceipt>(proposal.evaluation) : undefined;
-        if (evaluation) validateReceipt(evaluation, proposal);
+        if (evaluation) validateReceipt(evaluation, proposal, 'retained');
         return { proposal, evaluation: evaluation ?? state ?? null,
           feedback: evaluation ? evaluationFeedback(evaluation, (ref, maxBytes) => JSON.parse(Buffer.from(bound.store.readArtifact({ uri: `aeon:artifact:${ref.sha256}`, sha256: ref.sha256 }, maxBytes)).toString('utf8'))) : null,
           submission: proposal.submission ? bound.store.readJsonArtifact(proposal.submission) : null };
