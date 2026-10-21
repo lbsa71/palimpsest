@@ -5,6 +5,7 @@ import { resolveCodingMode, type CodingExecutor, type CodingInvocation, type Cod
 import { capture, executionKeys, monotonicReader, nodeExecutionEnvironment, scheduleTimer, throwFailures,
   type ExecutionEnvironment, type Timer } from '../packages/supervisor/environment.ts';
 import { spawnBounded, type ResourceLimits } from '../packages/supervisor/resource-limits.ts';
+import { readVerifiedRuntimeFile, runtimeBundlePath, type RuntimeIdentity } from './runtime-bundle.ts';
 
 /** Trusted host bindings. No binary, credentials, environment or mount is chosen by model arguments. */
 export interface CodexProcessOptions {
@@ -12,6 +13,8 @@ export interface CodexProcessOptions {
   codeModeHost?: string;
   codexHome: string;
   nodeBinary: string;
+  /** Exact pinned runtime file within an already verified, protected application image. */
+  nodeRuntime?: { root: string; identity: RuntimeIdentity };
   /** Explicit read-only dependency closure, optionally inside the protected application image. */
   toolchainDirectory?: string;
   protectedPaths: string[];
@@ -20,11 +23,12 @@ export interface CodexProcessOptions {
 export interface CodexProcessDependencies extends ExecutionEnvironment {
   /** A private host file outside every sandbox mount; removed only after the namespace drains. */
   policyFile(contents: string): { path: string; remove(): void };
+  verifyRuntimeFile?(root: string, path: string, identity: RuntimeIdentity): void;
 }
 
 /** Production supplies protected writable state because systemd may make the host /tmp read-only. */
 export function nodeCodexProcessDependencies(temporaryDirectory = tmpdir()): CodexProcessDependencies {
-  return { ...nodeExecutionEnvironment(), policyFile: contents => {
+  return { ...nodeExecutionEnvironment(), verifyRuntimeFile: (root, path, identity) => { readVerifiedRuntimeFile(root, path, identity); }, policyFile: contents => {
     const directory = mkdtempSync(join(temporaryDirectory, 'aeon-codex-policy-'));
     const path = join(directory, 'requirements.toml');
     try { writeFileSync(path, contents, { mode: 0o600, flag: 'wx' }); }
@@ -52,7 +56,7 @@ function managedPolicy(mode: CodingMode): string {
 }
 
 function confinementArguments(options: CodexProcessOptions, invocation: CodingInvocation, policyPath: string,
-  environment: ExecutionEnvironment): string[] {
+  environment: ExecutionEnvironment, verifyRuntimeFile: CodexProcessDependencies['verifyRuntimeFile']): string[] {
   const mode = resolveCodingMode(invocation.mode);
   if (environment.platform() !== 'linux') throw new Error('Codex coding requires Linux namespace isolation');
   if (invocation.executable !== 'codex' && invocation.executable !== '/runtime/codex') throw new Error('Only the host-bound Codex executable is permitted');
@@ -93,17 +97,26 @@ function confinementArguments(options: CodexProcessOptions, invocation: CodingIn
     throw new Error('Provision owner-private auth.json in the selected Codex home');
   }
   const readOnly = (path: string) => { const result = canonical(path); assertMount(result); return result; };
-  const binary = (path: string) => {
-    const result = readOnly(path), stat = environment.lstat(result);
+  const binary = (path: string, runtime?: CodexProcessOptions['nodeRuntime']) => {
+    const result = runtime ? canonical(path) : readOnly(path), stat = environment.lstat(result);
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o111) === 0) throw new Error('Coding runtime binary must be an executable ordinary file without hardlinks');
     if (contains(workspace, result) || contains(home, result)) throw new Error('Coding runtime binary cannot come from writable coding storage');
+    if (runtime) {
+      const root = canonical(runtime.root);
+      if (root !== runtime.root || path !== result || result !== join(root, runtimeBundlePath) || !runtime.identity.bundle ||
+          !protectedPaths.includes(root) || !verifyRuntimeFile) throw new Error('Coding bundled runtime requires an exact protected application file and verifier');
+      // Only this exact application ancestor is exempt. Separately protected runtime
+      // directories/files and every other protected ancestor retain their denial.
+      if (protectedPaths.some(protectedPath => protectedPath !== root && overlaps(result, protectedPath))) throw new Error('Coding mount overlaps protected storage');
+      verifyRuntimeFile(root, runtimeBundlePath, runtime.identity);
+    }
     return result;
   };
   const args = ['--unshare-all', '--share-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL',
     '--ro-bind', readOnly('/usr'), '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
     '--proc', '/proc', '--dev', '/dev', '--size', '67108864', '--tmpfs', '/tmp',
     mode === 'inspect' ? '--ro-bind' : '--bind', workspace, '/work', '--bind', home, '/coding-home',
-    '--ro-bind', binary(options.codexBinary), '/runtime/codex', '--ro-bind', binary(options.nodeBinary), '/runtime/node',
+    '--ro-bind', binary(options.codexBinary), '/runtime/codex', '--ro-bind', binary(options.nodeBinary, options.nodeRuntime), '/runtime/node',
     '--ro-bind', policyPath, '/etc/codex/requirements.toml'];
   if (options.codeModeHost) args.push('--ro-bind', binary(options.codeModeHost), '/runtime/codex-code-mode-host');
   if (options.toolchainDirectory) {
@@ -126,8 +139,10 @@ function confinementArguments(options: CodexProcessOptions, invocation: CodingIn
 /** One bounded native process per call. The provider/orchestrator owns the single persistent session. */
 export function createCodexProcess(options: CodexProcessOptions,
   supplied: CodexProcessDependencies = nodeCodexProcessDependencies()): CodingExecutor {
-  options = { ...options, protectedPaths: [...options.protectedPaths], ...(options.resourceLimits ? { resourceLimits: { ...options.resourceLimits } } : {}) };
-  const environment = capture(supplied, executionKeys), policyFile = supplied.policyFile.bind(supplied);
+  options = { ...options, protectedPaths: [...options.protectedPaths], ...(options.resourceLimits ? { resourceLimits: { ...options.resourceLimits } } : {}),
+    ...(options.nodeRuntime ? { nodeRuntime: { ...options.nodeRuntime, identity: { ...options.nodeRuntime.identity,
+      ...(options.nodeRuntime.identity.bundle ? { bundle: { ...options.nodeRuntime.identity.bundle } } : {}) } } } : {}) };
+  const environment = capture(supplied, executionKeys), policyFile = supplied.policyFile.bind(supplied), verifyRuntimeFile = supplied.verifyRuntimeFile?.bind(supplied);
   environment.monotonicNow = monotonicReader(environment.monotonicNow);
   let active = false;
   return async (invocation, signal) => {
@@ -154,7 +169,7 @@ export function createCodexProcess(options: CodexProcessOptions,
     let started = 0;
     try {
       policy = policyFile(managedPolicy(invocation.mode!));
-      const args = confinementArguments(options, invocation, policy.path, environment);
+      const args = confinementArguments(options, invocation, policy.path, environment, verifyRuntimeFile);
       signal?.throwIfAborted(); started = environment.monotonicNow();
       confined = await spawnBounded(args, { workspace: invocation.cwd, timeoutMs: invocation.timeoutMs, resourceLimits: options.resourceLimits, input: 'pipe' }, environment);
       const { child } = confined;

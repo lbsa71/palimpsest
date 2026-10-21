@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
-import { linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,7 @@ import test from 'node:test';
 import { CodexCodingProvider, type CodingInvocation, type CodingMode } from '../packages/coding/index.ts';
 import { nodeExecutionEnvironment, type ProcessChild } from '../packages/supervisor/environment.ts';
 import { createCodexProcess, nodeCodexProcessDependencies, type CodexProcessDependencies, type CodexProcessOptions } from './codex-process.ts';
+import { runtimeBundlePath, type RuntimeIdentity } from './runtime-bundle.ts';
 
 // Existing write/lifecycle scenarios explicitly request edit; omitted modes are tested as inspect below.
 const invocation: CodingInvocation = { executable: 'codex', args: ['exec', '--json', '-'], cwd: '/workspace', stdin: 'finite coding task', mode: 'edit', timeoutMs: 100, maxOutputBytes: 64 };
@@ -131,6 +133,90 @@ function realFixture() {
   writeFileSync(join(home, 'auth.json'), '{"fixture":true}', { mode: 0o600 }); writeFileSync(join(state, 'private'), 'private state');
   return { root, workspace, home, state, options: { codexBinary: process.execPath, nodeBinary: process.execPath, codexHome: home, protectedPaths: [state] } satisfies CodexProcessOptions };
 }
+
+function bundledFixture() {
+  const f = realFixture(), application = join(f.root, 'application'), nodeBinary = join(application, runtimeBundlePath);
+  mkdirSync(join(application, '.runtime'), { recursive: true }); copyFileSync(process.execPath, nodeBinary);
+  writeFileSync(join(application, '.runtime', 'private-control'), 'protected runtime sibling');
+  writeFileSync(join(application, 'private-control'), 'protected application control');
+  const identity: RuntimeIdentity = { nodeVersion: process.version, nodeSha256: createHash('sha256').update(readFileSync(nodeBinary)).digest('hex'),
+    platform: process.platform, arch: process.arch, bundle: { path: runtimeBundlePath, bytes: statSync(nodeBinary).size } };
+  return { ...f, application, nodeBinary, options: { ...f.options, nodeBinary, nodeRuntime: { root: application, identity }, protectedPaths: [f.state, application] } };
+}
+
+test('pinned bundled Node runs read-only in the actual namespace without exposing its protected application', async () => {
+  const f = bundledFixture();
+  try {
+    const { nodeRuntime, ...withoutGrant } = f.options;
+    await assert.rejects(createCodexProcess(withoutGrant)({ ...invocation, cwd: f.workspace }), /overlaps protected storage/);
+    const receipt = await createCodexProcess(f.options)({ ...invocation, cwd: f.workspace, timeoutMs: 5000, maxOutputBytes: 4096,
+      args: ['-e', `const fs=require('node:fs'),{spawnSync}=require('node:child_process');
+        if(fs.existsSync('/app/private-control')||fs.existsSync('/runtime/private-control')||fs.existsSync(${JSON.stringify(f.application)}))throw Error('application exposed');
+        if(require('node:crypto').createHash('sha256').update(fs.readFileSync('/runtime/node')).digest('hex')!==${JSON.stringify(nodeRuntime.identity.nodeSha256)})throw Error('runtime identity changed');
+        try{fs.writeFileSync('/runtime/node','changed');throw Error('runtime writable')}catch(error){if(!['EROFS','EACCES','ETXTBSY'].includes(error.code))throw error}
+        const child=spawnSync('/runtime/node',['-e',"require('node:fs').writeFileSync('/work/runtime-result',process.version);console.log(process.version)"],{encoding:'utf8'});
+        if(child.status!==0)throw Error(child.stderr);process.stdout.write(child.stdout);`] });
+    assert.equal(receipt.exitCode, 0, receipt.stderr);
+    assert.equal(receipt.stdout, `${process.version}\n`);
+    assert.equal(readFileSync(join(f.workspace, 'runtime-result'), 'utf8'), process.version);
+    assert.equal(readFileSync(join(f.application, 'private-control'), 'utf8'), 'protected application control');
+    assert.equal(createHash('sha256').update(readFileSync(f.nodeBinary)).digest('hex'), nodeRuntime.identity.nodeSha256);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('bundled runtime grants reject identity, path, protection and writable-storage mismatches before spawn', async () => {
+  const f = bundledFixture(), dependencies = nodeCodexProcessDependencies(f.state); let launches = 0;
+  dependencies.spawn = () => { launches++; throw Error('unexpected spawn'); };
+  const reject = async (options: CodexProcessOptions, expected: RegExp, injected = dependencies) => {
+    await assert.rejects(createCodexProcess(options, injected)({ ...invocation, cwd: f.workspace }), expected);
+    assert.equal(launches, 0); assert.deepEqual(readdirSync(f.state), ['private']);
+  };
+  try {
+    const grant = f.options.nodeRuntime;
+    await reject({ ...f.options, nodeRuntime: { ...grant, identity: { ...grant.identity, nodeSha256: '0'.repeat(64) } } }, /Pinned runtime changed/);
+    await reject({ ...f.options, nodeRuntime: { ...grant, identity: { ...grant.identity, bundle: { ...grant.identity.bundle!, bytes: 1 } } } }, /bundle size differs/);
+    const { bundle: _bundle, ...unbundled } = grant.identity;
+    await reject({ ...f.options, nodeRuntime: { ...grant, identity: unbundled } }, /exact protected application file/);
+    await reject({ ...f.options, nodeBinary: process.execPath }, /exact protected application file/);
+    await reject({ ...f.options, nodeRuntime: { ...grant, root: f.state } }, /exact protected application file/);
+    await reject({ ...f.options, protectedPaths: [f.state] }, /exact protected application file/);
+    await reject(f.options, /exact protected application file/, { ...dependencies, verifyRuntimeFile: undefined });
+    for (const protectedChild of [join(f.application, '.runtime'), f.nodeBinary]) {
+      await reject({ ...f.options, protectedPaths: [...f.options.protectedPaths, protectedChild] }, /overlaps protected storage/);
+    }
+    for (const writable of [f.home, f.workspace]) {
+      const path = join(writable, 'node'); writeFileSync(path, 'fixture executable', { mode: 0o700 });
+      await reject({ ...f.options, nodeBinary: path }, /cannot come from writable coding storage/);
+      rmSync(path);
+    }
+    linkSync(f.nodeBinary, join(f.root, 'runtime-hardlink'));
+    await reject(f.options, /without hardlinks/); rmSync(join(f.root, 'runtime-hardlink'));
+    renameSync(f.nodeBinary, join(f.application, '.runtime', 'retained-node'));
+    symlinkSync('retained-node', f.nodeBinary);
+    await reject(f.options, /exact protected application file/); rmSync(f.nodeBinary);
+    renameSync(join(f.application, '.runtime', 'retained-node'), f.nodeBinary);
+    renameSync(join(f.application, '.runtime'), join(f.application, 'retained-runtime'));
+    symlinkSync('retained-runtime', join(f.application, '.runtime'));
+    await reject(f.options, /exact protected application file/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('bundled runtime identity and verification callback are captured before host callbacks run', async () => {
+  const f = fixture(), identity: RuntimeIdentity = { nodeVersion: 'v24.13.0', nodeSha256: 'a'.repeat(64), platform: 'linux', arch: 'x64', bundle: { path: runtimeBundlePath, bytes: 100 } };
+  const grant = { root: '/source', identity }, bound = { ...options, nodeBinary: '/source/.runtime/node', nodeRuntime: grant };
+  const expected = structuredClone(grant); let verified = 0;
+  f.environment.verifyRuntimeFile = (root, path, actual) => { verified++; assert.equal(root, expected.root); assert.equal(path, runtimeBundlePath); assert.deepEqual(actual, expected.identity); };
+  const policyFile = f.environment.policyFile;
+  f.environment.policyFile = contents => {
+    grant.root = '/state'; identity.nodeSha256 = 'b'.repeat(64); identity.bundle!.bytes = 1;
+    f.environment.verifyRuntimeFile = () => { throw Error('replaced verifier used'); };
+    return policyFile(contents);
+  };
+  const running = createCodexProcess(bound, f.environment)(invocation); await tick(); f.child.close(); await running;
+  assert.equal(verified, 1); assert.equal(f.state.launches, 1);
+  const mount = f.state.args.findIndex((arg, index) => arg === '/source/.runtime/node' && f.state.args[index + 1] === '/runtime/node');
+  assert.equal(f.state.args[mount - 1], '--ro-bind'); assert.ok(!f.state.args.includes('/source'));
+});
 
 test('default inspect namespace reads files but rejects direct, aliased and metadata writes while persisting session state', async () => {
   const f = realFixture();
