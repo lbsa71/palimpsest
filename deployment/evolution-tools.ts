@@ -14,6 +14,7 @@ import { watchEvaluation, reconcileEvaluationWatch, recordEvaluationAcknowledgme
 import { maxRuntimeBytes, runtimeBundlePath, stageRuntimeBundle, type RuntimeProposal } from './runtime-bundle.ts';
 import type { EvolutionJob } from './evolution-mailbox.ts';
 import { governanceProposal, governanceProposalPath, validateReviewerMetadata, type ReviewerMetadata } from './reviewer-registry.ts';
+import { evaluationFeedback } from './evaluation-feedback.ts';
 
 export interface EvolutionContext { runId: string; scope: DataScope; workspace: string; store: OperationalStore; authority: Authority; effectId?: string }
 /** Issued by accepted host bootstrap or a host wrapper observing genuinely autonomous goal creation, never from Goal.origin alone. */
@@ -314,7 +315,10 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
           const req = request(proposal, 'evaluate'); state = options.readEvaluation(req); validateState(state, req);
           if (state.status === 'completed') proposal = acceptEvaluation(proposal, req, state.evaluation);
         }
-        return { proposal, evaluation: proposal.evaluation ? bound.store.readJsonArtifact(proposal.evaluation) : state ?? null,
+        const evaluation = proposal.evaluation ? bound.store.readJsonArtifact<EvaluationReceipt>(proposal.evaluation) : undefined;
+        if (evaluation) validateReceipt(evaluation, proposal);
+        return { proposal, evaluation: evaluation ?? state ?? null,
+          feedback: evaluation ? evaluationFeedback(evaluation, (ref, maxBytes) => JSON.parse(Buffer.from(bound.store.readArtifact({ uri: `aeon:artifact:${ref.sha256}`, sha256: ref.sha256 }, maxBytes)).toString('utf8'))) : null,
           submission: proposal.submission ? bound.store.readJsonArtifact(proposal.submission) : null };
       });
     },
