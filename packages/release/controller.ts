@@ -112,17 +112,19 @@ export class ReleaseController {
         { candidateId: receipt.candidateId, policyDigest: state.active.policyDigest }, generation, receipt.evidenceIds, 'transfer');
     } finally { this.#busy = false; }
   }
-  /** Separate durable stage, judged by the incumbent policy. The new policy cannot judge this change. */
+  /** Separate durable stage for ordinary or control changes, judged by incumbent policy. */
   stageControlUpgrade(proof: ReleaseProof, nextPolicy: AdmissionPolicy): string {
     this.#idle();
     const state = this.#ready();
-    const receipt = this.#admit(proof, state.authority, this.#policy(state.active.policyDigest), 'control-upgrade', state.accepted.candidateId);
-    if (!receipt.controlChange || nextPolicy.controlRevision !== proof.proposal.candidate.controls ||
+    const change = proof.proposal.candidate.controls === state.authority.controlRevision ? 'ordinary' : 'control-upgrade';
+    const receipt = this.#admit(proof, state.authority, this.#policy(state.active.policyDigest), change, state.accepted.candidateId);
+    if (nextPolicy.controlRevision !== proof.proposal.candidate.controls ||
       nextPolicy.policyDigest !== admissionPolicyIdentity(nextPolicy)) throw new Error('Staged policy must match the changed control artifact');
+    if (change === 'ordinary' && nextPolicy.policyDigest !== state.active.policyDigest) throw new Error('Ordinary staged changes must retain the accepted policy');
     // Persist the exact key digests, evaluator artifacts and required cases, never host-private keys.
     const descriptor = policyDescriptor(nextPolicy);
     const candidate = verifyCandidate(this.#options.artifactStore, receipt.candidateId);
-    if (identity((candidate.inputs.controls as { policy?: unknown })?.policy) !== identity(descriptor)) {
+    if (receipt.controlChange && identity((candidate.inputs.controls as { policy?: unknown })?.policy) !== identity(descriptor)) {
       throw new Error('Candidate control manifest must bind the next policy descriptor');
     }
     const id = identity({ receipt, nextPolicy: descriptor, nextPolicyDigest: nextPolicy.policyDigest });
@@ -139,9 +141,11 @@ export class ReleaseController {
       if (!stage) throw new Error('Unknown staged control upgrade');
       if (identity(stage.priorAuthority) !== identity(state.authority)) throw new Error('Staged control upgrade has stale authority');
       const nextPolicy = this.#policy(stage.nextPolicyDigest);
-      const receipt = this.#admit(stage.proof, state.authority, this.#policy(state.active.policyDigest), 'control-upgrade', state.accepted.candidateId);
+      const change = stage.proof.proposal.candidate.controls === state.authority.controlRevision ? 'ordinary' : 'control-upgrade';
+      if (change === 'ordinary' && stage.nextPolicyDigest !== state.active.policyDigest) throw new Error('Ordinary staged changes must retain the accepted policy');
+      const receipt = this.#admit(stage.proof, state.authority, this.#policy(state.active.policyDigest), change, state.accepted.candidateId);
       if (nextPolicy.controlRevision !== stage.proof.proposal.candidate.controls) throw new Error('Staged control identity changed');
-      return await this.#activate({ ...state, probationJudge: { authority: state.authority, policyDigest: state.active.policyDigest, change: 'control-upgrade' } },
+      return await this.#activate({ ...state, probationJudge: { authority: state.authority, policyDigest: state.active.policyDigest, change } },
         { candidateId: receipt.candidateId, policyDigest: nextPolicy.policyDigest }, generation, receipt.evidenceIds, 'transfer', withdrawGuard);
     } finally { this.#busy = false; }
   }

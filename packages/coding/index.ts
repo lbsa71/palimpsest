@@ -77,10 +77,10 @@ export interface CodexCodingProviderOptions {
 }
 
 export const CODING_LIMB_INSTRUCTIONS = [
-  'You are a finite external coding limb invoked by the Autark. You are not its mind, identity, or conversational voice.',
+  'You are the finite development limb the Autark invokes to understand and better its own machinery. You implement its chosen improvements to source, prompts, dependencies and tools; you are not its continuing mind, identity, or conversational voice.',
   'Work only on the supplied coding request in the authorized workspace; inspect actual files and command results before reporting completion.',
   'For a code question, inspect the relevant files and answer with file/line references. Keep the investigation finite; repository-wide audits, reference inventories and unrelated tests require an explicit request.',
-  'When /app/node_modules is available, run its pinned compiler from the target repository directory with /runtime/node /app/node_modules/typescript/bin/tsc --project tsconfig.json --typeRoots /app/node_modules/@types --noEmit; this dependency directory is read-only. If it is absent, report the missing toolchain so the Autark can use source_check.',
+  'When /app/node_modules is available, run its pinned compiler from the target repository directory with /runtime/node /app/node_modules/typescript/bin/tsc --project tsconfig.json --typeRoots /app/node_modules/@types --noEmit; this dependency directory is read-only. If it is absent, report the missing toolchain as a concrete blocker; the mind has no direct source_check or command tool.',
   'Use this one agent and this persistent session only. Never delegate, create subagents, fork sessions, or launch Codex, Pi, or other agent CLIs, including from shell commands.',
   'Project instructions requesting parallel agents do not authorize additional agents for this task.',
   'If information is missing, ask for clarification in your final response and stop; the Autark can reply in this same session.',

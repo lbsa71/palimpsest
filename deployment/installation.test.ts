@@ -90,6 +90,8 @@ test('preflight rehashes coordinator/runtime and rejects a mismatched frozen cap
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /dispatcher must remain outside/);
       writeFileSync(value.hostConfigFile, JSON.stringify({ ...baseConfig, evaluationDispatcher: join(root, 'private-dispatcher.json') }));
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Missing selected provider is held at inference; this process lacks delegation.
+      const unprofiled = freezeCandidate(source, value.artifactStore, ['deployment', 'package-lock.json'], { ...inputs, configuration: { model: { provider: 'mistral' } } });
+      assert.throws(() => checkInstallation({ ...value, coordinatorCandidateId: unprofiled.manifest.id }, 'service', false), /ENOENT/); // Optional process limits do not invalidate the unchanged physical installation.
       const journal = join(value.stateDirectory, 'host-successor.sqlite'), db = new DatabaseSync(journal); chmodSync(journal, 0o600);
       assert.throws(() => checkInstallation(selectedValue, 'service', false), /ENOENT/); // Interrupted first schema creation remains a bootstrap decision.
       db.exec('CREATE TABLE selection(singleton INTEGER PRIMARY KEY, value TEXT NOT NULL)');

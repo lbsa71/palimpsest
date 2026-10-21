@@ -7,6 +7,7 @@ import type { ChangeRecord } from '../packages/release/proposals.ts';
 import { assertReviewLineage } from './evaluation-resources.ts';
 import type { EvolutionJob } from './evolution-mailbox.ts';
 import type { EvaluationReceipt, EvaluationRequest } from './evolution-tools.ts';
+import type { HostResourceOptions } from './host-resources.ts';
 
 const namespace = 'host.evolution-continuations';
 interface Continuation { requestId: string; requestDigest: string; runId: string; changeId: string; scope: DataScope; authority: Authority; status: 'waiting' | 'notified' | 'declined' | 'reconciled' }
@@ -51,8 +52,10 @@ export function reconcileEvaluationWatch(store: OperationalStore, requestId: str
 }
 /** Local host events resume eligible waiting authors; no provider request or reviewer redispatch. */
 export class EvolutionContinuations {
+  readonly resourceOptions: HostResourceOptions;
   readonly store: OperationalStore; readonly runtime: DurableRuntime; readonly authorityStore: AuthorityStore; readonly goals: InitiativeRegistry;
-  constructor(options: { store: OperationalStore; runtime: DurableRuntime; authorityStore: AuthorityStore }) {
+  constructor(options: { store: OperationalStore; runtime: DurableRuntime; authorityStore: AuthorityStore } & HostResourceOptions) {
+    this.resourceOptions = { resourceLedger: options.resourceLedger, now: options.now ?? options.runtime.now };
     this.store = options.store; this.runtime = options.runtime; this.authorityStore = options.authorityStore; this.goals = new InitiativeRegistry(options.store);
   }
   private subscriptions(runId?: string): Continuation[] {
@@ -88,7 +91,7 @@ export class EvolutionContinuations {
         invariant(identity(request) === acknowledgment.requestDigest && request.proposal.runId === effect.runId &&
           identity(request.proposal.scope) === identity(effect.scope) && identity(request.proposal.authority) === identity(effect.authority), 'Local evaluation request binding mismatch');
         invariant(effect.payload && typeof effect.payload === 'object' && !Array.isArray(effect.payload) && effect.payload.changeId === request.proposal.id, 'Local evaluation proposal/payload mismatch');
-        assertReviewLineage(this.store, request);
+        assertReviewLineage(this.store, request, this.resourceOptions.now, request.proposal.authority, this.resourceOptions.resourceLedger);
         const receipt = this.store.readJsonArtifact<{ proposal: ChangeRecord; evaluation: { requestId: string; candidateId: string; policyDigest: string } }>(acknowledgment.receipt);
         if (effect.status === 'succeeded') invariant(effect.receipt && identity(this.store.readJsonArtifact(effect.receipt)) === identity(receipt), 'Successful local enqueue effect receipt changed');
         invariant(receipt.proposal.id === request.proposal.id && receipt.proposal.runId === effect.runId && identity(receipt.proposal.candidate) === identity(request.candidate.manifest) &&
@@ -144,7 +147,7 @@ export class EvolutionContinuations {
         const recoveredWait = this.store.get<{ requestId: string }>('host.evolution-recovered-waits', subscription.runId)?.value.requestId === subscription.requestId;
         if (run?.status !== 'waiting' && !(run?.status === 'ready' && recoveredWait && this.runtime.effects.unresolved(run.id).length === 0)) return;
         invariant(identity(run.scope) === identity(subscription.scope), 'Evolution continuation audience mismatch');
-        assertReviewLineage(this.store, request);
+        assertReviewLineage(this.store, request, this.resourceOptions.now, request.proposal.authority, this.resourceOptions.resourceLedger);
         const proposal = this.store.get<ChangeRecord>('release.changes', identity({ runId: subscription.runId, id: subscription.changeId }))?.value;
         invariant(proposal?.state === 'evaluation-dispatched' && identity(proposal.candidate) === identity(request.candidate.manifest) &&
           proposal.judgingPolicyDigest === request.policyDigest && identity(proposal.scope) === identity(subscription.scope) &&

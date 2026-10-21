@@ -13,6 +13,8 @@ export interface CodingConfig { provider?: 'codex' | 'pi'; model?: string; timeo
 export interface ApplicationConfig {
   /** Coding is an external limb, independent of the mind model. Defaults to Codex CLI. */
   coding?: CodingConfig;
+  /** Explicit host grant for conversations sharing the one retained engineering context. */
+  developmentAudiences?: DataScope[];
   developmentControl?: DevelopmentControlConfig;
   stateDirectory: string;
   workspaceDirectory: string;
@@ -66,6 +68,10 @@ export function validateConfiguration(config: ApplicationConfig): ApplicationCon
     invariant(config.coding.provider === 'pi' || config.coding.model === undefined || config.coding.model === DEFAULT_CODEX_CODING_MODEL, 'Codex coding requires gpt-6.1-sol at high effort');
     for (const [key, maximum] of [['timeoutMs', 1800000], ['maxOutputBytes', 8000000]] as const) invariant(config.coding[key] === undefined || Number.isSafeInteger(config.coding[key]) && config.coding[key]! > 0 && config.coding[key]! <= maximum, 'Coding limits must be finite and bounded');
     invariant(!config.developmentControl, 'External coding is not qualified for matched development evaluation');
+  }
+  if (config.developmentAudiences !== undefined) {
+    invariant(!config.developmentControl && Array.isArray(config.developmentAudiences) && config.developmentAudiences.length > 0 && config.developmentAudiences.length <= 32, 'Bounded explicit development audiences required');
+    for (const scope of config.developmentAudiences) { validateScope(scope); invariant(scope.kind === 'restricted', 'Shared development requires restricted audiences'); }
   }
   if (config.developmentControl !== undefined) validateDevelopmentControl(config.developmentControl);
   invariant(config.bootstrapInitiative === undefined || typeof config.bootstrapInitiative === 'boolean', 'Invalid bootstrap initiative setting');

@@ -5,6 +5,7 @@ import type { AuthorityFence } from '../../effects/index.ts';
 import { OperationalStore } from '../../storage/index.ts';
 import { SlackError } from '../slack/client.ts';
 import type { SlackApi, SlackPage } from '../slack/client.ts';
+import type { SlackDeliveryIdentity } from '../slack/authorship.ts';
 
 export interface SpeechGrant {channel:string;threadTs?:string;scope:DataScope}
 export interface SpeechPayload {channel:string;threadTs?:string;text:string;kind:'report'|'progress'|'message';obligationId?:string;obligationRevision?:number;reportRevision?:number}
@@ -28,6 +29,12 @@ export function createSpeechHandler(options:SpeechOptions):EffectReceiver {
   nonempty(options.botUserId,'sending Slack bot identity');
   invariant(Number.isSafeInteger(options.maxReconcilePages??10)&&(options.maxReconcilePages??10)>0,'positive reconciliation page bound required');
   invariant(Number.isSafeInteger(options.pageSize??100)&&(options.pageSize??100)>0&&(options.pageSize??100)<=1000,'invalid reconciliation page size');
+  const retainDelivery=(effect:Effect,p:SpeechPayload,messageTs:string)=>{
+    const key=`${p.channel}:${messageTs}`,old=options.store.get('communications.slack.deliveries',key);
+    const value:SlackDeliveryIdentity={channel:p.channel,messageTs,botUserId:options.botUserId,effectId:effect.id,
+      origin:effect.id.startsWith('host:')?'host-status':'mind-speech'};
+    options.store.put('communications.slack.deliveries',key,value,old?.revision??null);
+  };
   return {
     async dispatch(effect,signal){
       const p=payload(effect,options.grants);options.fence.assert(effect.authority);signal?.throwIfAborted();
@@ -35,6 +42,7 @@ export function createSpeechHandler(options:SpeechOptions):EffectReceiver {
       try{
         const response=await options.api.call<{channel:string;ts:string}>('chat.postMessage',{channel:p.channel,text:p.text,client_msg_id:clientMsgId,...(p.threadTs?{thread_ts:p.threadTs}:{})},signal);
         invariant(response.channel===p.channel && typeof response.ts==='string' && response.ts.length>0,'invalid Slack delivery receipt');
+        retainDelivery(effect,p,response.ts);
         return {outcome:'succeeded',receipt:options.store.putJsonArtifact(receipt(p,response.ts,clientMsgId) as unknown as JsonValue)};
       }catch(error){
         // Documented API rejections are failed. Connection loss, malformed success and 5xx stay unknown.
@@ -50,7 +58,7 @@ export function createSpeechHandler(options:SpeechOptions):EffectReceiver {
           // Slack can sanitize the text; trusted bot identity + unique client ID +
           // exact destination bind the receipt without demanding byte-identical rendering.
           const message=result.messages.find(m=>m.client_msg_id===clientMsgId && m.user===options.botUserId && (p.threadTs?m.thread_ts===p.threadTs:!m.thread_ts||m.thread_ts===m.ts));
-          if(message)return {outcome:'succeeded',receipt:options.store.putJsonArtifact(receipt(p,message.ts,clientMsgId) as unknown as JsonValue)};
+          if(message){retainDelivery(effect,p,message.ts);return {outcome:'succeeded',receipt:options.store.putJsonArtifact(receipt(p,message.ts,clientMsgId) as unknown as JsonValue)};}
           cursor=result.response_metadata?.next_cursor??'';if(!cursor||seen.has(cursor))break;seen.add(cursor);
         }
       }catch{/* Permission, retention, rate limit or transport gaps cannot prove non-delivery. */}

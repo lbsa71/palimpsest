@@ -35,7 +35,7 @@ const exact = (value: unknown, keys: string[]) => invariant(value && typeof valu
 
 /** Actual prior-owned implementation identity, not a caller assertion. Tests/docs excluded. */
 export function offlineRunnerDigest(): string {
-  const files = inventoryCandidateSource(ownRoot, ['packages', 'deployment', 'evaluations/offline-review', 'package.json', 'package-lock.json'])
+  const files = inventoryCandidateSource(ownRoot, ['packages', 'deployment', 'evaluations/offline-review', 'evaluations/engineering-review', 'package.json', 'package-lock.json'])
     .filter(file => !file.path.endsWith('.test.ts') && !file.path.endsWith('.md'));
   return identity({ version: 1, files, node: hashBytes(readFileSync(process.execPath)), nodeVersion: process.version });
 }

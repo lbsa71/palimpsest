@@ -22,6 +22,10 @@ import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type Revie
 import { assertControlActivationClaim, assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 import { controlActivationAcknowledgmentPending } from './control-tools.ts';
 import { RescueRotationHost, type RescueRotationOptions, type RescueRotationRecord } from './rescue-rotation.ts';
+import { ResourceLedger, type AllowanceAmendment } from '../packages/runtime/resources/index.ts';
+import type { HostResourceLedgerFactory } from './host-resources.ts';
+import { engineeringPlanMount, runEngineeringReview, type EngineeringReviewOptions } from './engineering-review.ts';
+import { providerGateway } from './provider-gateway.ts';
 
 export interface SupervisorOptions {
   host: HostBindings;
@@ -34,6 +38,8 @@ export interface SupervisorOptions {
   bootstrap?: { proof: ReleaseProof; policyDigest: string } | (() => { proof: ReleaseProof; policyDigest: string });
   allowedModelProfiles?: ModelProfile[];
   evaluationDispatcher?: { reviewerFile: string; policyDigests: readonly string[] };
+  /** Trusted transport/clock/filesystem ports for the source-bound engineering reviewer. */
+  engineeringReview?: Pick<EngineeringReviewOptions, 'performRequest' | 'timeoutSignal' | 'runCommand' | 'environment'>;
   /** Host-owned reviewer seam. Ordinary callers may only enqueue exact staged bindings. */
   controlReview?: Pick<ControlContinuationOptions, 'reserveProbation' | 'reviewProbation' | 'readyToActivate' | 'finishProbation'>;
   /** Explicit request only; the installed bootstrap checks current acceptance and boot readiness. */
@@ -73,6 +79,7 @@ export function validateHostBindings(host: HostBindings): void {
 /** One host coordinator owns release mutations; applications hold a separate execution lease. */
 export class ServiceSupervisor {
   readonly #options: SupervisorOptions;
+  readonly #engineeringReview: NonNullable<SupervisorOptions['engineeringReview']>;
   readonly #lease: ProcessLease;
   readonly #authority: AuthorityStore;
   readonly #controller: ReleaseController;
@@ -82,6 +89,17 @@ export class ServiceSupervisor {
   #configuredReviewer?: ReviewerFile;
   #reviewerDiagnosis?: string;
   readonly #resolvedReviewers = new Map<string, ReviewerFile>();
+  readonly #allowances = new Map<string, AllowanceAmendment | undefined>();
+  readonly #resourceLedger: HostResourceLedgerFactory = (store, ceiling, now) => {
+    const candidateId = this.#controller.status()!.accepted.candidateId;
+    if (!this.#allowances.has(candidateId)) this.#allowances.set(candidateId,
+      (verifyApplication(this.#options.host.artifactStore, candidateId, this.#options.host.nodeBinary).inputs.configuration as unknown as import('./config.ts').ApplicationConfig).allowanceAmendment);
+    const ledger = new ResourceLedger(store, ceiling, now), amendment = this.#allowances.get(candidateId), current = this.#authority.current();
+    invariant(current?.generation, 'Serving host authority required for accepted allowance binding');
+    const authority: Authority = { generation: current.generation, epoch: current.epoch, controlRevision: current.controlRevision };
+    if (amendment) ledger.applyAllowanceAmendment(amendment, { authority, assertAuthority: () => this.#authority.assert(authority) });
+    return ledger;
+  };
   #evolutionStore?: OperationalStore;
   #dispatcher?: EvaluationDispatcher;
   #controls?: ControlContinuation;
@@ -102,6 +120,9 @@ export class ServiceSupervisor {
     validateHostBindings(options.host);
     if (options.allowedModelProfiles !== undefined) validateModelGrants(options.allowedModelProfiles);
     this.#options = options;
+    this.#engineeringReview = { ...options.engineeringReview,
+      performRequest: options.engineeringReview?.performRequest ?? providerGateway({ provider: 'mistral', apiKey: () => options.secrets.mistralApiKey ?? '', maxResponseBytes: 262144 }),
+      timeoutSignal: options.engineeringReview?.timeoutSignal ?? (timeoutMs => AbortSignal.timeout(timeoutMs)) };
     this.#lease = new ProcessLease(join(options.host.stateDirectory, 'supervisor-lease.sqlite'));
     let authority: AuthorityStore | undefined;
     try {
@@ -177,7 +198,7 @@ export class ServiceSupervisor {
       finishProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.finishProbation(review),
       readyToActivate: (request: ControlActivationRequest) => this.#dispatcher!.probationAvailable() && !controlActivationAcknowledgmentPending(this.#evolutionStore!, request),
     };
-    this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!,
+    this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!, resourceLedger: this.#resourceLedger,
       status: () => this.#controller.status()!, stagedControl: id => this.#controller.stagedControl(id),
       assertAuthority: authority => this.#authority.assert(authority), ...reviewer,
       readyToActivate: request => !this.#operation && !this.#closing && !this.#hostHandoffPending && (reviewer.readyToActivate?.(request) ?? true),
@@ -208,6 +229,10 @@ export class ServiceSupervisor {
   #startDispatcher(): void {
     const configured = this.#options.evaluationDispatcher;
     this.#dispatcher = new EvaluationDispatcher({ mailbox: this.#mailbox!, host: this.#options.host, reviewer: this.#configuredReviewer, unavailableDiagnosis: this.#reviewerDiagnosis,
+      resourceLedger: this.#resourceLedger,
+      runReview: (reviewer, host, request, policy, acceptedId, resource) => reviewer.files.some(file => file.mount === engineeringPlanMount)
+        ? runEngineeringReview(reviewer, host, request, policy, acceptedId, { ...resource, ...this.#engineeringReview })
+        : import('./evaluation-dispatch.ts').then(module => module.runAccountedExternalReview(reviewer, host, request, policy, acceptedId, resource)),
       getPolicy: this.#policies.get, policyDigests: configured?.policyDigests ?? [], assertAuthority: grant => this.#authority.assert(grant),
       getReviewer: digest => this.#getReviewer(digest), currentPolicyDigest: () => {
         const state = this.#controller.status()!; return state.probationJudge?.policyDigest ?? state.active.policyDigest;
@@ -240,7 +265,7 @@ export class ServiceSupervisor {
   acceptProbation(proof: ReleaseProof, review?: RunningProbationReview): Promise<void> { return this.#exclusive(async () => {
     const prior = this.#controller.status()!;
     if (review) this.#authority.dispatch(review.physicalAuthority, () => this.#evolutionStore!.transaction(() => {
-      assertProbationLineage(this.#evolutionStore!, review);
+      assertProbationLineage(this.#evolutionStore!, review, { resourceLedger: this.#resourceLedger });
       this.#controller.acceptProbation(proof);
     }));
     else this.#controller.acceptProbation(proof);
@@ -260,7 +285,7 @@ export class ServiceSupervisor {
     return this.#exclusive(() => this.#controller.activateStagedControl(stageId, randomUUID(), review ? commit => this.#evolutionStore!.transaction(() => {
       // AuthorityStore holds its write lock before this callback; retain the operational
       // lock through withdrawal so cancellation and producer starts serialize with it.
-      assertControlActivationClaim(this.#evolutionStore!, stageId, review);
+      assertControlActivationClaim(this.#evolutionStore!, stageId, review, { resourceLedger: this.#resourceLedger });
       const record = this.#evolutionStore!.get<ControlContinuationRecord>('host.control-continuations', review.activationId)!.value;
       invariant(!controlActivationAcknowledgmentPending(this.#evolutionStore!, record.request), 'Control activation producer acknowledgment is incomplete');
       commit();

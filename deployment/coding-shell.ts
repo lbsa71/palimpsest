@@ -16,7 +16,9 @@ export function codexCodingShell(options: { provider: CodingProvider; store: Ope
       `Trusted host context: accepted source snapshot ${turn.source.candidateId} is available at /work/${turn.source.path}.`,
       'Use that directory for repository inspection and verification. Cite file paths, line numbers and actual observed command results when answering repository questions.',
       `Current turn authority: ${mode}. Any authorized edits must target that source subdirectory.`,
-      '', 'Coding request:', turn.message,
+      'This is the editable source for a whole-application candidate, including deployment/prompts/mind.md, dependencies, tools, planning and controls. In edit mode, implement the finite requested improvement and run relevant checks; report exact changed paths, command results and remaining limitations.',
+      'The continuing mind can freeze this source through candidate_freeze, request independent candidate_evaluate review and submit release_submit under the previously accepted controls. You implement and supply evidence; the mind coordinates review and release. Keep the retained native session, do not start other agents or request fresh human approval for already authorized work.',
+      '', 'Development request:', turn.message,
     ].join('\n') : turn.message;
     const budget = options.executionBudget(input.run.id);
     invariant(Number.isSafeInteger(budget.timeoutMs) && budget.timeoutMs > 0 && budget.timeoutMs <= options.timeoutMs,

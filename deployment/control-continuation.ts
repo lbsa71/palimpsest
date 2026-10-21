@@ -3,7 +3,7 @@ import type { FrozenCandidate } from '../packages/release/artifacts.ts';
 import type { ReleaseProof, ReleaseState, StagedControl } from '../packages/release/controller.ts';
 import type { ChangeRecord } from '../packages/release/proposals.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
-import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import { hostResourceLedger, type HostResourceOptions } from './host-resources.ts';
 import type { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { SubmissionRequest, SubmissionReceipt } from './evolution-tools.ts';
 
@@ -23,16 +23,21 @@ export interface ProbationReviewRequest {
   admissionEvidenceIds: string[]; allocationLineage: ProbationAllocation[]; reservedAt: number;
 }
 export type RunningProbationReview = ProbationReviewRequest & { physicalAuthority: Authority };
+function immutableAllocation(allocation: Omit<ProbationAllocation, 'id'>): Omit<ProbationAllocation, 'id'> {
+  return { rootId: allocation.rootId, ...(allocation.parentRunId ? { parentRunId: allocation.parentRunId } : {}), startedAt: allocation.startedAt, envelope: allocation.envelope };
+}
 /** Recheck under the host's authority/operational write locks at the acceptance boundary. */
-export function assertProbationLineage(store: OperationalStore, review: ProbationReviewRequest): void {
+export function assertProbationLineage(store: OperationalStore, review: ProbationReviewRequest, options: HostResourceOptions = {}): void {
+  const ledger = hostResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, options), now = options.now ?? ledger.now;
   const run = store.get<Run>('runs', review.proposal.runId)?.value;
   invariant(run && run.status !== 'cancelled' && identity(run.scope) === identity(review.proposal.scope), 'Probation author cancelled or unavailable');
-  invariant(!new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }).snapshot(run.id).cancelled, 'Probation allowance cancelled');
+  invariant(!ledger.snapshot(run.id).cancelled, 'Probation allowance cancelled');
   for (const expected of review.allocationLineage) {
-    const allocation = store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean }>('allocations', expected.id)?.value;
+    const allocation = store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean; elapsedFloorMs?: number }>('allocations', expected.id)?.value;
     invariant(allocation && !allocation.cancelled, 'Probation allocation cancelled or unavailable');
-    const { cancelled: _, ...fields } = allocation;
-    invariant(identity({ id: expected.id, ...fields }) === identity(expected) && Date.now() - allocation.startedAt < allocation.envelope.maxElapsedMs,
+    const limit = ledger.effectiveEnvelope(expected.id).maxElapsedMs;
+    invariant(identity(immutableAllocation(allocation)) === identity(immutableAllocation(expected)) &&
+      (limit === null || Math.max(0, now() - allocation.startedAt, allocation.elapsedFloorMs ?? 0) < limit),
       'Probation lineage changed or expired');
   }
 }
@@ -47,14 +52,14 @@ function boundRun(store: OperationalStore, request: ControlActivationRequest): v
     identity(run.scope) === identity(request.scope), 'Control activation author is cancelled, absent, stale or outside its audience');
 }
 /** Under authority then operational write locks, immediately around actual withdrawal. */
-export function assertControlActivationClaim(store: OperationalStore, stageId: string, review: ProbationReviewRequest): void {
+export function assertControlActivationClaim(store: OperationalStore, stageId: string, review: ProbationReviewRequest, options: HostResourceOptions = {}): void {
   const record = store.get<ControlContinuationRecord>(namespace, review.activationId)?.value;
   invariant(record?.status === 'activating' && identity(record.review) === identity(review) && record.request.stageId === stageId &&
     record.request.id === review.activationId && review.id === `probation:${identity(record.request)}` &&
     record.request.runId === review.proposal.runId && record.request.proposalId === review.proposal.id &&
     identity(record.request.scope) === identity(review.proposal.scope) && identity(record.request.authority) === identity(review.judgeAuthority),
   'Exact activating control reservation required');
-  boundRun(store, record.request); assertProbationLineage(store, review);
+  boundRun(store, record.request); assertProbationLineage(store, review, options);
   invariant(store.get<Run>('runs', record.request.runId)?.value.status !== 'running', 'Control producer is still running');
 }
 /** Ordinary tools may enqueue this exact binding after their own effect acknowledgement.
@@ -77,7 +82,7 @@ export function controlActivationStatus(store: OperationalStore, id: string, run
   invariant(!record || (record.request.runId === runId && identity(record.request.scope) === identity(scope)), 'Control activation unavailable for this run/audience');
   return record;
 }
-export interface ControlContinuationOptions {
+export interface ControlContinuationOptions extends HostResourceOptions {
   store: OperationalStore; mailbox: EvolutionMailbox;
   status(): ReleaseState; stagedControl(id: string): StagedControl | undefined;
   assertAuthority(authority: Authority): void;
@@ -139,19 +144,23 @@ export class ControlContinuation {
       if (this.options.readyToActivate && !this.options.readyToActivate(request)) return;
       const review = this.options.store.transaction(() => {
         this.#resolve(request); this.#abort.signal.throwIfAborted();
+        const ledger = hostResourceLedger(this.options.store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, this.options), now = this.options.now ?? ledger.now;
+        invariant(!ledger.snapshot(request.runId).cancelled, 'Probation allowance cancelled');
         const allocationLineage: ProbationAllocation[] = [];
         let id: string | undefined = request.runId;
         while (id) {
           invariant(allocationLineage.length < 128 && !allocationLineage.some(value => value.id === id), 'Bounded acyclic probation allocation lineage required');
-          const allocation: (Omit<ProbationAllocation, 'id'> & { cancelled: boolean }) | undefined = this.options.store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean }>('allocations', id)?.value;
-          invariant(allocation && !allocation.cancelled && Date.now() - allocation.startedAt < allocation.envelope.maxElapsedMs, 'Probation allocation expired or cancelled');
-          const { cancelled: _, ...fields } = allocation; allocationLineage.push({ id, ...fields }); id = allocation.parentRunId;
+          const allocation: (Omit<ProbationAllocation, 'id'> & { cancelled: boolean; elapsedFloorMs?: number }) | undefined = this.options.store.get<Omit<ProbationAllocation, 'id'> & { cancelled: boolean; elapsedFloorMs?: number }>('allocations', id)?.value;
+          invariant(allocation && !allocation.cancelled, 'Probation allocation expired or cancelled');
+          const limit = ledger.effectiveEnvelope(id).maxElapsedMs;
+          invariant(limit === null || Math.max(0, now() - allocation.startedAt, allocation.elapsedFloorMs ?? 0) < limit, 'Probation allocation expired or cancelled');
+          allocationLineage.push({ id, ...immutableAllocation(allocation) }); id = allocation.parentRunId;
         }
         const state = this.options.status();
         const review: ProbationReviewRequest = { id: `probation:${identity(request)}`, activationId: request.id,
           proposal: structuredClone(submission.proposal), candidate: structuredClone(submission.candidate),
           policyDigest: submission.policyDigest, judgeAuthority: structuredClone(request.authority), rescueCandidateId: state.accepted.candidateId,
-          admissionEvidenceIds: stage.proof.proposal.evidence.map(value => value.id), allocationLineage, reservedAt: Date.now() };
+          admissionEvidenceIds: stage.proof.proposal.evidence.map(value => value.id), allocationLineage, reservedAt: now() };
         return review;
       });
       // The reviewer obtains authority then operational write locks. Never invert that order
@@ -161,7 +170,7 @@ export class ControlContinuation {
       this.options.reserveProbation(review, () => {
         // The reservation owner holds authority then operational write locks here. The
         // runtime checks its host gate under this same operational lock before running.
-        this.#resolve(request); this.#abort.signal.throwIfAborted(); assertProbationLineage(this.options.store, review);
+        this.#resolve(request); this.#abort.signal.throwIfAborted(); assertProbationLineage(this.options.store, review, this.options);
         if (this.options.store.get<Run>('runs', request.runId)?.value.status === 'running' ||
           this.options.readyToActivate && !this.options.readyToActivate(request)) throw new ActivationDeferred();
         const current = controlActivationStatus(this.options.store, request.id, request.runId, request.scope);
@@ -175,7 +184,9 @@ export class ControlContinuation {
       const state = this.options.status();
       invariant(state.phase === 'probation' && state.active.candidateId === review.candidate.manifest.id &&
         identity(state.probationJudge?.authority && { generation: state.probationJudge.authority.generation, epoch: state.probationJudge.authority.epoch, controlRevision: state.probationJudge.authority.controlRevision }) === identity(review.judgeAuthority) &&
-        state.probationJudge?.policyDigest === review.policyDigest, 'Control probation differs from the original host review request');
+        state.probationJudge?.policyDigest === review.policyDigest &&
+        state.probationJudge.change === (review.candidate.manifest.controls === review.judgeAuthority.controlRevision ? 'ordinary' : 'control-upgrade'),
+      'Staged probation differs from the original host review request');
       this.#update(request.id, { status: 'reviewing', physicalAuthority });
       const proof = await this.options.reviewProbation({ ...review, physicalAuthority }, this.#abort.signal);
       const bytes = Buffer.from(canonicalJson(proof)); invariant(bytes.length <= 8 * 1024 * 1024, 'Bounded probation proof required');

@@ -5,7 +5,7 @@ import { runAgentLoopContinue } from './vendor/pi/agent/agent-loop.ts';
 import type { AgentEvent, AgentTool } from './vendor/pi/agent/types.ts';
 import { normalizeContext, validateToolArguments } from './vendor/pi/ai/index.ts';
 import type { AssistantMessage, Message, Tool, ToolResultMessage } from './vendor/pi/ai/types.ts';
-import { asJson, createMistralTransport, digest, mistralModel } from './mistral.ts';
+import { asJson, createMistralTransport, digest, mistralCompactionBoundary, mistralModel } from './mistral.ts';
 import type { Attempt, AttemptOutcome, MistralTransportOptions } from './mistral.ts';
 export { DEFAULT_MISTRAL_MODEL, createMistralTransport, mistralModel, mistralPayload } from './mistral.ts';
 export type { Attempt, AttemptOutcome } from './mistral.ts';
@@ -126,8 +126,8 @@ export function createAgentShell(options: ShellOptions): ShellPort {
         invariant(snapshot.observationIds.every(id => typeof id === 'string') && identity(snapshot.observationIds) === identity(input.checkpoint.observationIds), 'Checkpoint observation index mismatch');
         observationIds = [...snapshot.observationIds];
         status = snapshot.status;
-        compactions = snapshot.compactions ?? [];
-        rejectedCompactions = snapshot.rejectedCompactions ?? [];
+        compactions = structuredClone(snapshot.compactions ?? []);
+        rejectedCompactions = structuredClone(snapshot.rejectedCompactions ?? []);
       }
       transcript.push(...input.messages.map(message));
       // Replace every historical application system layer; reintroduce only the current manifest.
@@ -267,7 +267,8 @@ export function createAgentShell(options: ShellOptions): ShellPort {
             signal?.throwIfAborted();
             if (options.compaction && (transcript.length > options.compaction.thresholdMessages || options.compaction.thresholdBytes !== undefined && Buffer.byteLength(canonicalJson(json(modelMessages([system(), ...continuationMessages()])))) > options.compaction.thresholdBytes)) {
               let boundary = Math.max(0, transcript.length - options.compaction.retainMessages);
-              while (boundary > 0 && transcript[boundary].role === 'toolResult') boundary--;
+              if (provider === 'mistral') boundary = mistralCompactionBoundary(transcript, boundary, continuationMessages());
+              else while (boundary > 0 && transcript[boundary].role === 'toolResult') boundary--;
               const prefix = transcript.slice(0, boundary); const suffix = transcript.slice(boundary);
               // Stateless OpenAI native reasoning/calls cannot be discarded by a prose summary.
               // Compact only when user-history reduction actually removes entries.

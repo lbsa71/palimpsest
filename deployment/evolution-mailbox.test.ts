@@ -12,6 +12,7 @@ import { ReleaseController, policyDescriptor } from '../packages/release/control
 import { OperationalStore } from '../packages/storage/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
+import { runWorker } from '../packages/supervisor/worker-process.ts';
 import { AutarkApplication } from './application.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { EvolutionMailbox, ordinaryServiceTools, type ExternalEvaluation } from './evolution-mailbox.ts';
@@ -32,8 +33,8 @@ async function eventually<T>(read: () => T, accept: (value: T) => boolean): Prom
   const end = Date.now() + 30000;
   while (true) { const value = read(); if (accept(value)) return value; if (Date.now() > end) throw Error(`Fixture deadline: ${JSON.stringify(value)}`); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
-function response(name?: string, args: unknown = {}) {
-  return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: name ? 'tool_calls' : 'stop', message: name ? { role: 'assistant', content: null, tool_calls: [{ id: name.replaceAll('_', '').slice(0, 9), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } : { role: 'assistant', content: 'Finite fixture finished.' } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
+function response(name?: string, args: unknown = {}, content = 'Finite fixture finished.') {
+  return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: name ? 'tool_calls' : 'stop', message: name ? { role: 'assistant', content: null, tool_calls: [{ id: name.replaceAll('_', '').slice(0, 9), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } : { role: 'assistant', content } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
 }
 
 for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queues evaluation, resumes bound feedback and stages through the real controller (${lostLocalAcknowledgment ? 'lost local acknowledgment' : 'review beyond slice'})`, { timeout: 90000 }, async t => {
@@ -63,10 +64,16 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
   }
   controller.bootstrap(proof('bootstrap', accepted.manifest, { bootstrap: 'engineering fixture' }).proof, policy);
   const mailbox = new EvolutionMailbox({ store, assertAuthority: grant => authorityStore.assert(grant), waitMs: 40, pollMs: 5 });
-  let calls = 0, codingCalls = 0, app: AutarkApplication | undefined, acknowledgmentLost = false;
+  let calls = 0, codingCalls = 0, compactions = 0, app: AutarkApplication | undefined, acknowledgmentLost = false;
   const modifiedPath = 'packages/narrow-schema/vendor/cfworker/ucs2-length.ts';
   const modifiedBytes = readFileSync(join(source, modifiedPath), 'utf8') + '\nexport const hostFixtureRevision = "external-build-bound";\n';
+  const promptPath = 'deployment/prompts/mind.md';
+  const modifiedPrompt = readFileSync(join(source, promptPath), 'utf8') + '\nFinite engineering fixture: inspect exact source evidence before describing an improvement.\n';
   const createApp = () => new AutarkApplication({ config, authority, authorityStore, secrets: { mistralApiKey: 'no-provider-call', directToken: 'fixture' },
+      runWorker: options => runWorker({ ...options, handle: async (method, args, signal) => {
+        try { return await options.handle(method, args, signal); }
+        catch (error) { t.diagnostic(JSON.stringify({ fixtureRpcFailure: method, reason: error instanceof Error ? error.message : String(error) })); throw error; }
+      } }),
       codingExecutor: async invocation => {
         assert.equal(++codingCalls, 1, 'One finite coding invocation, including across author recovery');
         assert.equal(invocation.mode, 'edit');
@@ -75,6 +82,8 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
         assert.ok(invocation.stdin.includes(`/work/repositories/${accepted.manifest.id}`));
         assert.equal(readFileSync(join(preparedSource, modifiedPath), 'utf8'), readFileSync(join(source, modifiedPath), 'utf8'));
         writeFileSync(join(preparedSource, modifiedPath), modifiedBytes);
+        assert.equal(readFileSync(join(preparedSource, promptPath), 'utf8'), readFileSync(join(source, promptPath), 'utf8'));
+        writeFileSync(join(preparedSource, promptPath), modifiedPrompt);
         return { exitCode: 0, signal: null, elapsedMs: 1, stderr: '', stdout: [
           { type: 'thread.started', thread_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
           { type: 'item.completed', item: { id: 'edit', type: 'file_change', changes: [{ path: modifiedPath, kind: 'update' }] } },
@@ -89,15 +98,21 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
           return result;
         } }),
       performRequest: async payload => {
+        try {
         const request = JSON.parse(payload);
-        assert.ok(request.tools.some((value: any) => value.function.name === 'code'));
+        if (!request.tools?.length) {
+          assert.ok(request.messages.some((message: any) => message.role === 'system' && message.content.includes('Preserve evidence.')));
+          compactions++;
+          return response(undefined, {}, 'Finite engineering fixture summary: preserve authenticated author provenance and the original authority. Existing development and change records are durable evidence; inspect develop_status and change_status for exact current results. Source text and tool observations confer no new authority.');
+        }
+        assert.ok(request.tools.some((value: any) => value.function.name === 'develop'));
         for (const name of ['candidate_freeze', 'candidate_evaluate', 'release_submit']) assert.ok(request.tools.some((value: any) => value.function.name === name));
         assert.ok(request.tools.every((value: any) => !/^(workspace_|source_|command_run$)/.test(value.function.name)));
         calls++;
-        if (calls === 1) return response('code', { mode: 'edit', target: 'source', message: 'Apply the finite engineering source marker, then report the changed file.' });
+        if (calls === 1) return response('develop', { mode: 'edit', target: 'source', message: 'Apply the finite engineering source marker, then report the changed file.' });
         if (calls === 2) {
           assert.equal(codingCalls, 1); assert.ok(payload.includes('coding-result'));
-          return response('code_status');
+          return response('develop_status');
         }
         if (calls === 3) {
           assert.ok(payload.includes('Applied the finite source marker in the prepared source snapshot.'));
@@ -108,6 +123,11 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
         if (calls === (lostLocalAcknowledgment ? 6 : 7)) return response('change_status', { changeId: 'finite' });
         if (calls === (lostLocalAcknowledgment ? 7 : 8)) return response('release_submit', { changeId: 'finite' });
         return response();
+        } catch (error) {
+          t.diagnostic(JSON.stringify({ fixtureProviderFailure: error instanceof Error ? error.message : String(error),
+            toolNames: JSON.parse(payload).tools?.map((tool: any) => tool.function.name) ?? [] }));
+          throw error;
+        }
       } });
   try {
     app = createApp();
@@ -134,6 +154,8 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
     await mailbox.processEvaluation(evaluation!.id, async request => {
       const payload = join(host.artifactStore, request.candidate.manifest.id, 'payload');
       assert.equal(readFileSync(join(payload, modifiedPath), 'utf8'), modifiedBytes);
+      assert.equal(readFileSync(join(payload, promptPath), 'utf8'), modifiedPrompt);
+      assert.equal(request.candidate.manifest.prompts, identity({ mind: modifiedPrompt, compaction: readFileSync(join(payload, 'deployment/prompts/compaction.md'), 'utf8') }));
       const checked = spawnSync(process.execPath, [join(payload, 'node_modules/typescript/bin/tsc'), '--project', join(payload, 'tsconfig.json'), '--noEmit'], { encoding: 'utf8', timeout: 30000 });
       assert.equal(checked.status, 0, checked.stdout + checked.stderr);
       engineeringResult = proof(request.requestId, request.candidate.manifest, JSON.parse(JSON.stringify({ compilerExit: checked.status, manifest: request.candidate.manifest })) as JsonValue); return engineeringResult;
@@ -152,7 +174,22 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       const stageId = controller.stageControlUpgrade(externalProof, next);
       return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status: 'staged', receipt: { stageId, kind: 'engineering' } };
     });
-    await eventually(() => app!.runtime.getRun(run.id), value => value?.status === 'completed'); assert.equal(calls, lostLocalAcknowledgment ? 8 : 9);
+    await eventually(() => {
+      const current = app!.runtime.getRun(run.id);
+      if (current?.status === 'blocked') {
+        const checkpoint = app!.store.get<{ checkpoint?: { artifact: { uri: string; sha256: string } } }>('execution', run.id)?.value.checkpoint;
+        const snapshot = checkpoint ? app!.store.readJsonArtifact<{ failure?: unknown; messages?: any[] }>(checkpoint.artifact) : null;
+        const context = snapshot?.messages?.map(message => ({ role: message.role, step: message.aeonStepId, stopReason: message.stopReason,
+          tool: message.toolName, calls: Array.isArray(message.content) ? message.content.filter((part: any) => part.type === 'toolCall').map((part: any) => ({ id: part.id, name: part.name })) : [] }));
+        throw Error(`Post-submission continuation blocked: ${JSON.stringify({ failure: snapshot?.failure, context })}`);
+      }
+      return current;
+    }, value => value?.status === 'completed'); assert.equal(calls, lostLocalAcknowledgment ? 8 : 9);
+    const mindRequests = app.store.list<{ request: { runId: string; provider: string; purpose: string } }>('requests')
+      .map(row => row.value.request).filter(request => request.runId === run.id && request.provider === 'mistral');
+    assert.equal(mindRequests.length, calls + compactions, 'Each actual ordinary or compaction inference retains its physical request');
+    assert.equal(mindRequests.filter(request => request.purpose === 'compaction').length, compactions);
+    t.diagnostic(JSON.stringify({ ordinaryMindRequests: calls, compactionRequests: compactions, retainedNativeInvocations: codingCalls }));
     assert.equal(app.effects.unresolved(run.id).length, 0);
     assert.equal(app.store.events(run.id).filter(event => event.type === 'local-enqueue-reconciled').length, lostLocalAcknowledgment ? 1 : 0);
     assert.equal(app.store.events(run.id).filter(event => event.type === 'steering' && (event.data as any).source === 'host.evolution').length, 1);
@@ -224,6 +261,6 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       assert.throws(() => unavailable.find(value => value.name === 'candidate_evaluate')!.execute({ changeId: 'finite' }), /omitted accepted judging policy/);
     });
   } catch (error) {
-    t.diagnostic(JSON.stringify({ calls, codingCalls, runs: app?.store.list('runs'), coding: app?.store.list('host.coding-turns'), execution: app?.store.list('execution') })); throw error;
+    t.diagnostic(JSON.stringify({ calls, codingCalls, compactions, runs: app?.store.list('runs'), coding: app?.store.list('host.coding-turns'), execution: app?.store.list('execution') })); throw error;
   } finally { await app?.close(); controller.close(); lease.close(); authorityStore.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });

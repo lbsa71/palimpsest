@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { type ArtifactRef, type Authority, type EvaluationEvidence, type Run } from '../packages/contracts/index.ts';
+import { identity, type ArtifactRef, type Authority, type EvaluationEvidence, type PhysicalRequest, type ResourceEnvelope, type Run } from '../packages/contracts/index.ts';
 import { admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { freezeCandidate, type FrozenCandidate } from '../packages/release/artifacts.ts';
 import { policyDescriptor, ReleaseController, type ReleaseProof } from '../packages/release/controller.ts';
@@ -19,12 +19,13 @@ import { assertControlActivationClaim, assertProbationLineage, ControlContinuati
 import { accountedReview, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
 import type { EvaluationRequest, SubmissionRequest } from './evolution-tools.ts';
+import type { HostResourceLedgerFactory, HostResourceOptions } from './host-resources.ts';
 
 async function stop(child: ChildProcess | undefined): Promise<void> {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   await new Promise<void>(resolve => { child.once('exit', () => resolve()); child.kill('SIGKILL'); });
 }
-async function fixture() {
+async function fixture(resourceOptions: HostResourceOptions = {}, ordinary = false) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-host-control-')), source = join(root, 'source'), artifacts = join(root, 'artifacts'), state = join(root, 'state');
   mkdirSync(source); mkdirSync(state);
   const store = new OperationalStore({ filename: join(state, 'operational.sqlite') }), authority = new AuthorityStore(join(state, 'authority.sqlite')), lease = new ProcessLease(join(state, 'lease.sqlite'));
@@ -34,7 +35,7 @@ async function fixture() {
   const fields = { kind: 'engineering' as const, requiredCases: ['running'], evaluatorKeys: new Map([['independent-fixture', key]]), evaluatorArtifacts: new Map([['independent-fixture', evaluator.sha256]]) };
   const candidate = (version: number) => {
     writeFileSync(join(source, 'main.mjs'), `console.log(${version});setInterval(()=>{},1000);`);
-    return freezeCandidate(source, artifacts, ['main.mjs'], { createdBy: 'candidate-author', controls: { version, policy: policyDescriptor(fields) }, configuration: {}, dependencies: {}, prompts: {}, model: {} });
+    return freezeCandidate(source, artifacts, ['main.mjs'], { createdBy: 'candidate-author', controls: { version: ordinary ? 1 : version, policy: policyDescriptor(fields) }, configuration: {}, dependencies: {}, prompts: { version }, model: {} });
   };
   const incumbent = candidate(1), successor = candidate(2);
   const policies = new Map<string, AdmissionPolicy>();
@@ -59,7 +60,7 @@ async function fixture() {
       },
     } });
   controller.bootstrap(proof(incumbent, initial), original);
-  const envelope = { maxRequests: 20, maxTokens: 100, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 1 }, ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 1000 });
+  const envelope = { maxRequests: 20, maxTokens: 100, maxCostUsd: 0, maxElapsedMs: 60000, maxConcurrency: 1 }, ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 1000 }, resourceOptions.now);
   ledger.allocate('root', envelope); ledger.allocate('author', envelope, 'root');
   store.put('runs', 'author', { id: 'author', status: 'waiting', revision: 1, authority: initial, scope: { kind: 'public' } }, null);
   const mailbox = new EvolutionMailbox({ store, assertAuthority: grant => authority.assert(grant) });
@@ -73,11 +74,11 @@ async function fixture() {
   await mailbox.processSubmission(submission.requestId, async () => { stageId = controller.stageControlUpgrade(externalProof, next); return { requestId: submission.requestId, candidateId: successor.manifest.id, status: 'staged', receipt: { stageId, policyDigest: next.policyDigest } }; }); await submissionWait;
   const binding: ControlActivationRequest = { id: 'activation', submissionId: 'submission', stageId, proposalId: 'change', runId: 'author', scope: { kind: 'public' }, authority: initial };
   const asEvaluation = (review: ProbationReviewRequest): EvaluationRequest => ({ requestId: review.id, proposal: review.proposal, candidate: review.candidate, policyDigest: review.policyDigest });
-  const resources = (review: ProbationReviewRequest) => ({ store, request: asEvaluation(review), evaluatorDigest: evaluator.sha256, evaluatorId: 'independent-fixture', maxElapsedMs: 1000, assertAuthority: (grant: Authority) => authority.assert(grant), dispatchAuthority: (grant: Authority, operation: () => void) => authority.dispatch(grant, operation) });
-  const options: ControlContinuationOptions = { store, mailbox, status: () => controller.status()!, stagedControl: id => controller.stagedControl(id), assertAuthority: grant => authority.assert(grant),
+  const resources = (review: ProbationReviewRequest) => ({ ...resourceOptions, store, request: asEvaluation(review), evaluatorDigest: evaluator.sha256, evaluatorId: 'independent-fixture', maxElapsedMs: 1000, assertAuthority: (grant: Authority) => authority.assert(grant), dispatchAuthority: (grant: Authority, operation: () => void) => authority.dispatch(grant, operation) });
+  const options: ControlContinuationOptions = { ...resourceOptions, store, mailbox, status: () => controller.status()!, stagedControl: id => controller.stagedControl(id), assertAuthority: grant => authority.assert(grant),
     reserveProbation: (review, commitReservation) => prepareReview({ ...resources(review), commitReservation }),
     activate: (id, review) => controller.activateStagedControl(id, `successor-${++generation}`, commit => store.transaction(() => {
-      assertControlActivationClaim(store, id, review); commit();
+      assertControlActivationClaim(store, id, review, resourceOptions); commit();
     })),
     reviewProbation: async (review, signal) => accountedReview({ ...resources(review), prepared: true, physicalAuthority: review.physicalAuthority, signal }, async gate => {
       let reviewer: ChildProcess | undefined;
@@ -87,7 +88,7 @@ async function fixture() {
         return proof(review.candidate, review.judgeAuthority, review.id);
       } finally { await stop(reviewer); }
     }), acceptProbation: async (signedProof, review) => authority.dispatch(review.physicalAuthority, () => store.transaction(() => {
-      assertProbationLineage(store, review); controller.acceptProbation(signedProof);
+      assertProbationLineage(store, review, resourceOptions); controller.acceptProbation(signedProof);
     })) };
   return { root, store, authority, controller, mailbox, ledger, binding, options, proof, original, next, incumbent, successor, starts,
     status: () => controlActivationStatus(store, binding.id, binding.runId, binding.scope)!,
@@ -102,13 +103,65 @@ test('durable authored activation actually starts control successor and accepts 
     assert.equal(f.status().status, 'accepted'); assert.deepEqual(f.starts, [2]);
     assert.equal(f.controller.status()?.accepted.policyDigest, f.next.policyDigest);
     assert.throws(() => f.authority.assert(f.binding.authority), /withdrawn/);
-    assert.deepEqual(f.store.get('allocations', 'author'), allocation);
+    const after = f.store.get<{ elapsedFloorMs?: number }>('allocations', 'author')!;
+    const { elapsedFloorMs: beforeFloor, ...beforeGrant } = allocation!.value as unknown as { elapsedFloorMs: number };
+    const { elapsedFloorMs: afterFloor, ...afterGrant } = after.value;
+    assert.deepEqual(afterGrant, beforeGrant); assert.ok(afterFloor! >= beforeFloor);
     assert.equal(f.ledger.snapshot('author').requests, 1);
     assert.equal(f.ledger.request(reviewPhysicalId(f.status().review!.id))?.status, 'succeeded');
     assert.ok(f.controller.history().some(event => event.kind === 'probation-accepted'));
     assert.notEqual(f.status().review!.admissionEvidenceIds[0], (f.controller.proof(f.status().proofId!) as { proof: ReleaseProof }).proof.proposal.evidence[0]!.id);
     assert.equal(f.status().review!.policyDigest, f.original.policyDigest);
     assert.ok(f.status().physicalAuthority!.epoch > f.binding.authority.epoch);
+  } finally { await continuation.close(); await f.dispose(); }
+});
+
+test('ordinary staged proposal uses the same durable activation and fresh original-policy probation continuation', async () => {
+  const f = await fixture({}, true), continuation = new ControlContinuation(f.options);
+  try {
+    assert.equal(f.controller.status()!.phase, 'accepted'); assert.deepEqual(f.starts, []);
+    assert.equal(f.successor.manifest.controls, f.incumbent.manifest.controls);
+    assert.equal(f.next.policyDigest, f.original.policyDigest);
+    enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+    assert.equal(f.status().status, 'accepted'); assert.deepEqual(f.starts, [2]);
+    assert.equal(f.controller.status()!.accepted.candidateId, f.successor.manifest.id);
+    assert.equal(f.controller.status()!.accepted.policyDigest, f.original.policyDigest);
+    assert.equal(f.status().review!.policyDigest, f.original.policyDigest);
+    assert.notEqual(f.status().review!.admissionEvidenceIds[0], (f.controller.proof(f.status().proofId!) as { proof: ReleaseProof }).proof.proposal.evidence[0]!.id);
+    assert.equal(f.ledger.request(reviewPhysicalId(f.status().review!.id))!.status, 'succeeded');
+    assert.ok(f.controller.history().some(event => (event.value as { probationJudge?: { change: string } }).probationJudge?.change === 'ordinary'));
+  } finally { await continuation.close(); await f.dispose(); }
+});
+
+for (const ordinary of [false, true]) test(`expired original root completes ${ordinary ? 'ordinary' : 'control'} staged activation and fresh probation only with accepted host policy, retaining old uncertainty`, async () => {
+  let now = 0, f: Awaited<ReturnType<typeof fixture>>;
+  const clock = () => now;
+  const resourceLedger: HostResourceLedgerFactory = (store, ceiling, suppliedClock) => {
+    const resources = new ResourceLedger(store, ceiling, suppliedClock ?? clock);
+    const root = store.get<{ envelope: ResourceEnvelope }>('allocations', 'root')!.value;
+    const current = f.authority.current()!;
+    resources.applyAllowanceAmendment({ id: 'explicit-host-unlimited', rootId: 'root', expectedEnvelopeDigest: identity(root.envelope), authorizationRef: 'fixture-user-grant',
+      cumulativeTokenLimit: null, cumulativeCostLimit: null, cumulativeRequestLimit: null, cumulativeElapsedLimit: null, descendantCostLimit: 'root', scope: 'root-and-descendants' },
+    { authority: current as Authority, assertAuthority: () => f.authority.assert(current as Authority) });
+    return resources;
+  };
+  f = await fixture({ now: clock, resourceLedger }, ordinary);
+  const continuation = new ControlContinuation(f.options);
+  try {
+    const old: PhysicalRequest = { id: 'old-unknown', runId: 'author', purpose: 'review', provider: 'fixture', model: 'fixture', promptManifestId: 'old', requestDigest: identity('old'), reservationId: 'old-unknown', status: 'reserved',
+      usage: { requests: 1, inputTokens: null, outputTokens: null, costUsd: null, elapsedMs: 0 } };
+    f.ledger.reserve(old); f.ledger.dispatched({ ...old, status: 'dispatched' }); f.ledger.settle({ ...old, status: 'uncertain' });
+    f.ledger.releaseConcurrency(old.id, { kind: 'host-recovery', reason: 'Fixture proves old transport is gone; financial outcome remains unknown' });
+    const retained = f.store.get('requests', old.id), root = f.store.get<{ envelope: ResourceEnvelope; startedAt: number }>('allocations', 'root')!.value;
+    now = 100000;
+    assert.throws(() => f.ledger.reserve({ ...old, id: 'unbound', reservationId: 'unbound' }), /exhausted/);
+    enqueueControlActivation(f.store, f.binding); await continuation.processPending();
+    assert.equal(f.status().status, 'accepted'); assert.deepEqual(f.starts, [2]); assert.equal(f.controller.status()!.phase, 'accepted');
+    assert.equal(f.ledger.request(reviewPhysicalId(f.status().review!.id))!.status, 'succeeded');
+    assert.deepEqual(f.store.get('requests', old.id), retained); assert.equal(f.ledger.request(old.id)!.status, 'uncertain');
+    const current = f.store.get<{ envelope: ResourceEnvelope; startedAt: number }>('allocations', 'root')!.value;
+    assert.equal(current.startedAt, root.startedAt); assert.deepEqual(current.envelope, root.envelope);
+    assert.equal(f.ledger.snapshot('root').requests, 2);
   } finally { await continuation.close(); await f.dispose(); }
 });
 

@@ -15,12 +15,13 @@ import type { ChangeRecord } from '../packages/release/proposals.ts';
 import type { ControlContinuationRecord } from './control-continuation.ts';
 import { controlActivationAcknowledgmentPending, controlActivationId, ControlAuthorContinuations, controlTools } from './control-tools.ts';
 import type { SubmissionRequest } from './evolution-tools.ts';
+import type { HostResourceLedgerFactory } from './host-resources.ts';
 
-function fixture(mode: 'normal' | 'lost-reply' | 'lost-settlement' = 'normal', concurrency = 1) {
+function fixture(mode: 'normal' | 'lost-reply' | 'lost-settlement' = 'normal', concurrency = 1, now?: () => number) {
   const root = mkdtempSync(join(tmpdir(), 'aeon-control-tools-')), filename = join(root, 'operational.sqlite');
   const store = new OperationalStore({ filename }), authorities = new AuthorityStore(join(root, 'authority.sqlite'));
   const authority = authorities.bootstrap('old-author', identity('old-controls'), identity('rescue'));
-  const scope = { kind: 'restricted' as const, principals: ['operator'] }, resources = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 100 });
+  const scope = { kind: 'restricted' as const, principals: ['operator'] }, resources = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 100 }, now);
   const envelope = { maxRequests: 30, maxTokens: 10000, maxCostUsd: 0, maxElapsedMs: 10000, maxConcurrency: concurrency };
   resources.allocate('operating', envelope);
   let calls = 0, afterTool: (() => Promise<void> | void) | undefined, controls!: ControlAuthorContinuations, runId = '';
@@ -31,7 +32,7 @@ function fixture(mode: 'normal' | 'lost-reply' | 'lost-settlement' = 'normal', c
   }, async reconcile() { throw Error('No external review replay or arbitrary receiver lookup'); } });
   const prompt = { id: 'fixture', requestDigest: identity('no-physical-model'), fragments: [] };
   const call = () => ({ id: 'activation-call', runId, stepId: 'activation-step', name: 'control_activate', arguments: { changeId: 'finite' } });
-  const runtime = new DurableRuntime({ store, effects, resources, shell: { async run(input, bridge) {
+  const runtime = new DurableRuntime({ store, effects, resources, now, shell: { async run(input, bridge) {
     calls++; const observation = await bridge.execute(call()); await afterTool?.();
     const checkpoint = await bridge.persistCheckpoint(input.run.id, input.run.revision, 'fixture', { observationIds: [observation.id], phase: 'control-requested' });
     return controls.preserveWaiting(input.run.id, { status: 'completed', checkpoint, observations: [observation] });
@@ -94,6 +95,31 @@ test('successor adoption preserves original allocation and known outcome wakes t
       const status = await f.tools().find(tool => tool.name === 'control_status')!.execute({ changeId: 'finite' }) as { activation: { status: string } };
       assert.equal(status.activation.status, 'accepted'); assert.equal(f.controls.holds(f.run.id), false);
     } finally { reopened.close(); }
+  } finally { f.close(); }
+});
+
+test('expired original author wake requires explicit host allowance binding and retains runtime clock and grant', async () => {
+  let now = 0; const f = fixture('normal', 1, () => now);
+  try {
+    await f.runtime.resume(f.run.id, f.prompt);
+    const allocation = f.store.get('allocations', f.run.id), root = f.store.get('allocations', 'operating');
+    const next = f.authorities.activate(f.authorities.withdraw(f.authority), 'successor', f.candidate.controls, f.candidate.id);
+    f.runtime.adopt(f.run.id, next); f.changeStatus('accepted'); now = 20000;
+    const resourceLedger: HostResourceLedgerFactory = (store, ceiling, clock) => {
+      const ledger = new ResourceLedger(store, ceiling, clock);
+      ledger.applyAllowanceAmendment({ id: 'accepted-unlimited', rootId: 'operating', expectedEnvelopeDigest: identity(f.envelope), authorizationRef: 'fixture-user-grant',
+        cumulativeRequestLimit: null, cumulativeTokenLimit: null, cumulativeCostLimit: null, cumulativeElapsedLimit: null, scope: 'root-and-descendants', descendantCostLimit: 'root' },
+      { authority: next, assertAuthority: () => f.authorities.assert(next) });
+      return ledger;
+    };
+    // An audit record alone is insufficient; each callback needs the trusted composition binding.
+    resourceLedger(f.store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, f.runtime.now);
+    assert.deepEqual(f.controls.wake(), []);
+    const bound = new ControlAuthorContinuations({ store: f.store, runtime: f.runtime, authorityStore: f.authorities, resourceLedger });
+    assert.deepEqual(bound.wake(), [f.run.id]); assert.deepEqual(bound.wake(), []);
+    assert.equal(f.store.get<{ requestedAt: number }>('host.pending-runs', f.run.id)!.value.requestedAt, 20000);
+    assert.deepEqual(f.store.get('allocations', f.run.id), allocation); assert.deepEqual(f.store.get('allocations', 'operating'), root);
+    assert.equal(f.calls(), 1);
   } finally { f.close(); }
 });
 

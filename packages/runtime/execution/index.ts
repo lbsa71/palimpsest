@@ -15,6 +15,8 @@ interface ExecutionState { checkpoint?: ShellCheckpoint; lastResult?: ShellResul
 export interface CapacityWait { requestId: string; runId: string; phase: 'reserve' | 'dispatch'; startedAt: number }
 export interface RuntimeOptions { store: OperationalStore; shell: ShellPort; effects: EffectJournal; resources: ResourceLedger; now?: ()=>number;
   elapsedNow?: () => number; newId?: () => string;
+  /** Surface composition can retain authenticated transport attribution in model text. */
+  renderInput?: (input: InboundInput) => string;
   /** Host eligibility, checked under the same operational write lock as the running claim. */
   canResume?: (run: Run) => boolean;
 }
@@ -30,9 +32,11 @@ export class DurableRuntime {
   readonly canResume?: (run: Run) => boolean;
   private readonly elapsedNow: () => number;
   private readonly newId: () => string;
+  private readonly renderInput: (input: InboundInput) => string;
   /** Thin host production composition facade; supplied ports replace every clock/ID callback. */
   constructor(options: RuntimeOptions) {
     this.store=options.store;this.shell=options.shell;this.effects=options.effects;this.resources=options.resources;this.canResume=options.canResume;
+    this.renderInput=options.renderInput??(input=>typeof input.value==='string'?input.value:canonicalJson(input.value));
     const wall=options.now??createProductionWallClock(), elapsed=options.elapsedNow??createProductionElapsedClock(), id=options.newId??createProductionIdSupplier();
     this.now=()=>{const value=wall();invariant(Number.isFinite(value),'invalid wall clock reading');return value;};
     let previous:number|undefined;
@@ -176,7 +180,7 @@ export class DurableRuntime {
       const entries=this.store.events<InboundInput>(runId,state.messageSequence??0).filter(e=>e.type==='admitted'||e.type==='steering');
       const messageSequence=entries.at(-1)?.sequence??state.messageSequence??0;
       const checkpoint=state.checkpoint?{...state.checkpoint,revision:run.revision}:undefined;
-      const messages=entries.map(e=>({role:'user',content:typeof e.data.value==='string'?e.data.value:canonicalJson(e.data.value),timestamp:this.now()}));
+      const messages=entries.map(e=>({role:'user',content:this.renderInput(e.data),timestamp:this.now()}));
       const result=await this.shell.run({run,messages,prompt,...(checkpoint?{checkpoint}:{})},this.bridge(runId,run.authority,messageSequence),controller.signal);
       if(result.checkpoint){validateCheckpoint(result.checkpoint,run);const issued=this.execution(runId).checkpoint;invariant(issued && canonicalJson({...issued,revision:run.revision})===canonicalJson(result.checkpoint),'shell returned an unissued checkpoint');this.store.readArtifact(result.checkpoint.artifact);}
       this.store.transaction(()=> {for(const observation of result.observations) {validateObservation(observation);invariant(observation.runId===runId,'foreign shell observation');const row=this.store.get<Observation>('observations',observation.id);invariant(row && canonicalJson(row.value)===canonicalJson(observation),'shell returned an unissued or changed observation');}this.saveExecution(runId,{...this.execution(runId),lastResult:result,messageSequence,...(result.checkpoint?{checkpoint:result.checkpoint}:{})});});

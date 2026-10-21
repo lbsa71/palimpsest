@@ -215,13 +215,13 @@ function fixture(activate = false, governance = false, offline: boolean | 'revie
     ...(governance ? [{ path: 'deployment/fixture-reviewer.mjs', content: futureReviewerSource, expected: null },
       { path: 'deployment/fixture-reviewer-rules.mjs', content: futureRules, expected: null }] : [])];
   const calls = [...(governance ? [['governance_profile', {}]] : []),
-    ['code', { mode: 'edit', target: 'source', message: '__finite_coding_edit__' }], ['code_status', {}],
+    ['develop', { mode: 'edit', target: 'source', message: '__finite_coding_edit__' }], ['develop_status', {}],
     ['change_propose', { changeId: 'finite', justification: 'Test physical hosted review dispatch.', objective: 'Stage exact source through prior controls.', successCriteria: ['held-out exact source observed by physical external process'], experienceIds: [] }],
     ['candidate_freeze', { changeId: 'finite' }], ['candidate_evaluate', { changeId: 'finite' }], ['change_status', { changeId: 'finite' }], ['release_submit', { changeId: 'finite' }],
     ...(activate ? [['control_activate', { changeId: 'finite' }]] : [])];
   // Persisted model messages select the next step across service replacement; the fixture
   // stops after enqueue and resumes only after the actual bound host result event.
-  const futureCalls = [['governance_profile', {}], ['code', { mode: 'edit', target: 'source', message: 'fixture-files:[]' }], ['code_status', {}], ['change_propose', { changeId: 'future', justification: 'Verify accepted source-owned evaluator through ordinary tools.', objective: 'Obtain a future-policy physical review.', successCriteria: ['new required case and reviewer bytes execute'], experienceIds: [] }], ['candidate_freeze', { changeId: 'future' }], ['candidate_evaluate', { changeId: 'future' }]];
+  const futureCalls = [['governance_profile', {}], ['develop', { mode: 'edit', target: 'source', message: 'fixture-files:[]' }], ['develop_status', {}], ['change_propose', { changeId: 'future', justification: 'Verify accepted source-owned evaluator through ordinary tools.', objective: 'Obtain a future-policy physical review.', successCriteria: ['new required case and reviewer bytes execute'], experienceIds: [] }], ['candidate_freeze', { changeId: 'future' }], ['candidate_evaluate', { changeId: 'future' }]];
   const governanceTransport = governance ? `import { createHash as fixtureCreateHash } from 'node:crypto';
 const fixtureFutureSequence = ${JSON.stringify(futureCalls)};
 function fixtureGovernance(profile) {
@@ -286,7 +286,8 @@ async function fixtureTransport(payload) {
   const request = JSON.parse(payload), messages = request.messages;
   if (!request.tools?.length) {
     const prefix = JSON.parse(messages.findLast(message => message.role === 'user').content);
-    const progress = fixtureProgress(prefix); fixtureAssert.ok(progress.seen.length > 0, 'Compaction retains completed fixture calls');
+    fixtureAssert.ok(Array.isArray(prefix) && prefix.length > 0, 'Compaction receives an actual nonempty transcript prefix');
+    const progress = fixtureProgress(prefix); // A host/input-only prefix can validly precede the first completed tool call.
     return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'fixture-progress:' + JSON.stringify(progress) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
   }
   fixtureAssert.ok(request.tools.every(tool => !/^(workspace_|source_|command_run$)/.test(tool.function.name)));
@@ -294,7 +295,7 @@ async function fixtureTransport(payload) {
   const sequence = ${governance ? 'progress.future ? fixtureFutureSequence : fixtureSequence' : 'fixtureSequence'};
   const seen = new Set(progress.seen);
   let step = sequence.find((step, index) => !seen.has('fx' + index));
-  if (step?.[0] === 'code_status' && !progress.coding) step = undefined;
+  if (step?.[0] === 'develop_status' && !progress.coding) step = undefined;
   if (step?.[0] === 'change_status' && !progress.evaluated) step = undefined;
   let args = step?.[1];
   if (args?.message === '__finite_coding_edit__') {
@@ -309,7 +310,9 @@ async function fixtureTransport(payload) {
   const child = readFileSync(childPath, 'utf8'), composition = 'new AutarkApplication({ config, codingExecutor,';
   assert.equal(child.split(composition).length, 2, 'Exactly one host composition receives both offline transports');
   writeFileSync(childPath, transport + child.replace(composition, 'new AutarkApplication({ performRequest: fixtureTransport, config, codingExecutor: fixtureCoding,'));
-  const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: 10, maxElapsedMs: 600000, maxConcurrency: activate ? 1 : 2 };
+  // Governance exercises two native turns. Each unknown subscription cost retains
+  // the real $5 ceiling; provide both ceilings plus finite mind-call headroom.
+  const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: governance ? 11 : 10, maxElapsedMs: 600000, maxConcurrency: activate ? 1 : 2 };
   const inputs: DeploymentInputs = { createdBy: 'engineering-fixture-author', policy: policyDescriptor(fields), runtime: { nodeVersion: process.version, nodeSha256: hashBytes(readFileSync(process.execPath)), platform: process.platform, arch: process.arch }, prompts: { mind: 'Finite captured transport fixture.', compaction: 'Retain state.' },
     configuration: { bootstrapInitiative: false, model: { id: 'fixture-v1', reasoning: false, effort: 'none', contextWindow: 128000, maxRequestsPerSlice: 12, maxOutputTokens: 256, timeoutMs: 30000, pricesPerMillion: { input: 1, output: 2 } }, resources, conversationResources: resources,
       scheduler: { windowMs: 1000, maxSlicesPerWindow: 1, maxLifetimeSlices: 1, quantumMs: 60000, idleRetryMs: 1000, maxStalls: 2, resources }, maxConcurrentRuns: 1, pollMs: 100, commands: ['/runtime/node'], researchHosts: [], direct: { host: '127.0.0.1', port: 0, actorId: 'fixture-operator', scope: { kind: 'restricted', principals: ['fixture-operator'] }, modificationEligible: true } } };
@@ -763,8 +766,10 @@ test('ordinary author activates its exact stage and receives fresh physical prob
     assert.equal(physical.length, 2, 'One admission review and one fresh probation review');
     assert.ok(physical.every(value => value.status === 'succeeded' && value.runId === run.id));
     for (const allocation of record.review.allocationLineage) {
-      const { cancelled, ...retained } = store.get<any>('allocations', allocation.id)!.value;
-      assert.equal(cancelled, false); assert.deepEqual({ id: allocation.id, ...retained }, allocation);
+      const { cancelled, elapsedFloorMs, ...retained } = store.get<any>('allocations', allocation.id)!.value;
+      const { elapsedFloorMs: originalFloor, ...original } = allocation as typeof allocation & { elapsedFloorMs?: number };
+      assert.equal(cancelled, false); assert.deepEqual({ id: allocation.id, ...retained }, original);
+      assert.ok((elapsedFloorMs ?? 0) >= (originalFloor ?? 0), 'Elapsed accounting may advance without replacing the original grant');
     }
     await eventually(() => store.events(run.id).filter(event => event.type === 'steering' && JSON.stringify(event.data).includes('control')).length, count => count > 0);
     store.put('fixture.control-latest', 'lived', { retained: true, uncertainEffect: 'do-not-repeat' }, null);
@@ -812,8 +817,10 @@ test('ordinary governance proposal uses old physical judges before accepted rest
     assert.equal(admission.policyDigest, f.policy.policyDigest); assert.ok(admission.evidence.every((evidence: EvaluationEvidence) => evidence.evaluatorArtifact.sha256 === f.policy.evaluatorArtifacts.get(f.reviewer.evaluatorId)));
     assert.equal(physicalRequests().length, 2); assert.ok(physicalRequests().every(value => value.status === 'succeeded' && value.runId === authorRun));
     for (const allocation of record.review.allocationLineage) {
-      const { cancelled, ...retained } = store.get<any>('allocations', allocation.id)!.value;
-      assert.equal(cancelled, false); assert.deepEqual({ id: allocation.id, ...retained }, allocation);
+      const { cancelled, elapsedFloorMs, ...retained } = store.get<any>('allocations', allocation.id)!.value;
+      const { elapsedFloorMs: originalFloor, ...original } = allocation as typeof allocation & { elapsedFloorMs?: number };
+      assert.equal(cancelled, false); assert.deepEqual({ id: allocation.id, ...retained }, original);
+      assert.ok((elapsedFloorMs ?? 0) >= (originalFloor ?? 0), 'Elapsed accounting may advance without replacing the original grant');
     }
     const oldProfile = store.list<any>('observations').map(row => row.value).find(observation => observation.runId === authorRun && observation.value?.proposalPath === 'deployment/governance-proposal.json')?.value;
     assert.ok(oldProfile?.reviewer); assert.equal(JSON.stringify(oldProfile).includes(f.root), false); assert.equal(JSON.stringify(oldProfile).includes('keyFile'), false);
@@ -849,7 +856,9 @@ test('ordinary governance proposal uses old physical judges before accepted rest
     t.diagnostic(JSON.stringify({ kind: 'source-governance-physical-engineering', incumbent: f.incumbent.manifest.id, accepted: record.review.candidate.manifest.id, oldPolicy: f.policy.policyDigest, nextPolicy: nextPolicyDigest,
       oldReviewer: f.policy.evaluatorArtifacts.get(f.reviewer.evaluatorId), futureReviewer: f.futureReviewerDigest, physicalReviews: physicalRequests().map(value => ({ id: value.id, runId: value.runId, status: value.status, elapsedMs: value.usage.elapsedMs })), oldAdmissionEvidence: record.review.admissionEvidenceIds, oldProbationEvidence: proof.proposal.evidence.map(evidence => evidence.id), futureEvidence: futureResult.evidence.map((evidence: EvaluationEvidence) => evidence.id), liveProviderCalls: 0, externalMessages: 0 }));
   } catch (error) {
-    const diagnosis = { error: error instanceof Error ? error.stack : String(error), host: supervisor?.status(), controls: store.list('host.control-continuations'), jobs: store.list('host.evolution-jobs'), runs: store.list('runs'), observations: store.list('observations'), physical: physicalRequests() };
+    const failures = store.list<any>('execution').map(row => ({ runId: row.key, status: row.value.lastResult?.status,
+      failure: row.value.checkpoint ? store.readJsonArtifact<any>(row.value.checkpoint.artifact).failure : row.value.failure }));
+    const diagnosis = { error: error instanceof Error ? error.stack : String(error), failures, budgets: store.list('budgets'), requests: store.list('requests'), host: supervisor?.status(), controls: store.list('host.control-continuations'), jobs: store.list('host.evolution-jobs'), runs: store.list('runs'), observations: store.list('observations'), physical: physicalRequests() };
     t.diagnostic(JSON.stringify(diagnosis));
     if (process.env.AEON_GOVERNANCE_LOG_DIRECTORY) {
       try { mkdirSync(process.env.AEON_GOVERNANCE_LOG_DIRECTORY, { recursive: true }); writeFileSync(join(process.env.AEON_GOVERNANCE_LOG_DIRECTORY, `failure-${process.pid}.json`), JSON.stringify(diagnosis, null, 2)); }

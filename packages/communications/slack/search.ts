@@ -1,6 +1,8 @@
 import { invariant, nonempty } from '../../contracts/common.ts';
 import type { Provenance } from '../../contracts/common.ts';
 import type { SlackApi } from './client.ts';
+import { slackAuthor } from './authorship.ts';
+import type { SlackAuthor } from './authorship.ts';
 
 export const SLACK_SEARCH_METHOD = 'assistant.search.context' as const;
 export const SLACK_SEARCH_MAX_QUERY_CHARS = 500;
@@ -15,6 +17,7 @@ export interface SlackSearchContext {
   channelId: string;
   actionToken: string;
   allowedChannelIds: readonly string[];
+  botUserId?: string;
 }
 
 export interface SlackSearchRequest {
@@ -30,6 +33,7 @@ export interface SlackSearchMessage {
   content: string;
   permalink: string;
   provenance: Provenance;
+  author: SlackAuthor;
 }
 
 export interface SlackSearchResult {
@@ -52,6 +56,10 @@ interface RawSearchMessage {
   message_ts?: unknown;
   content?: unknown;
   permalink?: unknown;
+  user?: unknown;
+  user_id?: unknown;
+  bot_id?: unknown;
+  subtype?: unknown;
 }
 
 function text(value: unknown, field: string): string {
@@ -97,7 +105,9 @@ function projectMessage(raw: unknown, context: SlackSearchContext, provenance: P
   const permalink = text(candidate.permalink, 'permalink');
   if (teamId !== context.teamId) return null;
   if (!context.allowedChannelIds.includes(channelId)) return null;
-  return { teamId, channelId, messageTs, content, permalink, provenance };
+  const user = typeof candidate.user_id === 'string' ? candidate.user_id : typeof candidate.user === 'string' ? candidate.user : undefined;
+  const author=slackAuthor(teamId,context.botUserId,{...(user?{user}:{}),...(typeof candidate.bot_id==='string'?{bot_id:candidate.bot_id}:{}),...(typeof candidate.subtype==='string'?{subtype:candidate.subtype}:{})});
+  return { teamId, channelId, messageTs, content, permalink, provenance, author };
 }
 
 /**

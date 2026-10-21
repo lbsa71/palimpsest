@@ -7,6 +7,7 @@ import type { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { ApplicationTool } from './application.ts';
 import { controlActivationStatus, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationRecord } from './control-continuation.ts';
 import { assertReviewLineage } from './evaluation-resources.ts';
+import type { HostResourceOptions } from './host-resources.ts';
 import type { EvolutionJob } from './evolution-mailbox.ts';
 import type { EvolutionContext, SubmissionReceipt, SubmissionRequest } from './evolution-tools.ts';
 
@@ -66,7 +67,7 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
   const allowed = (signal?: AbortSignal) => { signal?.throwIfAborted(); assertAuthority(bound.authority); const run = bound.store.get<Run>('runs', bound.runId)?.value;
     invariant(run && !['completed', 'cancelled'].includes(run.status) && identity(run.scope) === identity(bound.scope) && identity(run.authority) === identity(bound.authority), 'Control author cancelled, terminal or fenced'); };
   const schema = { type: 'object', properties: { changeId: { type: 'string' } }, required: ['changeId'], additionalProperties: false };
-  return [{ name: 'control_activate', description: 'Durably request activation of this run’s exact staged control proposal and immediately acknowledge its pending host continuation. Activation and fresh probation remain independently judged by the original accepted policy. Inspect control_status for the result.', inputSchema: schema,
+  return [{ name: 'control_activate', description: 'Durably request activation of this run’s exact staged ordinary or control proposal and immediately acknowledge its pending host continuation. Activation and fresh probation remain independently judged by the original accepted policy. Inspect control_status for the result.', inputSchema: schema,
     execute(args, signal) {
       try { allowed(signal); const changeId = argsId(args); invariant(bound.effectId, 'Ordinary activation requires its host tool effect identity');
         return bound.store.transaction(() => {
@@ -91,7 +92,7 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
         });
       } catch (cause) { throw Object.assign(Error(`Control activation enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid binding'}`, { cause }), { mayHaveApplied: false }); }
     },
-  }, { name: 'control_status', description: 'Inspect this run’s exact control activation and original-policy probation outcome. Uncertain work requires explicit reconciliation and is never retried by this read.', inputSchema: schema,
+  }, { name: 'control_status', description: 'Inspect this run’s exact staged activation and original-policy probation outcome. Uncertain work requires explicit reconciliation and is never retried by this read.', inputSchema: schema,
     execute(args, signal) {
       allowed(signal); const changeId = argsId(args), proposal = proposals.get(changeId);
       invariant(identity(proposal.scope) === identity(bound.scope), 'Own exact audience required');
@@ -110,8 +111,10 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
 /** A scoped continuation of the existing author. It allocates no new run or resources. */
 export class ControlAuthorContinuations {
   readonly store: OperationalStore; readonly runtime: DurableRuntime; readonly authorityStore: AuthorityStore; readonly goals: InitiativeRegistry;
-  constructor(options: { store: OperationalStore; runtime: DurableRuntime; authorityStore: AuthorityStore }) {
+  readonly resourceOptions: HostResourceOptions & { now: () => number };
+  constructor(options: { store: OperationalStore; runtime: DurableRuntime; authorityStore: AuthorityStore } & HostResourceOptions) {
     this.store = options.store; this.runtime = options.runtime; this.authorityStore = options.authorityStore; this.goals = new InitiativeRegistry(this.store);
+    this.resourceOptions = { resourceLedger: options.resourceLedger, now: options.now ?? options.runtime.now };
   }
   #waiting(runId?: string): ControlWatch[] { return this.store.list<ControlWatch>(watches).map(row => row.value).filter(value => value.status === 'waiting' && (!runId || value.request.runId === runId)); }
   holds(runId: string): boolean { return this.#waiting(runId).length > 0; }
@@ -178,7 +181,7 @@ export class ControlAuthorContinuations {
         if (!record || !['accepted', 'rejected'].includes(record.status) || this.runtime.effects.unresolved(run.id).length) return;
         invariant(identity(record.request) === identity(watch.request), 'Control author watch binding changed');
         const submission = resolveSubmission(this.store, watch.request);
-        assertReviewLineage(this.store, submission, Date.now, current.authority);
+        assertReviewLineage(this.store, submission, this.resourceOptions.now, current.authority, this.resourceOptions.resourceLedger);
         const execution = this.store.list<{ runId: string }>('initiative.execution').find(row => row.value.runId === run.id);
         if (execution) {
           const goal = this.goals.goal(execution.key);
@@ -186,7 +189,7 @@ export class ControlAuthorContinuations {
           if (goal.status !== 'ready') this.goals.revise(goal.id, goal.revision, { status: 'ready' }, 'Known exact host control outcome awaits original author inspection');
         } else {
           if (this.store.get('host.child-runs', run.id) || this.store.list<{ runId: string }>('host.delivery-runs').some(row => row.value.runId === run.id)) return;
-          const pending = this.store.get('host.pending-runs', run.id); this.store.put('host.pending-runs', run.id, { requestedAt: Date.now() }, pending?.revision ?? null);
+          const pending = this.store.get('host.pending-runs', run.id); this.store.put('host.pending-runs', run.id, { requestedAt: this.resourceOptions.now() }, pending?.revision ?? null);
         }
         this.runtime.steer(run.id, { id: `control-result:${watch.request.id}`, source: 'host.control', externalId: watch.request.id, externalRevision: '1',
           actorId: current.authority.generation, authenticated: true, scope: watch.request.scope,

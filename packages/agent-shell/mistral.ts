@@ -94,6 +94,27 @@ function mistralMessageOrder(messages: Message[]): Message[] {
   return ordered;
 }
 
+/** Choose a raw-history cut without separating a complete assistant batch from
+ * its later recovered results. Provider ordering validates the same exact native
+ * identities as normal requests; historical messages themselves never move. */
+export function mistralCompactionBoundary(history: Message[], boundary: number, continuation: Message[] = history): number {
+  if (!Number.isSafeInteger(boundary) || boundary < 0 || boundary > history.length) throw Error('Invalid Mistral compaction boundary');
+  const indices = new Map(history.map((message, index) => [message, index]));
+  const ordered = mistralMessageOrder(continuation);
+  for (let index = 0; index < ordered.length; index++) {
+    const message = ordered[index]!;
+    if (message.role !== 'assistant') continue;
+    const calls = message.content.filter(block => block.type === 'toolCall'); if (!calls.length) continue;
+    const start = indices.get(message), results = ordered.slice(index + 1, index + 1 + calls.length);
+    const resultIndices = results.map(result => indices.get(result));
+    if (start === undefined || resultIndices.some(result => result === undefined)) throw Error('Mistral compaction view differs from retained history');
+    const end = Math.max(...resultIndices as number[]);
+    if (start < boundary && end >= boundary) boundary = start;
+    index += calls.length;
+  }
+  return boundary;
+}
+
 export function mistralPayload(context: TranscriptContext, model: string, maxTokens: number, reasoningEffort?: 'none' | 'high'): string {
   const normalized = collapseSystemMessages(context);
   const messages = mistralMessageOrder(normalized.messages).map(message => {

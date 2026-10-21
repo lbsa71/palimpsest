@@ -5,3 +5,5 @@ export * from './slack/ingress/index.ts';
 export * from './slack/recovery/index.ts';
 export * from './slack/socket.ts';
 export * from './egress/index.ts';
+export * from './slack/authorship.ts';
+export * from './slack/history.ts';

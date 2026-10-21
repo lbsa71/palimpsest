@@ -14,7 +14,7 @@ import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { spawnBounded } from '../packages/supervisor/resource-limits.ts';
-import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import { hostResourceLedger, type HostResourceOptions } from './host-resources.ts';
 import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewOperationId, type ReviewResourceOptions } from './evaluation-resources.ts';
 import { loadOfflinePlan, offlinePlanMount, offlineOperation, runOfflineCase, type OfflineObservation } from '../evaluations/offline-review/index.ts';
 import { evaluationAcknowledgmentPending } from './evolution-continuation.ts';
@@ -215,7 +215,9 @@ export async function runAccountedExternalReview(config: ReviewerFile, host: Hos
       resource.physicalAuthority ?? request.proposal.authority, offline ? observations : undefined));
 }
 
-export interface DispatchOptions {
+export interface DispatchOptions extends HostResourceOptions {
+  /** Accepted host composition may select the source-bound fresh engineering reviewer. */
+  runReview?: typeof runAccountedExternalReview;
   mailbox: EvolutionMailbox; host: HostBindings; reviewer?: ReviewerFile;
   unavailableDiagnosis?: string;
   getPolicy(digest: string): AdmissionPolicy; policyDigests: readonly string[];
@@ -248,7 +250,7 @@ export class EvaluationDispatcher {
   constructor(options: DispatchOptions) {
     this.options = options; this.#diagnosis = options.unavailableDiagnosis;
     // The owning supervisor lease and parent-death/PID-namespace boundary exclude a live old reviewer.
-    removeInterruptedSnapshots(options.host); options.mailbox.recover(); recoverReviewReservations(options.mailbox.store); this.#publish();
+    removeInterruptedSnapshots(options.host); options.mailbox.recover(); recoverReviewReservations(options.mailbox.store, options); this.#publish();
   }
   status(): DispatchStatus {
     const jobs = this.options.mailbox.jobs();
@@ -272,13 +274,14 @@ export class EvaluationDispatcher {
     invariant(this.probationAvailable(review.policyDigest), 'External probation reviewer unavailable or busy');
     invariant(identity(review.judgeAuthority) === identity(review.proposal.authority) && review.rescueCandidateId === this.options.acceptedCandidateId(), 'Exact original probation judge and rescue required');
     const reviewer = this.#reviewer(review.policyDigest)!, request = this.#probationRequest(review);
-    assertProbationLineage(this.options.mailbox.store, review);
+    assertProbationLineage(this.options.mailbox.store, review, this.options);
     const policy = this.options.getPolicy(review.policyDigest);
     invariant(policy.controlRevision === review.judgeAuthority.controlRevision && policy.evaluatorArtifacts.get(reviewer.evaluatorId) === hashBytes(Buffer.from(reviewerDescriptor(reviewer))), 'Original probation evaluator unavailable');
     const offline = loadOfflinePlan(reviewer), first = offline?.plan.cases[0];
     prepareReview({ store: this.options.mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer))),
       ...(first ? { operation: offlineOperation(offline!.digest, first) } : {}),
       evaluatorId: reviewer.evaluatorId, maxElapsedMs: reviewer.maxElapsedMs, assertAuthority: this.options.assertAuthority,
+      resourceLedger: this.options.resourceLedger, now: this.options.now, monitor: this.options.monitor,
       dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal,
       commitReservation: () => {
         invariant(!this.options.mailbox.store.get('host.probation-review-contexts', review.id), 'Probation reservation already used');
@@ -300,7 +303,7 @@ export class EvaluationDispatcher {
     store.transaction(() => {
       const saved = store.get('host.probation-review-contexts', review.id)?.value;
       invariant(!saved || identity(saved) === identity(review), 'Probation cleanup context changed');
-      const ledger = new ResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 });
+      const ledger = hostResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, this.options);
       const request = this.#probationRequest(review);
       const operations = store.get<{ id: string; digest: string }[]>('host.probation-review-operations', review.id)?.value ?? [];
       for (const operation of [undefined, ...operations]) {
@@ -321,14 +324,15 @@ export class EvaluationDispatcher {
     const { physicalAuthority, ...original } = review, { mailbox } = this.options, reviewer = this.#reviewer(review.policyDigest);
     invariant(reviewer && this.#activeJob === review.id && identity(mailbox.store.get('host.probation-review-contexts', review.id)?.value) === identity(original), 'Exact reserved probation continuation required');
     const request = this.#probationRequest(review), combined = AbortSignal.any([signal, this.#abort.signal]);
-    const assertCurrent = (authority: Authority) => { this.options.assertAuthority(authority); assertProbationLineage(mailbox.store, review); };
+    const assertCurrent = (authority: Authority) => { this.options.assertAuthority(authority); assertProbationLineage(mailbox.store, review, this.options); };
     try {
-      const response = await runAccountedExternalReview(reviewer, this.options.host, request, this.options.getPolicy(review.policyDigest), review.rescueCandidateId,
+      const response = await (this.options.runReview ?? runAccountedExternalReview)(reviewer, this.options.host, request, this.options.getPolicy(review.policyDigest), review.rescueCandidateId,
       { store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer))),
         evaluatorId: reviewer.evaluatorId, maxElapsedMs: reviewer.maxElapsedMs, prepared: true, physicalAuthority,
+        resourceLedger: this.options.resourceLedger, now: this.options.now, monitor: this.options.monitor,
         assertAuthority: assertCurrent, dispatchAuthority: this.options.dispatchAuthority, signal: combined });
       this.options.dispatchAuthority(physicalAuthority, () => mailbox.store.transaction(() => {
-        combined.throwIfAborted(); assertProbationLineage(mailbox.store, review);
+        combined.throwIfAborted(); assertProbationLineage(mailbox.store, review, this.options);
         invariant(response.result.proof.proposal.evidence.every(value => !review.admissionEvidenceIds.includes(value.id)), 'Probation requires fresh independent evidence');
         for (const blob of response.artifacts) mailbox.store.putArtifact(Buffer.from(blob.base64, 'base64'));
         mailbox.store.put('host.probation-review-results', review.id, mailbox.store.putJsonArtifact(response.result as unknown as import('../packages/contracts/index.ts').JsonValue), null);
@@ -359,31 +363,32 @@ export class EvaluationDispatcher {
     this.#publish();
     try {
       if (job.kind === 'evaluation') await mailbox.processEvaluation(job.id, async request => {
-        const response = await runAccountedExternalReview(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest), this.options.acceptedCandidateId(),
+        const response = await (this.options.runReview ?? runAccountedExternalReview)(reviewer!, this.options.host, request, this.options.getPolicy(request.policyDigest), this.options.acceptedCandidateId(),
         { store: mailbox.store, request, evaluatorDigest: hashBytes(Buffer.from(reviewerDescriptor(reviewer!))),
-          evaluatorId: reviewer!.evaluatorId, maxElapsedMs: reviewer!.maxElapsedMs, assertAuthority: this.options.assertAuthority, dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal },
+          evaluatorId: reviewer!.evaluatorId, maxElapsedMs: reviewer!.maxElapsedMs, assertAuthority: this.options.assertAuthority, dispatchAuthority: this.options.dispatchAuthority, signal: this.#abort.signal,
+          resourceLedger: this.options.resourceLedger, now: this.options.now, monitor: this.options.monitor },
         );
         for (const blob of response.artifacts) mailbox.store.putArtifact(Buffer.from(blob.base64, 'base64'));
         return response.result;
       }, this.#abort.signal, (request, result) => this.options.dispatchAuthority(request.proposal.authority, () => mailbox.store.transaction(() => {
-        this.#abort.signal.throwIfAborted(); assertReviewLineage(mailbox.store, request);
+        this.#abort.signal.throwIfAborted(); assertReviewLineage(mailbox.store, request, this.options.now, request.proposal.authority, this.options.resourceLedger);
         mailbox.completeEvaluation(job.id, result);
       })));
       else await mailbox.processSubmission(job.id, async (request, proof) => {
         const policy = this.options.getPolicy(request.policyDigest);
         invariant(policy.controlRevision === request.proposal.authority.controlRevision, 'Submission must retain the exact prior policy');
         this.options.assertAuthority(request.proposal.authority);
-        let receipt: SubmissionReceipt['receipt'], status: SubmissionReceipt['status'];
-        if (request.candidate.manifest.controls === request.proposal.authority.controlRevision) {
-          const authority = await this.options.release(proof); receipt = { authority: { ...authority } }; status = 'admitted';
-        } else {
+        let next: AdmissionPolicy | undefined;
+        if (request.candidate.manifest.controls === request.proposal.authority.controlRevision) next = policy;
+        else {
           const descriptor = (request.candidate.inputs.controls as { policy?: unknown }).policy;
-          const next = this.options.policyDigests.map(digest => this.options.getPolicy(digest)).find(value => value.controlRevision === request.candidate.manifest.controls &&
+          next = this.options.policyDigests.map(digest => this.options.getPolicy(digest)).find(value => value.controlRevision === request.candidate.manifest.controls &&
             identity(policyDescriptor(value)) === identity(descriptor)) ?? this.options.prepareControlPolicy?.(request);
           invariant(next && next.controlRevision === request.candidate.manifest.controls && identity(policyDescriptor(next)) === identity(descriptor), 'Next control policy unavailable: exact candidate descriptor is absent from the host registry');
-          receipt = { stageId: await this.options.stageControl(proof, next.policyDigest), policyDigest: next.policyDigest }; status = 'staged';
         }
-        return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status, receipt };
+        invariant(next, 'Exact staged change policy required');
+        return { requestId: request.requestId, candidateId: request.candidate.manifest.id, status: 'staged',
+          receipt: { stageId: await this.options.stageControl(proof, next.policyDigest), policyDigest: next.policyDigest } };
       }, this.#abort.signal);
       this.#diagnosis = undefined;
     } catch {

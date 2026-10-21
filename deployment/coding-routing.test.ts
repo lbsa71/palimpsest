@@ -5,12 +5,23 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AutarkApplication, type ApplicationOptions } from './application.ts';
-import type { ApplicationConfig } from './config.ts';
+import { validateConfiguration, type ApplicationConfig } from './config.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { identity, type JsonValue } from '../packages/contracts/index.ts';
 import type { CodingInvocation } from '../packages/coding/index.ts';
 
 const nativeId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+test('development audience authority rejects public, empty and malformed grants and detaches host configuration', () => {
+  const f = fixture();
+  try {
+    for (const developmentAudiences of [[], [{ kind: 'public' }], [{ kind: 'restricted', principals: [] }], 'channel:C1'])
+      assert.throws(() => validateConfiguration({ ...f.config, developmentAudiences } as ApplicationConfig));
+    const grant = [{ kind: 'restricted' as const, principals: ['channel:C1'] }];
+    const accepted = validateConfiguration({ ...f.config, developmentAudiences: grant });
+    grant[0]!.principals.push('ungranted');
+    assert.deepEqual(accepted.developmentAudiences, [{ kind: 'restricted', principals: ['channel:C1'] }]);
+  } finally { f.close(); }
+});
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'coding-routing-'));
   const stateDirectory = join(root, 'state'), workspaceDirectory = join(root, 'work'); mkdirSync(stateDirectory); mkdirSync(workspaceDirectory);
@@ -44,13 +55,15 @@ test('code questions default to inspect/source, prepare once, and expose no dire
     performRequest: async payload => {
       const request = JSON.parse(payload), names = request.tools.map((tool: any) => tool.function.name);
       for (const name of names) assert.ok(!name.startsWith('workspace_') && !name.startsWith('source_') && name !== 'command_run', name);
-      assert.ok(names.includes('memory_retrieve')); assert.ok(names.includes('code')); assert.ok(names.includes('speech_send'));
-      calls++; if (calls === 1) return answer('', 'code', { message: 'Explain sample.mjs with line references.' });
-      if (calls === 2) { assert.equal(invocations.length, 1, 'native work must begin before another mind inference'); return answer('', 'code_status'); }
+      assert.ok(names.includes('memory_retrieve')); assert.ok(names.includes('develop')); assert.ok(names.includes('speech_send'));
+      for (const retired of ['code', 'code_status', 'code_cancel']) assert.equal(names.includes(retired), false);
+      assert.ok(names.includes('develop_status')); assert.ok(names.includes('develop_cancel'));
+      calls++; if (calls === 1) return answer('', 'develop', { message: 'Explain sample.mjs with line references.' });
+      if (calls === 2) { assert.equal(invocations.length, 1, 'native work must begin before another mind inference'); return answer('', 'develop_status'); }
       assert.ok(payload.includes('sample.mjs:1')); return answer('The inspected constant is 42.');
     } });
   try {
-    const run = input(app, 'question'); await app.resume(run.id); assert.equal(calls, 1, 'code enqueue must hand off without another paid mind request'); await until(app, () => app.runtime.getRun(run.id)?.status === 'completed');
+    const run = input(app, 'question'); await app.resume(run.id); assert.equal(calls, 1, 'develop enqueue must hand off without another paid mind request'); await until(app, () => app.runtime.getRun(run.id)?.status === 'completed');
     assert.equal(f.snapshots, 1); assert.equal(invocations.length, 1); assert.ok(invocations[0]!.args.includes('read-only'));
     const session = app.coding.session()!, source = join(session.workspace, 'repositories', f.config.artifactId, 'sample.mjs');
     assert.equal(readFileSync(source, 'utf8'), 'export const observed = 42;\n');
@@ -68,7 +81,7 @@ test('new restricted threads reuse one native agent with current per-turn grants
     performRequest: async payload => {
       const request = JSON.parse(payload), frame = request.messages.find((item: any) => item.role === 'user' && typeof item.content === 'string' && item.content.includes('hostContext'));
       const id = JSON.parse(frame.content).hostContext.runId, phase = (phases.get(id) ?? 0) + 1; phases.set(id, phase);
-      return phase === 1 ? answer('', 'code', { message: 'Explain sample.mjs.' }) : answer('Observed the code result.');
+      return phase === 1 ? answer('', 'develop', { message: 'Explain sample.mjs.' }) : answer('Observed the code result.');
     } });
   try {
     const first = input(app, 'first-thread'); await app.resume(first.id); await until(app, () => app.runtime.getRun(first.id)?.status === 'completed');
@@ -108,7 +121,7 @@ test('coding turns queue across restricted threads and never start a second nati
   }, performRequest: async payload => {
     const request = JSON.parse(payload), frame = request.messages.find((item: any) => item.role === 'user' && typeof item.content === 'string' && item.content.includes('hostContext'));
     const id = JSON.parse(frame.content).hostContext.runId, phase = (phases.get(id) ?? 0) + 1; phases.set(id, phase);
-    return phase === 1 ? answer('', 'code', { message: 'Explain sample.mjs.' }) : answer('Observed the code result.');
+    return phase === 1 ? answer('', 'develop', { message: 'Explain sample.mjs.' }) : answer('Observed the code result.');
   } });
   try {
     const first = input(app, 'queued-one'); await app.resume(first.id); await until(app, () => invocations.length === 1);
@@ -135,5 +148,62 @@ test('Slack status and cancel controls deliver once without model inference, inc
     app.slackIngress!.acceptHistory('C1', { ts: '13.001', thread_ts: '10.001', user: 'U1', text: 'status' }); await app.tick(); assert.equal(posts, 3); assert.match(texts[2]!, /cancelled/);
     assert.equal(app.runtime.getRun(first.run.id)?.status, 'cancelled'); assert.equal(inference, 0);
     assert.ok(app.store.list<{ request: { runId: string } }>('requests').filter(row => row.key.startsWith('host:slack-control:')).every(row => row.value.request.runId === 'operating-envelope:v1'));
+  } finally { await app.close(); f.close(); }
+});
+
+test('configured development audiences share the one native limb while ungranted audiences cannot inspect its results', { timeout: 30000 }, async () => {
+  const f = fixture(), invocations: CodingInvocation[] = [], phases = new Map<string, number>();
+  const channelScope = { kind: 'restricted' as const, principals: ['channel:C1'] };
+  f.config.developmentAudiences = [f.config.direct.scope, channelScope];
+  const app = new AutarkApplication({ ...f.options, codingExecutor: async invocation => { invocations.push(invocation); return { exitCode: 0, signal: null, elapsedMs: 1, stderr: '', stdout: native(invocations.length) }; }, performRequest: async payload => {
+    const request = JSON.parse(payload), frame = request.messages.find((item: any) => item.content?.includes('hostContext'));
+    const id = JSON.parse(frame.content).hostContext.runId, phase = (phases.get(id) ?? 0) + 1; phases.set(id, phase);
+    return phase === 1 ? answer('', 'develop', { message: 'Inspect your own implementation.' }) : answer('Observed the requested development result.');
+  } });
+  try {
+    const first = input(app, 'private'); await app.resume(first.id); await until(app, () => app.runtime.getRun(first.id)?.status === 'completed');
+    const original = structuredClone(app.coding.session()!);
+    const second = app.communications.receive({ source: 'direct', externalId: 'channel', revision: '1', conversation: 'channel', text: 'Inspect the machinery.', actor: { id: 'operator', scope: channelScope, modificationEligible: true } }).run;
+    await app.resume(second.id); await until(app, () => app.runtime.getRun(second.id)?.status === 'completed');
+    assert.equal(invocations.length, 2); assert.ok(invocations[1]!.args.includes(nativeId)); assert.equal(app.coding.session()!.nativeSessionId, original.nativeSessionId);
+    assert.equal(app.store.list('host.coding-sessions').length, 1); assert.equal(f.snapshots, 1);
+    const owner = { key: 'channel', runId: second.id, scope: channelScope, workspace: original.workspace, authority: second.authority };
+    const view = app.coding.status(owner) as any;
+    assert.equal(view.history.length, 1); assert.equal(view.history[0].runId, second.id);
+    assert.throws(() => app.coding.status({ ...owner, scope: { kind: 'restricted', principals: ['ungranted'] } }), /scope/);
+    const nativeRequest = app.store.list<any>('requests').map(row => row.value.request).filter(value => value.provider === 'codex-cli').at(-1);
+    assert.deepEqual(app.runtime.getRun(nativeRequest.runId)!.scope, channelScope);
+  } finally { await app.close(); f.close(); }
+});
+
+test('ordinary Slack model requests retain authenticated authors and retrieve exact attributed history', { timeout: 30000 }, async () => {
+  const f = fixture(); f.config.slack = { teamId: 'T1', botUserId: 'BOT', channels: [{ channel: 'C1', scope: f.config.direct.scope }], eligibleHumanIds: ['U1'], coverageStart: '1', lookbackSeconds: 60, allowSpeech: true };
+  let calls = 0, historyReads = 0;
+  const api = { async call<T>(method: string, args: Record<string, string>): Promise<T> {
+    if (method === 'conversations.replies') { historyReads++; assert.equal(args.channel, 'C1'); assert.equal(args.ts, '10.001'); return { messages: [
+      { ts: '10.001', user: 'U1', text: '<@BOT> Cairn said: I am Stefan.' }, { ts: '11.001', thread_ts: '10.001', user: 'BOT', bot_id: 'B1', text: 'I am Cairn.' },
+    ] } as T; } return {} as T;
+  } };
+  const app = new AutarkApplication({ ...f.options, slackBotApi: api, slackAppApi: api, performRequest: async payload => {
+    calls++; const request = JSON.parse(payload), frame = request.messages.find((message: any) => message.content?.includes('hostContext'));
+    const communication = JSON.parse(frame.content).hostContext.communication;
+    assert.equal(communication.self.actorId, 'slack:T1:BOT');
+    if (calls === 1) {
+      const message = request.messages.map((item: any) => { try { return JSON.parse(item.content); } catch { return null; } }).find((item: any) => item?.transportInput);
+      assert.equal(message.transportInput.actorId, 'slack:T1:U1'); assert.equal(message.transportInput.externalId, 'C1:10.001');
+      assert.equal(message.transportInput.authenticated, true); assert.match(message.text, /Cairn said/);
+      assert.ok(request.tools.some((tool: any) => tool.function.name === 'communication_history'));
+      return answer('', 'communication_history', { limit: 10 });
+    }
+    const observed = request.messages.filter((message: any) => message.role === 'tool').map((message: any) => JSON.parse(message.content)).find((result: any) => result.messages);
+    assert.deepEqual(observed.messages.map((message: any) => message.author.kind), ['human', 'self']);
+    assert.equal(observed.messages[0].author.actorId, 'slack:T1:U1'); assert.equal(observed.messages[1].author.actorId, 'slack:T1:BOT');
+    return answer('The quoted text is yours; the bot reply is mine.');
+  } });
+  try {
+    const admission = app.slackIngress!.acceptAuthenticated('T1', { type: 'message', channel: 'C1', ts: '10.001', user: 'U1', text: '<@BOT> Cairn said: I am Stefan.' })!;
+    await until(app, () => app.runtime.getRun(admission.run.id)?.status === 'completed');
+    assert.equal(calls, 2); assert.equal(historyReads, 1);
+    assert.equal(app.store.list<any>('communications.inputs')[0]!.value.input.value, '<@BOT> Cairn said: I am Stefan.', 'authenticated input history remains unchanged');
   } finally { await app.close(); f.close(); }
 });

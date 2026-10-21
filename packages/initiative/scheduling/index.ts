@@ -6,6 +6,8 @@ import { ObligationRegistry } from '../obligations/index.ts';
 import { nodeInitiativeId, nodeInitiativeCollation, type SchedulerEnvironment } from '../environment.ts';
 export type ServiceClass = 'commitment' | 'conversation' | 'inquiry';
 export interface SchedulerPolicy { windowMs: number; maxSlicesPerWindow: number; maxLifetimeSlices: number; quantumMs: number; idleRetryMs: number; maxStalls: number; resources: ResourceEnvelope }
+/** Trusted host composition only; persisted policy and usage never grant this override. */
+export interface SchedulerHostPolicy { unlimitedLifetime?: boolean }
 interface SchedulerState { policy: SchedulerPolicy; startedAt: number; windowStartedAt: number; windowSlices: number; lifetimeSlices: number; cursor: number; queue: Record<ServiceClass, string[]> }
 export type Selection = { kind: 'goal'; service: ServiceClass; goal: Goal } | { kind: 'obligation'; service: 'commitment'; obligation: Obligation };
 export type SchedulingDecision = { kind: 'selected'; selection: Selection; sequence: number } | { kind: 'idle' | 'window-exhausted' | 'lifetime-exhausted'; reason: string; nextWakeup: string | null };
@@ -15,8 +17,10 @@ export class FairScheduler {
   readonly store: OperationalStore; readonly goals: InitiativeRegistry; readonly obligations: ObligationRegistry; readonly id: string; readonly policy: SchedulerPolicy; readonly eligibleGoal?: (goal: Goal) => boolean;
   private readonly newId: () => string;
   private readonly compareIds: (left: string, right: string) => number;
-  constructor(store: OperationalStore, goals: InitiativeRegistry, obligations: ObligationRegistry, id: string, policy: SchedulerPolicy, at: number, eligibleGoal?: (goal: Goal) => boolean, environment?: SchedulerEnvironment) {
+  private readonly unlimitedLifetime: boolean;
+  constructor(store: OperationalStore, goals: InitiativeRegistry, obligations: ObligationRegistry, id: string, policy: SchedulerPolicy, at: number, eligibleGoal?: (goal: Goal) => boolean, environment?: SchedulerEnvironment, hostPolicy?: SchedulerHostPolicy) {
     this.store = store; this.goals = goals; this.obligations = obligations; this.id = id; this.policy = structuredClone(policy); this.eligibleGoal = eligibleGoal;
+    this.unlimitedLifetime = hostPolicy?.unlimitedLifetime === true;
     const newId = environment?.newId ?? nodeInitiativeId(), compare = environment?.compareIds ?? nodeInitiativeCollation();
     this.newId = () => { const value = newId(); nonempty(value, 'selection event id'); return value; };
     this.compareIds = (left, right) => { const value = compare(left,right); invariant(Number.isFinite(value), 'invalid initiative collation'); return value; };
@@ -46,7 +50,7 @@ export class FairScheduler {
       const row = this.store.get<SchedulerState>('initiative.schedulers', this.id)!, state = row.value;
       invariant(now >= state.startedAt && now >= state.windowStartedAt, 'scheduler clock went backwards');
       let decision: SchedulingDecision;
-      if (state.lifetimeSlices >= this.policy.maxLifetimeSlices) decision = { kind: 'lifetime-exhausted', reason: 'finite lifetime slices exhausted; explicit new operating grant required', nextWakeup: null };
+      if (!this.unlimitedLifetime && state.lifetimeSlices >= this.policy.maxLifetimeSlices) decision = { kind: 'lifetime-exhausted', reason: 'finite lifetime slices exhausted; explicit new operating grant required', nextWakeup: null };
       else {
         if (now >= state.windowStartedAt + this.policy.windowMs) { state.windowStartedAt += Math.floor((now - state.windowStartedAt) / this.policy.windowMs) * this.policy.windowMs; state.windowSlices = 0; }
         if (state.windowSlices >= this.policy.maxSlicesPerWindow) decision = { kind: 'window-exhausted', reason: 'window service exhausted; lifetime usage retained', nextWakeup: new Date(state.windowStartedAt + this.policy.windowMs).toISOString() };

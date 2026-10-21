@@ -5,11 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { identity, type PhysicalRequest } from '../packages/contracts/index.ts';
-import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import { CapacityUnavailable, ResourceLedger } from '../packages/runtime/resources/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { accountedReview, assertReviewLineage, prepareReview, recoverReviewReservations, reviewOperationId, reviewPhysicalId } from './evaluation-resources.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
+
+function assertGrantRetained(current: { revision: number; value: unknown } | undefined, prior: { revision: number; value: unknown } | undefined): void {
+  assert.ok(current && prior);
+  const { elapsedFloorMs: currentFloor, ...currentGrant } = current.value as Record<string, unknown>;
+  const { elapsedFloorMs: priorFloor, ...priorGrant } = prior.value as Record<string, unknown>;
+  assert.deepEqual(currentGrant, priorGrant); assert.ok(Number(currentFloor ?? 0) >= Number(priorFloor ?? 0)); assert.ok(current.revision >= prior.revision);
+}
 
 function fixture(maxConcurrency = 3) {
   const directory = mkdtempSync(join(tmpdir(), 'aeon-review-resources-')), filename = join(directory, 'state.sqlite');
@@ -23,6 +30,31 @@ function fixture(maxConcurrency = 3) {
   const options = { store, request, evaluatorDigest: identity('closure'), evaluatorId: 'qualified-offline-fixture', maxElapsedMs: 1000, assertAuthority: () => {}, dispatchAuthority: (_grant: unknown, operation: () => void) => operation(), now: () => now };
   return { directory, filename, store, ledger, options, setTime: (value: number) => { now = value; }, close: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
+test('injected review monitor aborts cancellation and deadlines deterministically and is cancelled after every outcome', async () => {
+  for (const outcome of ['success', 'cancellation', 'deadline', 'scheduler-failure'] as const) {
+    const f = fixture(); let tick!: () => void, starts = 0, stops = 0, launches = 0;
+    const monitor = { every(ms: number, callback: () => void) {
+      assert.equal(ms, 25); starts++;
+      if (outcome === 'scheduler-failure') throw Error('Fixture monitor unavailable');
+      tick = callback; return () => { stops++; };
+    } };
+    try {
+      const result = accountedReview({ ...f.options, monitor }, async gate => {
+        gate.dispatch(() => { launches++; });
+        if (outcome === 'cancellation') f.ledger.cancel('parent');
+        f.setTime(outcome === 'deadline' ? 1000 : 17); tick();
+        gate.signal.throwIfAborted(); return 'signed observation';
+      });
+      if (outcome === 'success') assert.equal(await result, 'signed observation');
+      else await assert.rejects(result, outcome === 'cancellation' ? /cancelled/ : outcome === 'deadline' ? /deadline/ : /monitor unavailable/);
+      assert.equal(starts, 1); assert.equal(stops, outcome === 'scheduler-failure' ? 0 : 1);
+      assert.equal(launches, outcome === 'scheduler-failure' ? 0 : 1);
+      assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.status,
+        outcome === 'success' ? 'succeeded' : outcome === 'scheduler-failure' ? 'failed' : 'uncertain');
+      assert.equal(f.ledger.snapshot('parent').concurrent, ['success', 'scheduler-failure'].includes(outcome) ? 0 : 1);
+    } finally { f.close(); }
+  }
+});
 test('sibling probes and sealed reviewer each charge the original maxConcurrency-one lineage across transfer', async () => {
   const f = fixture(1), operation = { id: 'validator', digest: identity('original-private-case') };
   const first = { ...f.options, operation };
@@ -40,7 +72,7 @@ test('sibling probes and sealed reviewer each charge the original maxConcurrency
     await accountedReview({ ...transferred, continuedFrom: reviewOperationId(first) }, async gate => { gate.dispatch(() => {}); f.setTime(30); });
     assert.equal(f.ledger.request(reviewOperationId(first))!.usage.elapsedMs, 20);
     assert.equal(f.ledger.request(reviewPhysicalId('stable-job'))!.usage.elapsedMs, 10);
-    assert.deepEqual(f.store.get('allocations', 'parent'), parent); assert.deepEqual(f.store.get('allocations', 'child'), child);
+    assertGrantRetained(f.store.get('allocations', 'parent'), parent); assertGrantRetained(f.store.get('allocations', 'child'), child);
     assert.equal(f.ledger.snapshot('parent').requests, 2); assert.equal(f.ledger.snapshot('parent').concurrent, 0);
     await assert.rejects(accountedReview({ ...transferred, operation, prepared: true }, async () => {}), /unused prepared/);
     await assert.rejects(accountedReview({ ...transferred, continuedFrom: reviewOperationId(first) }, async () => {}), /already used/);
@@ -78,7 +110,7 @@ test('active tool receiver concurrency is retained; reviewer cannot silently bor
   try {
     const effect: PhysicalRequest = { id: 'tool:wait', runId: 'child', purpose: 'reasoning', provider: 'effect-receiver', model: 'candidate_evaluate', promptManifestId: 'tool:wait', requestDigest: identity('wait'), reservationId: 'tool:wait', status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
     f.ledger.reserve(effect); f.ledger.dispatched({ ...effect, status: 'dispatched' });
-    await assert.rejects(accountedReview(f.options, async gate => { gate.dispatch(() => { spawns++; }); }), /budget exhausted|allocation exhausted/);
+    await assert.rejects(accountedReview(f.options, async gate => { gate.dispatch(() => { spawns++; }); }), CapacityUnavailable);
     assert.equal(spawns, 0); assert.equal(f.ledger.request(effect.id)!.status, 'dispatched');
   } finally { f.close(); }
 });
@@ -88,7 +120,7 @@ test('late resource refusal rolls back a host activation claim and permits the s
     const effect: PhysicalRequest = { id: 'tool:busy', runId: 'child', purpose: 'reasoning', provider: 'effect-receiver', model: 'fixture', promptManifestId: 'tool:busy', requestDigest: identity('busy'), reservationId: 'tool:busy', status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: 0 } };
     f.ledger.reserve(effect); f.ledger.dispatched({ ...effect, status: 'dispatched' });
     const options = { ...f.options, commitReservation: () => { f.store.put('host.test-activation', 'claim', { status: 'activating' }, null); } };
-    assert.throws(() => prepareReview(options), /budget exhausted|allocation exhausted/);
+    assert.throws(() => prepareReview(options), CapacityUnavailable);
     assert.equal(f.store.get('host.test-activation', 'claim'), undefined);
     assert.equal(f.ledger.request(reviewPhysicalId('stable-job')), undefined);
     assert.deepEqual(f.store.list('host.external-review-reservations'), []);
@@ -209,7 +241,7 @@ test('prepared probation retains the original judge and allocation clock after s
     const physical = f.ledger.request(reviewPhysicalId('stable-job'))!;
     assert.equal(physical.usage.elapsedMs, 90, 'Activation time is charged without resetting the review clock');
     assert.equal(physical.requestDigest, identity(f.options.request));
-    assert.deepEqual(f.store.get('allocations', 'child'), allocation);
+    assertGrantRetained(f.store.get('allocations', 'child'), allocation);
     assert.equal(f.ledger.snapshot('parent').requests, 1);
     await assert.rejects(accountedReview({ ...f.options, prepared: true, physicalAuthority: successor }, async () => {}), /unused prepared/);
   } finally { f.close(); }

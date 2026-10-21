@@ -72,7 +72,7 @@ test('dispatches assistant.search.context once with documented public-channel pa
   });
   assert.equal(result.nextCursor, 'next');
   assert.equal(result.messages.length, 2);
-  assert.deepEqual(Object.keys(result.messages[0]).sort(), ['channelId', 'content', 'messageTs', 'permalink', 'provenance', 'teamId']);
+  assert.deepEqual(Object.keys(result.messages[0]).sort(), ['author', 'channelId', 'content', 'messageTs', 'permalink', 'provenance', 'teamId']);
   assert.deepEqual(result.messages.map(message => [message.teamId, message.channelId, message.messageTs, message.content, message.permalink]), [
     ['T1', 'C1', '1.2', 'first', 'https://example.test/1'],
     ['T1', 'C2', '3.4', 'second', 'https://example.test/2'],

@@ -48,7 +48,7 @@ for (const unlimited of [false, true]) test(`expired operating grant ${unlimited
     performRequest: async () => {
       mindCalls++; const code = mindCalls % 2 === 1;
       return { status: 200, body: JSON.stringify({ model: config.model.id, choices: [{ finish_reason: code ? 'tool_calls' : 'stop', message: { role: 'assistant', content: code ? null : 'Observed result.',
-        ...(code ? { tool_calls: [{ id: '000000001', type: 'function', function: { name: 'code', arguments: JSON.stringify({ message: 'Inspect the bounded offline fixture.', target: 'workspace' }) } }] } : {}) } }],
+        ...(code ? { tool_calls: [{ id: '000000001', type: 'function', function: { name: 'develop', arguments: JSON.stringify({ message: 'Inspect the bounded offline fixture.', target: 'workspace' }) } }] } : {}) } }],
         usage: { prompt_tokens: 20, completion_tokens: 10 } }) };
     } });
   try {

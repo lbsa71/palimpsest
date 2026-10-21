@@ -23,7 +23,7 @@ function fixture(execute: Execute = async () => result()) {
   let owner!: CodingOwner;
   const shell: ShellPort = { async run({ run }, bridge) {
     const command = next; next = undefined;
-    const observations = command ? [await bridge.execute({ id: command.id, runId: run.id, stepId: command.id, name: 'code',
+    const observations = command ? [await bridge.execute({ id: command.id, runId: run.id, stepId: command.id, name: 'develop',
       arguments: { message: command.message, ...(command.sessionId ? { sessionId: command.sessionId } : {}) } })] : [];
     const status = nextStatus; nextStatus = 'completed';
     return limb.preserveWaiting(run.id, { status, observations });
@@ -52,6 +52,26 @@ async function settled(limb: CodingLimb): Promise<void> {
   assert.equal(limb.busy, false, 'coding executor must settle');
 }
 function current(f: ReturnType<typeof fixture>) { return f.store.list<CodingTurn>('host.coding-turns').at(-1)!.value; }
+
+test('configured development audiences authorize the initial binding before any session or turn exists', async () => {
+  let calls = 0;
+  const f = fixture(async () => { calls++; return result(); });
+  try {
+    for (const sharedAudiences of [[], [{ kind: 'restricted' as const, principals: ['another-audience'] }]]) {
+      const denied = new CodingLimb({ ...f.limb.options, sharedAudiences });
+      assert.throws(() => denied.bind(f.owner, 'initial-denied'), /Initial coding scope is outside configured development audiences/);
+      assert.equal(f.store.list('host.coding-sessions').length, 0);
+      assert.equal(f.store.list('host.coding-turns').length, 0);
+    }
+    const allowed = new CodingLimb({ ...f.limb.options, sharedAudiences: [f.owner.scope] });
+    const session = allowed.bind(f.owner, 'initial-allowed');
+    assert.equal(session.owner, f.owner.key);
+    assert.deepEqual(session.scope, f.owner.scope);
+    assert.equal(f.store.list('host.coding-sessions').length, 1);
+    assert.equal(f.store.list('host.coding-turns').length, 0);
+    assert.equal(calls, 0);
+  } finally { await f.close(); }
+});
 
 test('coding acknowledgement is durable before dispatch; repeated identity cannot create another agent', async () => {
   let calls = 0;
@@ -180,7 +200,7 @@ test('parent cancellation and authority withdrawal stop queued coding before ext
   }
 });
 
-test('an executor failure remains visible in code_status with unknown accounting', async () => {
+test('an executor failure remains visible in develop_status with unknown accounting', async () => {
   const f = fixture(async () => { throw new Error('Injected host executable unavailable'); });
   try {
     await f.enqueue(); f.limb.tick(); await settled(f.limb);
@@ -251,7 +271,7 @@ test('an explicit stopped-turn acknowledgement retains uncertainty and permits o
     const acknowledge = { turnId: turn.id, resultSha256: turn.result!.sha256 };
     assert.deepEqual(f.limb.cancel(f.owner), { cancelled: false, reason: 'No coding turn is active' });
     assert.throws(() => f.limb.submit(f.owner, 'held', 'Continue'), /requires host inspection/);
-    assert.throws(() => f.limb.cancel(f.owner, { ...acknowledge, resultSha256: '0'.repeat(64) }), /Exact uncertain/);
+    assert.throws(() => f.limb.cancel(f.owner, { ...acknowledge, resultSha256: '0'.repeat(64) }), /Exact visible uncertain coding result acknowledgement required/);
     const disposition = f.limb.cancel(f.owner, acknowledge);
     assert.deepEqual(f.limb.cancel(f.owner, acknowledge), disposition);
     assert.deepEqual(f.store.get('host.coding-turns', turn.id), original);

@@ -9,7 +9,7 @@ import { validateConfiguration, type ApplicationConfig } from './config.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { CodingInvocation, CodingResult } from '../packages/coding/index.ts';
 import type { CodingTurn } from './coding-limb.ts';
-import type { Observation, PhysicalRequest } from '../packages/contracts/index.ts';
+import type { Observation, PhysicalRequest, ShellCheckpoint } from '../packages/contracts/index.ts';
 
 const nativeSessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 function fixture(provider?: 'pi') {
@@ -60,7 +60,7 @@ test('exclusive application recovery releases old execution slots while preservi
   } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 function tool(id: number, name: string, args: unknown) { return { status: 200, body: JSON.stringify({ model: 'mistral-fixture-v1', choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null,
-  tool_calls: [{ id: String(id).padStart(9, '0'), type: 'function', function: { name, arguments: JSON.stringify(name === 'code' ? { mode: 'edit', target: 'workspace', ...args as object } : args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
+  tool_calls: [{ id: String(id).padStart(9, '0'), type: 'function', function: { name, arguments: JSON.stringify(name === 'develop' ? { mode: 'edit', target: 'workspace', ...args as object } : args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) }; }
 interface Request { messages: Array<{ role: string; content: string }>; tools?: Array<{ function: { name: string } }> }
 function context(request: Request): { target?: { channel?: string } } {
   for (const message of request.messages) if (message.role === 'user') { try { const parsed = JSON.parse(message.content); if (parsed.hostContext) return parsed.hostContext; } catch {} }
@@ -99,14 +99,14 @@ test('ordinary mind delegates to default Codex, remains responsive, and follows 
       const request = JSON.parse(payload) as Request;
       assert.ok(request.messages.some(message => message.role === 'system' && message.content.includes('Fixture continuing mind')));
       const names = request.tools?.map(item => item.function.name) ?? [];
-      assert.ok(names.includes('code')); assert.ok(names.includes('code_status'));
+      assert.ok(names.includes('develop')); assert.ok(names.includes('develop_status'));
       if (context(request).target?.channel === 'other') { otherCalls++; return response('The mind is responsive while coding is external.'); }
       mindCalls++;
-      if (mindCalls === 1) return tool(1, 'code', { message: 'Implement the fixture and ask which edge case to cover.' });
-      if (mindCalls === 2 || mindCalls === 4) return tool(mindCalls, 'code_status', {});
+      if (mindCalls === 1) return tool(1, 'develop', { message: 'Implement the fixture and ask which edge case to cover.' });
+      if (mindCalls === 2 || mindCalls === 4) return tool(mindCalls, 'develop_status', {});
       if (mindCalls === 3) {
         assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('command_execution')));
-        return tool(4, 'code', { message: 'Cover the zero edge case.', sessionId: app.coding.session()!.id });
+        return tool(4, 'develop', { message: 'Cover the zero edge case.', sessionId: app.coding.session()!.id });
       }
       assert.equal(mindCalls, 5); return response('Inspected the second result.');
     } });
@@ -134,17 +134,17 @@ test('ordinary mind delegates to default Codex, remains responsive, and follows 
   } finally { releaseFirst(); await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('explicit Pi coding uses the existing broker and retains its transcript on follow-up', { timeout: 30000 }, async () => {
+test('explicit Pi coding uses the existing broker and retains its transcript on follow-up', { timeout: 30000 }, async t => {
   const f = fixture('pi'); let app!: AutarkApplication, mindCalls = 0, codingCalls = 0, cliCalls = 0;
   const childPayloads: Request[] = [];
   app = new AutarkApplication({ ...f, secrets: { mistralApiKey: 'fixture-no-network', directToken: 'fixture' },
     codingExecutor: async () => { cliCalls++; throw new Error('Pi selection cannot invoke Codex'); },
     performRequest: async payload => {
       const request = JSON.parse(payload) as Request;
-      if (request.messages.some(message => message.role === 'system' && message.content.includes('external coding limb'))) {
+      if (request.tools?.some(item => item.function.name.startsWith('workspace_'))) {
         childPayloads.push(request); codingCalls++;
         const tools = request.tools?.map(item => item.function.name) ?? [];
-        for (const denied of ['code', 'delegation_start', 'speech_send', 'release_submit']) assert.equal(tools.includes(denied), false);
+        for (const denied of ['develop', 'delegation_start', 'speech_send', 'release_submit']) assert.equal(tools.includes(denied), false);
         if (codingCalls === 1) return tool(101, 'workspace_write', { path: 'pi-fixture.js', content: 'console.log(42);\n', expectedSha256: null });
         if (codingCalls === 2) return tool(102, 'command_run', { executable: '/runtime/node', args: ['pi-fixture.js'] });
         if (codingCalls === 3) return response('I wrote pi-fixture.js and observed 42. Which check next?');
@@ -154,9 +154,9 @@ test('explicit Pi coding uses the existing broker and retains its transcript on 
         return response('The retained command evidence reports 42.');
       }
       mindCalls++;
-      if (mindCalls === 1) return tool(1, 'code', { message: 'Write and run the bounded Pi fixture.' });
-      if (mindCalls === 2 || mindCalls === 4) return tool(mindCalls, 'code_status', {});
-      if (mindCalls === 3) return tool(4, 'code', { message: 'Confirm the existing output.', sessionId: app.coding.session()!.id });
+      if (mindCalls === 1) return tool(1, 'develop', { message: 'Write and run the bounded Pi fixture.' });
+      if (mindCalls === 2 || mindCalls === 4) return tool(mindCalls, 'develop_status', {});
+      if (mindCalls === 3) return tool(4, 'develop', { message: 'Confirm the existing output.', sessionId: app.coding.session()!.id });
       assert.equal(mindCalls, 5); return response('Observed the retained Pi result.');
     } });
   try {
@@ -171,6 +171,10 @@ test('explicit Pi coding uses the existing broker and retains its transcript on 
     assert.ok(childPayloads.at(-1)!.messages.length > childPayloads[0]!.messages.length);
     const statuses = app.runtime.observations(run.id).filter(item => item.value && typeof item.value === 'object' && !Array.isArray(item.value) && 'history' in item.value);
     assert.equal(statuses.length, 2); assert.match(JSON.stringify(statuses), /pi-fixture.js/);
+  } catch (error) {
+    t.diagnostic(JSON.stringify({ mindCalls, codingCalls, checkpointFailures: app.store.list<{ checkpoint?: ShellCheckpoint }>('execution').map(row => ({ runId: row.key,
+      failure: row.value.checkpoint ? app.store.readJsonArtifact<{ failure?: unknown }>(row.value.checkpoint.artifact).failure : null })) }));
+    throw error;
   } finally { await app.close(); f.authorityStore.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -184,14 +188,14 @@ test('a later message in the same conversation reads the retained workspace and 
     },
     performRequest: async payload => {
       mindCalls++; const request = JSON.parse(payload) as Request;
-      if (mindCalls === 1) return tool(201, 'code', { message: 'Write the initial fixture.' });
+      if (mindCalls === 1) return tool(201, 'develop', { message: 'Write the initial fixture.' });
       if (mindCalls === 2) return response('The current coding request has been observed.');
-      if (mindCalls === 3) return tool(204, 'code_status', {});
+      if (mindCalls === 3) return tool(204, 'develop_status', {});
       if (mindCalls === 4) {
         assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('Implemented it')), 'new parent must inspect the retained coding evidence');
-        return tool(205, 'code', { message: 'Adjust the existing fixture.', sessionId: app.coding.session()!.id });
+        return tool(205, 'develop', { message: 'Adjust the existing fixture.', sessionId: app.coding.session()!.id });
       }
-      if (mindCalls === 5) return tool(207, 'code_status', {});
+      if (mindCalls === 5) return tool(207, 'develop_status', {});
       assert.equal(mindCalls, 6); return response('Inspected the later coding result.');
     } };
   app = new AutarkApplication(options);

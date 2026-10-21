@@ -4,6 +4,8 @@ import type { DataScope } from '../../../contracts/common.ts';
 import { CommunicationsCore } from '../../core/index.ts';
 import type { Admission } from '../../core/index.ts';
 import type { SlackMessage } from '../client.ts';
+import { retainSlackObservation, slackAuthor, slackDelivery } from '../authorship.ts';
+import type { SlackObservedMessage } from '../authorship.ts';
 import { captureWallClock, createNodeCommunicationsEnvironment } from '../../environment.ts';
 
 export interface SlackChannelGrant { channel:string; scope:DataScope; directUserId?:string }
@@ -21,6 +23,19 @@ export class SlackIngress {
   readonly options:SlackIngressOptions;
   constructor(options:SlackIngressOptions){this.options=options;nonempty(options.teamId,'Slack team');nonempty(options.botUserId,'Slack bot');invariant(new Set(options.channels.map(c=>c.channel)).size===options.channels.length,'duplicate channel grant');for(const grant of options.channels)validateSlackDirectGrant(grant,options.teamId,options.botUserId);}
   threads():JoinedThread[]{return this.options.core.store.list<JoinedThread>('communications.slack.threads').map(r=>r.value);}
+  /** Observations retain bot/unknown authors without turning them into human requests. */
+  observeAuthenticated(channel:string,message:SlackMessage,explicitHistory=false,deleted=false,revision?:string):SlackObservedMessage|undefined {
+    const grant=this.options.channels.find(item=>item.channel===channel);
+    if(!grant || !/^\d+(?:\.\d+)?$/.test(message.ts))return;
+    const threadTs=message.thread_ts??message.ts;
+    const author=slackAuthor(this.options.teamId,this.options.botUserId,message,slackDelivery(this.options.core.store,channel,message.ts));
+    if(grant.directUserId!==undefined && author.userId!==grant.directUserId && author.kind!=='self')return;
+    const joined=this.options.core.store.get('communications.slack.threads',`${this.options.teamId}:${channel}:${threadTs}`);
+    if(!explicitHistory && grant.directUserId===undefined && !joined && !message.text?.includes(`<@${this.options.botUserId}>`))return;
+    const observed:SlackObservedMessage={teamId:this.options.teamId,channel,messageTs:message.ts,threadTs,
+      revision:revision??message.edited?.ts??message.ts,text:deleted?'':message.text??'',author,scope:grant.scope,deleted,attribution:'authenticated-slack-metadata'};
+    return retainSlackObservation(this.options.core.store,observed);
+  }
   /** Called exclusively after Socket Mode authentication or signed HTTP verification. */
   acceptAuthenticated(teamId:string,event:SlackEvent):Admission|undefined {
     invariant(teamId===this.options.teamId,'foreign Slack workspace');
@@ -28,6 +43,7 @@ export class SlackIngress {
     const grant=this.options.channels.find(c=>c.channel===event.channel);if(!grant)return;
     const deletion=event.subtype==='message_deleted';
     const message=event.subtype==='message_changed'?event.message:deletion?event.previous_message:event as SlackMessage;
+    if(message)this.observeAuthenticated(event.channel,message,false,deletion,deletion?event.event_ts:undefined);
     if(!message || message.bot_id || message.user===this.options.botUserId || !message.user || !message.ts)return;
     if(message.subtype && !['thread_broadcast','message_changed'].includes(message.subtype))return;
     const author=message.user;const threadTs=message.thread_ts??message.ts;

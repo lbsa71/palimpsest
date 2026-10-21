@@ -156,7 +156,7 @@ export function checkInstallation(input: Installation, context: 'admin' | 'servi
   invariant(new Set([config.host.stateDirectory, config.evidenceDirectory, value.artifactStore, value.workspaceProvisionDirectory]).size === 4, 'Distinct state, evidence, artifacts and workspace required');
   for (const path of [value.hostConfigFile, value.environmentFile]) for (const root of [value.hostDataProvisionDirectory, value.workspaceProvisionDirectory]) invariant(!beneath(root, path), 'Configuration and secrets must be outside writable data roots');
   const profile = (candidate.inputs.configuration as unknown as DeploymentInputs['configuration']).resourceLimits;
-  invariant(profile && profile.workspaceBytes === value.workspaceBytes && profile.workspaceInodes === value.workspaceInodes, 'Frozen resource profile must match provisioned capacity');
+  invariant(profile === undefined || profile && profile.workspaceBytes === value.workspaceBytes && profile.workspaceInodes === value.workspaceInodes, 'Frozen resource profile must match provisioned capacity');
   invariant(Array.isArray(config.policyFiles) && config.policyFiles.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(part => typeof part === 'string')), 'Exact policy registry required');
   if (config.allowedModelProfiles !== undefined) validateModelGrants(config.allowedModelProfiles);
   if (config.evaluationDispatcher !== undefined) {
