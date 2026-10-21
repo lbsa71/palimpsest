@@ -95,8 +95,10 @@ function snapshot(source: string, target: string, entries: readonly string[], li
   finally { closeSync(root); }
 }
 
-function provenance(context: EvolutionContext, options: EvolutionOptions): ChangeProvenance {
-  const bound = options.provenanceForRun(context);
+function provenance(context: EvolutionContext, options: EvolutionOptions, retained?: ChangeProvenance): ChangeProvenance {
+  const bound = retained ?? options.provenanceForRun(context);
+  // The self-origin resolver also checks its full independent ancestry, not just this run.
+  if (retained?.kind === 'self') invariant(identity(options.provenanceForRun(context)) === identity(retained), 'Recorded self origin is no longer independently valid');
   const inputs = context.store.events<InboundInput>(context.runId).filter(event => ['admitted', 'steering'].includes(event.type)).map(event => event.data);
   const input = inputs.find(input => input.id === bound.inputId);
   invariant(input?.authenticated && input.actorId === bound.actorId && identity(input.scope) === identity(context.scope), 'Proposal requires host-authenticated run provenance');
@@ -116,6 +118,12 @@ function provenance(context: EvolutionContext, options: EvolutionOptions): Chang
     }
   }
   return structuredClone(bound);
+}
+
+/** Only use before filesystem/host effects; expected validation cannot have applied a change. */
+function prevalidate<T>(read: () => T): T {
+  try { return read(); }
+  catch (error) { if (error instanceof ContractError) throw Object.assign(error, { mayHaveApplied: false }); throw error; }
 }
 
 function frozenInputs(staging: string, workspace: string, accepted: FrozenCandidate, options: EvolutionOptions, createdBy: string): DeploymentInputs {
@@ -201,10 +209,12 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     reconcileEvaluationWatch(bound.store, req.requestId); return evaluated;
   };
   const request = (proposal: ChangeRecord, action: string): EvaluationRequest => {
-    invariant(proposal.candidate, 'Candidate has not been frozen'); assertAuthority(proposal.authority, bound.authority);
-    const id = requestId(proposal, action);
-    invariant(identity(provenance(bound, options)) === identity(proposal.provenance), 'Proposal trusted provenance changed');
-    const candidate = verifyApplication(options.artifactStore, proposal.candidate.id, options.nodeBinary);
+    const id = prevalidate(() => {
+      invariant(proposal.candidate, 'Candidate has not been frozen'); assertAuthority(proposal.authority, bound.authority);
+      provenance(bound, options, proposal.provenance);
+      return requestId(proposal, action);
+    });
+    const candidate = verifyApplication(options.artifactStore, proposal.candidate!.id, options.nodeBinary);
     invariant(identity(candidate.manifest) === identity(proposal.candidate), 'Proposal manifest changed');
     const { evaluation, submission, ...frozenProposal } = proposal;
     return { requestId: id, proposal: { ...frozenProposal, state: 'frozen' }, candidate, policyDigest: proposal.judgingPolicyDigest! };
@@ -244,11 +254,16 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     },
   }, { name: 'candidate_freeze', description: 'Freeze this proposal’s source workspace and accepted compiler closure into a host-private immutable whole-application candidate. Actual prompt and proposed model/configuration bytes bind the manifest; no release is activated.', inputSchema: schema({ changeId: string }, ['changeId']),
     execute(args, signal) {
-      allowed(signal); const id = idArgs(args), proposal = proposals.get(id); assertAuthority(proposal.authority, bound.authority);
-      invariant(identity(provenance(bound, options)) === identity(proposal.provenance), 'Proposal trusted provenance changed');
+      const { id, proposal } = prevalidate(() => {
+        allowed(signal); const id = idArgs(args), proposal = proposals.get(id); assertAuthority(proposal.authority, bound.authority);
+        provenance(bound, options, proposal.provenance);
+        if (!proposal.candidate) {
+          invariant(proposal.state === 'proposed', 'Proposal cannot be frozen in this state');
+          invariant(Number.isSafeInteger(options.maxFiles) && options.maxFiles > 0 && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0, 'Finite snapshot bounds required');
+        }
+        return { id, proposal };
+      });
       if (proposal.candidate) { request(proposal, 'verify'); return proposal; }
-      invariant(proposal.state === 'proposed', 'Proposal cannot be frozen in this state');
-      invariant(Number.isSafeInteger(options.maxFiles) && options.maxFiles > 0 && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0, 'Finite snapshot bounds required');
       mkdirSync(options.artifactStore, { recursive: true, mode: 0o700 }); const store = realpathSync(options.artifactStore), workspace = realpathSync(bound.workspace);
       const fd = directory(options.artifactStore); closeSync(fd); invariant(outside(workspace, store) && outside(store, workspace) && outside(workspace, bound.store.filename), 'Host artifacts/state must be outside candidate workspace');
       const accepted = verifyApplication(store, options.acceptedCandidateId, options.nodeBinary); const acceptedRoot = join(store, accepted.manifest.id, 'payload');
