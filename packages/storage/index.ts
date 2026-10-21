@@ -107,6 +107,7 @@ export class OperationalStore {
           CREATE INDEX event_stream ON events(stream,sequence);
           CREATE TABLE artifacts(digest TEXT PRIMARY KEY, bytes BLOB NOT NULL);
           PRAGMA user_version=1;`);
+        this.db.exec('CREATE INDEX IF NOT EXISTS event_type ON events(type);');
         this.db.exec('COMMIT');
       } catch (error) { this.rollback('ROLLBACK', error); }
       const check = this.db.prepare('PRAGMA quick_check').all() as { quick_check: string }[];
