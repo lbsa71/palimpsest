@@ -4,7 +4,7 @@
 
 **Hibernated at user request, 2026-10-12. No active session owner or goal.** Read [RESUME](../RESUME.md) for the current checkpoint and restart order; older ownership/status entries below are historical unless reaffirmed there.
 
-Status: **implementing**. Session owner: **/root**. Accountable actor: Codex. Governing method: [workflow](../workflow.md).
+Status: **broader lane hibernated; finite ES01–ES04 accepted/deployed**. Session owner: **none after the finite handoff**. Accountable actor for this handoff: Codex. Governing method: [workflow](../workflow.md).
 
 Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21](../../../REQUIREMENTS.md).
 
@@ -13,6 +13,8 @@ Requirements: [RW01, RW03, RW10, RW13, RW14, RW15, RW16, RW18, RW19, RW20, RW21]
 ```
 
 The user requires every environmental boundary injectable. The adopted [DI plan](../evidence/A1-L09/environment-di-plan.md) covers 29 finite tasks across all lanes; [DI01](../evidence/A1-L01/environment-di-01.md) releases their local port/trust design prerequisite. Timing/driver, runtime, memory, initiative, retained-schema and communication DI slices have fresh component acceptance. DI06 needs repair after fresh review; DI09 has an isolated verified repair pending integration/review; DI10 is integrated and awaits its unstarted fresh review. All owners/goals are hibernated; [RESUME](../RESUME.md) specifies exact checkpoints and parallel restart tasks. Full application forwarding and whole-environment closure remain open. Exact current ownership and receipts are in [execution](../execution.md); no future task has implicit permission to edit active recorder/driver/control files.
+
+2026-10-21 finite handoff supersedes earlier pilot/current-owner labels: `develop` self-betterment/authorship repair ES01–ES04 is accepted and deployed at candidatee7abf31…/authority143. Root application source `430fec5` matches all334 deployed application files; actual independent source/prompt releases, normal boot, separate rescue rotation and post-restart Slack inspection/follow-up are verified. [The finite evidence](../evidence/A1-L09/evolution-and-slack-authorship.md) retains exact manifests, assistance, refusals, unknowns and failed broader idle targets. ES ownership is released; residual idle investigation is a separate unclaimed task. This does not accept the lane's broader H1 goal or resume hibernated work.
 
 ## Ownership and dependencies
 
@@ -60,6 +62,8 @@ Record installation identity, actual readiness checks, self-authored candidate d
 Non-goals: reviving the old systemd process, old database migration, permanent human-only source components, an ever-growing ancestor council, deployment without the implementing session's authorization, or declaring operational takeover on the strength of a persuasive introduction.
 
 ## Coordination
+
+2026-10-21 ES03 integration additionally reserves `packages/storage/index.ts`, `packages/storage/test/document-journal.test.ts`, new `packages/storage/test/event-type-index.test.ts`, `deployment/coding-limb.ts` and `deployment/coding-limb.test.ts` to root for importing the exact Cairn/native19 source into Git. Cairn owns the separately prepared live engineering snapshot; review agents have read-only access and private evidence files. The finite live task repairs the observed idle journal scan and missing stopped-session status metadata. Root assistance, native18 timeout/unknown charges, successful exact abandonment, native19 results and prior-policy review remain explicit; importing source does not accept its live candidate.
 
 2026-10-21 ES01–ES04 claimed by `/root`, branch `codex/evolution-and-slack-authorship-20261021`, base `71913cb`. User explicitly requests repair and live redeployment of real self-modification plus Slack self/other attribution. /goal Repair the ordinary runtime's complete coding → source/prompt candidate → independent evaluation → successor activation path, demonstrate a real Cairn-authored change and post-activation behavior, and prove Slack author identity survives intake, retrieval and continuation. Root owns deployment/application, evolution wiring/configuration, coding audience/session routing, prompt/capability context, release/deployment, focused integration tests and final documentation. ES01 Slack author owns only communication adapters/context and new attribution tests after reporting exact file reservations; ES02 independent evolution diagnosis/review is read-only plus new held-out tests; ES03 root integrates/redeploys; ES04 independent exact-stage/live review follows immutable source. Delegates use Sol 6.1/high, no paid/live effects or service changes without root coordination. Reuse the existing release controller, evaluator registry and retained single coding session; no second coding agent, grant reset, lost memory/history or self-awarded admission. Precode acceptance and evidence: [evolution and Slack authorship](../evidence/A1-L09/evolution-and-slack-authorship.md). Other broad backlog remains inactive.
 
