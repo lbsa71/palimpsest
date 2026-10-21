@@ -1,6 +1,6 @@
 import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, opendirSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { assertAuthority, canonicalJson, identity, invariant, validateEvaluation, type Authority, type DataScope, type EvaluationEvidence, type Goal, type InboundInput, type JsonValue, type Run } from '../packages/contracts/index.ts';
+import { assertAuthority, canonicalJson, ContractError, identity, invariant, validateEvaluation, type Authority, type DataScope, type EvaluationEvidence, type Goal, type InboundInput, type JsonValue, type Run } from '../packages/contracts/index.ts';
 import { DevelopmentalMemory } from '../packages/development/index.ts';
 import { hashBytes, type FrozenCandidate } from '../packages/release/artifacts.ts';
 import { ChangeProposals, type ChangeProvenance, type ChangeRecord } from '../packages/release/proposals.ts';
@@ -219,13 +219,22 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       return { proposalPath: governanceProposalPath, policy, reviewer: metadata ? metadata.reviewer as unknown as JsonValue : null,
         bounds: metadata ? { pollMs: metadata.bounds.pollMs, maxElapsedMs: metadata.bounds.maxElapsedMs, maxOutputBytes: metadata.bounds.maxOutputBytes, maxClosureBytes: metadata.bounds.maxClosureBytes, memoryBytes: metadata.bounds.memoryBytes } : null };
     },
-  }, { name: 'change_propose', description: 'Record a justified finite source change proposal with visible experience evidence. Origin and human eligibility come from authenticated host provenance; workspace edits confer no production authority.',
-    inputSchema: schema({ changeId: string, justification: string, objective: string, successCriteria: { type: 'array', items: string, minItems: 1, maxItems: 32 }, experienceIds: { type: 'array', items: string, maxItems: 32 } }, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']),
+  }, { name: 'change_propose', description: 'Record a justified finite source change proposal with visible memory experience IDs. Human-origin proposals may use an empty experienceIds list; self-origin proposals require at least one visible memory experience. Origin and human eligibility come from authenticated host provenance; workspace edits confer no production authority.',
+    inputSchema: schema({ changeId: string, justification: string, objective: string, successCriteria: { type: 'array', items: string, minItems: 1, maxItems: 32 }, experienceIds: { type: 'array', description: 'Exact IDs of memory experiences visible to this run, not input/event IDs, artifact URIs, or inferred labels. Human-origin proposals may use []; self-origin proposals require valid visible experiences.', items: string, maxItems: 32 } }, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']),
     execute(args, signal) {
-      allowed(signal); const a = object(args, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']); const origin = provenance(bound, options);
-      const sources = strings(a.experienceIds, origin.kind === 'human'); const memory = new DevelopmentalMemory(bound.store);
-      const experience = sources.map(id => { const record = memory.get(id, bound.scope); invariant(record, 'Experience unavailable to proposal scope'); return record; });
-      return proposals.create({ id: text(a.changeId), runId: bound.runId, scope: bound.scope, authority: bound.authority, provenance: origin, justification: text(a.justification), goal: { objective: text(a.objective), successCriteria: strings(a.successCriteria) }, experience: proposals.artifact(experience), state: 'proposed' });
+      const validated = (() => {
+        try {
+          allowed(signal); const a = object(args, ['changeId', 'justification', 'objective', 'successCriteria', 'experienceIds']); const origin = provenance(bound, options);
+          const sources = strings(a.experienceIds, origin.kind === 'human'); const memory = new DevelopmentalMemory(bound.store);
+          const experience = sources.map(id => { const record = memory.get(id, bound.scope); invariant(record, 'Experience unavailable to proposal scope'); return record; });
+          return { id: text(a.changeId), runId: bound.runId, scope: bound.scope, authority: bound.authority, provenance: origin, justification: text(a.justification), goal: { objective: text(a.objective), successCriteria: strings(a.successCriteria) }, experience, state: 'proposed' as const };
+        } catch (error) {
+          // This read-only validation has not crossed either artifact or proposal write.
+          if (error instanceof ContractError) throw Object.assign(error, { mayHaveApplied: false });
+          throw error;
+        }
+      })();
+      return proposals.create({ ...validated, experience: proposals.artifact(validated.experience) });
     },
   }, { name: 'candidate_freeze', description: 'Freeze this proposal’s source workspace and accepted compiler closure into a host-private immutable whole-application candidate. Actual prompt and proposed model/configuration bytes bind the manifest; no release is activated.', inputSchema: schema({ changeId: string }, ['changeId']),
     execute(args, signal) {

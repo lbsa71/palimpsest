@@ -100,6 +100,27 @@ test('coding acknowledgement is durable before dispatch; repeated identity canno
   } finally { await f.close(); }
 });
 
+for (const processStopped of [true, false, undefined]) test(`develop_status exposes retained uncertain session and cleanup metadata (${processStopped})`, async () => {
+  const retained = { ...result('uncertain'), processStopped, exitCode: null,
+    events: [{ type: 'thread.started', thread_id: nativeSessionId }] };
+  const f = fixture(async () => retained);
+  try {
+    await f.enqueue(); f.limb.tick(); await settled(f.limb);
+    const status = f.limb.status(f.owner) as unknown as { sessionId: string; nativeSessionId: string;
+      result: { sessionId: string; processStopped: boolean | null; status: string; artifact: NonNullable<CodingTurn['result']> } };
+    assert.equal(status.sessionId, f.limb.session()!.id);
+    assert.notEqual(status.sessionId, nativeSessionId);
+    assert.equal(status.nativeSessionId, nativeSessionId);
+    assert.equal(status.result.sessionId, nativeSessionId);
+    assert.equal(status.result.processStopped, processStopped ?? null);
+    assert.equal(status.result.status, 'uncertain');
+    assert.deepEqual(f.store.readJsonArtifact(status.result.artifact), JSON.parse(JSON.stringify(retained)));
+    assert.equal(f.limb.workspaceLocked(f.owner.workspace), true);
+    assert.throws(() => f.limb.submit(f.owner, 'held-after-status', 'Continue'), /requires host inspection/);
+    assert.equal(f.store.list('host.coding-abandonments').length, 0);
+  } finally { await f.close(); }
+});
+
 test('follow-up addresses the same durable native session and cannot change its identity', async () => {
   const seen: Array<{ id?: string; workspace: string; message: string }> = [];
   const f = fixture(async (session, turn) => { seen.push({ id: session.nativeSessionId, workspace: session.workspace, message: turn.message }); return result(); });
@@ -206,6 +227,7 @@ test('an executor failure remains visible in develop_status with unknown account
     await f.enqueue(); f.limb.tick(); await settled(f.limb);
     const status = f.limb.status(f.owner) as unknown as { result: CodingResult };
     assert.equal(status.result.status, 'uncertain'); assert.match(status.result.summary, /Injected host executable unavailable/);
+    assert.equal(status.result.sessionId, null); assert.equal(status.result.processStopped, null);
     assert.deepEqual(status.result.events, []); assert.equal(status.result.usage.costUsd, null); assert.equal(status.result.usage.physicalRequests, null);
   } finally { await f.close(); }
 });

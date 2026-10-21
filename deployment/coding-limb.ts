@@ -91,7 +91,8 @@ export class CodingLimb {
     const result = turn?.result ? this.options.store.readJsonArtifact<CodingResult>(turn.result) : undefined;
     return json({ sessionId: session.id, nativeSessionId: session.nativeSessionId ?? null, provider: session.provider, turn: turn ?? null,
       history: history.map(item => ({ id: item.id, runId: item.runId, status: item.status, mode: item.mode ?? null, result: item.result ?? null, abandonment: this.abandonment(item) ?? null })),
-      result: result ? { status: result.status, summary: result.summary?.slice(0, 16384), exitCode: result.exitCode, elapsedMs: result.elapsedMs, usage: result.usage, cumulativeUsage: result.cumulativeUsage ?? null,
+      result: result ? { sessionId: result.sessionId ?? null, processStopped: result.processStopped ?? null,
+        status: result.status, summary: result.summary?.slice(0, 16384), exitCode: result.exitCode, elapsedMs: result.elapsedMs, usage: result.usage, cumulativeUsage: result.cumulativeUsage ?? null,
         events: (result.events ?? []).slice(offset, offset + limit), eventCount: (result.events ?? []).length, nextOffset: offset + limit < (result.events ?? []).length ? offset + limit : null,
         stderr: (result.stderr ?? '').slice(-8192), artifact: turn!.result } : null });
   }
