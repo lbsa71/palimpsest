@@ -78,6 +78,7 @@ export function openaiPayload(context: TranscriptContext, model: string, maxToke
 }
 /** Reservations and host settlement apply to every attempt, including retry and compaction. */
 export function createOpenAITransport(options: MistralTransportOptions): { stream: StreamFn; setPurpose(value: Attempt['purpose']): void; attempts(): number } {
+  if (options.requiredTool !== undefined) throw Error('Required-tool routing is only qualified for the Mistral protocol transport');
   options = { ...options, modelProfile: options.modelProfile && { ...options.modelProfile } };
   const environment = captureShellEnvironment(options.environment), transport = options.fetch ?? nodeShellFetch();
   const { apiKey, reserve, dispatched: markDispatched, settle } = options;

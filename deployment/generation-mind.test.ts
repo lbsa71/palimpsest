@@ -26,10 +26,23 @@ function candidate(label = 'incumbent'): LoadedGeneration {
   return { candidate: { manifest: { id: identity(manifest), ...manifest }, inputs: value, files }, applicationRoot: '/fixture/app', nodeBinary: '/fixture/node' };
 }
 function call(image: LoadedGeneration, role: GenerationCall['role'] = 'incumbent', turnId = 'first', checkpoint?: ShellCheckpoint): GenerationCall {
-  return { sessionId: 'succession', turnId, role, candidateId: image.candidate.manifest.id, input: {
+  const phase = role === 'observer' ? 'observe' : role === 'successor' ? 'ready' : turnId === 'verdict' ? 'verdict' : 'challenge';
+  return { sessionId: 'succession', turnId, role, phase, candidateId: image.candidate.manifest.id, input: {
     run: { id: role === 'successor' ? 'successor-run' : 'incumbent-run', revision: 1, status: 'running', authority: { generation: 'physical-host', epoch: 1, controlRevision: 'accepted' }, scope: { kind: 'restricted', principals: ['owner'] } },
     messages: [{ role: 'user', content: `AUTHORIZED CONTINUITY ${turnId}`, timestamp: 0 }], ...(checkpoint ? { checkpoint } : {}),
   } };
+}
+const evidenceRef = { uri: `aeon:artifact:${'e'.repeat(64)}`, sha256: 'e'.repeat(64) };
+function modelEvent(context: GenerationCall): GenerationEvent {
+  const message = `MODEL ${context.role} ${context.turnId}`;
+  switch (context.phase) {
+    case 'challenge': return { kind: 'challenge', content: { question: message, criterion: 'Declared continuity criterion' } };
+    case 'answer': return { kind: 'answer', content: { answer: message, evidence: [evidenceRef] } };
+    case 'counter-answer': return { kind: 'answer', content: { answer: message } };
+    case 'verdict': return { kind: 'verdict', content: { decision: 'accept', reason: message, question: 'What does the serving successor actually preserve?' } };
+    case 'ready': return { kind: 'ready', content: { ready: true, reason: message } };
+    case 'observe': return { kind: 'verdict', content: { decision: 'accept', reason: message, evidence: [evidenceRef] } };
+  }
 }
 function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'aeon-generation-')); const state = join(directory, 'state'), work = join(directory, 'work');
@@ -74,9 +87,8 @@ function fixture(t: TestContext) {
     readArtifact: ref => artifacts.get(ref.sha256)!,
     async performRequest(context, payload) {
       payloads.push({ call: context, payload });
-      const kind = context.role === 'incumbent' ? context.turnId === 'verdict' ? 'verdict' : 'challenge' : context.role === 'successor' ? 'ready' : 'observation';
       return { status: 200, body: JSON.stringify({ model: profile.id, choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null,
-        tool_calls: [{ id: `native-${payloads.length}`, type: 'function', function: { name: 'generation_mailbox', arguments: JSON.stringify({ kind, content: `MODEL ${context.role} ${context.turnId}` }) } }] } }], usage: { prompt_tokens: 11, completion_tokens: 4 } }) };
+        tool_calls: [{ id: `native-${payloads.length}`, type: 'function', function: { name: 'generation_mailbox', arguments: JSON.stringify(modelEvent(context)) } }] } }], usage: { prompt_tokens: 11, completion_tokens: 4 } }) };
     },
     recordTransport() {},
     recordResponse(context, _id, response) { for (const tool of JSON.parse(response.body).choices[0].message.tool_calls ?? []) sources.push({ runId: context.input.run.id, id: tool.id, arguments: JSON.parse(tool.function.arguments) }); },
@@ -100,10 +112,108 @@ test('own frozen instructions, mailbox handoff and same incumbent checkpoint sur
   assert.match(f.payloads[0].payload, /OWN MIND incumbent/); assert.match(f.payloads[1].payload, /OWN MIND successor/);
   assert.doesNotMatch(f.payloads[1].payload, /OWN MIND incumbent/);
   assert.match(f.payloads[3].payload, /MODEL incumbent first/); assert.match(f.payloads[3].payload, /MODEL incumbent verdict/); assert.match(f.payloads[3].payload, /AUTHORIZED CONTINUITY after-cutover/);
+  for (const { call: selected, payload: source } of f.payloads) {
+    const payload = JSON.parse(source);
+    assert.deepEqual(payload.tool_choice, { type: 'function', function: { name: 'generation_mailbox' } });
+    const expected = { challenge: ['challenge'], ready: ['ready'], verdict: ['verdict'], observe: ['verdict', 'regression'] };
+    assert.deepEqual(payload.tools[0].function.parameters.properties.kind.enum, expected[selected.phase as keyof typeof expected]);
+  }
   const startup = f.starts[1].initial as unknown as { options: ShellOptions; fragments: Record<string, string> };
   assert.equal(startup.options.model, profile.id); assert.equal(startup.fragments[startup.options.compaction!.instruction.artifact.sha256], 'OWN COMPACTION successor');
   assert.deepEqual(startup.options.tools.map(tool => tool.name), ['generation_mailbox']);
   assert.equal(f.requests.filter(request => request.status === 'succeeded').length, 4);
+});
+
+test('successor answer request requires the mailbox and complete artifact citation objects', async t => {
+  const f = fixture(t), image = candidate('successor'); f.images.set(image.candidate.manifest.id, image);
+  const selected: GenerationCall = { ...call(image, 'successor'), phase: 'answer' };
+  await createGenerationMind(f.options, f.ports)(selected);
+  const payload = JSON.parse(f.payloads[0].payload);
+  assert.deepEqual(payload.tool_choice, { type: 'function', function: { name: 'generation_mailbox' } });
+  assert.deepEqual(payload.tools.map((tool: { function: { name: string } }) => tool.function.name), ['generation_mailbox']);
+  const evidenceSchemas: Record<string, any>[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (!Array.isArray(value) && 'properties' in value) {
+      const properties = (value as { properties?: Record<string, any> }).properties;
+      if (properties?.evidence) evidenceSchemas.push(properties.evidence);
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(payload.tools[0].function.parameters);
+  assert.ok(evidenceSchemas.length > 0, 'Answer schema must expose its evidence contract');
+  for (const evidence of evidenceSchemas) {
+    assert.equal(evidence.type, 'array'); assert.equal(evidence.items.type, 'object');
+    assert.deepEqual([...evidence.items.required].sort(), ['sha256', 'uri']);
+    assert.equal(evidence.items.additionalProperties, false);
+    assert.equal(evidence.items.properties.uri.type, 'string');
+    assert.equal(evidence.items.properties.sha256.type, 'string');
+  }
+});
+
+test('worker cannot downgrade the required mailbox selector to automatic before provider dispatch', async t => {
+  const f = fixture(t), image = candidate(); f.images.set(image.candidate.manifest.id, image);
+  const execute = f.ports.runWorker;
+  const attempted: unknown[] = [], rejected: string[] = [];
+  f.ports.runWorker = worker => {
+    const start = worker.initial as unknown as { options: ShellOptions };
+    delete start.options.requiredTool;
+    return execute({ ...worker, async handle(method, args, signal) {
+      if (method === 'capturePrompt') attempted.push(JSON.parse(String(args[1])).tool_choice);
+      try { return await worker.handle(method, args, signal); }
+      catch (error) { if (method === 'capturePrompt') rejected.push(String(error)); throw error; }
+    } });
+  };
+  const result = await createGenerationMind(f.options, f.ports)(call(image));
+  assert.equal(result.shell.status, 'blocked');
+  assert.ok(result.shell.checkpoint);
+  assert.deepEqual(attempted, ['auto']); assert.equal(rejected.length, 1); assert.match(rejected[0], /owned tools|tool selection/);
+  assert.equal(f.payloads.length, 0); assert.equal(f.requests.length, 0); assert.equal(f.mailbox.length, 0);
+});
+
+test('actual worker rejects a bare URI answer without appending any mailbox event', async t => {
+  const f = fixture(t), image = candidate('successor'); f.images.set(image.candidate.manifest.id, image);
+  const perform = f.ports.performRequest;
+  f.ports.performRequest = async (...args) => {
+    const result = await perform(...args), body = JSON.parse(result.body);
+    const tool = body.choices[0].message.tool_calls[0];
+    const event = JSON.parse(tool.function.arguments); event.content.evidence = [evidenceRef.uri];
+    tool.function.arguments = JSON.stringify(event);
+    return { ...result, body: JSON.stringify(body) };
+  };
+  const selected: GenerationCall = { ...call(image, 'successor'), phase: 'answer' };
+  const result = await createGenerationMind(f.options, f.ports)(selected);
+  assert.equal(f.mailbox.length, 0); assert.ok(f.payloads.length > 0);
+  assert.ok(f.sources.every(source => (source.arguments as { content: { evidence: unknown[] } }).content.evidence[0] === evidenceRef.uri));
+  const checkpoints = [...f.checkpoints.values()] as { messages?: { role: string; isError?: boolean; content: unknown }[] }[];
+  assert.ok(checkpoints.some(checkpoint => checkpoint.messages?.some(message => message.role === 'toolResult' && message.isError && /evidence|object/.test(JSON.stringify(message.content)))), 'Rejected citation must remain in the actual native checkpoint');
+  assert.equal(result.mailbox.length, 0);
+});
+
+test('required mailbox leaves incumbent rejection, successor refusal and observer uncertainty to the actual mind', async t => {
+  const f = fixture(t), image = candidate(); f.images.set(image.candidate.manifest.id, image);
+  const perform = f.ports.performRequest;
+  let judgment: { decision?: string; ready?: boolean } = {};
+  f.ports.performRequest = async (...args) => {
+    const result = await perform(...args), body = JSON.parse(result.body), tool = body.choices[0].message.tool_calls[0];
+    const event = JSON.parse(tool.function.arguments); Object.assign(event.content, judgment);
+    tool.function.arguments = JSON.stringify(event); return { ...result, body: JSON.stringify(body) };
+  };
+  const invoke = createGenerationMind(f.options, f.ports);
+  for (const decision of ['reject', 'more']) {
+    judgment = { decision };
+    const result = await invoke(call(image, 'incumbent', 'verdict'));
+    assert.equal(result.shell.status, 'completed'); assert.equal((result.mailbox[0].content as { decision: string }).decision, decision);
+  }
+  judgment = { ready: false };
+  const readiness = await invoke(call(image, 'successor'));
+  assert.equal(readiness.shell.status, 'completed'); assert.equal((readiness.mailbox[0].content as { ready: boolean }).ready, false);
+  for (const decision of ['regression', 'inconclusive']) {
+    judgment = { decision };
+    const result = await invoke(call(image, 'observer'));
+    assert.equal(result.shell.status, 'completed'); assert.equal((result.mailbox[0].content as { decision: string }).decision, decision);
+  }
+  assert.equal(f.mailbox.length, 5); assert.equal(f.payloads.length, 5);
 });
 
 test('candidate metadata changes, wrong frozen runtime and revoked role stop before worker launch', async t => {
@@ -121,13 +231,13 @@ test('candidate metadata changes, wrong frozen runtime and revoked role stop bef
 test('host rejects fabricated model source, forbidden effects, forged roles and unbounded mailbox content', async t => {
   const f = fixture(t), image = candidate(); f.images.set(image.candidate.manifest.id, image);
   f.ports.runWorker = async worker => {
-    const base: ToolCall = { id: 'fake-native', runId: 'incumbent-run', stepId: 'step', name: 'generation_mailbox', arguments: { kind: 'verdict', content: 'invented pass' } };
+    const base: ToolCall = { id: 'fake-native', runId: 'incumbent-run', stepId: 'step', name: 'generation_mailbox', arguments: { kind: 'challenge', content: { question: 'invented question', criterion: 'Declared continuity criterion' } } };
     const signal = new AbortController().signal;
     for (const [tool, reason] of [
       [base, /real model source/], [{ ...base, name: 'speech_send' }, /own mailbox/], [{ ...base, runId: 'foreign' }, /Foreign worker/],
       [{ ...base, arguments: { kind: 'ready', content: true } }, /not permitted/],
       [{ ...base, arguments: { kind: 'verdict', content: true, role: 'successor' } }, /not permitted/],
-      [{ ...base, arguments: { kind: 'verdict', content: 'x'.repeat(9000) } }, /exceeds/],
+      [{ ...base, arguments: { kind: 'challenge', content: { question: 'x'.repeat(9000), criterion: 'Declared continuity criterion' } } }, /exceeds/],
     ] as const) await assert.rejects(worker.handle('execute', [json(tool)], signal), reason);
     return { status: 'blocked', observations: [] };
   };

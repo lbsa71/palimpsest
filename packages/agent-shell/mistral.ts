@@ -21,6 +21,8 @@ export interface MistralTransportOptions {
   /** Provider capability/configuration is supplied explicitly, never inferred from a model name. */
   modelProfile?: { contextWindow: number; reasoning: boolean };
   reasoningEffort?: 'none' | 'high';
+  /** Trusted protocol composition may require one declared communication tool. */
+  requiredTool?: string;
   reserve(attempt: Attempt): Promise<void>;
   dispatched(attempt: Attempt): Promise<void>;
   settle(attempt: Attempt, outcome: AttemptOutcome): Promise<void>;
@@ -115,7 +117,7 @@ export function mistralCompactionBoundary(history: Message[], boundary: number, 
   return boundary;
 }
 
-export function mistralPayload(context: TranscriptContext, model: string, maxTokens: number, reasoningEffort?: 'none' | 'high'): string {
+export function mistralPayload(context: TranscriptContext, model: string, maxTokens: number, reasoningEffort?: 'none' | 'high', requiredTool?: string): string {
   const normalized = collapseSystemMessages(context);
   const messages = mistralMessageOrder(normalized.messages).map(message => {
     if (message.role === 'system') return { role: 'system', content: getSystemMessageText(message) };
@@ -128,7 +130,8 @@ export function mistralPayload(context: TranscriptContext, model: string, maxTok
     return { role: 'assistant', content: assistantContent(message), ...(calls.length ? { tool_calls: calls } : {}) };
   });
   const tools = getCurrentTools(normalized.messages).map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
-  return JSON.stringify({ model, messages, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}), stream: false, max_tokens: maxTokens });
+  if (requiredTool && tools.length && !tools.some(tool => tool.function.name === requiredTool)) throw Error('Required Mistral tool is not declared');
+  return JSON.stringify({ model, messages, ...(tools.length ? { tools, tool_choice: requiredTool ? { type: 'function', function: { name: requiredTool } } : 'auto' } : {}), ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}), stream: false, max_tokens: maxTokens });
 }
 
 /** One finite transport per run; reservations cover retries and compaction as well as ordinary calls. */
@@ -141,6 +144,7 @@ export function createMistralTransport(options: MistralTransportOptions): { stre
   const retries = options.maxRetries ?? 0;
   if (!Number.isSafeInteger(retries) || retries < 0 || retries > 3) throw new Error('Retry budget must be between zero and three');
   if (options.reasoningEffort && !options.modelProfile?.reasoning) throw new Error('Reasoning effort requires an explicitly capable model profile');
+  if (options.requiredTool !== undefined && (typeof options.requiredTool !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(options.requiredTool))) throw Error('Invalid required Mistral tool');
   if (options.modelProfile && (!Number.isSafeInteger(options.modelProfile.contextWindow) || options.modelProfile.contextWindow < 1)) throw new Error('Invalid configured model context window');
   let dispatched = 0;
   let purpose: Attempt['purpose'] = 'reasoning';
@@ -149,7 +153,7 @@ export function createMistralTransport(options: MistralTransportOptions): { stre
     const message: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: 'mistral', model: model.id, usage: emptyUsage(), stopReason: 'pending', timestamp: environment.wallNow() };
     void (async () => {
       try {
-        const payload = mistralPayload(context, model.id, options.maxOutputTokens ?? 4096, options.reasoningEffort);
+        const payload = mistralPayload(context, model.id, options.maxOutputTokens ?? 4096, options.reasoningEffort, purpose === 'reasoning' ? options.requiredTool : undefined);
         for (let retry = 0; ; retry++) {
           requestOptions?.signal?.throwIfAborted();
           if (dispatched >= options.maxRequests) throw new Error('Physical request budget exhausted');

@@ -72,6 +72,7 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
   };
   const provider = options.worker.provider ?? 'mistral';
   invariant(provider === 'mistral' || provider === 'openai', 'Unsupported broker provider');
+  invariant(options.worker.requiredTool === undefined || provider === 'mistral' && options.worker.tools.some(tool => tool.name === options.worker.requiredTool), 'Required protocol tool must be declared on the qualified Mistral transport');
   invariant(options.worker.model && !options.worker.model.includes('latest'), 'Broker needs an explicitly pinned model');
   invariant(/^[a-zA-Z0-9_./-]+\.(ts|js)$/.test(options.entrypoint) && !options.entrypoint.split('/').includes('..'), 'Invalid worker entrypoint');
   invariant(options.pricesPerMillion && Object.keys(options.pricesPerMillion).sort().join(',') === 'input,output', 'Explicit input and output token prices required');
@@ -213,7 +214,8 @@ export function createBrokerShell(options: BrokerShellOptions): ShellPort {
                 invariant(decoded.max_tokens === (worker.maxOutputTokens ?? 4096), 'Unqualified output allowance');
                 invariant(decoded.reasoning_effort === worker.reasoningEffort, 'Unqualified reasoning effort');
               }
-              invariant(identity(decoded.tools ?? []) === identity(expectedTools) && decoded.tool_choice === (expectedTools.length ? 'auto' : undefined), 'Worker changed owned tools');
+              const expectedChoice = expectedTools.length ? worker.requiredTool ? { type: 'function', function: { name: worker.requiredTool } } : 'auto' : undefined;
+              invariant(identity(decoded.tools ?? []) === identity(expectedTools) && identity(decoded.tool_choice ?? null) === identity(expectedChoice ?? null), 'Worker changed owned tools or required tool selection');
               invariant(decoded.model === worker.model && decoded.stream === false, 'Unqualified provider profile');
               await bridge.capturePrompt(manifest, payload);
               captured.set(manifest.id, { manifest, payload, purpose: compaction ? 'compaction' : 'reasoning' });

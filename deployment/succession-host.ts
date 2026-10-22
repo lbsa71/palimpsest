@@ -218,7 +218,7 @@ export class SuccessionHost {
       return json({ scope: captured.scope, sourceRunId: captured.sourceRunId, memory: captured.memory,
         provenance: captured.provenance, ...(conversation ? { conversation: captured.conversation } : {}) });
     };
-    const call: GenerationCall = { sessionId: id, turnId: turn.id, role: turn.role, candidateId: session.candidateId,
+    const call: GenerationCall = { sessionId: id, turnId: turn.id, role: turn.role, phase: turn.phase, candidateId: session.candidateId,
       input: { run, ...(checkpoint ? { checkpoint } : {}), messages: [
         json({ role: 'user', timestamp: this.now(), content: canonicalJson(json({ continuity: visible(context, turn.role === 'successor'),
           ...(identity(context) === identity(catchUp) ? {} : { catchUp: visible(catchUp, false) }) })) }),
