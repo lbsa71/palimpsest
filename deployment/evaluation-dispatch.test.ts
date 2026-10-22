@@ -210,7 +210,8 @@ function fixture(activate = false, governance = false, offline: boolean | 'revie
   const fields = { kind: 'engineering' as const, requiredCases: [offline === 'reviewer' ? 'concrete-reviewer' : offline ? 'validator-string-length' : 'held-out-exact-source'], evaluatorKeys: new Map([[reviewer.evaluatorId, key]]), evaluatorArtifacts: new Map([[reviewer.evaluatorId, evaluator.sha256]]) };
   const modifiedBytes = readFileSync(join(source, markerPath), 'utf8') + marker;
   // Captured main-model and native-agent transports remain finite and offline. Only
-  // the coding executor edits the host-prepared source, before ordinary release tools.
+  // the coding executor edits the host-prepared source. Low-level lifecycle calls
+  // below are a test-only host backend extension, never the ordinary mind surface.
   const edits = [{ path: markerPath, content: modifiedBytes, expected: readFileSync(join(source, markerPath), 'utf8') },
     ...(governance ? [{ path: 'deployment/fixture-reviewer.mjs', content: futureReviewerSource, expected: null },
       { path: 'deployment/fixture-reviewer-rules.mjs', content: futureRules, expected: null }] : [])];
@@ -309,7 +310,22 @@ async function fixtureTransport(payload) {
   const childPath = join(source, 'deployment/service-child.ts');
   const child = readFileSync(childPath, 'utf8'), composition = 'new AutarkApplication({ config, codingExecutor,';
   assert.equal(child.split(composition).length, 2, 'Exactly one host composition receives both offline transports');
-  writeFileSync(childPath, transport + child.replace(composition, 'new AutarkApplication({ performRequest: fixtureTransport, config, codingExecutor: fixtureCoding,'));
+  const ordinaryImport = "import { ordinaryServiceTools } from './evolution-mailbox.ts';";
+  assert.equal(child.split(ordinaryImport).length, 2, 'Only the disposable fixture composition receives private backend tools');
+  const privateBackend = `import { ordinaryServiceTools, ordinaryEvolutionOptions } from './evolution-mailbox.ts';
+import { evolutionTools as fixtureEvolutionTools } from './evolution-tools.ts';
+import { controlTools as fixtureControlTools } from './control-tools.ts';
+function fixturePrivateBackend(context: Parameters<typeof ordinaryServiceTools>[0], host: Parameters<typeof ordinaryServiceTools>[1]) {
+  const ordinary = ordinaryServiceTools(context, host), privateNames = ['candidate_freeze', 'candidate_evaluate', 'release_submit'];
+  fixtureAssert.equal(ordinary.filter(tool => tool.name === 'skin_shed').length, 1);
+  for (const name of [...privateNames, 'control_activate']) fixtureAssert.equal(ordinary.some(tool => tool.name === name), false, 'Ordinary succession has no low-level bypass');
+  return [...ordinary, ...fixtureEvolutionTools(context, ordinaryEvolutionOptions(context, host)).filter(tool => privateNames.includes(tool.name)), ...fixtureControlTools(context, host.assertAuthority)];
+}
+`;
+  const ordinaryCall = '...ordinaryServiceTools(context,';
+  assert.equal(child.split(ordinaryCall).length, 2);
+  const fixtureChild = child.replace(ordinaryImport, privateBackend).replace(ordinaryCall, '...fixturePrivateBackend(context,').replace(composition, 'new AutarkApplication({ performRequest: fixtureTransport, config, codingExecutor: fixtureCoding,');
+  writeFileSync(childPath, transport + fixtureChild);
   // Governance exercises two native turns. Each unknown subscription cost retains
   // the real $5 ceiling; provide both ceilings plus finite mind-call headroom.
   const resources = { maxRequests: 100, maxTokens: 10000000, maxCostUsd: governance ? 11 : 10, maxElapsedMs: 600000, maxConcurrency: activate ? 1 : 2 };
@@ -583,7 +599,7 @@ test('offline behavioral reviewer confines candidate probes and reaches ordinary
   } finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('ordinary frozen service tools dispatch to a sealed external process and stage through the actual supervisor', { timeout: 180000 }, async t => {
+test('host-private frozen service backend dispatches to a sealed external process and stages through the actual supervisor', { timeout: 180000 }, async t => {
   const scenario = async (name: string, body: () => Promise<void>): Promise<void> => {
     t.signal.throwIfAborted();
     let running: Promise<void> | undefined;
@@ -735,7 +751,7 @@ test('ordinary frozen service tools dispatch to a sealed external process and st
   finally { await supervisor?.close(); authorityStore.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('ordinary author activates its exact stage and receives fresh physical probation under the original judge', { timeout: 120000 }, async t => {
+test('host-private author backend activates its exact stage and receives fresh physical probation under the original judge', { timeout: 120000 }, async t => {
   const f = fixture(true); let supervisor: ServiceSupervisor | undefined;
   const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
   try {
@@ -748,7 +764,8 @@ test('ordinary author activates its exact stage and receives fresh physical prob
     const acceptanceStarted = Date.now();
     const record = await eventually(() => {
       const value = store.list<import('./control-continuation.ts').ControlContinuationRecord>('host.control-continuations')[0]?.value;
-      if (value && ['rejected', 'uncertain'].includes(value.status)) throw Error(JSON.stringify({ control: value.status, diagnosis: value.diagnosis, host: supervisor!.status().evaluation }));
+      if (value && ['rejected', 'uncertain'].includes(value.status)) throw Error(JSON.stringify({ control: value, host: supervisor!.status().evaluation, release: supervisor!.status().release,
+        physicalReviews: store.list<{ request: import('../packages/contracts/index.ts').PhysicalRequest }>('requests').map(row => row.value.request).filter(request => request.provider === 'external-offline-review') }));
       return value;
     }, value => value?.status === 'accepted', 90000);
     t.diagnostic(JSON.stringify({ phase: 'ordinary-control-acceptance', elapsedMs: Date.now() - acceptanceStarted }));
@@ -781,7 +798,7 @@ test('ordinary author activates its exact stage and receives fresh physical prob
   } finally { await supervisor?.close(); store.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('ordinary governance proposal uses old physical judges before accepted restart selects the new source reviewer', { timeout: 180000 }, async t => {
+test('host-private governance backend uses old physical judges before accepted restart selects the new source reviewer', { timeout: 180000 }, async t => {
   const f = fixture(true, true); let supervisor: ServiceSupervisor | undefined;
   const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
   const keyDigest = hashBytes(readFileSync(f.reviewer.keyFile));

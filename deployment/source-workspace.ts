@@ -1,13 +1,17 @@
 import { invariant, type JsonValue } from '../packages/contracts/index.ts';
-import { runConfined } from '../packages/supervisor/confinement.ts';
+import { runConfined, type CommandReceipt, type ConfinedCommand } from '../packages/supervisor/confinement.ts';
 import type { ResourceLimits } from '../packages/supervisor/resource-limits.ts';
 
-export interface SourceWorkspaceOptions { applicationRoot: string; workspace: string; protectedPaths: string[]; nodeBinary: string; maxFiles: number; maxBytes: number; timeoutMs: number; resourceLimits?: ResourceLimits }
+export interface SourceWorkspaceOptions { applicationRoot: string; workspace: string; protectedPaths: string[]; nodeBinary: string; maxFiles: number; maxBytes: number; timeoutMs: number; resourceLimits?: ResourceLimits;
+  /** Host-selected one-time coding repository seed; never a model-supplied tool argument. */
+  gitRepository?: boolean;
+  run?: (command: ConfinedCommand) => Promise<CommandReceipt>;
+}
 export interface SourceTool { name: string; description: string; inputSchema: object; execute(args: JsonValue, signal?: AbortSignal): Promise<JsonValue> }
 /** These explicit roots constitute the rewrite source; history and installed packages are not copied. */
 export const rewriteSourceEntries = ['packages', 'deployment', 'evaluations', 'experiments/agent-shell', 'docs/rewrite', 'docs/adr', 'AGENTS.md', 'README.md', 'PLAN.md', 'REQUIREMENTS.md', 'GROWTH.md', 'package.json', 'package-lock.json', 'tsconfig.json'];
 const snapshotScript = String.raw`
-import fs from 'node:fs'; import path from 'node:path'; import crypto from 'node:crypto';
+import fs from 'node:fs'; import path from 'node:path'; import crypto from 'node:crypto'; import {spawnSync} from 'node:child_process';
 const config=JSON.parse(process.argv[1]);
 if(fs.readdirSync('/work').length)throw Error('Source snapshot requires an empty exclusive workspace');
 let bytes=0,visited=0;const files=[];
@@ -27,18 +31,33 @@ function visit(relative){if(++visited>config.maxFiles*2||relative.split('/').len
  }finally{fs.closeSync(fd);}}
 for(const entry of config.entries)if(fs.existsSync(path.join('/app',entry)))visit(entry);
 files.sort((a,b)=>a.path.localeCompare(b.path,'en'));
-console.log(JSON.stringify({files,bytes,source:'accepted application snapshot',copiedAt:new Date().toISOString()}));
+let repository;
+if(config.gitRepository){
+ const git=(args)=>{const result=spawnSync('/usr/bin/git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','commit.gpgsign=false',...args],
+  {cwd:'/work',encoding:'utf8',maxBuffer:262144,env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_TERMINAL_PROMPT:'0'}});
+  if(result.error||result.status!==0)throw Error('Git repository seed failed: '+(result.error?.message||result.stderr));return result.stdout.trim();};
+ git(['init','--quiet','--template=','--initial-branch=main']);
+ git(['config','user.name','Autark']);git(['config','user.email','autark@localhost']);
+ // Every copied file belongs to the accepted baseline, even if a nested ignore rule matches it.
+ git(['add','--force','--all']);git(['commit','--quiet','-m','Initialize accepted source baseline']);
+ repository={branch:git(['branch','--show-current']),commit:git(['rev-parse','HEAD']),tree:git(['rev-parse','HEAD^{tree}']),clean:git(['status','--porcelain=v1'])===''};
+ if(!repository.clean)throw Error('Initial Git source baseline is not clean');
+}
+console.log(JSON.stringify({files,bytes,source:config.gitRepository?'accepted application seed for persistent Git repository':'accepted application snapshot',
+ ...(repository?{git:repository}:{}),copiedAt:new Date().toISOString()}));
 `;
 function object(args: JsonValue, keys: string[]): Record<string, JsonValue> { invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).every(key => keys.includes(key)), 'Invalid source tool arguments'); return args; }
 export function sourceWorkspaceTools(options: SourceWorkspaceOptions): SourceTool[] {
+  options = { ...options, protectedPaths: [...options.protectedPaths], ...(options.resourceLimits ? { resourceLimits: { ...options.resourceLimits } } : {}) };
+  const execute = options.run ?? runConfined;
   invariant(Number.isSafeInteger(options.maxFiles) && options.maxFiles > 0 && options.maxFiles <= 100000 && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0 && options.maxBytes <= 512 * 1024 * 1024, 'Finite bounded source snapshot grants required');
-  const run = (args: string[], maxOutputBytes: number, signal?: AbortSignal) => runConfined({ workspace: options.workspace, applicationRoot: options.applicationRoot, protectedPaths: options.protectedPaths, nodeBinary: options.nodeBinary, executable: '/runtime/node', args, timeoutMs: options.timeoutMs, maxOutputBytes, resourceLimits: options.resourceLimits, signal });
+  const run = (args: string[], maxOutputBytes: number, signal?: AbortSignal) => execute({ workspace: options.workspace, applicationRoot: options.applicationRoot, protectedPaths: options.protectedPaths, nodeBinary: options.nodeBinary, executable: '/runtime/node', args, timeoutMs: options.timeoutMs, maxOutputBytes, resourceLimits: options.resourceLimits, signal });
   return [{
     name: 'source_checkout', description: 'Copy the explicit accepted rewrite source into this empty isolated workspace, with source hashes. The candidate can then edit dependencies, prompts, tools, controls and plans for evaluation.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     async execute(args, signal) {
       object(args, []);
-      const receipt = await run(['--input-type=module', '-e', snapshotScript, JSON.stringify({ entries: rewriteSourceEntries, count: 0, maxFiles: options.maxFiles, maxBytes: options.maxBytes })], Math.min(options.maxBytes, 2_000_000), signal);
+      const receipt = await run(['--input-type=module', '-e', snapshotScript, JSON.stringify({ entries: rewriteSourceEntries, count: 0, maxFiles: options.maxFiles, maxBytes: options.maxBytes, gitRepository: options.gitRepository === true })], Math.min(options.maxBytes, 2_000_000), signal);
       return JSON.parse(JSON.stringify(receipt)) as JsonValue;
     },
   }, {

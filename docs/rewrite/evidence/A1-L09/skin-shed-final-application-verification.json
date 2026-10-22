@@ -1,0 +1,22 @@
+{
+  "qualification": "Operator-run all five actual application/probe/handoff/drain/final-factory cases on this exact final source. Controlled transport, no live cognitive/H1 claim; no filters or assertion changes.",
+  "command": {
+    "executable": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+    "args": [
+      "--experimental-test-module-mocks",
+      "--test",
+      "--test-concurrency=1",
+      "deployment/skin-shed-application.test.ts"
+    ]
+  },
+  "sourceSha256": {
+    "application": "381e0c501e0dc7a9b98408ad8a1effeb0324b52d00ca710b7a3d41b144d635b4",
+    "mailbox": "6c84177cb1896745a501169fcce025742a5c7cc2840cb39715ba42f0609d3822",
+    "test": "fa4e684a11dfafee15d15a43d49f6552fcfed8175f283198a234103f043b3727"
+  },
+  "unchangedAfterExecution": true,
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "(node:294457) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n✔ application successor probe uses its actual configured shell and only the internal reply capability with settled model evidence (249.583584ms)\n✔ a configured provider attempt to use a production effect cannot qualify the internal successor probe (138.010194ms)\n✔ an explicit unsupported rollout projection exposes neither unfinished skin shedding nor legacy lifecycle bypasses (35.676052ms)\n✔ real skin_shed handoff holds its parent despite steering while unrelated Slack proceeds, then wakes once under adopted authority (403.243085ms)\n✔ activation drain lets existing inference finish, queues new Slack work and still executes the actual internal successor probe (374.416244ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1833.462141\n",
+  "stderr": ""
+}

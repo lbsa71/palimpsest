@@ -18,6 +18,8 @@ import { EffectJournal } from '../packages/effects/index.ts';
 import { assertControlActivationClaim, assertProbationLineage, ControlContinuation, controlActivationStatus, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ProbationReviewRequest } from './control-continuation.ts';
 import { accountedReview, prepareReview, recoverReviewReservations, reviewPhysicalId } from './evaluation-resources.ts';
 import { EvolutionMailbox } from './evolution-mailbox.ts';
+import { ChangeProposals } from '../packages/release/proposals.ts';
+import { CodingLimb } from './coding-limb.ts';
 import type { EvaluationRequest, SubmissionRequest } from './evolution-tools.ts';
 import type { HostResourceLedgerFactory, HostResourceOptions } from './host-resources.ts';
 
@@ -344,7 +346,7 @@ test('lost activation response and interrupted journal retain uncertainty and ne
 test('self-judging or reused admission evidence fails probation and preserves accepted rescue', async () => {
   for (const mode of ['new-judge', 'reused-evidence'] as const) {
     const f = await fixture(); const continuation = new ControlContinuation({ ...f.options,
-      reviewProbation: async request => mode === 'new-judge' ? f.proof(f.successor, request.physicalAuthority, request.id, f.next) : f.controller.stagedControl(f.binding.stageId)!.proof });
+      reviewProbation: async request => mode === 'new-judge' ? f.proof(f.successor, request.physicalAuthority, request.id, f.next) : f.controller.stagedControl(f.binding.stageId!)!.proof });
     try {
       enqueueControlActivation(f.store, f.binding); await continuation.processPending();
       assert.equal(f.status().status, 'uncertain'); assert.equal(f.controller.status()?.accepted.candidateId, f.incumbent.manifest.id);
@@ -390,5 +392,56 @@ test('cancellation between accepted activation and fresh physical review cannot 
     assert.equal(f.ledger.request(reviewPhysicalId(f.status().review!.id))?.status, 'failed');
     assert.equal(f.controller.status()?.accepted.candidateId, f.incumbent.manifest.id);
     await f.controller.recover('cancelled-author-rescue'); assert.deepEqual(f.starts, [2, 1]);
+  } finally { await continuation.close(); await f.dispose(); }
+});
+
+/** Preparation uses controlled backend ports; activation/probation use the real controller above. */
+function skinFixture(f: Awaited<ReturnType<typeof fixture>>) {
+  const submission = f.mailbox.request('submission') as SubmissionRequest, proposals = new ChangeProposals(f.store, 'author', f.binding.scope);
+  const { candidate: _candidate, ...unfrozen } = submission.proposal;
+  proposals.create({ ...unfrozen, state: 'proposed' });
+  const { stageId: _stage, submissionId: _submission, ...common } = f.binding;
+  const intent: ControlActivationRequest = { ...common, skinShed: { effectId: 'tool:actual-enqueue', workspace: f.root, incumbentCandidateId: f.incumbent.manifest.id, policyDigest: f.original.policyDigest } };
+  const transitions: string[] = [];
+  const backend = {
+    freeze(id: string) { transitions.push('freeze'); assert.equal(f.status().status, 'freezing'); return proposals.transition(id, 'proposed', 'frozen', { candidate: f.successor.manifest, judgingPolicyDigest: f.original.policyDigest }); },
+    evaluation(id: string) { transitions.push('evaluate'); proposals.transition(id, 'frozen', 'evaluation-dispatched'); return f.mailbox.request('evaluation') as EvaluationRequest; },
+    evaluated(id: string, receipt: import('./evolution-tools.ts').EvaluationReceipt) { transitions.push('evaluated'); return proposals.transition(id, 'evaluation-dispatched', 'evaluated', { evaluation: proposals.artifact(receipt) }); },
+    submission(id: string) { transitions.push('submit'); proposals.transition(id, 'evaluated', 'submission-dispatched'); return submission; },
+    submitted(id: string, receipt: import('./evolution-tools.ts').SubmissionReceipt) { transitions.push('submitted'); return proposals.transition(id, 'submission-dispatched', 'submitted', { submission: proposals.artifact(receipt) }); },
+  };
+  return { intent, backend, transitions };
+}
+test('one existing control continuation owns source preparation, interview, real activation and fresh probation', async () => {
+  const f = await fixture(), skin = skinFixture(f); let approved = false, observed = false;
+  const runtime = new DurableRuntime({ store: f.store, resources: f.ledger, effects: new EffectJournal(f.store, f.authority, { dispatch: async () => { throw Error('No effect expected'); }, reconcile: async () => { throw Error('No effect expected'); } }), shell: { run: async () => { throw Error('No reasoning expected'); } } });
+  let nativeCalls = 0;
+  const coding = new CodingLimb({ store: f.store, runtime, now: Date.now, provider: 'codex', assertAuthority: grant => f.authority.assert(grant), execute: async () => { nativeCalls++; throw Error('Freeze must exclude the queued writer'); } });
+  coding.submit({ key: 'original', runId: 'author', workspace: f.root, scope: f.binding.scope, authority: f.binding.authority }, 'tool:queued-writer', 'Inspect after freeze');
+  const continuation = new ControlContinuation({ ...f.options,
+    evolution: () => ({ ...skin.backend, freeze: id => { assert.equal(f.status().status, 'freezing'); coding.tick(); assert.equal(nativeCalls, 0); return skin.backend.freeze(id); } }),
+    interviewApproved: () => approved,
+    interview: async (request, candidate, stage) => { assert.equal(f.status().status, 'interviewing'); assert.equal(request.id, skin.intent.id); assert.equal(candidate.manifest.id, f.successor.manifest.id); assert.equal(stage, f.binding.stageId); skin.transitions.push('interview'); approved = true; return true; },
+    beforeActivate: () => assert.equal(approved, true),
+    observeProbation: async () => { assert.equal(f.controller.status()!.phase, 'probation'); observed = true; return 'accept'; },
+    acceptProbation: async (proof, review) => { assert.equal(observed, true); await f.options.acceptProbation(proof, review); },
+  });
+  try {
+    enqueueControlActivation(f.store, skin.intent); await continuation.processPending();
+    assert.equal(f.status().status, 'accepted'); assert.deepEqual(skin.transitions, ['freeze', 'evaluate', 'evaluated', 'submit', 'submitted', 'interview']);
+    assert.deepEqual(f.status().request, skin.intent, 'Initial control intent is immutable; stage progress lives in its existing proposal');
+    assert.equal(f.store.list('host.skin-sheds').length, 0); assert.equal(f.store.list('host.skin-shed-author-watches').length, 0);
+    assert.equal(f.controller.status()!.accepted.candidateId, f.successor.manifest.id); assert.deepEqual(f.starts, [2]);
+    await continuation.processPending(); assert.equal(skin.transitions.length, 6); assert.equal(nativeCalls, 0);
+  } finally { await coding.close(); await continuation.close(); await f.dispose(); }
+});
+test('interrupted source freeze stays uncertain in the existing journal and never replays after reopening', async () => {
+  const f = await fixture(), skin = skinFixture(f); let freezes = 0;
+  const options = { ...f.options, evolution: () => ({ ...skin.backend, freeze: () => { freezes++; throw Error('Lost freeze acknowledgment'); } }), interview: async () => true };
+  const continuation = new ControlContinuation(options);
+  try {
+    enqueueControlActivation(f.store, skin.intent); await continuation.processPending(); assert.equal(f.status().status, 'uncertain');
+    const original = f.store.get('host.control-continuations', skin.intent.id); await continuation.close();
+    const reopened = new ControlContinuation(options); try { await reopened.processPending(); assert.equal(freezes, 1); assert.deepEqual(f.store.get('host.control-continuations', skin.intent.id), original); assert.equal(f.controller.status()!.accepted.candidateId, f.incumbent.manifest.id); } finally { await reopened.close(); }
   } finally { await continuation.close(); await f.dispose(); }
 });

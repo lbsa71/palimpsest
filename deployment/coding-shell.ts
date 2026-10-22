@@ -10,14 +10,17 @@ export function codexCodingShell(options: { provider: CodingProvider; store: Ope
   return { async run(input, bridge, signal) {
     const session = options.session(), turn = options.turn(input.run.id);
     const mode = resolveCodingMode(turn.mode);
-    if (turn.source) invariant(/^[a-f0-9]{64}$/.test(turn.source.candidateId) && turn.source.path === `repositories/${turn.source.candidateId}`,
-      'Coding source context requires the exact trusted candidate workspace path');
+    if (turn.source) invariant(/^[a-f0-9]{64}$/.test(turn.source.candidateId) && turn.source.path === 'source' &&
+      (turn.source.acceptedCandidateId === undefined || /^[a-f0-9]{64}$/.test(turn.source.acceptedCandidateId)),
+      'Coding source context requires the exact persistent repository path');
     const message = turn.source ? [
-      `Trusted host context: accepted source snapshot ${turn.source.candidateId} is available at /work/${turn.source.path}.`,
+      `Trusted host context: your persistent Git working tree is at /work/${turn.source.path}, originally seeded from accepted candidate ${turn.source.candidateId}.`,
+      `The currently serving accepted candidate is ${turn.source.acceptedCandidateId ?? turn.source.candidateId}. The working tree may contain later commits or uncommitted work; its seed identity is not a claim that it matches the serving image.`,
+      'Inspect Git status, branch and relevant diff before editing. Use ordinary branches, commits and reverts for source history; preserve unrelated or unfinished work. Do not reset or replace the repository merely because the accepted image changed.',
       'Use that directory for repository inspection and verification. Cite file paths, line numbers and actual observed command results when answering repository questions.',
       `Current turn authority: ${mode}. Any authorized edits must target that source subdirectory.`,
       'This is the editable source for a whole-application candidate, including deployment/prompts/mind.md, dependencies, tools, planning and controls. In edit mode, implement the finite requested improvement and run relevant checks; report exact changed paths, command results and remaining limitations.',
-      'The continuing mind can freeze this source through candidate_freeze, request independent candidate_evaluate review and submit release_submit under the previously accepted controls. You implement and supply evidence; the mind coordinates review and release. Keep the retained native session, do not start other agents or request fresh human approval for already authorized work.',
+      'The continuing mind can propose this improvement with change_propose, then invoke skin_shed(changeId). That one operation owns source freeze, independent review, incumbent/successor interview, cutover and incumbent observation during fresh probation under the previously accepted controls. You implement and supply evidence; the mind initiates the operation and checks its retained outcome. Keep the retained native session, do not start other agents or request fresh human approval for already authorized work.',
       '', 'Development request:', turn.message,
     ].join('\n') : turn.message;
     const budget = options.executionBudget(input.run.id);

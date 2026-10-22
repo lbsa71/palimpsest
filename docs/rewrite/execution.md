@@ -1,5 +1,9 @@
 # Aeon 1 execution record
 
+## 2026-10-21 active Skin Shed succession repair
+
+Root claims SS01–SS05 on `codex/skin-shed-succession-20261021`, base `9bb8cfe`, per [the finite precode contract](evidence/A1-L09/skin-shed-succession.md). User reaffirms incumbent interviewing successor through the supervisor, rather than merely fresh independent review under old controls. Existing delegates investigate generation execution, durable orchestration and independent failure gates read-only; root serializes shared source/live mutations. Exactly one Sol6.1/high coding session remains retained. No claim of completion or H1 qualification follows from this reservation.
+
 ## 2026-10-21 completed finite development and Slack authorship repair
 
 ES01–ES04 is accepted/deployed with application source `430fec5` on `codex/evolution-and-slack-authorship-20261021`, base `71913cb`; the reviewed handoff is published to main. The [finite evidence](evidence/A1-L09/evolution-and-slack-authorship.md) records actual root-assisted source/prompt cycles, independent signed admission/fresh probation, ordinary second/third release success, current candidatee7abf31…/authority143 and normal bootstrap followed by separate rescue rotation. Actual final Slack code inspection resumed the original Sol6.1/high native UUID and the follow-up correctly identified human/self messages and local speech-versus-host provenance without another permission question. All334 frozen application files match the root source. Strict/build and57 final focused checks pass; original grants/history/unknown charges remain intact. Residual idle load remains unresolved despite materially lower reads and the indexed query improvement; the evidence names a separate unclaimed causal investigation. General autonomy/H1 stays unqualified, the broader backlog stays hibernated, and finite ownership/effects are released after this handoff.

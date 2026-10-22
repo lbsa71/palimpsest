@@ -1,16 +1,30 @@
 import { canonicalJson, identity, invariant, type ArtifactRef, type Authority, type DataScope, type ResourceEnvelope, type Run } from '../packages/contracts/index.ts';
 import type { FrozenCandidate } from '../packages/release/artifacts.ts';
 import type { ReleaseProof, ReleaseState, StagedControl } from '../packages/release/controller.ts';
-import type { ChangeRecord } from '../packages/release/proposals.ts';
+import { ChangeProposals, type ChangeRecord } from '../packages/release/proposals.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import { hostResourceLedger, type HostResourceOptions } from './host-resources.ts';
 import type { EvolutionMailbox } from './evolution-mailbox.ts';
-import type { SubmissionRequest, SubmissionReceipt } from './evolution-tools.ts';
+import type { SubmissionRequest, SubmissionReceipt, EvaluationReceipt, evolutionBackend } from './evolution-tools.ts';
 
 const namespace = 'host.control-continuations';
 class ActivationDeferred extends Error {}
 export interface ControlActivationRequest {
-  id: string; submissionId: string; stageId: string; proposalId: string; runId: string; scope: DataScope; authority: Authority;
+  id: string; submissionId?: string; stageId?: string; proposalId: string; runId: string; scope: DataScope; authority: Authority;
+  skinShed?: { effectId: string; workspace: string; incumbentCandidateId: string; policyDigest: string };
+}
+export interface StagedControlActivationRequest extends ControlActivationRequest { submissionId: string; stageId: string }
+/** The proposal/submission journal owns preparation progress; the control intent stays immutable. */
+export function resolveControlActivation(store: OperationalStore, request: ControlActivationRequest): StagedControlActivationRequest {
+  if (!request.skinShed) {
+    invariant(request.submissionId && request.stageId, 'Staged control request required');
+    return request as StagedControlActivationRequest;
+  }
+  const proposal = new ChangeProposals(store, request.runId, request.scope).get(request.proposalId);
+  invariant(proposal.state === 'submitted' && proposal.submission, 'Skin shed proposal is not staged');
+  const receipt = store.readJsonArtifact<SubmissionReceipt>(proposal.submission), stageId = (receipt.receipt as { stageId?: string }).stageId;
+  invariant(receipt.status === 'staged' && stageId, 'Skin shed requires its real staged receipt');
+  return { ...request, submissionId: receipt.requestId, stageId };
 }
 export interface ProbationAllocation {
   id: string; rootId: string; parentRunId?: string; startedAt: number; envelope: ResourceEnvelope;
@@ -43,7 +57,7 @@ export function assertProbationLineage(store: OperationalStore, review: Probatio
 }
 export interface ControlContinuationRecord {
   request: ControlActivationRequest;
-  status: 'pending' | 'activating' | 'reviewing' | 'accepted' | 'rejected' | 'uncertain';
+  status: 'pending' | 'freezing' | 'interviewing' | 'activating' | 'reviewing' | 'accepted' | 'rejected' | 'uncertain';
   review?: ProbationReviewRequest; physicalAuthority?: Authority; proofId?: string; probationProof?: ArtifactRef; diagnosis?: string;
 }
 function boundRun(store: OperationalStore, request: ControlActivationRequest): void {
@@ -54,7 +68,7 @@ function boundRun(store: OperationalStore, request: ControlActivationRequest): v
 /** Under authority then operational write locks, immediately around actual withdrawal. */
 export function assertControlActivationClaim(store: OperationalStore, stageId: string, review: ProbationReviewRequest, options: HostResourceOptions = {}): void {
   const record = store.get<ControlContinuationRecord>(namespace, review.activationId)?.value;
-  invariant(record?.status === 'activating' && identity(record.review) === identity(review) && record.request.stageId === stageId &&
+  invariant(record?.status === 'activating' && identity(record.review) === identity(review) && resolveControlActivation(store, record.request).stageId === stageId &&
     record.request.id === review.activationId && review.id === `probation:${identity(record.request)}` &&
     record.request.runId === review.proposal.runId && record.request.proposalId === review.proposal.id &&
     identity(record.request.scope) === identity(review.proposal.scope) && identity(record.request.authority) === identity(review.judgeAuthority),
@@ -66,13 +80,17 @@ export function assertControlActivationClaim(store: OperationalStore, stageId: s
  * The trusted host independently resolves the staged submission before any activation. */
 export function enqueueControlActivation(store: OperationalStore, request: ControlActivationRequest, signal?: AbortSignal): ControlContinuationRecord {
   signal?.throwIfAborted();
-  invariant(request && Object.keys(request).sort().join(',') === 'authority,id,proposalId,runId,scope,stageId,submissionId' &&
-    [request.id, request.submissionId, request.stageId, request.proposalId, request.runId].every(id => typeof id === 'string' && id.length > 0 && id.length <= 256), 'Exact bounded control activation binding required');
+  const expected = request.skinShed ? 'authority,id,proposalId,runId,scope,skinShed' : 'authority,id,proposalId,runId,scope,stageId,submissionId';
+  invariant(request && Object.keys(request).sort().join(',') === expected &&
+    [request.id, request.proposalId, request.runId].every(id => typeof id === 'string' && id.length > 0 && id.length <= 256), 'Exact bounded control intent required');
+  if (request.skinShed) invariant(Object.keys(request.skinShed).sort().join(',') === 'effectId,incumbentCandidateId,policyDigest,workspace' &&
+    Object.values(request.skinShed).every(value => typeof value === 'string' && value.length > 0), 'Exact skin shed host binding required');
+  else resolveControlActivation(store, request);
   return store.transaction(() => {
     boundRun(store, request);
     const row = store.get<ControlContinuationRecord>(namespace, request.id);
     if (row) { invariant(identity(row.value.request) === identity(request), 'Control activation identity reused with different contents'); return row.value; }
-    invariant(store.list<ControlContinuationRecord>(namespace).filter(row => ['pending', 'activating', 'reviewing'].includes(row.value.status)).length < 32, 'Control activation queue is full');
+    invariant(store.list<ControlContinuationRecord>(namespace).filter(row => ['pending', 'freezing', 'interviewing', 'activating', 'reviewing'].includes(row.value.status)).length < 32, 'Control activation queue is full');
     const record: ControlContinuationRecord = { request: structuredClone(request), status: 'pending' };
     store.put(namespace, request.id, record, null); return record;
   });
@@ -93,6 +111,18 @@ export interface ControlContinuationOptions extends HostResourceOptions {
   /** Release only this exact logical reservation; preserve uncertain physical outcomes. */
   finishProbation?(request: ProbationReviewRequest): void;
   reviewProbation(request: RunningProbationReview, signal: AbortSignal): Promise<ReleaseProof>;
+  /** Optional preparation of ordinary skin_shed intents inside this SAME host continuation. */
+  canProcess?(): boolean;
+  handoffPending?(): boolean;
+  accepted?(record: ControlContinuationRecord): boolean;
+  readyToPrepare?(request: ControlActivationRequest): boolean;
+  evolution?(request: ControlActivationRequest): ReturnType<typeof evolutionBackend>;
+  interview?(request: ControlActivationRequest, candidate: FrozenCandidate, stageId: string, signal: AbortSignal): Promise<boolean>;
+  interviewApproved?(request: ControlActivationRequest): boolean;
+  /** Actual cognitive approval is additional to the independent signed source review. */
+  beforeActivate?(request: ControlActivationRequest): void;
+  observeProbation?(request: RunningProbationReview, proof: ReleaseProof, signal: AbortSignal): Promise<'accept' | 'regression' | 'inconclusive' | undefined>;
+  recoverRegression?(request: RunningProbationReview): Promise<void>;
   activate(stageId: string, review: ProbationReviewRequest): Promise<Authority>; acceptProbation(proof: ReleaseProof, review: RunningProbationReview): Promise<void>;
 }
 /** Finite host continuation. Caller withdrawal cannot cancel an accepted activation request.
@@ -103,24 +133,27 @@ export class ControlContinuation {
   #loop?: Promise<void>; #processing = false;
   constructor(options: ControlContinuationOptions) {
     this.options = options;
-    for (const row of options.store.list<ControlContinuationRecord>(namespace))
-      if (['activating', 'reviewing'].includes(row.value.status)) this.#update(row.value.request.id,
+    for (const row of options.store.list<ControlContinuationRecord>(namespace)) {
+      if (row.value.status === 'reviewing' && options.accepted?.(row.value)) this.#update(row.value.request.id, { status: 'accepted' });
+      else if (['freezing', 'interviewing', 'activating', 'reviewing'].includes(row.value.status)) this.#update(row.value.request.id,
         { status: 'uncertain', diagnosis: 'Host continuation interrupted; inspect retained controller history and reconcile this ID before any retry' });
+    }
   }
   records(): ControlContinuationRecord[] { return this.options.store.list<ControlContinuationRecord>(namespace).map(row => row.value); }
   #update(id: string, patch: Partial<ControlContinuationRecord>): void {
     const row = this.options.store.get<ControlContinuationRecord>(namespace, id); invariant(row, 'Missing control activation request');
     this.options.store.put(namespace, id, { ...row.value, ...patch }, row.revision);
   }
-  #resolve(request: ControlActivationRequest): { submission: SubmissionRequest; stage: StagedControl } {
+  #resolve(request: ControlActivationRequest): { submission: SubmissionRequest; stage: StagedControl; activation: StagedControlActivationRequest } {
     const { store, mailbox } = this.options;
     boundRun(store, request); this.options.assertAuthority(request.authority);
-    const job = mailbox.status(request.submissionId);
+    const activation = resolveControlActivation(store, request);
+    const job = mailbox.status(activation.submissionId);
     invariant(job?.kind === 'submission' && job.status === 'completed' && job.receipt, 'Control activation requires a completed staged submission');
     const receipt = store.readJsonArtifact<SubmissionReceipt>(job.receipt);
-    invariant(receipt.status === 'staged' && receipt.requestId === request.submissionId &&
-      (receipt.receipt as { stageId?: string }).stageId === request.stageId, 'Control activation differs from the staged host receipt');
-    const submission = mailbox.request(request.submissionId) as SubmissionRequest, stage = this.options.stagedControl(request.stageId);
+    invariant(receipt.status === 'staged' && receipt.requestId === activation.submissionId &&
+      (receipt.receipt as { stageId?: string }).stageId === activation.stageId, 'Control activation differs from the staged host receipt');
+    const submission = mailbox.request(activation.submissionId) as SubmissionRequest, stage = this.options.stagedControl(activation.stageId);
     invariant(stage && submission.proposal.id === request.proposalId && submission.proposal.runId === request.runId &&
       identity(submission.proposal.scope) === identity(request.scope) && identity(submission.proposal.authority) === identity(request.authority) &&
       identity(stage.proof.proposal.priorAuthority) === identity(request.authority) &&
@@ -131,17 +164,60 @@ export class ControlContinuation {
     const current = this.options.status();
     invariant(current.phase === 'accepted' && identity(current.authority) === identity(stage.priorAuthority) &&
       current.active.policyDigest === submission.policyDigest, 'Control activation has stale stage authority or judging policy');
-    return { submission, stage };
+    return { submission, stage, activation };
+  }
+  async #prepare(request: ControlActivationRequest): Promise<boolean> {
+    if (!request.skinShed || this.options.interviewApproved?.(request)) return true;
+    if (this.options.readyToPrepare && !this.options.readyToPrepare(request)) return false;
+    invariant(this.options.evolution && this.options.interview, 'Skin shed is unavailable');
+    const backend = this.options.evolution(request), proposals = new ChangeProposals(this.options.store, request.runId, request.scope);
+    let proposal = proposals.get(request.proposalId);
+    if (proposal.state === 'proposed') {
+      const claimed = this.options.store.transaction(() => {
+        this.options.assertAuthority(request.authority);
+        if (this.options.readyToPrepare && !this.options.readyToPrepare(request)) return false;
+        this.#update(request.id, { status: 'freezing' }); return true;
+      });
+      if (!claimed) return false;
+      await backend.freeze(request.proposalId);
+      this.#update(request.id, { status: 'pending' }); proposal = proposals.get(request.proposalId);
+    }
+    if (['frozen', 'evaluation-dispatched'].includes(proposal.state)) {
+      const evaluation = this.options.store.transaction(() => this.options.mailbox.enqueueEvaluation(backend.evaluation(request.proposalId)));
+      if (evaluation.status === 'uncertain') { this.#update(request.id, { status: 'uncertain', diagnosis: 'Independent review outcome is unresolved; inspect the original job' }); return false; }
+      if (evaluation.status !== 'completed') return false;
+      const receipt = evaluation.evaluation;
+      backend.evaluated(request.proposalId, receipt);
+      if (!receipt.evidence.every(evidence => evidence.verdict === 'pass')) { this.#update(request.id, { status: 'rejected', diagnosis: 'Independent review did not pass; inspect change_status' }); return false; }
+      proposal = proposals.get(request.proposalId);
+    }
+    if (['evaluated', 'submission-dispatched'].includes(proposal.state)) {
+      const submission = this.options.store.transaction(() => this.options.mailbox.enqueueSubmission(backend.submission(request.proposalId)));
+      if (submission.status === 'uncertain') { this.#update(request.id, { status: 'uncertain', diagnosis: 'Staged submission outcome is unresolved; inspect the original job' }); return false; }
+      if (submission.status !== 'completed') return false;
+      invariant(submission.receipt, 'Completed submission has no receipt');
+      const receipt = this.options.store.readJsonArtifact<SubmissionReceipt>(submission.receipt);
+      backend.submitted(request.proposalId, receipt);
+      if (receipt.status !== 'staged') { this.#update(request.id, { status: 'rejected', diagnosis: 'The supervisor did not stage this proposal' }); return false; }
+    }
+    const { submission, stage, activation } = this.#resolve(request);
+    this.#update(request.id, { status: 'interviewing' });
+    if (!await this.options.interview(request, submission.candidate, activation.stageId, this.#abort.signal)) {
+      this.#update(request.id, { status: 'rejected', diagnosis: 'The incumbent or successor declined succession; inspect the retained dialogue' }); return false;
+    }
+    this.#update(request.id, { status: 'pending' }); return true;
   }
   async processPending(): Promise<void> {
-    if (this.#processing || this.#abort.signal.aborted) return;
+    if (this.#processing || this.#abort.signal.aborted || this.options.canProcess?.() === false) return;
     const pending = this.records().find(record => record.status === 'pending'); if (!pending) return;
     this.#processing = true;
     let started = false, reservedReview: ProbationReviewRequest | undefined;
     try {
       const request = pending.request;
-      const { submission, stage } = this.#resolve(request);
+      if (!await this.#prepare(request)) return;
+      const { submission, stage, activation } = this.#resolve(request);
       if (this.options.readyToActivate && !this.options.readyToActivate(request)) return;
+      this.options.beforeActivate?.(request);
       const review = this.options.store.transaction(() => {
         this.#resolve(request); this.#abort.signal.throwIfAborted();
         const ledger = hostResourceLedger(this.options.store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, this.options), now = this.options.now ?? ledger.now;
@@ -180,7 +256,7 @@ export class ControlContinuation {
       const claimed = controlActivationStatus(this.options.store, request.id, request.runId, request.scope);
       invariant(claimed?.status === 'activating' && identity(claimed.review) === identity(review), 'Atomic activation reservation claim required');
       started = true;
-      const physicalAuthority = await this.options.activate(request.stageId, review);
+      const physicalAuthority = await this.options.activate(activation.stageId, review);
       const state = this.options.status();
       invariant(state.phase === 'probation' && state.active.candidateId === review.candidate.manifest.id &&
         identity(state.probationJudge?.authority && { generation: state.probationJudge.authority.generation, epoch: state.probationJudge.authority.epoch, controlRevision: state.probationJudge.authority.controlRevision }) === identity(review.judgeAuthority) &&
@@ -195,11 +271,23 @@ export class ControlContinuation {
         identity(proof.proposal.candidate) === identity(review.candidate.manifest) &&
         proof.proposal.evidence.every(value => !review.admissionEvidenceIds.includes(value.id)), 'Probation review requires fresh original-policy signed evidence');
       this.options.assertAuthority(physicalAuthority);
-      await this.options.acceptProbation(proof, { ...review, physicalAuthority });
-      this.#update(request.id, { status: 'accepted' });
+      const running = { ...review, physicalAuthority };
+      const observation = await this.options.observeProbation?.(running, proof, this.#abort.signal);
+      if (observation === 'inconclusive') {
+        this.#update(request.id, { status: 'uncertain', diagnosis: 'Incumbent observation is inconclusive; retain probation and reconcile evidence without automatic acceptance or rollback' }); return;
+      }
+      if (observation === 'regression') {
+        invariant(this.options.recoverRegression, 'Substantiated regression requires supervised current-history recovery');
+        await this.options.recoverRegression(running);
+        this.#update(request.id, { status: 'rejected', diagnosis: 'Incumbent reported substantiated successor regression; supervisor recovered using current operational history' }); return;
+      }
+      this.options.assertAuthority(physicalAuthority);
+      await this.options.acceptProbation(proof, running);
+      if (!this.options.handoffPending?.()) this.#update(request.id, { status: 'accepted' });
     } catch (error) {
       if (error instanceof ActivationDeferred) return;
-      this.#update(pending.request.id, { status: started ? 'uncertain' : 'rejected', diagnosis: started ?
+      const unresolved = started || ['freezing', 'interviewing'].includes(this.records().find(record => record.request.id === pending.request.id)!.status);
+      this.#update(pending.request.id, { status: unresolved ? 'uncertain' : 'rejected', diagnosis: unresolved ?
         'Control activation or probation did not complete; inspect retained controller/review evidence and reconcile this ID' :
         'Control activation rejected before authority transfer; inspect the exact stage, author and remaining allowance' });
     } finally {

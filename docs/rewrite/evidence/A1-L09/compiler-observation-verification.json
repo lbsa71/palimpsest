@@ -1,0 +1,18 @@
+{
+  "qualification": "Operator-run observation-contract fixture with controlled command/provider ports. Existing suite initially passed22 with two input-only leaf failures (3 including parent); fixed by restricting the added schema explanation to source changes. Both unchanged failing cases then passed, plus the new outgoing payload case and strict compilation. The complete25-case suite was not repeated on final source. No automatic test-execution or release-policy change; not live cognition/H1.",
+  "sourceSha256": {
+    "deployment/engineering-review.ts": "75003f73de070e96b7b8e5c27b19e7e13a7094b1f38051f81bdbb1ae66afe033",
+    "deployment/engineering-review-host-evidence.test.ts": "3dd0fb8c0f344ac6ef7d9a91db166b6ce6e1424cf852348ebcd9e76ffc11324b"
+  },
+  "originalRegression": {
+    "privateLog": "host-evidence-minimal-regression.log",
+    "sha256": "35a34197070a60af543c6ea719198f2d72de2fd4c275fba1293de15bdf43b865",
+    "pass": 22,
+    "fail": 3,
+    "leafFailures": 2
+  },
+  "inputOnly": "(node:293818) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n▶ independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls\n  ✔ exact configuration-only change is independently reviewed without fabricating a source edit (6135.385745ms)\n  ✔ exact prompts-only change is independently reviewed without fabricating a source edit (6199.641205ms)\n✔ independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls (23165.956867ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 23680.048875\n",
+  "focused": "(node:293896) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n✔ host source verification and actual compiler invocation reach the independent review payload (4299.980614ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5338.054059\n",
+  "strictExitCode": 0,
+  "scopeChange": "An unshipped automatic smoke-runner design was abandoned after the user requested simplification. Its failed TAP case and original files/logs are retained privately and are not accepted/green claims."
+}

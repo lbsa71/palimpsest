@@ -4,7 +4,7 @@ import { ReviewerRegistry } from './reviewer-registry.ts';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { identity, invariant, type Authority } from '../packages/contracts/index.ts';
+import { identity, invariant, type Authority, type Run, type PhysicalRequest } from '../packages/contracts/index.ts';
 import { admitCandidate, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import { policyDescriptor, ReleaseController, type ReleaseProof, type ReleaseState, type ReleaseTarget } from '../packages/release/controller.ts';
@@ -12,20 +12,24 @@ import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { assertResourceConfinement, initializeResourceDelegation } from '../packages/supervisor/resource-limits.ts';
 import { verifyApplication } from './candidate.ts';
-import { beneath, type ApplicationSecrets } from './config.ts';
+import { beneath, selectedProviderKey, type ApplicationSecrets } from './config.ts';
 import { assertPrivateHostDirectory, readHostFile } from './host-policy.ts';
 import { materializeConfiguration, type HostBindings } from './materialize.ts';
 import { ServiceProcess, type EvolutionMetadata, type ServiceReady } from './service-process.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
-import { EvolutionMailbox } from './evolution-mailbox.ts';
+import { EvolutionMailbox, ordinaryEvolutionBackend } from './evolution-mailbox.ts';
 import { EvaluationDispatcher, loadReviewerFile, type DispatchStatus, type ReviewerFile } from './evaluation-dispatch.ts';
-import { assertControlActivationClaim, assertProbationLineage, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
+import { assertControlActivationClaim, assertProbationLineage, resolveControlActivation, ControlContinuation, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationOptions, type ControlContinuationRecord, type ProbationReviewRequest, type RunningProbationReview } from './control-continuation.ts';
 import { controlActivationAcknowledgmentPending } from './control-tools.ts';
 import { RescueRotationHost, type RescueRotationOptions, type RescueRotationRecord } from './rescue-rotation.ts';
 import { ResourceLedger, type AllowanceAmendment } from '../packages/runtime/resources/index.ts';
 import type { HostResourceLedgerFactory } from './host-resources.ts';
 import { engineeringPlanMount, runEngineeringReview, type EngineeringReviewOptions } from './engineering-review.ts';
 import { providerGateway } from './provider-gateway.ts';
+import { SuccessionHost, nodeSuccessionHostEnvironment, type SuccessionHostOptions } from './succession-host.ts';
+import { codingWritesPending } from './coding-limb.ts';
+import { ChangeProposals } from '../packages/release/proposals.ts';
+import type { SuccessionBinding } from './succession-dialogue.ts';
 
 export interface SupervisorOptions {
   host: HostBindings;
@@ -44,6 +48,8 @@ export interface SupervisorOptions {
   controlReview?: Pick<ControlContinuationOptions, 'reserveProbation' | 'reviewProbation' | 'readyToActivate' | 'finishProbation'>;
   /** Explicit request only; the installed bootstrap checks current acceptance and boot readiness. */
   rotateRescue?: RescueRotationOptions['rotate'];
+  /** Trusted composition seams; never supplied through model tools or candidate JSON. */
+  succession?: Pick<SuccessionHostOptions, 'environment' | 'performRequest' | 'now'>;
 }
 export interface SupervisorStatus {
   coordinator: { processId: number; module: string };
@@ -103,6 +109,7 @@ export class ServiceSupervisor {
   #evolutionStore?: OperationalStore;
   #dispatcher?: EvaluationDispatcher;
   #controls?: ControlContinuation;
+  #succession?: SuccessionHost;
   #rescueRotations?: RescueRotationHost;
   #mailbox?: EvolutionMailbox;
   #ready?: ServiceReady;
@@ -169,6 +176,7 @@ export class ServiceSupervisor {
       }
       else await supervisor.#exclusive(() => supervisor.#initialize());
       supervisor.#startDispatcher();
+      supervisor.#startSuccession();
       supervisor.#startControlContinuation();
       supervisor.#startRescueRotations();
       return supervisor;
@@ -191,17 +199,105 @@ export class ServiceSupervisor {
       rotate: this.#options.rotateRescue });
     this.#rescueRotations.start();
   }
+  #startSuccession(): void {
+    const host = this.#options.host, store = this.#evolutionStore!, now = this.#options.succession?.now ?? Date.now;
+    const environment = this.#options.succession?.environment ?? nodeSuccessionHostEnvironment(host, now);
+    const configuration = (id: string) => materializeConfiguration(verifyApplication(host.artifactStore, id, host.nodeBinary), host);
+    const incumbent = configuration(this.#controller.status()!.active.candidateId);
+    this.#succession = new SuccessionHost({ store, host, environment, now, resourceLedger: this.#resourceLedger, resourceLimits: incumbent.resourceLimits,
+      current: () => { const state = this.#controller.status()!, grant = this.#authority.current(); invariant(grant?.generation, 'Current succession host authority required');
+        return { candidateId: state.active.candidateId, phase: state.phase, authority: { generation: grant.generation, epoch: grant.epoch, controlRevision: grant.controlRevision } }; },
+      assertAuthority: authority => this.#authority.assert(authority), dispatchAuthority: (authority, operation) => this.#authority.dispatch(authority, operation),
+      performRequest: this.#options.succession?.performRequest ?? ((payload, signal, call) => {
+        invariant(call, 'Exact frozen cognitive generation required'); const config = configuration(call.candidateId);
+        return providerGateway({ provider: config.model.provider, apiKey: () => selectedProviderKey(config.model, this.#options.secrets), maxResponseBytes: 2_000_000 })(payload, signal);
+      }) });
+  }
+  #configuration(id: string) { const host = this.#options.host; return materializeConfiguration(verifyApplication(host.artifactStore, id, host.nodeBinary), host); }
+  #activationAcknowledgmentPending(request: ControlActivationRequest): boolean {
+    return controlActivationAcknowledgmentPending(this.#evolutionStore!, request);
+  }
+  #ownedCandidate(candidateId: string): boolean {
+    const store = this.#evolutionStore!;
+    return this.#controls?.records().some(({ request }) => request.skinShed &&
+      new ChangeProposals(store, request.runId, request.scope).get(request.proposalId).candidate?.id === candidateId) ?? false;
+  }
+  #binding(control: ControlActivationRequest | ProbationReviewRequest): SuccessionBinding | undefined {
+    const store = this.#evolutionStore!, id = 'activationId' in control ? control.activationId : control.id;
+    const record = store.get<ControlContinuationRecord>('host.control-continuations', id)?.value;
+    if (!record?.request.skinShed) return undefined;
+    const request = record.request, intent = request.skinShed!, proposal = new ChangeProposals(store, request.runId, request.scope).get(request.proposalId);
+    const dialogue = this.#succession!.dialogue.status(id), activation = resolveControlActivation(store, request);
+    invariant(dialogue && proposal.candidate && dialogue.binding.id === id && dialogue.binding.runId === request.runId &&
+      dialogue.binding.candidateId === proposal.candidate.id && dialogue.binding.incumbentId === intent.incumbentCandidateId &&
+      dialogue.binding.stageId === activation.stageId && dialogue.binding.policyDigest === intent.policyDigest &&
+      identity(dialogue.binding.authority) === identity(request.authority) && identity(dialogue.binding.scope) === identity(request.scope) &&
+      dialogue.binding.objective === proposal.goal.objective && identity(dialogue.binding.criteria) === identity(proposal.goal.successCriteria), 'Exact supervised generation binding required');
+    if ('activationId' in control) invariant(control.candidate.manifest.id === proposal.candidate.id && control.policyDigest === intent.policyDigest &&
+      identity(control.proposal.goal) === identity(proposal.goal) && identity(control.judgeAuthority) === identity(request.authority), 'Probation differs from incumbent approval');
+    else invariant(identity(control) === identity(request), 'Control intent changed');
+    return dialogue.binding;
+  }
+  #activationReady(request: ControlActivationRequest): boolean {
+    if (!request.skinShed) return true;
+    const store = this.#evolutionStore!, id = `external-review:probation:${identity(request)}`;
+    if (store.list<Run>('runs').some(row => row.value.status === 'running') || codingWritesPending(store, false)) return false;
+    return !store.list<{ request: PhysicalRequest }>('requests').some(({ key, value: { request: physical } }) => {
+      if (!['reserved', 'dispatched'].includes(physical.status)) return false;
+      const prepared = store.get<{ physical: PhysicalRequest; claimed?: boolean }>('host.external-review-reservations', id)?.value;
+      return !(key === id && physical.status === 'reserved' && physical.id === id && physical.runId === request.runId &&
+        physical.reservationId === id && physical.purpose === 'review' && physical.provider === 'external-offline-review' && prepared && !prepared.claimed && identity(prepared.physical) === identity(physical));
+    });
+  }
   #startControlContinuation(): void {
     const reviewer = this.#options.controlReview ?? {
       reserveProbation: (review: ProbationReviewRequest, commitReservation: () => void) => this.#dispatcher!.reserveProbation(review, commitReservation),
       reviewProbation: (review: RunningProbationReview, signal: AbortSignal) => this.#dispatcher!.reviewProbation(review, signal),
       finishProbation: (review: import('./control-continuation.ts').ProbationReviewRequest) => this.#dispatcher!.finishProbation(review),
-      readyToActivate: (request: ControlActivationRequest) => this.#dispatcher!.probationAvailable() && !controlActivationAcknowledgmentPending(this.#evolutionStore!, request),
+      readyToActivate: (request: ControlActivationRequest) => this.#dispatcher!.probationAvailable() && !this.#activationAcknowledgmentPending(request),
     };
     this.#controls = new ControlContinuation({ store: this.#evolutionStore!, mailbox: this.#mailbox!, resourceLedger: this.#resourceLedger,
       status: () => this.#controller.status()!, stagedControl: id => this.#controller.stagedControl(id),
       assertAuthority: authority => this.#authority.assert(authority), ...reviewer,
-      readyToActivate: request => !this.#operation && !this.#closing && !this.#hostHandoffPending && (reviewer.readyToActivate?.(request) ?? true),
+      readyToActivate: request => !this.#operation && !this.#closing && !this.#hostHandoffPending && !this.#activationAcknowledgmentPending(request) && this.#activationReady(request) && (reviewer.readyToActivate?.(request) ?? true),
+      canProcess: () => !this.#operation && !this.#closing && !this.#hostHandoffPending,
+      handoffPending: () => this.#hostHandoffPending,
+      accepted: record => {
+        const state = this.#controller.status()!, review = record.review;
+        if (!review || !record.probationProof || !record.proofId || !record.physicalAuthority || state.phase !== 'accepted' ||
+          state.accepted.candidateId !== review.candidate.manifest.id || state.active.candidateId !== review.candidate.manifest.id ||
+          !state.authority.generation || state.authority.artifactId !== review.candidate.manifest.id || state.authority.controlRevision !== review.candidate.manifest.controls) return false;
+        const proof = this.#evolutionStore!.readJsonArtifact<ReleaseProof>(record.probationProof), accepted = this.#controller.proof(record.proofId) as { proof?: ReleaseProof } | undefined;
+        if (!accepted || identity(accepted.proof) !== identity(proof) || proof.proposal.id !== record.proofId || proof.proposal.id !== review.id ||
+          identity(proof.proposal.candidate) !== identity(review.candidate.manifest) || identity(proof.proposal.priorAuthority) !== identity(review.judgeAuthority) ||
+          identity([...state.admissionEvidenceIds].sort()) !== identity(proof.proposal.evidence.map(evidence => evidence.id).sort())) return false;
+        const committed = this.#controller.history().some(event => {
+          const previous = event.value as ReleaseState;
+          return event.kind === 'probation-accepted' && previous.accepted.candidateId === review.candidate.manifest.id &&
+            identity({ generation: previous.authority.generation, epoch: previous.authority.epoch, controlRevision: previous.authority.controlRevision }) === identity(record.physicalAuthority) &&
+            identity([...previous.admissionEvidenceIds].sort()) === identity([...state.admissionEvidenceIds].sort());
+        });
+        if (!committed) return false;
+        if (!record.request.skinShed) return true;
+        const binding = this.#binding(review);
+        return !!binding && this.#succession!.dialogue.status(binding.id)?.phase === 'retired';
+      },
+      readyToPrepare: request => !this.#operation && !this.#closing && !this.#hostHandoffPending && !this.#activationAcknowledgmentPending(request) && !codingWritesPending(this.#evolutionStore!),
+      evolution: request => ordinaryEvolutionBackend({ store: this.#evolutionStore!, runId: request.runId, scope: request.scope, authority: request.authority, workspace: request.skinShed!.workspace },
+        { config: this.#configuration(request.skinShed!.incumbentCandidateId), artifactStore: this.#options.host.artifactStore, evolution: this.#evolutionMetadata(request.skinShed!.policyDigest), assertAuthority: grant => this.#authority.assert(grant) }),
+      interviewApproved: request => request.skinShed !== undefined && this.#succession!.dialogue.status(request.id)?.phase === 'approved',
+      interview: async (request, candidate, stageId, signal) => {
+        const proposal = new ChangeProposals(this.#evolutionStore!, request.runId, request.scope).get(request.proposalId), intent = request.skinShed!;
+        const binding = this.#succession!.capture({ id: request.id, runId: request.runId, stageId, incumbentId: intent.incumbentCandidateId,
+          candidateId: candidate.manifest.id, policyDigest: intent.policyDigest, authority: request.authority, scope: request.scope,
+          objective: proposal.goal.objective, criteria: proposal.goal.successCriteria });
+        try { await this.#succession!.dialogue.interview(binding, signal); }
+        catch (error) { if (this.#succession!.dialogue.status(request.id)?.phase === 'rejected') return false; throw error; }
+        this.#succession!.dialogue.assertApproved(binding); return true;
+      },
+      beforeActivate: request => { const binding = this.#binding(request); if (binding) this.#succession!.dialogue.assertApproved(binding); },
+      observeProbation: (review, _proof, signal) => { const binding = this.#binding(review); return binding ? this.#succession!.dialogue.observe(binding, signal) : Promise.resolve(undefined); },
+      recoverRegression: async () => { await this.recover(); },
       activate: (id, review) => this.activateControl(id, review), acceptProbation: (proof, review) => this.acceptProbation(proof, review) });
     this.#controls.start();
   }
@@ -254,7 +350,10 @@ export class ServiceSupervisor {
       default: throw new Error('Unknown host control command');
     }
   }
-  release(proof: ReleaseProof): Promise<Authority> { return this.#exclusive(() => this.#controller.transfer(proof, randomUUID())); }
+  release(proof: ReleaseProof): Promise<Authority> { return this.#exclusive(() => {
+    invariant(!this.#ownedCandidate(proof.proposal.candidate.id), 'Skin shed candidate requires its supervised continuation');
+    return this.#controller.transfer(proof, randomUUID());
+  }); }
   recover(): Promise<Authority> {
     return this.#exclusive(async () => {
       const authority = await this.#controller.recover(randomUUID());
@@ -264,12 +363,18 @@ export class ServiceSupervisor {
   }
   acceptProbation(proof: ReleaseProof, review?: RunningProbationReview): Promise<void> { return this.#exclusive(async () => {
     const prior = this.#controller.status()!;
+    if (this.#ownedCandidate(prior.active.candidateId)) {
+      const binding = review && this.#binding(review);
+      invariant(binding && binding.candidateId === prior.active.candidateId, 'Skin shed acceptance requires its exact supervised observer continuation');
+    }
     if (review) this.#authority.dispatch(review.physicalAuthority, () => this.#evolutionStore!.transaction(() => {
       assertProbationLineage(this.#evolutionStore!, review, { resourceLedger: this.#resourceLedger });
+      const binding = this.#binding(review); if (binding) this.#succession!.dialogue.assertObserved(binding);
       this.#controller.acceptProbation(proof);
     }));
     else this.#controller.acceptProbation(proof);
-    if (prior.probationJudge?.change === 'control-upgrade' && this.#options.onHostAccepted) {
+    if (review) { const binding = this.#binding(review); if (binding) this.#succession!.dialogue.retire(binding); }
+    if (this.#controller.status()!.accepted.candidateId !== prior.accepted.candidateId && this.#options.onHostAccepted) {
       this.#hostHandoffPending = true;
       this.#options.onHostAccepted(this.#controller.status()!.accepted, prior.accepted);
     }
@@ -282,14 +387,23 @@ export class ServiceSupervisor {
     });
   }
   activateControl(stageId: string, review?: ProbationReviewRequest): Promise<Authority> {
-    return this.#exclusive(() => this.#controller.activateStagedControl(stageId, randomUUID(), review ? commit => this.#evolutionStore!.transaction(() => {
+    return this.#exclusive(() => {
+      const candidateId = this.#controller.stagedControl(stageId)?.proof.proposal.candidate.id;
+      if (candidateId && this.#ownedCandidate(candidateId)) {
+        const binding = review && this.#binding(review);
+        invariant(binding && binding.candidateId === candidateId && binding.stageId === stageId, 'Skin shed activation requires its exact supervised continuation');
+      }
+      return this.#controller.activateStagedControl(stageId, randomUUID(), review ? commit => this.#evolutionStore!.transaction(() => {
       // AuthorityStore holds its write lock before this callback; retain the operational
       // lock through withdrawal so cancellation and producer starts serialize with it.
       assertControlActivationClaim(this.#evolutionStore!, stageId, review, { resourceLedger: this.#resourceLedger });
       const record = this.#evolutionStore!.get<ControlContinuationRecord>('host.control-continuations', review.activationId)!.value;
-      invariant(!controlActivationAcknowledgmentPending(this.#evolutionStore!, record.request), 'Control activation producer acknowledgment is incomplete');
+      const binding = this.#binding(review); if (binding) this.#succession!.dialogue.assertApproved(binding);
+      invariant(this.#activationReady(record.request), 'Active production work must drain before skin shed withdrawal');
+      invariant(!this.#activationAcknowledgmentPending(record.request), 'Control activation producer acknowledgment is incomplete');
       commit();
-    }) : undefined));
+    }) : undefined);
+    });
   }
   async #exclusive<T>(operation: () => Promise<T>): Promise<T> {
     invariant(!this.#closing && !this.#closed && !this.#operation && !this.#hostHandoffPending, 'Supervisor unavailable or release operation in progress');
@@ -373,6 +487,7 @@ export class ServiceSupervisor {
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closing = true;
+    this.#succession?.close();
     await this.#rescueRotations?.close();
     await this.#controls?.close();
     await this.#dispatcher?.close();

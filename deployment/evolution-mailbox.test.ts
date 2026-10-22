@@ -15,8 +15,8 @@ import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { runWorker } from '../packages/supervisor/worker-process.ts';
 import { AutarkApplication } from './application.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
-import { EvolutionMailbox, ordinaryServiceTools, type ExternalEvaluation } from './evolution-mailbox.ts';
-import type { EvaluationRequest, SubmissionReceipt } from './evolution-tools.ts';
+import { EvolutionMailbox, ordinaryEvolutionOptions, ordinaryServiceTools, type ExternalEvaluation } from './evolution-mailbox.ts';
+import { evolutionTools, type EvaluationRequest, type SubmissionReceipt } from './evolution-tools.ts';
 import { materializeConfiguration } from './materialize.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
 import { validateEvolutionMetadata } from './service-process.ts';
@@ -37,7 +37,7 @@ function response(name?: string, args: unknown = {}, content = 'Finite fixture f
   return { status: 200, body: JSON.stringify({ model: 'fixture-v1', choices: [{ finish_reason: name ? 'tool_calls' : 'stop', message: name ? { role: 'assistant', content: null, tool_calls: [{ id: name.replaceAll('_', '').slice(0, 9), type: 'function', function: { name, arguments: JSON.stringify(args) } }] } : { role: 'assistant', content } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }) };
 }
 
-for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queues evaluation, resumes bound feedback and stages through the real controller (${lostLocalAcknowledgment ? 'lost local acknowledgment' : 'review beyond slice'})`, { timeout: 90000 }, async t => {
+for (const lostLocalAcknowledgment of [false, true]) test(`host-private evolution backend queues evaluation, resumes bound feedback and stages through the real controller (${lostLocalAcknowledgment ? 'lost local acknowledgment' : 'review beyond slice'})`, { timeout: 90000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'aeon-evolution-host-'));
   const source = join(root, 'source'); copySource(source);
   const host = { stateDirectory: join(root, 'state'), workspaceDirectory: join(root, 'workspaces'), artifactStore: join(root, 'artifacts'), nodeBinary: process.execPath };
@@ -91,12 +91,21 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
           { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 20 } },
         ].map(event => JSON.stringify(event)).join('\n') };
       },
-      additionalTools: context => ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, evolution: { policyDigest: policy.policyDigest }, assertAuthority: grant => authorityStore.assert(grant) }).map(tool =>
+      additionalTools: context => {
+        const binding = { config, artifactStore: host.artifactStore, evolution: { policyDigest: policy.policyDigest }, assertAuthority: (grant: typeof authority) => authorityStore.assert(grant) };
+        const ordinary = ordinaryServiceTools(context, binding), privateNames = ['candidate_freeze', 'candidate_evaluate', 'release_submit'];
+        assert.equal(ordinary.filter(tool => tool.name === 'skin_shed').length, 1);
+        for (const name of [...privateNames, 'control_activate']) assert.equal(ordinary.some(tool => tool.name === name), false, `Ordinary succession has no ${name} bypass`);
+        // Test-only backend extension retains the existing mailbox fault/recovery
+        // coverage. This sequence is deliberately unavailable to the ordinary mind.
+        const privateBackend = evolutionTools(context, ordinaryEvolutionOptions(context, binding)).filter(tool => privateNames.includes(tool.name));
+        return [...ordinary, ...privateBackend].map(tool =>
         tool.name !== 'candidate_evaluate' ? tool : { ...tool, async execute(args, signal) {
           const result = await tool.execute(args, signal);
           if (lostLocalAcknowledgment && !acknowledgmentLost) { acknowledgmentLost = true; throw Object.assign(Error('Fixture lost committed local enqueue reply'), { mayHaveApplied: true }); }
           return result;
-        } }),
+        } });
+      },
       performRequest: async payload => {
         try {
         const request = JSON.parse(payload);
@@ -258,7 +267,9 @@ for (const lostLocalAcknowledgment of [false, true]) test(`ordinary service queu
       assert.throws(() => validateEvolutionMetadata({ policyDigest: policy.policyDigest, reviewerKey: 'secret' } as any), /Public frozen/);
       const context = { runId: run.id, store: app!.store, scope: config.direct.scope, authority, workspace: host.workspaceDirectory };
       const unavailable = ordinaryServiceTools(context, { config, artifactStore: host.artifactStore, assertAuthority: () => {} });
-      assert.throws(() => unavailable.find(value => value.name === 'candidate_evaluate')!.execute({ changeId: 'finite' }), /omitted accepted judging policy/);
+      assert.equal(unavailable.filter(value => value.name === 'skin_shed').length, 1);
+      for (const name of ['candidate_freeze', 'candidate_evaluate', 'release_submit', 'control_activate']) assert.equal(unavailable.some(value => value.name === name), false);
+      assert.throws(() => unavailable.find(value => value.name === 'skin_shed')!.execute({ changeId: 'finite' }), /omitted accepted judging policy/);
     });
   } catch (error) {
     t.diagnostic(JSON.stringify({ calls, codingCalls, compactions, runs: app?.store.list('runs'), coding: app?.store.list('host.coding-turns'), execution: app?.store.list('execution') })); throw error;

@@ -1,0 +1,29 @@
+{
+  "phase": "c3",
+  "qualification": "Operator-run deterministic offline fixture with actual journals, ReleaseController, AuthorityStore, SkinShedService and ControlContinuation; cognition and process lifecycle ports controlled. Not actual ServiceSupervisor, sealed-reviewer test execution, live Skin Shed or H1.",
+  "command": {
+    "executable": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+    "args": [
+      "--experimental-test-module-mocks",
+      "--test",
+      "--test-concurrency=1",
+      "deployment/skin-shed-supervisor.test.ts"
+    ]
+  },
+  "executedSourceSha256": {
+    "deployment/control-continuation.ts": "a6e04d9fa4094acb74e75487ebe0e96f8c7d5a9516ce611c0d1cd731fe8c68a9",
+    "deployment/evolution-mailbox.ts": "84ad15d859e8519e5fc9ac382632b2021c5e008f867c579f5c23edb603c1830b",
+    "deployment/supervisor.ts": "e5204f3ba5e62d3d6e2ac2a7818e6c1763170c4e3d6ac4ea5abaff5a65d92a49",
+    "deployment/service-child.ts": "edafd04695a502651b5ee42ad5ca5ce966c31c8c0177e135cdfbb1d325e778ac",
+    "deployment/skin-shed-service.ts": "7e770327b18e7c2a7fa111985c3b92e7d08e54c5f2318f57ac03b474534daee8",
+    "deployment/skin-shed.ts": "fbf9a41c07b09a1469062c96fcb1402b75228117b7a952c249f44c70a69c08d9",
+    "deployment/succession-dialogue.ts": "7ac2026716e4e22d519b3d00dffa26e8269e27da31e015f0f47c55e0f388e320",
+    "deployment/succession-host.ts": "b4eeb5ef6e88605669513a2fe6a0ca8a66c9839dab8e28c4972cc0ca81526196",
+    "deployment/skin-shed-supervisor.test.ts": "033d34acff202dd94c2184f40ea93f13a165a94495820e138d76c0ed505f6e67"
+  },
+  "unchangedAfterExecution": true,
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "(node:285784) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n✔ exact skin_shed receiver settlement and producer finish precede host work; no control_activate acknowledgment is required (707.221295ms)\n✔ lost SS receiver accounting cannot borrow the absent control acknowledgment to cut over (431.339536ms)\n✔ revoked incumbent approval is checked again inside the actual authority withdrawal guard (473.300281ms)\n✔ fresh independent probation and an actual observer result precede controller acceptance and retirement (607.025913ms)\n✔ reused admission evidence cannot trigger observer approval or controller acceptance (518.185112ms)\n✔ memory-withdrawal after observer approval blocks the actual acceptance commit and retirement (642.426261ms)\n✔ new-steering after observer approval blocks the actual acceptance commit and retirement (596.210413ms)\n✔ changed-observer-verdict after observer approval blocks the actual acceptance commit and retirement (595.173858ms)\n✔ substantiated observer regression recovers the incumbent using the current lived store and preserves old unknown charges (588.13776ms)\n✔ inconclusive observer result holds probation without acceptance, rollback or restart replay (589.844618ms)\n✔ lost observer result holds probation without acceptance, rollback or restart replay (719.885315ms)\nℹ tests 11\nℹ suites 0\nℹ pass 11\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 7008.366009\n",
+  "stderr": ""
+}

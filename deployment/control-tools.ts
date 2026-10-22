@@ -1,11 +1,11 @@
-import { identity, invariant, type ArtifactRef, type Authority, type DataScope, type Effect, type Goal, type JsonValue, type PhysicalRequest, type Run, type ShellResult } from '../packages/contracts/index.ts';
+import { ContractError, identity, invariant, type ArtifactRef, type Authority, type DataScope, type Effect, type Goal, type JsonValue, type PhysicalRequest, type Run, type ShellResult } from '../packages/contracts/index.ts';
 import { InitiativeRegistry } from '../packages/initiative/goals/index.ts';
 import { ChangeProposals } from '../packages/release/proposals.ts';
 import type { DurableRuntime } from '../packages/runtime/index.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
 import type { AuthorityStore } from '../packages/supervisor/authority.ts';
 import type { ApplicationTool } from './application.ts';
-import { controlActivationStatus, enqueueControlActivation, type ControlActivationRequest, type ControlContinuationRecord } from './control-continuation.ts';
+import { controlActivationStatus, enqueueControlActivation, resolveControlActivation, type ControlActivationRequest, type ControlContinuationRecord } from './control-continuation.ts';
 import { assertReviewLineage } from './evaluation-resources.ts';
 import type { HostResourceOptions } from './host-resources.ts';
 import type { EvolutionJob } from './evolution-mailbox.ts';
@@ -15,7 +15,8 @@ const watches = 'host.control-author-watches', acknowledgments = 'host.control-a
 interface ControlWatch { request: ControlActivationRequest; status: 'waiting' | 'notified' | 'reconciled' }
 interface ControlAcknowledgment { effectId: string; request: ControlActivationRequest; authority: Authority; payload: JsonValue; receipt: ArtifactRef }
 export function controlActivationId(runId: string, changeId: string): string { return `control:${identity({ runId, changeId })}`; }
-function resolveSubmission(store: OperationalStore, request: ControlActivationRequest): SubmissionRequest {
+function resolveSubmission(store: OperationalStore, initial: ControlActivationRequest): SubmissionRequest {
+  const request = resolveControlActivation(store, initial);
   const proposal = new ChangeProposals(store, request.runId, request.scope).get(request.proposalId);
   invariant(proposal.state === 'submitted' && proposal.submission && proposal.candidate && identity(proposal.scope) === identity(request.scope) &&
     identity(proposal.authority) === identity(request.authority), 'Control activation requires this exact submitted proposal');
@@ -32,24 +33,34 @@ function resolveSubmission(store: OperationalStore, request: ControlActivationRe
   return submission;
 }
 function publicStatus(record: ControlContinuationRecord): JsonValue {
-  return { id: record.request.id, submissionId: record.request.submissionId, stageId: record.request.stageId, status: record.status,
+  return { id: record.request.id, ...(record.request.submissionId ? { submissionId: record.request.submissionId } : {}),
+    ...(record.request.stageId ? { stageId: record.request.stageId } : {}), status: record.status,
     ...(record.review ? { candidateId: record.review.candidate.manifest.id } : {}), ...(record.proofId ? { proofId: record.proofId } : {}),
     ...(record.probationProof ? { probationProof: { uri: record.probationProof.uri, sha256: record.probationProof.sha256 } } : {}), ...(record.diagnosis ? { diagnosis: record.diagnosis } : {}) };
+}
+function acknowledgedReceipt(store: OperationalStore, ack: ControlAcknowledgment): void {
+  const receipt = store.readJsonArtifact<{ changeId: string; activation: { id: string; status: string; submissionId?: string; stageId?: string } }>(ack.receipt);
+  invariant(receipt.changeId === ack.request.proposalId && receipt.activation.id === ack.request.id && receipt.activation.submissionId === ack.request.submissionId && receipt.activation.stageId === ack.request.stageId &&
+    ['pending', 'freezing', 'interviewing', 'activating', 'reviewing', 'accepted', 'rejected', 'uncertain'].includes(receipt.activation.status), 'Exact local control acknowledgment required');
 }
 /** Host-only requestControlActivation has no tool acknowledgment. An ordinary producer must
  * finish both its exact effect and receiver accounting before physical authority withdrawal. */
 export function controlActivationAcknowledgmentPending(store: OperationalStore, request: ControlActivationRequest): boolean {
-  return store.list<ControlAcknowledgment>(acknowledgments).some(row => {
+  const retained = store.list<ControlAcknowledgment>(acknowledgments);
+  if (request.skinShed && !retained.some(row => row.key === request.skinShed!.effectId && row.value.effectId === request.skinShed!.effectId && identity(row.value.request) === identity(request))) return true;
+  return retained.some(row => {
     const ack = row.value;
     if (ack.request.id !== request.id) return false;
     if (identity(ack.request) !== identity(request)) return true;
     // A settled tool can precede the producer's final checkpoint. Let the current slice
     // finish before reserving its remaining single slot or withdrawing its grant.
     if (store.get<Run>('runs', request.runId)?.value.status === 'running') return true;
+    if (request.skinShed && (ack.effectId !== request.skinShed.effectId || identity(ack.authority) !== identity(request.authority))) return true;
     const effect = store.get<Effect>('effects', ack.effectId)?.value;
     const physical = effect?.reservationId ? store.get<{ request: PhysicalRequest }>('requests', effect.reservationId)?.value.request : undefined;
     try {
-      return !effect || effect.status !== 'succeeded' || !effect.receipt || effect.kind !== 'control_activate' || effect.runId !== request.runId ||
+      acknowledgedReceipt(store, ack);
+      return !effect || effect.status !== 'succeeded' || !effect.receipt || effect.kind !== (request.skinShed ? 'skin_shed' : 'control_activate') || effect.runId !== request.runId ||
         identity(effect.payload) !== identity(ack.payload) || identity(effect.scope) !== identity(request.scope) || identity(effect.authority) !== identity(ack.authority) ||
         identity(store.readJsonArtifact(effect.receipt)) !== identity(store.readJsonArtifact(ack.receipt)) || !physical || physical.status !== 'succeeded' ||
         physical.id !== effect.id || physical.reservationId !== effect.reservationId || physical.runId !== effect.runId || physical.provider !== 'effect-receiver' ||
@@ -58,8 +69,9 @@ export function controlActivationAcknowledgmentPending(store: OperationalStore, 
     } catch { return true; }
   });
 }
-export function controlTools(context: EvolutionContext, assertAuthority: (authority: Authority) => void): ApplicationTool[] {
+export function controlTools(context: EvolutionContext, assertAuthority: (authority: Authority) => void, skinShed?: { incumbentCandidateId: string; policyDigest: string }): ApplicationTool[] {
   const bound = { ...context, scope: structuredClone(context.scope), authority: structuredClone(context.authority) };
+  skinShed = skinShed && { ...skinShed };
   const proposals = new ChangeProposals(bound.store, bound.runId, bound.scope);
   const argsId = (args: JsonValue) => {
     invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).join(',') === 'changeId' && typeof args.changeId === 'string' && args.changeId.length > 0 && args.changeId.length <= 256, 'Exact bounded changeId required'); return args.changeId;
@@ -69,6 +81,7 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
   const schema = { type: 'object', properties: { changeId: { type: 'string' } }, required: ['changeId'], additionalProperties: false };
   return [{ name: 'control_activate', description: 'Durably request activation of this run’s exact staged ordinary or control proposal and immediately acknowledge its pending host continuation. Activation and fresh probation remain independently judged by the original accepted policy. Inspect control_status for the result.', inputSchema: schema,
     execute(args, signal) {
+      let committing = false;
       try { allowed(signal); const changeId = argsId(args); invariant(bound.effectId, 'Ordinary activation requires its host tool effect identity');
         return bound.store.transaction(() => {
           allowed(signal); const proposal = proposals.get(changeId); invariant(identity(proposal.scope) === identity(bound.scope) && proposal.submission, 'Own scoped staged submission required');
@@ -80,6 +93,7 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
           const previous = controlActivationStatus(bound.store, request.id, bound.runId, bound.scope);
           invariant(!previous || identity(previous.request) === identity(request), 'Changed control activation identity');
           if (!previous) invariant(identity(request.authority) === identity(bound.authority), 'Original staged authority required before activation');
+          committing = true;
           const record = previous ?? enqueueControlActivation(bound.store, request, signal);
           const value = { changeId, activation: publicStatus(record) }, row = bound.store.get<ControlWatch>(watches, request.id);
           invariant(!row || identity(row.value.request) === identity(request), 'Control author watch identity changed');
@@ -90,7 +104,7 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
           if (!old) bound.store.put(acknowledgments, bound.effectId!, ack, null);
           return value;
         });
-      } catch (cause) { throw Object.assign(Error(`Control activation enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid binding'}`, { cause }), { mayHaveApplied: false }); }
+      } catch (cause) { throw Object.assign(Error(`Control activation enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid binding'}`, { cause }), !committing && cause instanceof ContractError ? { mayHaveApplied: false } : {}); }
     },
   }, { name: 'control_status', description: 'Inspect this run’s exact staged activation and original-policy probation outcome. Uncertain work requires explicit reconciliation and is never retried by this read.', inputSchema: schema,
     execute(args, signal) {
@@ -98,12 +112,46 @@ export function controlTools(context: EvolutionContext, assertAuthority: (author
       invariant(identity(proposal.scope) === identity(bound.scope), 'Own exact audience required');
       const id = controlActivationId(bound.runId, changeId), record = controlActivationStatus(bound.store, id, bound.runId, bound.scope);
       if (!record) return { changeId, activation: null };
-      resolveSubmission(bound.store, record.request);
+      if (!record.request.skinShed || record.status === 'accepted') resolveSubmission(bound.store, record.request);
       if (['accepted', 'rejected', 'uncertain'].includes(record.status)) {
         const watch = bound.store.get<ControlWatch>(watches, id);
         if (watch && watch.value.status !== 'reconciled') bound.store.put(watches, id, { ...watch.value, status: 'reconciled' }, watch.revision);
       }
       return { changeId, activation: publicStatus(record) };
+    },
+  }, { name: 'skin_shed', description: 'Begin one supervised succession for this run’s proposal, then yield. The existing supervisor freezes and independently reviews it, mediates the incumbent/successor interview, and controls cutover, observation and probation. Repeating this changeId reads the retained outcome; uncertain work is never replayed.', inputSchema: schema,
+    execute(args, signal) {
+      let committing = false;
+      try {
+        allowed(signal); const changeId = argsId(args);
+        return bound.store.transaction(() => {
+          allowed(signal); const proposal = proposals.get(changeId), id = controlActivationId(bound.runId, changeId);
+          invariant(identity(proposal.scope) === identity(bound.scope), 'Own exact audience required');
+          const previous = controlActivationStatus(bound.store, id, bound.runId, bound.scope);
+          if (previous) {
+            invariant(previous.request.skinShed && identity(previous.request.authority) === identity(proposal.authority), 'Existing control request is not this retained skin shed');
+            if (['accepted', 'rejected', 'uncertain'].includes(previous.status)) {
+              const watch = bound.store.get<ControlWatch>(watches, id);
+              if (watch && watch.value.status !== 'reconciled') { committing = true; bound.store.put(watches, id, { ...watch.value, status: 'reconciled' }, watch.revision); }
+            }
+            return { changeId, activation: publicStatus(previous) };
+          }
+          const effectId = bound.effectId;
+          invariant(effectId && effectId.startsWith('tool:') && bound.workspace && skinShed &&
+            /^[a-f0-9]{64}$/.test(skinShed.incumbentCandidateId) && /^[a-f0-9]{64}$/.test(skinShed.policyDigest), 'Skin shed requires its exact host effect, workspace, incumbent and policy');
+          invariant(identity(proposal.authority) === identity(bound.authority) &&
+            (!proposal.judgingPolicyDigest || proposal.judgingPolicyDigest === skinShed.policyDigest), 'Original proposal authority and judging policy required');
+          const request: ControlActivationRequest = { id, proposalId: changeId, runId: bound.runId, scope: structuredClone(bound.scope), authority: structuredClone(proposal.authority),
+            skinShed: { effectId, workspace: bound.workspace, incumbentCandidateId: skinShed.incumbentCandidateId, policyDigest: skinShed.policyDigest } };
+          committing = true;
+          const record = enqueueControlActivation(bound.store, request, signal), value = { changeId, activation: publicStatus(record) };
+          bound.store.put(watches, id, { request, status: 'waiting' }, null);
+          const ack: ControlAcknowledgment = { effectId, request, authority: structuredClone(bound.authority), payload: structuredClone(args), receipt: bound.store.putJsonArtifact(value) };
+          bound.store.put(acknowledgments, effectId, ack, null);
+          return value;
+        });
+      } catch (cause) { throw Object.assign(Error(`Skin shed enqueue rejected: ${cause instanceof Error ? cause.message : 'invalid binding'}`, { cause }),
+        !committing && cause instanceof ContractError ? { mayHaveApplied: false } : {}); }
     },
   }];
 }
@@ -118,8 +166,14 @@ export class ControlAuthorContinuations {
   }
   #waiting(runId?: string): ControlWatch[] { return this.store.list<ControlWatch>(watches).map(row => row.value).filter(value => value.status === 'waiting' && (!runId || value.request.runId === runId)); }
   holds(runId: string): boolean { return this.#waiting(runId).length > 0; }
+  draining(): boolean {
+    return this.store.list<ControlContinuationRecord>('host.control-continuations').some(({ value: record }) =>
+      ['activating', 'reviewing'].includes(record.status) || record.request.skinShed && record.status === 'pending' && this.store.get<{ phase: string }>('host.succession-dialogues', record.request.id)?.value.phase === 'approved');
+  }
   eligibleRun(runId: string, hasSteering: boolean): boolean {
+    if (this.draining()) return false;
     const watched = this.#waiting(runId); if (!watched.length) return true;
+    if (watched.some(watch => watch.request.skinShed)) return false;
     if (watched.some(watch => ['activating', 'reviewing'].includes(controlActivationStatus(this.store, watch.request.id, runId, watch.request.scope)?.status ?? 'pending'))) return false;
     return hasSteering;
   }
@@ -141,16 +195,15 @@ export class ControlAuthorContinuations {
       try { this.authorityStore.dispatch(authority, () => this.store.transaction(() => {
         const effect = this.runtime.effects.get(ack.effectId);
         if (!effect || !['uncertain', 'succeeded'].includes(effect.status)) return;
-        invariant(effect.id.startsWith('tool:') && effect.kind === 'control_activate' && effect.runId === ack.request.runId &&
+        invariant(effect.id.startsWith('tool:') && effect.kind === (ack.request.skinShed ? 'skin_shed' : 'control_activate') && effect.runId === ack.request.runId &&
           identity(effect.payload) === identity(ack.payload) && identity(effect.scope) === identity(ack.request.scope) && identity(effect.authority) === identity(ack.authority) &&
           ack.payload && typeof ack.payload === 'object' && !Array.isArray(ack.payload) && ack.payload.changeId === ack.request.proposalId, 'Local control effect binding mismatch');
         const record = controlActivationStatus(this.store, ack.request.id, ack.request.runId, ack.request.scope);
         invariant(record && identity(record.request) === identity(ack.request), 'Committed exact local control request required');
-        resolveSubmission(this.store, ack.request);
-        const receipt = this.store.readJsonArtifact<{ changeId: string; activation: { id: string; status: string; submissionId: string; stageId: string } }>(ack.receipt);
-        invariant(receipt.changeId === ack.request.proposalId && receipt.activation.id === ack.request.id && receipt.activation.submissionId === ack.request.submissionId && receipt.activation.stageId === ack.request.stageId &&
-          ['pending', 'activating', 'reviewing', 'accepted', 'rejected', 'uncertain'].includes(receipt.activation.status), 'Exact local control acknowledgment required');
-        if (effect.status === 'succeeded') invariant(effect.receipt && identity(this.store.readJsonArtifact(effect.receipt)) === identity(receipt), 'Succeeded control effect receipt changed');
+        if (ack.request.skinShed) invariant(ack.effectId === ack.request.skinShed.effectId && identity(ack.authority) === identity(ack.request.authority), 'Exact original skin shed acknowledgment required');
+        else resolveSubmission(this.store, ack.request);
+        acknowledgedReceipt(this.store, ack);
+        if (effect.status === 'succeeded') invariant(effect.receipt && identity(this.store.readJsonArtifact(effect.receipt)) === identity(this.store.readJsonArtifact(ack.receipt)), 'Succeeded control effect receipt changed');
         const reservation = this.store.get<{ request: PhysicalRequest; ceiling: { elapsedMs: number }; charged: { elapsedMs: number } }>('requests', effect.reservationId!)?.value;
         if (effect.status === 'succeeded' && reservation?.request.status === 'succeeded') return;
         invariant(reservation && reservation.request.id === effect.id && reservation.request.reservationId === effect.reservationId && reservation.request.purpose === 'reasoning' &&
@@ -178,10 +231,20 @@ export class ControlAuthorContinuations {
         const current = this.runtime.getRun(run.id)!;
         invariant(!['completed', 'cancelled', 'running'].includes(current.status) && identity(current.scope) === identity(watch.request.scope) && identity(current.authority) === identity(run.authority), 'Original current author required');
         const record = controlActivationStatus(this.store, watch.request.id, run.id, watch.request.scope);
-        if (!record || !['accepted', 'rejected'].includes(record.status) || this.runtime.effects.unresolved(run.id).length) return;
+        if (!record || !(watch.request.skinShed ? ['accepted', 'rejected', 'uncertain'] : ['accepted', 'rejected']).includes(record.status) || this.runtime.effects.unresolved(run.id).length) return;
         invariant(identity(record.request) === identity(watch.request), 'Control author watch binding changed');
-        const submission = resolveSubmission(this.store, watch.request);
-        assertReviewLineage(this.store, submission, this.resourceOptions.now, current.authority, this.resourceOptions.resourceLedger);
+        const proposal = new ChangeProposals(this.store, watch.request.runId, watch.request.scope).get(watch.request.proposalId);
+        invariant(identity(proposal.authority) === identity(watch.request.authority) && identity(proposal.scope) === identity(watch.request.scope), 'Original scoped proposal required');
+        if (!watch.request.skinShed || record.status === 'accepted') {
+          const submission = resolveSubmission(this.store, watch.request);
+          if (watch.request.skinShed) {
+            invariant(record.review && record.proofId === record.review.id && record.probationProof, 'Accepted skin shed requires its actual probation proof');
+            const proof = this.store.readJsonArtifact<{ proposal: { id: string; candidate: unknown; priorAuthority: Authority } }>(record.probationProof);
+            invariant(proof.proposal.id === record.review.id && identity(proof.proposal.candidate) === identity(submission.candidate.manifest) &&
+              identity(proof.proposal.priorAuthority) === identity(watch.request.authority), 'Accepted skin shed probation proof differs from its original stage');
+          }
+          assertReviewLineage(this.store, submission, this.resourceOptions.now, current.authority, this.resourceOptions.resourceLedger);
+        } else assertReviewLineage(this.store, { proposal }, this.resourceOptions.now, current.authority, this.resourceOptions.resourceLedger);
         const execution = this.store.list<{ runId: string }>('initiative.execution').find(row => row.value.runId === run.id);
         if (execution) {
           const goal = this.goals.goal(execution.key);
@@ -194,7 +257,7 @@ export class ControlAuthorContinuations {
         this.runtime.steer(run.id, { id: `control-result:${watch.request.id}`, source: 'host.control', externalId: watch.request.id, externalRevision: '1',
           actorId: current.authority.generation, authenticated: true, scope: watch.request.scope,
           value: { event: 'control-outcome', changeId: watch.request.proposalId, activationId: watch.request.id, status: record.status,
-            instruction: 'Inspect control_status for this exact host outcome and decide the next step under the current grant and original remaining allowance.' } });
+            instruction: watch.request.skinShed ? 'Read skin_shed with this changeId for the exact retained outcome. Uncertain work requires reconciliation; this notification did not retry or settle it.' : 'Inspect control_status for this exact host outcome and decide the next step under the current grant and original remaining allowance.' } });
         this.store.put(watches, watch.request.id, { ...row.value, status: 'notified' }, row.revision); resumed.push(run.id);
       })); } catch { /* Cancelled, expired and unbound authors remain inspectable without automatic work. */ }
     }

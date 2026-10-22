@@ -2,15 +2,15 @@ import { canonicalJson, identity, invariant, validateArtifact, validateEvaluatio
 import type { ReleaseProof } from '../packages/release/controller.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import type { OperationalStore } from '../packages/storage/index.ts';
-import { evolutionTools, type EvolutionContext, type EvaluationRequest, type EvaluationReceipt, type EvaluationState, type SubmissionRequest, type SubmissionReceipt } from './evolution-tools.ts';
+import { evolutionBackend, evolutionTools, type EvolutionOptions, type EvolutionContext, type EvaluationRequest, type EvaluationReceipt, type EvaluationState, type SubmissionRequest, type SubmissionReceipt } from './evolution-tools.ts';
 import type { ApplicationConfig } from './config.ts';
 import type { ApplicationTool } from './application.ts';
 import { proposalProvenance } from './proposal-origin.ts';
 import { sourceWorkspaceTools } from './source-workspace.ts';
 import type { EvolutionMetadata } from './service-process.ts';
 import { maxRuntimeBytes } from './runtime-bundle.ts';
-import { controlTools } from './control-tools.ts';
 import { rescueRotationTools } from './rescue-rotation.ts';
+import { controlTools } from './control-tools.ts';
 
 const namespace = 'host.evolution-jobs';
 type Request = EvaluationRequest | SubmissionRequest;
@@ -105,7 +105,7 @@ export class EvolutionMailbox {
     return { ...binding, status: job.status, ...(diagnosis ? { diagnosis } : {}) };
   };
   requestEvaluation = async (request: EvaluationRequest, signal?: AbortSignal): Promise<EvaluationReceipt> => this.wait<EvaluationReceipt>(this.enqueue('evaluation', request), signal);
-  submitRelease = async (request: SubmissionRequest, signal?: AbortSignal): Promise<SubmissionReceipt> => {
+  enqueueSubmission = (request: SubmissionRequest): EvolutionJob => {
     const evaluated = this.status(request.evaluation.requestId);
     invariant(evaluated?.kind === 'evaluation' && evaluated.status === 'completed' && evaluated.proof &&
       identity(this.store.readJsonArtifact(evaluated.receipt!)) === identity(request.evaluation) &&
@@ -113,8 +113,10 @@ export class EvolutionMailbox {
       identity(evaluated.authority) === identity(request.proposal.authority), 'Submission requires the exact externally completed evaluation job');
     const evaluatedRequest = this.request(evaluated.id) as EvaluationRequest;
     invariant(identity(evaluatedRequest.proposal) === identity(request.proposal) && identity(evaluatedRequest.candidate) === identity(request.candidate), 'Submission differs from the externally evaluated proposal');
-    return this.wait<SubmissionReceipt>(this.enqueue('submission', request), signal);
+    return this.enqueue('submission', request);
   };
+  submitRelease = async (request: SubmissionRequest, signal?: AbortSignal): Promise<SubmissionReceipt> => this.wait<SubmissionReceipt>(this.enqueueSubmission(request), signal);
+
   private update(id: string, patch: Partial<EvolutionJob>): EvolutionJob {
     const row = this.store.get<EvolutionJob>(namespace, id); invariant(row, 'Unknown evolution job');
     const job = { ...row.value, ...patch }; this.store.put(namespace, id, job, row.revision); return job;
@@ -192,11 +194,20 @@ export class EvolutionMailbox {
 export function ordinaryServiceTools(context: EvolutionContext, host: { config: ApplicationConfig; artifactStore: string; evolution?: EvolutionMetadata; assertAuthority(authority: Authority): void }): ApplicationTool[] {
   const { config } = host;
   const source = sourceWorkspaceTools({ applicationRoot: config.applicationRoot, workspace: context.workspace, protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, maxFiles: 10000, maxBytes: 50_000_000, timeoutMs: 30000, resourceLimits: config.resourceLimits });
-  if (!host.evolution) return [...source, ...['model_profiles', 'governance_profile', 'change_propose', 'candidate_freeze', 'candidate_evaluate', 'release_submit', 'change_status', 'control_activate', 'control_status', 'rescue_rotate', 'rescue_status'].map(name => ({ name, description: 'Evolution is unavailable because this engineering startup has no accepted judging policy metadata.', inputSchema: { type: 'object' }, execute() { throw new Error('Evolution unavailable: host startup omitted accepted judging policy metadata'); } }))];
+  if (!host.evolution) return [...source, ...['model_profiles', 'governance_profile', 'change_propose', 'skin_shed', 'change_status', 'rescue_rotate', 'rescue_status'].map(name => ({ name, description: 'Evolution is unavailable because this engineering startup has no accepted judging policy metadata.', inputSchema: { type: 'object' }, execute() { throw new Error('Evolution unavailable: host startup omitted accepted judging policy metadata'); } }))];
+  return [...source, ...evolutionTools(context, ordinaryEvolutionOptions(context, host)).filter(tool => !['candidate_freeze', 'candidate_evaluate', 'release_submit'].includes(tool.name)),
+    ...controlTools(context, host.assertAuthority, { incumbentCandidateId: config.artifactId, policyDigest: host.evolution.policyDigest }).filter(tool => tool.name === 'skin_shed'),
+    ...rescueRotationTools(context, { candidateId: config.artifactId, policyDigest: host.evolution.policyDigest, assertAuthority: host.assertAuthority })];
+}
+
+export function ordinaryEvolutionOptions(context: EvolutionContext, host: { config: ApplicationConfig; artifactStore: string; evolution?: EvolutionMetadata; assertAuthority(authority: Authority): void }): EvolutionOptions {
+  invariant(host.evolution, 'Accepted evolution policy required'); const { config } = host;
   const mailbox = new EvolutionMailbox({ store: context.store, assertAuthority: host.assertAuthority });
-  return [...source, ...evolutionTools(context, { artifactStore: host.artifactStore, acceptedCandidateId: config.artifactId, nodeBinary: config.nodeBinary, policyDigest: host.evolution.policyDigest,
+  return { artifactStore: host.artifactStore, acceptedCandidateId: config.artifactId, nodeBinary: config.nodeBinary, policyDigest: host.evolution.policyDigest,
     maxFiles: 20000, maxBytes: 128 * 1024 * 1024, runtimeMaxBytes: maxRuntimeBytes, eligibleHumanAuthors: new Set([...(config.direct.modificationEligible ? [config.direct.actorId] : []), ...(config.slack?.eligibleHumanIds.map(id => `slack:${config.slack!.teamId}:${id}`) ?? [])]),
     allowedModelProfiles: host.evolution.allowedModelProfiles, reviewer: host.evolution.reviewer, assertAuthority: host.assertAuthority, provenanceForRun: proposalProvenance,
-    enqueueEvaluation: mailbox.enqueueEvaluation, readEvaluation: mailbox.readEvaluation, submitRelease: mailbox.submitRelease }), ...controlTools(context, host.assertAuthority),
-    ...rescueRotationTools(context, { candidateId: config.artifactId, policyDigest: host.evolution.policyDigest, assertAuthority: host.assertAuthority })];
+    enqueueEvaluation: mailbox.enqueueEvaluation, readEvaluation: mailbox.readEvaluation, submitRelease: mailbox.submitRelease };
+}
+export function ordinaryEvolutionBackend(context: EvolutionContext, host: Parameters<typeof ordinaryEvolutionOptions>[1]) {
+  return evolutionBackend(context, ordinaryEvolutionOptions(context, host));
 }

@@ -4,26 +4,35 @@ import type { CodingSource } from './coding-limb.ts';
 
 interface SourceRecord { state: 'preparing' | 'ready' | 'uncertain'; source?: CodingSource; receipt?: CodingSource['receipt'] }
 interface CodingSourcesOptions { store: OperationalStore; snapshot(workspace: string, path: string, signal?: AbortSignal, timeoutMs?: number): Promise<JsonValue> }
-/** Preparation is trusted host work; the mind never receives a filesystem capability. */
+const sourcePath = 'source';
+const sourceKey = (workspace: string) => identity({ workspace, path: sourcePath });
+/** Seed one editable repository. A new accepted image never replaces its branches or dirty work. */
 export class CodingSources {
   private readonly options: CodingSourcesOptions;
   private readonly active = new Map<string, Promise<CodingSource>>();
-  constructor(options: CodingSourcesOptions) { this.options = options; }
+  constructor(options: CodingSourcesOptions) { this.options = { store: options.store, snapshot: options.snapshot }; }
+  private current(source: CodingSource, acceptedCandidateId: string): CodingSource {
+    invariant(/^[a-f0-9]{64}$/.test(acceptedCandidateId), 'Accepted source candidate identity required');
+    invariant(source.path === sourcePath && /^[a-f0-9]{64}$/.test(source.candidateId), 'Persistent source repository binding changed');
+    return { ...structuredClone(source), acceptedCandidateId };
+  }
   prepared(workspace: string, candidateId: string): CodingSource | undefined {
-    const record = this.options.store.get<SourceRecord>('host.coding-sources', identity({ workspace, candidateId }))?.value;
+    invariant(/^[a-f0-9]{64}$/.test(candidateId), 'Accepted source candidate identity required');
+    const record = this.options.store.get<SourceRecord>('host.coding-sources', sourceKey(workspace))?.value;
     invariant(!record || record.state === 'ready', 'Partial coding source preparation requires host inspection; no overwrite or automatic retry');
-    return record?.source ? structuredClone(record.source) : undefined;
+    return record?.source ? this.current(record.source, candidateId) : undefined;
   }
   async prepare(workspace: string, candidateId: string, signal?: AbortSignal, timeoutMs?: number): Promise<CodingSource> {
     invariant(/^[a-f0-9]{64}$/.test(candidateId), 'Accepted source candidate identity required');
-    const key = identity({ workspace, candidateId });
-    const active = this.active.get(key); if (active) return active;
+    signal?.throwIfAborted();
+    const key = sourceKey(workspace);
+    const active = this.active.get(key); if (active) return this.current(await active, candidateId);
     invariant(timeoutMs === undefined || Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30000, 'Finite source preparation timeout required');
     const task = this.prepareOnce(workspace, candidateId, signal, timeoutMs); this.active.set(key, task);
-    try { return await task; } finally { this.active.delete(key); }
+    try { return this.current(await task, candidateId); } finally { this.active.delete(key); }
   }
   private async prepareOnce(workspace: string, candidateId: string, signal?: AbortSignal, timeoutMs?: number): Promise<CodingSource> {
-    const key = identity({ workspace, candidateId }), path = `repositories/${candidateId}`;
+    const key = sourceKey(workspace), path = sourcePath;
     const existing = this.options.store.get<SourceRecord>('host.coding-sources', key)?.value;
     if (existing?.state === 'ready') return structuredClone(existing.source!);
     invariant(!existing, 'Partial coding source preparation requires host inspection; no overwrite or automatic retry');

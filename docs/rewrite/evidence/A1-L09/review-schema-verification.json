@@ -1,0 +1,177 @@
+{
+  "qualification": "Operator-run exact outgoing-review schema regression and existing error/accounting checks, plus separately accounted actual Mistral transport compatibility. Neither the probe nor its refuse text is an admission/source-correctness decision; adoption still requires prior accepted review and fresh probation.",
+  "sourceSha256": {
+    "deployment/engineering-review.ts": "100a146eeab7163914353897a4ed42da1cb6f594f90f1cbc4f48218431bbfff5",
+    "deployment/engineering-review.test.ts": "709a0c198810da5d527c787a0871fb0fa2eea38b8be3ede75510efc36591929e"
+  },
+  "testEvidence": {
+    "scope": "Outgoing strict engineering review response envelope regression through actual runEngineeringReview pipeline; no live inference qualification",
+    "ownedFile": "deployment/engineering-review.test.ts",
+    "testSHA256": "709a0c198810da5d527c787a0871fb0fa2eea38b8be3ede75510efc36591929e",
+    "sourceSHA256": "100a146eeab7163914353897a4ed42da1cb6f594f90f1cbc4f48218431bbfff5",
+    "command": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --test deployment/engineering-review.test.ts",
+    "red": {
+      "tests": 22,
+      "pass": 20,
+      "fail": 2,
+      "skipped": 0,
+      "durationMs": 144985.444467
+    },
+    "redFailure": "New outgoing contract assertion: Outgoing review request must include response_format before provider dispatch. Enclosing parent failed too; all20 preexisting subcases passed.",
+    "green": {
+      "tests": 22,
+      "pass": 22,
+      "fail": 0,
+      "skipped": 0,
+      "durationMs": 139758.659494
+    },
+    "strict": {
+      "command": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    "diffCheckExit": 0,
+    "contract": [
+      "Raw response_format.type json_schema; json_schema.name engineering_source_verdict and strict true.",
+      "Raw schema property is schema, not SDK schema_definition or schemaDefinition aliases.",
+      "Exactly six required review fields, no additional properties; host request/candidate/policy IDs are single-value string enums.",
+      "Pass/fail/refuse remain expressible; real JSON Schema validator rejects shortened/foreign/missing bindings, wrong verdict/types and extra fields.",
+      "Payload retained bytes and physical request digest include the exact outgoing schema; existing local wrong-ID/error/accounting cases remain unchanged."
+    ],
+    "officialReferencesReadOffline": [
+      {
+        "path": "/home/palimpsest/migration/skin-shed-20261021/mistral-official-structured-example.py",
+        "sha256": "db33e4ae844eafae890ea1b4055ee72c32644ae3333256eba711e15947ce7158"
+      },
+      {
+        "path": "/home/palimpsest/migration/skin-shed-20261021/mistral-official-jsonschema.ts",
+        "sha256": "2e17ff7324843721d3eee47ed8ec8d6ce9c88aa472856d351496f5cc8c62b3f8"
+      }
+    ],
+    "limitations": [
+      "Only test file edited by this author; root owns production formatter/payload change.",
+      "No network/provider/model/Slack/live calls by this author; fixture model responses and real local compiler engineering checks only.",
+      "Root separately owns accounted actual API schema acceptance probe; its result is not inferred from these tests."
+    ]
+  },
+  "stdout": "(node:286768) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n▶ independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls\n  ✔ raw model request strictly constrains the exact review envelope without changing verdict choices or local accounting (2690.73586ms)\n  ✔ real sibling compiler and fresh independent model produce admissible signed evidence (5591.754329ms)\n  ✔ known independent fail remains signed feedback (2695.903766ms)\n  ✔ known independent refuse remains signed feedback (2754.649354ms)\n  ✔ failed compiler yields known failure and never requests model judgment (2556.138651ms)\n  ✔ oversized exact source refuses without truncation or model request (2650.894137ms)\n  ✔ binding never signs or automatically retries model evidence (2392.441011ms)\n  ✔ http never signs or automatically retries model evidence (2384.445022ms)\n  ✔ malformed never signs or automatically retries model evidence (2459.48434ms)\n  ✔ transport never signs or automatically retries model evidence (2510.845369ms)\n  ✔ cancelled never signs or automatically retries model evidence (2750.103007ms)\n  ✔ another required policy case is refused before physical work (525.760201ms)\n  ✔ mutable or wrong execution controls fail before command, provider request or signing (521.232556ms)\n  ✔ changed sealed plan, key and authority cannot use a previously admitted reviewer (3776.283233ms)\n  ✔ exact configuration-only change is independently reviewed without fabricating a source edit (4137.669939ms)\n  ✔ exact prompts-only change is independently reviewed without fabricating a source edit (4276.776511ms)\n  ✔ createdBy-only candidates remain empty changes and never request an independent model (4089.785333ms)\n  ✔ recursive input changes preserve escaped keys, null presence, array length and container types (5728.698955ms)\n  ✔ deployment input bytes consume the same finite diff allowance without truncation (4021.824897ms)\n  ✔ combined executable metadata and prompt changes are both supplied exactly (6202.832987ms)\n  ✔ two exact frozen accepted host generations inherit one unchanged sealed plan and the successor reviews a later change (69751.488192ms)\n✔ independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls (139185.567554ms)\nℹ tests 22\nℹ suites 0\nℹ pass 22\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 139758.659494\n",
+  "liveTransportProbe": {
+    "qualification": "Actual Mistral transport-schema probe only, no source-review/admission/H1 claim. Pure new formatter; all ledger/gateway/authority APIs imported from accepted image.",
+    "formatterSha256": "100a146eeab7163914353897a4ed42da1cb6f594f90f1cbc4f48218431bbfff5",
+    "acceptedId": "d70474085d8d0a68c3711e295604125e7e2d9b5b8803d4d8591be54103b63aca",
+    "physical": {
+      "id": "review-schema-transport-probe-20261021-v2",
+      "model": "mistral-large-4-0",
+      "promptManifestId": "review-schema-transport-probe-20261021-v2",
+      "provider": "mistral",
+      "purpose": "review",
+      "requestDigest": "79c678e046151cc2eef9fe3b26084116fb807da6edaccc6a26c8e1f24b8c7c08",
+      "reservationId": "review-schema-transport-probe-20261021-v2",
+      "runId": "run:752e92dc804cee54bdb0c82e0cb2d915d690151da416b20189ca94293df586ba",
+      "status": "succeeded",
+      "usage": {
+        "costUsd": 0.00096006,
+        "elapsedMs": 2794,
+        "inputTokens": 291,
+        "outputTokens": 135,
+        "requests": 1
+      }
+    },
+    "request": {
+      "model": "mistral-large-4-0",
+      "reasoning_effort": "none",
+      "max_tokens": 512,
+      "temperature": 0,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "engineering_source_verdict",
+          "strict": true,
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "enum": [
+                  "review-schema-transport-probe-20261021-v2"
+                ]
+              },
+              "candidateId": {
+                "type": "string",
+                "enum": [
+                  "d70474085d8d0a68c3711e295604125e7e2d9b5b8803d4d8591be54103b63aca"
+                ]
+              },
+              "policyDigest": {
+                "type": "string",
+                "enum": [
+                  "d62668721dbcb6bc446870dc49a63d298e741fe3b70e9263b9dc32695ec95c3f"
+                ]
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail",
+                  "refuse"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "requestId",
+              "candidateId",
+              "policyDigest",
+              "verdict",
+              "reason",
+              "findings"
+            ]
+          }
+        }
+      },
+      "messages": [
+        {
+          "role": "system",
+          "content": "This is only a structured-output transport compatibility probe, not a source review or admission. Return verdict refuse, reason schema-probe-only, findings empty. Obey the supplied schema identities."
+        },
+        {
+          "role": "user",
+          "content": "Verify only the structured response envelope. No source correctness or deployment decision is requested."
+        }
+      ]
+    },
+    "httpStatus": 200,
+    "servedModel": "mistral-large-4-0",
+    "finishReason": "stop",
+    "reply": {
+      "requestId": "review-schema-transport-probe-20261021-v2",
+      "candidateId": "d70474085d8d0a68c3711e295604125e7e2d9b5b8803d4d8591be54103b63aca",
+      "policyDigest": "d62668721dbcb6bc446870dc49a63d298e741fe3b70e9263b9dc32695ec95c3f",
+      "verdict": "refuse",
+      "reason": "schema-probe-only",
+      "findings": []
+    },
+    "usage": {
+      "requests": 1,
+      "inputTokens": 291,
+      "outputTokens": 135,
+      "costUsd": 0.00096006,
+      "elapsedMs": 2794
+    },
+    "responseSha256": "022741c1e2299b7f0c14dcac612e7772922e990bbccb47f783fdd9c0a5bcc100",
+    "originalUnknownsPreserved": true,
+    "originalRootEnvelopeAndStartPreserved": true
+  },
+  "primaryDocumentation": [
+    "https://docs.mistral.ai/studio/conversations/structured-output/custom",
+    "https://github.com/mistralai/client-ts/blob/main/src/models/components/jsonschema.ts"
+  ]
+}

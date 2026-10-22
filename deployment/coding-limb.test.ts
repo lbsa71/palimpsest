@@ -337,3 +337,23 @@ test('stopped uncertainty cannot release a message queued before inspection', as
     assert.equal(calls, 1); assert.equal(current(f).status, 'cancelled');
   } finally { release(); await f.close(); }
 });
+
+test('atomic coding claim stays queued during operator activation and probation without relying on the application gate', async () => {
+  const f = fixture();
+  try {
+    await f.enqueue();
+    const requests = f.store.list('requests');
+    for (const status of ['activating', 'reviewing']) {
+      const row = f.store.get('host.control-continuations', 'operator');
+      f.store.put('host.control-continuations', 'operator', { request: { id: 'operator' }, status }, row?.revision ?? null);
+      f.limb.tick();
+      assert.equal(f.limb.busy, false);
+      assert.equal(current(f).status, 'queued');
+      assert.deepEqual(f.store.list('requests'), requests);
+    }
+    const row = f.store.get('host.control-continuations', 'operator')!;
+    f.store.put('host.control-continuations', 'operator', { request: { id: 'operator' }, status: 'accepted' }, row.revision);
+    f.limb.tick(); await settled(f.limb);
+    assert.equal(current(f).status, 'completed');
+  } finally { await f.close(); }
+});

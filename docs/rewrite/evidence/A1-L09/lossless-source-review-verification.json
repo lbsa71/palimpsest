@@ -1,0 +1,143 @@
+{
+  "qualification": "Operator-run exact physical reviewer-payload/source reconstruction and existing compiler/accounting/error fixtures; controlled provider responses. Genuine causal old-format refusal and honest oversized refusal retained. Not a live admission or autonomous Skin Shed claim.",
+  "sourceSha256": {
+    "deployment/engineering-review.ts": "bae9a0e78eab7bf71f522cb3a548ff9c1a13dbbefb36181565f271a1edf63753",
+    "deployment/engineering-review.test.ts": "6c7299c68b12c0a86a4c4b33465d7ca866a271352123e7aa20628bb8e36a4526"
+  },
+  "testEvidence": {
+    "status": "passed",
+    "scope": "Test-only outgoing engineering review packet contract; no provider/live calls or production mutations",
+    "sourceAtFinalRunStart": "bae9a0e78eab7bf71f522cb3a548ff9c1a13dbbefb36181565f271a1edf63753",
+    "testAtFinalRunStart": "6c7299c68b12c0a86a4c4b33465d7ca866a271352123e7aa20628bb8e36a4526",
+    "causalRed": {
+      "log": "engineering-lossless-red-causal.log",
+      "sha256": "24d9cfc2d2667e9e5553e9cb2a73914324e1a64b3cbcba2f3d2a7bb0492257aa",
+      "exitCode": 1,
+      "subtests": 2,
+      "passingSubtests": 1,
+      "failingSubtests": 1,
+      "cause": "Lossless duplicate source expected one model dispatch, observed zero; honest unique-source and oversized deployment-input refusal passed",
+      "productionEncoderAbsent": true,
+      "sourceSha256": "6bba01790e404a660a7efada2c0936262e8384c6f2b7e141d56f5675bcc17784",
+      "command": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 --test-reporter=tap --test-skip-pattern='^(raw model|real sibling|known independent|failed compiler|oversized exact|binding never|http never|malformed never|transport never|cancelled never|another required|mutable or|changed sealed|exact configuration|exact prompts|createdBy|recursive input|deployment input|combined executable|two exact frozen)' deployment/engineering-review.test.ts"
+    },
+    "preFinalFocusedGreen": {
+      "log": "engineering-lossless-green-focused.log",
+      "exitCode": 0,
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 45712.400278,
+      "qualification": "Before final bounded-decoder and strengthened combined-input assertions; not final-source qualification"
+    },
+    "retainedNonQualificationAttempts": [
+      {
+        "log": "engineering-lossless-red.log",
+        "reason": "Child-only test name filter selected no subtests"
+      },
+      {
+        "log": "engineering-lossless-red-only.log",
+        "reason": "Negative filter also excluded filename; selected no subtests"
+      },
+      {
+        "log": "engineering-lossless-red-isolated.log",
+        "reason": "Fixture missing docs/adr sibling; setup failures corrected before causal red"
+      },
+      {
+        "log": "engineering-lossless-red-targeted.log",
+        "reason": "Same setup failures; old tests also ran and passed"
+      },
+      {
+        "log": "engineering-lossless-green-full.log",
+        "reason": "Author intentionally terminated own worker290822 when bounded-decoder source/tests changed; incomplete, no green claim"
+      }
+    ],
+    "finalLog": "engineering-lossless-green-final.log",
+    "contract": [
+      "Only overflowing combined canonical source/input packets can factor SourceChange.after; fitting baseline shapes unchanged",
+      "Before and all input values retained exactly; after independently reconstructed from zero-based inclusive/exclusive LF-preserving ranges and literals",
+      "UTF8 BOM, mixed CRLF/LF, unterminated text, separated edits, insertion/deletion, literal new/deleted source, executable flags and hashes retained",
+      "Combined finite cap/context/actual prompt artifact and physical digest verified",
+      "Unique source, combined source plus exact uncompressed input, invalid UTF8 and NUL binary refuse without model request reservation",
+      "Malformed/prototype grammar and repeated-copy UTF8 output-byte overflow rejected"
+    ],
+    "finalRun": {
+      "command": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node --experimental-test-module-mocks --test --test-concurrency=1 deployment/engineering-review.test.ts",
+      "cwd": "/home/palimpsest/src/palimpsest",
+      "executable": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+      "executableSha256": "53fb205ae78805130177e24bcb459a69a1518c8d98f8965f31d85aae7ea840fc",
+      "nodeVersion": "v24.13.0",
+      "exitCode": 0,
+      "tests": 25,
+      "passed": 25,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "durationMs": 175183.549346,
+      "parentDurationMs": 174482.550226,
+      "unchangedParentTimeoutMs": 180000,
+      "sourceSha256": "bae9a0e78eab7bf71f522cb3a548ff9c1a13dbbefb36181565f271a1edf63753",
+      "testSha256": "6c7299c68b12c0a86a4c4b33465d7ca866a271352123e7aa20628bb8e36a4526",
+      "log": "/home/palimpsest/migration/skin-shed-20261021/engineering-lossless-green-final.log",
+      "logSha256": "b2e129facd8ad7389a8652c7da279a1863e8b1d3ae7e303cda2fe52657cfda57"
+    },
+    "strict": {
+      "command": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node node_modules/typescript/bin/tsc --noEmit",
+      "cwd": "/home/palimpsest/src/palimpsest",
+      "executable": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+      "exitCode": 0,
+      "log": "/home/palimpsest/migration/skin-shed-20261021/engineering-lossless-strict.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "unchangedAfterRun": {
+      "source": true,
+      "test": true,
+      "sourceSha256": "bae9a0e78eab7bf71f522cb3a548ff9c1a13dbbefb36181565f271a1edf63753",
+      "testSha256": "6c7299c68b12c0a86a4c4b33465d7ca866a271352123e7aa20628bb8e36a4526"
+    },
+    "diffCheck": {
+      "command": "git diff --check -- deployment/engineering-review.test.ts",
+      "exitCode": 0
+    },
+    "processInspection": {
+      "requestedAtEnd": true,
+      "observation": "Worker290906 had already exited when read-only /proc and process-child inspection ran. No matching tsc/bwrap/test process remained. Completed log shows sibling compiler6244.228793ms; output buffering during later synchronous fixture work had appeared stalled. No tracing signals or production process changes."
+    }
+  },
+  "stdout": "(node:290906) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n✔ lossless source decoder preserves exact segments and rejects malformed grammar instead of guessing source (4.479583ms)\n▶ independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls\n  ✔ lossless review source packet reconstructs separated edits with UTF-8 BOM, mixed line endings and source metadata under the unchanged shared bound (10307.648958ms)\n  ✔ lossless review source packet honestly refuses unique source and oversized deployment inputs without model dispatch (27082.214667ms)\n  ✔ raw model request strictly constrains the exact review envelope without changing verdict choices or local accounting (2683.914805ms)\n  ✔ real sibling compiler and fresh independent model produce admissible signed evidence (6244.228793ms)\n  ✔ known independent fail remains signed feedback (4588.964721ms)\n  ✔ known independent refuse remains signed feedback (2847.028031ms)\n  ✔ failed compiler yields known failure and never requests model judgment (2454.140621ms)\n  ✔ oversized exact source refuses without truncation or model request (2496.391471ms)\n  ✔ binding never signs or automatically retries model evidence (3500.455098ms)\n  ✔ http never signs or automatically retries model evidence (3832.938452ms)\n  ✔ malformed never signs or automatically retries model evidence (2701.998311ms)\n  ✔ transport never signs or automatically retries model evidence (2697.528157ms)\n  ✔ cancelled never signs or automatically retries model evidence (2490.618477ms)\n  ✔ another required policy case is refused before physical work (594.331253ms)\n  ✔ mutable or wrong execution controls fail before command, provider request or signing (908.827036ms)\n  ✔ changed sealed plan, key and authority cannot use a previously admitted reviewer (6115.549912ms)\n  ✔ exact configuration-only change is independently reviewed without fabricating a source edit (4037.10606ms)\n  ✔ exact prompts-only change is independently reviewed without fabricating a source edit (6064.508161ms)\n  ✔ createdBy-only candidates remain empty changes and never request an independent model (6012.965054ms)\n  ✔ recursive input changes preserve escaped keys, null presence, array length and container types (5709.52671ms)\n  ✔ deployment input bytes consume the same finite diff allowance without truncation (4637.869968ms)\n  ✔ combined executable metadata and prompt changes are both supplied exactly (5667.976555ms)\n  ✔ two exact frozen accepted host generations inherit one unchanged sealed plan and the successor reviews a later change (49985.597066ms)\n✔ independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls (174482.550226ms)\nℹ tests 25\nℹ suites 0\nℹ pass 25\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 175183.549346\n",
+  "causalRed": "TAP version 13\n# (node:290586) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n# (Use `node --trace-warnings ...` to show where the warning was created)\n# Subtest: independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls\n    # Subtest: lossless review source packet reconstructs separated edits with UTF-8 BOM, mixed line endings and source metadata under the unchanged shared bound\n    not ok 1 - lossless review source packet reconstructs separated edits with UTF-8 BOM, mixed line endings and source metadata under the unchanged shared bound\n      ---\n      duration_ms: 5948.760437\n      type: 'test'\n      location: '/home/palimpsest/src/palimpsest/deployment/engineering-review.test.ts:92:13'\n      failureType: 'testCodeFailure'\n      error: |-\n        Lossless factoring permits exactly one actual independent review dispatch\n        \n        0 !== 1\n        \n      code: 'ERR_ASSERTION'\n      name: 'AssertionError'\n      expected: 1\n      actual: 0\n      operator: 'strictEqual'\n      stack: |-\n        TestContext.<anonymous> (file:///home/palimpsest/src/palimpsest/deployment/engineering-review.test.ts:151:14)\n        process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n        async Test.run (node:internal/test_runner/test:1113:7)\n        async TestContext.<anonymous> (file:///home/palimpsest/src/palimpsest/deployment/engineering-review.test.ts:92:5)\n        async Test.run (node:internal/test_runner/test:1113:7)\n        async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)\n      ...\n    # Subtest: lossless review source packet honestly refuses unique source and oversized deployment inputs without model dispatch\n    ok 2 - lossless review source packet honestly refuses unique source and oversized deployment inputs without model dispatch\n      ---\n      duration_ms: 10760.005314\n      type: 'test'\n      ...\n    1..2\nnot ok 1 - independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls\n  ---\n  duration_ms: 21267.793079\n  type: 'test'\n  location: '/home/palimpsest/src/palimpsest/deployment/engineering-review.test.ts:26:1'\n  failureType: 'subtestsFailed'\n  error: '1 subtest failed'\n  code: 'ERR_TEST_FAILURE'\n  ...\n1..1\n# tests 3\n# suites 0\n# pass 1\n# fail 2\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 21789.13818\n",
+  "independentProspectiveChallenge": {
+    "qualification": "Offline pure actual-source packet computation against exact frozen C6 metadata and actual three proposed files; no freeze, compiler, provider or admission execution.",
+    "encodingSourceSha256": "bae9a0e78eab7bf71f522cb3a548ff9c1a13dbbefb36181565f271a1edf63753",
+    "extractedFunctionBlockSha256": "7e70f61325069d0c59d22f714fbe66982da5a6fc0d22b7a3ffa46e395d4781d7",
+    "baselineCandidateId": "1bf5b81867054b36cc4095287f2cc830c91c62b896330a4e30cad762341c27bc",
+    "prospectiveFiles": [
+      {
+        "path": "deployment/application.ts",
+        "sha256": "381e0c501e0dc7a9b98408ad8a1effeb0324b52d00ca710b7a3d41b144d635b4",
+        "bytes": 93918
+      },
+      {
+        "path": "deployment/evolution-mailbox.ts",
+        "sha256": "6c84177cb1896745a501169fcce025742a5c7cc2840cb39715ba42f0609d3822",
+        "bytes": 19618
+      },
+      {
+        "path": "deployment/skin-shed-application.test.ts",
+        "sha256": "fa4e684a11dfafee15d15a43d49f6552fcfed8175f283198a234103f043b3727",
+        "bytes": 22664
+      }
+    ],
+    "fullPacketBytes": 254453,
+    "losslessPacketBytes": 148251,
+    "packetDigest": "62567cb0f2fbec25830332ddf0d3b2d0cc07803201412a991b48003ef5d1ad51",
+    "allCompleteTextsAndHashesReconstructed": true,
+    "fittingExistingDFullPacketByteIdentical": true,
+    "malformedCasesRejected": 6,
+    "byteExpansionAndUnicodeBoundsRejected": true,
+    "lineEndingBOMMoveRepeatHeldoutPassed": true,
+    "additionalActualRawTestReportAllowance": 48357,
+    "liveOrAdmissionQualification": false
+  }
+}

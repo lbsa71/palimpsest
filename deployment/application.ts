@@ -36,6 +36,7 @@ import { sourceWorkspaceTools } from './source-workspace.ts';
 import { physicalRequestSliceContinuation } from '../packages/agent-shell/index.ts';
 import { SlackControlReplies, type SlackControlDiagnosis } from './slack-control-replies.ts';
 import { codingAccess } from './coding-access.ts';
+import { SuccessionProbes } from './succession-probe.ts';
 import { renderConversationInput } from './conversation-input.ts';
 import type { HostResourceLedgerFactory } from './host-resources.ts';
 
@@ -78,6 +79,7 @@ export class AutarkApplication {
   readonly prompt: PromptManifest;
   readonly evolution: EvolutionContinuations;
   readonly controls: ControlAuthorContinuations;
+  readonly successionProbes: SuccessionProbes;
   readonly directApi: ReturnType<typeof createDirectApi>;
   readonly slackIngress?: SlackIngress; readonly slackRecovery?: SlackRecovery; readonly slackSocket?: SlackSocketMode;
   readonly slackActivity?: SlackActivity;
@@ -266,7 +268,7 @@ export class AutarkApplication {
         protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary, resourceLimits: config.resourceLimits,
         worker: { provider: config.model.provider ?? 'mistral', model: config.model.id, modelProfile: { contextWindow: config.model.contextWindow, reasoning: config.model.reasoning }, ...(config.model.reasoning ? { reasoningEffort: config.model.effort } : {}),
           maxOutputTokens: config.model.maxOutputTokens, maxRequests: config.model.maxRequestsPerSlice, maxRetries: 0, timeoutMs: config.model.timeoutMs, tools,
-          finishAfterSuccessfulTools: !codingRun && tools.some(tool => tool.name === 'develop') ? ['develop'] : [],
+          finishAfterSuccessfulTools: !codingRun ? ['develop', 'skin_shed', 'succession_probe_reply'].filter(name => tools.some(tool => tool.name === name)) : [],
           compaction: { ...contextBudget(config), instruction: { id: 'application.compaction', owner: 'application', role: 'system', order: 1, artifact: compaction, scope: { kind: 'public' }, replaceable: true, derivedFrom: [base.sha256] } } },
         timeoutMs: codingRun ? codingTimeout : Math.min(config.conversationResources.maxElapsedMs, record.target && config.conversationTimeoutMs ? config.conversationTimeoutMs : config.scheduler.quantumMs), maxPayloadBytes: 2_000_000, maxResponseBytes: developmentAccounting?.maxResponseBytes, pricesPerMillion: config.model.pricesPerMillion,
         resolveFragment: async fragment => Buffer.from(this.store.readArtifact(fragment.artifact)).toString('utf8'),
@@ -277,7 +279,7 @@ export class AutarkApplication {
         beforeRequest: developmentAccounting ? id => developmentAccounting.assertEntry(id) : undefined,
         onTransportFinished: requestId => this.resources.releaseConcurrency(requestId, { kind: 'transport-terminal', reason: 'Host provider transport completed or aborted and local settlement finished' }),
         recordTransport: receipt => { developmentAccounting?.recordTransport(receipt); transportRecorder(this.store)(receipt); } });
-      const frame = { role: 'user', timestamp: this.runtime.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery, this.runtime.now), development: this.developmentControl.isEvaluation ? null : { acceptedCandidateId: config.artifactId, editablePrompt: 'deployment/prompts/mind.md', editableCompaction: 'deployment/prompts/compaction.md', tool: 'develop', sourceIsOwnImplementation: true, evaluation: this.store.get('host.evaluation-dispatch', 'current')?.value ?? { available: false, diagnosis: 'Host evaluator status not yet available' }, workflow: ['develop(mode=edit,target=source)', 'change_propose', 'candidate_freeze', 'candidate_evaluate', 'change_status', 'release_submit', 'control_activate when staged', 'control_status'] }, target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
+      const frame = { role: 'user', timestamp: this.runtime.now(), content: JSON.stringify({ hostContext: { runId: input.run.id, memory: context, agenda: this.developmentControl.kind === 'no-standing-goals' ? [] : this.goals.all(input.run.scope), ...(this.developmentControl.isEvaluation ? { currentEvidence: this.developmentControl.currentEvidence(input.run.id, input.run.scope, this.memory) } : {}), obligations: this.conversationObligations.visible(record.target), communication: communicationState(input.run.scope, record.target, this.slackRecovery, this.runtime.now), development: this.developmentControl.isEvaluation ? null : { acceptedCandidateId: config.artifactId, editablePrompt: 'deployment/prompts/mind.md', editableCompaction: 'deployment/prompts/compaction.md', tool: 'develop', sourceIsOwnImplementation: true, evaluation: this.store.get('host.evaluation-dispatch', 'current')?.value ?? { available: false, diagnosis: 'Host evaluator status not yet available' }, workflow: ['develop(mode=edit,target=source)', 'change_propose', 'skin_shed(changeId)', 'yield for supervised interview, cutover and observer probation', 'skin_shed(changeId) reads actual outcome'] }, target: record.target ?? null, workspace: '/work', operatingUsage: this.resources.snapshot(this.rootAllocation), attribution: 'Authenticated host state; retrieved content retains its own provenance.' } }) };
       let messages = codingRun ? input.messages : [frame, ...input.messages];
       if (codingRun?.provider === 'pi' && !input.checkpoint) {
         const session = this.coding.session()!, context = this.store.get<{ sessionId: string; scope: DataScope; checkpoint: ShellCheckpoint }>('host.pi-coding-context', session.id)?.value;
@@ -293,7 +295,7 @@ export class AutarkApplication {
       return this.coding.preserveWaiting(input.run.id, this.controls.preserveWaiting(input.run.id, this.evolution.preserveWaiting(input.run.id, result)));
     } };
     this.runtime = new DurableRuntime({ store: this.store, shell: developmentAccounting?.wrapShell(this.developmentControl.isScripted ? createScriptedControlShell(this.developmentControl) : shell) ?? shell, effects: this.effects, resources: this.resources, renderInput: renderConversationInput,
-      canResume: run => { this.developmentControl.assertRun(run.id); this.developmentControl.assertRestoredState(); return this.controls.eligibleRun(run.id, this.hasPendingSteering(run.id)); } });
+      canResume: run => { this.developmentControl.assertRun(run.id); this.developmentControl.assertRestoredState(); return this.successionEligible(run.id); } });
     this.coding = new CodingLimb({ store: this.store, runtime: this.runtime, provider: config.coding?.provider ?? 'codex', sharedAudiences: config.developmentAudiences, onWake: runId => {
       const execution = this.store.list<{ runId: string }>('initiative.execution').find(row => row.value.runId === runId);
       const goal = execution ? this.goals.goal(execution.key) : undefined;
@@ -301,12 +303,9 @@ export class AutarkApplication {
     }, now: () => this.runtime.now(), assertAuthority: authority => options.authorityStore.assert(authority), execute: (session, turn, signal) => this.executeCoding(session, turn, signal) });
     this.codingSources = new CodingSources({ store: this.store, snapshot: options.codingSnapshot ?? (async (workspace, path, signal, timeoutMs) => {
       invariant(realpathSync(workspace) === workspace, 'Canonical coding workspace required');
-      const directory = join(workspace, 'repositories');
-      try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-      invariant(lstatSync(directory).isDirectory() && realpathSync(directory) === directory, 'Coding repository directory must not be a link');
       const destination = join(workspace, path); mkdirSync(destination, { mode: 0o700 });
       return sourceWorkspaceTools({ applicationRoot: config.applicationRoot, workspace: destination, protectedPaths: [config.stateDirectory], nodeBinary: config.nodeBinary,
-        maxFiles: 10000, maxBytes: 50_000_000, timeoutMs: timeoutMs ?? 30000, resourceLimits: config.resourceLimits })[0]!.execute({}, signal);
+        gitRepository: true, maxFiles: 10000, maxBytes: 50_000_000, timeoutMs: timeoutMs ?? 30000, resourceLimits: config.resourceLimits })[0]!.execute({}, signal);
     }) });
     const resourceLedger: HostResourceLedgerFactory = (store, ceiling, now) => {
       const ledger = new ResourceLedger(store, ceiling, now ?? this.runtime.now);
@@ -315,6 +314,7 @@ export class AutarkApplication {
     };
     this.evolution = new EvolutionContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore, resourceLedger });
     this.controls = new ControlAuthorContinuations({ store: this.store, runtime: this.runtime, authorityStore: options.authorityStore, resourceLedger });
+    this.successionProbes = new SuccessionProbes({ store: this.store, runtime: this.runtime, candidateId: config.artifactId, authority: options.authority, resources: config.conversationResources, assertAuthority: () => options.authorityStore.assert(options.authority) });
     this.consolidation = new AccountedConsolidation(this.memory, this.runtime, options.authority);
     this.communications = new CommunicationsCore({ store: this.store, runtime: this.runtime,
       grant: () => ({ authority: options.authority, resources: config.conversationResources, parentRunId: this.rootAllocation }),
@@ -387,6 +387,7 @@ export class AutarkApplication {
     }
     return allocations;
   }
+  private successionEligible(runId: string): boolean { return !!this.successionProbes?.isProbe(runId) || (this.controls?.eligibleRun(runId, this.hasPendingSteering(runId)) ?? true); }
   private occupied(): number { return this.active.size + (this.initiativeTask ? 1 : 0) + (this.coding?.busy ? 1 : 0); }
   private coordinatedWorkspace(runId: string): { workspace: string; locked: boolean } {
     const grant = this.grant(runId), session = this.coding.session();
@@ -403,11 +404,12 @@ export class AutarkApplication {
     const coding = this.store.get<{ turn: CodingTurn }>('host.coding-runs', runId)?.value;
     return { scope: grant.scope, workspace: { workspace: grant.workspace, protectedPaths: [this.config.stateDirectory, this.config.applicationRoot], nodeBinary: this.config.nodeBinary, timeoutMs: 30000, maxBytes: 131072, maxFiles: 10000, executables: this.config.commands, maxArgs: 64, ...(this.config.resourceLimits ? { resourceLimits: this.config.resourceLimits } : {}) },
       research: { allowedHosts: this.config.researchHosts, timeoutMs: 15000, maxBytes: 262144, maxRedirects: 3 },
-      actions: this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => codingAccess(name, coding ? coding.turn.mode ?? 'inspect' : undefined) && (!child || child.allowedEffects.includes(name)) && (child || !this.coding?.workspaceLocked(grant.workspace) || ['workspace_read', 'workspace_search', 'workspace_discover', 'workspace_diff', 'research_fetch', 'speech_send'].includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
+      actions: this.successionProbes?.isProbe(runId) || this.consolidation?.claim(runId) ? [] : toolDefinitions.map(tool => tool.name).filter(name => codingAccess(name, coding ? coding.turn.mode ?? 'inspect' : undefined) && (!child || child.allowedEffects.includes(name)) && (child || !this.coding?.workspaceLocked(grant.workspace) || ['workspace_read', 'workspace_search', 'workspace_discover', 'workspace_diff', 'research_fetch', 'speech_send'].includes(name)) && (name !== 'speech_send' || grant.target !== undefined && (grant.target.transport === 'direct' || this.config.slack?.allowSpeech))) };
   }
   private mindTools(runId: string, effectId?: string): (ApplicationTool & { extension?: true })[] {
     this.developmentControl.assertRun(runId);
     if (this.developmentControl.isScripted) return [];
+    if (this.successionProbes?.isProbe(runId)) return this.successionProbes.tools(runId, effectId);
     const scope = this.grant(runId).scope;
     if (this.store.get('host.child-runs', runId)) return [];
     if (this.consolidation?.claim(runId)) return this.consolidation.tools(runId);
@@ -452,7 +454,7 @@ export class AutarkApplication {
   }
   private codingTools(runId: string, effectId?: string): ApplicationTool[] {
     const object = (args: JsonValue, keys: string[]): Record<string, JsonValue> => { invariant(args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).every(key => keys.includes(key)), 'Invalid coding arguments'); return args; };
-    return [{ name: 'develop', description: 'Develop your machinery through the one retained engineering limb: investigate repository questions and improve source, prompts, dependencies, tools, tests, planning or controls. Defaults: mode=inspect (enforced read-only), target=source (host prepares an editable accepted-source snapshot). Use mode=edit for implementation and checks; target=workspace for existing workspace files. A successful enqueue yields immediately; results wake this run. Inspect develop_status, then use change_propose, candidate_freeze, candidate_evaluate, change_status and release_submit for independent review and host-controlled release. Follow-ups reuse the same native session. The limb cannot speak for you or activate changes.',
+    return [{ name: 'develop', description: 'Develop your machinery through the one retained engineering limb: investigate repository questions and improve source, prompts, dependencies, tools, tests, planning or controls. Defaults: mode=inspect (enforced read-only), target=source (one persistent Git working tree). Use mode=edit for implementation and checks; target=workspace for existing workspace files. A successful enqueue yields immediately; results wake this run. Inspect develop_status, propose a supported improvement with change_propose, then invoke skin_shed(changeId) and yield. Repeating skin_shed reads its actual retained outcome. Follow-ups reuse the same native session. The limb cannot speak for you or activate changes.',
       inputSchema: { type: 'object', properties: { message: { type: 'string' }, sessionId: { type: 'string' }, mode: { type: 'string', enum: ['inspect', 'edit'] }, target: { type: 'string', enum: ['source', 'workspace'] } }, required: ['message'], additionalProperties: false }, execute: async (args, signal) => {
         const value = object(args, ['message', 'sessionId', 'mode', 'target']); invariant(effectId && typeof value.message === 'string' && value.message.trim() && Buffer.byteLength(value.message) <= 32768 && (value.sessionId === undefined || typeof value.sessionId === 'string'), 'Coding message and durable effect identity required');
         const mode = value.mode ?? 'inspect', target = value.target ?? 'source';
@@ -497,7 +499,7 @@ export class AutarkApplication {
         if (!source) {
           const budget = this.codingBudget(child.id, 30000), id = `coding-source:${turn.id}`;
           const payload = { candidateId: this.config.artifactId, workspace: session.workspace, timeoutMs: budget.timeoutMs };
-          const request: PhysicalRequest = { id, runId: child.id, purpose: 'delegation', provider: 'host-source', model: 'source_snapshot', promptManifestId: id,
+          const request: PhysicalRequest = { id, runId: child.id, purpose: 'delegation', provider: 'host-source', model: 'source_git_repository', promptManifestId: id,
             requestDigest: identity(payload), reservationId: id, status: 'reserved', usage: { requests: 1, inputTokens: 0, outputTokens: 0, costUsd: 0, elapsedMs: budget.reservationElapsedMs } };
           this.options.authorityStore.assert(turn.authority); signal.throwIfAborted();
           this.store.transaction(() => { this.resources.reserve(request); this.resources.dispatched({ ...request, status: 'dispatched' }); });
@@ -658,7 +660,7 @@ export class AutarkApplication {
   private async notifyConversationFailures(): Promise<void> {
     const ids = new Set(this.store.list<Effect>('effects').filter(row => row.key.startsWith('host:deadline:') || row.key.startsWith('host:blocked:')).map(row => row.key));
     for (const { value: run } of this.store.list<Run>('runs')) {
-      if (!['waiting', 'blocked'].includes(run.status) || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || this.coding.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+      if (!['waiting', 'blocked'].includes(run.status) || this.managedElsewhere(run.id) || this.hasPendingSteering(run.id) || this.evolution.holds(run.id) || this.coding.holds(run.id) || !this.successionEligible(run.id)) continue;
       const state = this.store.get<{ failure?: string; failedAttempt?: number; checkpoint?: ShellCheckpoint; lastResult?: ShellResult; messageSequence?: number }>('execution', run.id)?.value;
       let id: string, text: string;
       if (run.status === 'waiting' && state?.failure === 'Worker deadline exceeded') {
@@ -703,7 +705,7 @@ export class AutarkApplication {
       try {
         if (effect.status === 'authorized') {
           const run = this.runtime.getRun(effect.runId);
-          if (!run || this.hasPendingSteering(effect.runId) || this.managedElsewhere(run.id) || this.evolution.holds(run.id) || this.coding.holds(run.id) || !this.controls.eligibleRun(run.id, false)) continue;
+          if (!run || this.hasPendingSteering(effect.runId) || this.managedElsewhere(run.id) || this.evolution.holds(run.id) || this.coding.holds(run.id) || !this.successionEligible(run.id)) continue;
           if (id.startsWith('host:deadline:') && run.status !== 'waiting') continue;
           if (id.startsWith('host:blocked:')) {
             const current = this.store.get<{ checkpoint?: ShellCheckpoint; messageSequence?: number }>('execution', run.id)?.value;
@@ -780,7 +782,7 @@ export class AutarkApplication {
     const existing = this.active.get(runId); if (existing) return existing;
     const run = this.runtime.getRun(runId); invariant(run, 'Unknown run');
     this.ingestCommunications(run);
-    if (!this.controls.eligibleRun(runId, this.hasPendingSteering(runId))) return run;
+    if (!this.successionEligible(runId)) return run;
     if (!this.providerAvailable()) { if (!['completed', 'cancelled'].includes(run.status)) this.enqueue(runId); return run; }
     if (this.occupied() >= this.config.maxConcurrentRuns || this.closing) { this.enqueue(runId); return run; }
     const queued = this.store.get('host.pending-runs', runId); if (queued) this.store.delete('host.pending-runs', runId, queued.revision);
@@ -809,16 +811,17 @@ export class AutarkApplication {
     try {
       this.developmentControl.assertRestoredState();
       this.conversationObligations.confirm(); this.evolution.reconcileAcknowledgments(); this.evolution.wake(); this.controls.reconcileAcknowledgments(); this.controls.wake();
-      this.coding.tick(this.occupied() < this.config.maxConcurrentRuns); this.coding.wake();
+      this.coding.tick(!this.controls.draining() && this.occupied() < this.config.maxConcurrentRuns); this.coding.wake();
       this.activity(() => this.slackActivity?.tick());
       await this.notifySlackControls();
       await this.notifyConversationFailures();
       // Offline recovery retains intake and known local reconciliation. Missing credentials
       // must not consume scheduler slices or physical reservations on repeated polling.
       if (!this.providerAvailable()) return;
+      for (const runId of this.successionProbes.prepare()) this.enqueue(runId);
       // Give development first access to a freed slot on alternating admissions.
-      if ((this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns && !this.developmentControl.isScripted) { this.developmentTurn = false; this.startDevelopment(); }
-      const pending = this.store.list<Run>('runs').filter(row => !this.managedElsewhere(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && (!this.coding.holds(row.key) || this.hasPendingSteering(row.key)) && this.controls.eligibleRun(row.key, this.hasPendingSteering(row.key)) && (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)))
+      if (!this.controls.draining() && (this.developmentTurn || !this.store.list('host.pending-runs').length) && !this.initiativeTask && this.occupied() < this.config.maxConcurrentRuns && !this.developmentControl.isScripted) { this.developmentTurn = false; this.startDevelopment(); }
+      const pending = this.store.list<Run>('runs').filter(row => (row.value.status === 'ready' || this.store.get('host.pending-runs', row.key) || row.value.status === 'waiting' && this.hasPendingSteering(row.key)) && !this.managedElsewhere(row.key) && this.successionEligible(row.key) && (!this.evolution.holds(row.key) || this.hasPendingSteering(row.key)) && (!this.coding.holds(row.key) || this.hasPendingSteering(row.key)))
         .sort((a, b) => (this.store.get<{ requestedAt: number }>('host.pending-runs', a.key)?.value.requestedAt ?? 0) - (this.store.get<{ requestedAt: number }>('host.pending-runs', b.key)?.value.requestedAt ?? 0) || a.key.localeCompare(b.key));
       for (const row of pending) {
         if (this.occupied() >= this.config.maxConcurrentRuns) break;

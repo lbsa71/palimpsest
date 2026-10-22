@@ -10,11 +10,13 @@ import { identity, type ArtifactRef, type Authority, type EvaluationEvidence } f
 import { admissionPolicyIdentity, signEvaluation, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes, type FrozenCandidate } from '../packages/release/artifacts.ts';
 import { policyDescriptor, type ReleaseProof } from '../packages/release/controller.ts';
+import { ChangeProposals } from '../packages/release/proposals.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { AuthorityStore } from '../packages/supervisor/authority.ts';
 import { ProcessLease } from '../packages/supervisor/process-lease.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
 import { controlSocket, requestControl, serveControls } from './cli.ts';
+import { controlActivationId } from './control-tools.ts';
 import { contentAddressedEvidence, loadHostPolicy, type HostPolicyFile } from './host-policy.ts';
 import type { HostBindings } from './materialize.ts';
 import { rewriteSourceEntries } from './source-workspace.ts';
@@ -189,4 +191,113 @@ test('CLI supervisor SIGKILL releases host ownership and recovers actual applica
     await stop('SIGTERM');
     const lease = new ProcessLease(join(f.host.stateDirectory, 'supervisor-lease.sqlite')); lease.close();
   } finally { await stop('SIGKILL'); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ordinary prompt-only acceptance requests exact host handoff only after fresh probation and fences further coordinator work', { timeout: 90000 }, async () => {
+  const f = fixture(); let supervisor: ServiceSupervisor | undefined;
+  const handoffs: { target: { candidateId: string; policyDigest: string }; previous: { candidateId: string; policyDigest: string } }[] = [];
+  try {
+    supervisor = await ServiceSupervisor.open({ ...f.options, onHostAccepted(target, previous) {
+      assert.equal(supervisor!.status().release?.phase, 'accepted');
+      assert.deepEqual(supervisor!.status().release?.accepted, target);
+      assert.equal(supervisor!.status().ready?.candidateId, target.candidateId);
+      assert.equal(supervisor!.status().running, true);
+      handoffs.push({ target: structuredClone(target), previous: structuredClone(previous) });
+    } });
+    const initialPid = supervisor.status().processId;
+    const successor = freezeApplication(f.source, f.host.artifactStore, { ...f.inputs,
+      prompts: { ...f.inputs.prompts, mind: 'No inference. Ordinary prompt-only host handoff fixture.' } });
+    assert.equal(successor.manifest.controls, f.incumbent.manifest.controls);
+    assert.notEqual(successor.manifest.id, f.incumbent.manifest.id);
+    const ledgerState = () => {
+      const ledger = new AuthorityStore(join(f.host.stateDirectory, 'authority.sqlite'));
+      try { return ledger.current(); } finally { ledger.close(); }
+    };
+    async function withSyntheticOwnership(check: () => Promise<void>): Promise<void> {
+      const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+      const runId = 'fixture-owned-author', changeId = 'owned-change', id = controlActivationId(runId, changeId), scope = { kind: 'public' as const };
+      // Deliberately synthetic retained ownership, not a real cognitive approval.
+      // Uncertain status prevents the background continuation from advancing it.
+      const request = { id, runId, proposalId: changeId, scope, authority: f.initial, skinShed: { effectId: 'tool:fixture-owned-shed',
+        workspace: f.source, incumbentCandidateId: f.incumbent.manifest.id, policyDigest: f.policy.policyDigest } };
+      const proposals = new ChangeProposals(store, runId, scope), proposalKey = proposals.key(changeId);
+      proposals.create({ id: changeId, runId, scope, authority: f.initial, state: 'frozen', candidate: successor.manifest,
+        judgingPolicyDigest: f.policy.policyDigest, provenance: { kind: 'human', inputId: 'fixture-synthetic-input', actorId: 'fixture' },
+        justification: 'Synthetic retained ownership only', goal: { objective: 'Check direct lifecycle boundaries', successCriteria: ['No direct bypass'] },
+        experience: store.putArtifact('Synthetic ownership only; no dialogue or approval') });
+      store.put('host.control-continuations', id, { request, status: 'uncertain' }, null);
+      const retained = store.get('host.control-continuations', id), retainedProposal = store.get('release.changes', proposalKey);
+      try { await check(); assert.deepEqual(store.get('host.control-continuations', id), retained); assert.deepEqual(store.get('release.changes', proposalKey), retainedProposal); }
+      finally {
+        const row = store.get('host.control-continuations', id); if (row) store.delete('host.control-continuations', id, row.revision);
+        const proposal = store.get('release.changes', proposalKey); if (proposal) store.delete('release.changes', proposalKey, proposal.revision);
+        store.close();
+      }
+    }
+    // A supplied foreign activation ID cannot stand in for the exact host continuation.
+    const foreignReview = { activationId: 'fixture-foreign-activation' } as NonNullable<Parameters<ServiceSupervisor['activateControl']>[1]>;
+    const admission = f.proof(successor, f.initial), invalid = structuredClone(admission);
+    invalid.signed[0]!.authentication = '0'.repeat(64);
+    await assert.rejects(supervisor.release(invalid), /authentication/);
+    assert.deepEqual(handoffs, []); assert.equal(supervisor.status().release?.phase, 'accepted');
+    assert.equal(supervisor.status().processId, initialPid);
+    await withSyntheticOwnership(async () => {
+      const authority = ledgerState(), state = supervisor!.status().release, ready = supervisor!.status().ready;
+      await assert.rejects(supervisor!.command({ kind: 'release', proof: admission }), /Skin shed candidate requires its supervised continuation/);
+      const stageId = await supervisor!.stageControl(admission, f.policy.policyDigest);
+      await assert.rejects(supervisor!.command({ kind: 'activate-control', stageId }), /Skin shed activation requires its exact supervised continuation/);
+      await assert.rejects(supervisor!.activateControl(stageId, foreignReview), /Skin shed activation requires its exact supervised continuation/);
+      assert.deepEqual(ledgerState(), authority); assert.deepEqual(supervisor!.status().release, state);
+      assert.deepEqual(supervisor!.status().ready, ready); assert.equal(supervisor!.status().processId, initialPid); assert.deepEqual(handoffs, []);
+    });
+    await supervisor.release(admission);
+    assert.equal(supervisor.status().release?.phase, 'probation');
+    assert.equal(supervisor.status().release?.probationJudge?.change, 'ordinary');
+    assert.equal(supervisor.status().ready?.candidateId, successor.manifest.id);
+    assert.notEqual(supervisor.status().processId, initialPid); assert.deepEqual(handoffs, []);
+    await assert.rejects(supervisor.acceptProbation(admission), /fresh evidence/);
+    assert.equal(supervisor.status().release?.phase, 'probation'); assert.deepEqual(handoffs, []);
+    const fresh = f.proof(successor, f.initial), forgedFresh = structuredClone(fresh);
+    forgedFresh.signed[0]!.authentication = '0'.repeat(64);
+    await assert.rejects(supervisor.acceptProbation(forgedFresh), /authentication/);
+    assert.equal(supervisor.status().release?.phase, 'probation'); assert.deepEqual(handoffs, []);
+    await withSyntheticOwnership(async () => {
+      const authority = ledgerState(), state = supervisor!.status().release, ready = supervisor!.status().ready, pid = supervisor!.status().processId;
+      await assert.rejects(supervisor!.command({ kind: 'probation', proof: fresh }), /Skin shed acceptance requires its exact supervised observer continuation/);
+      await assert.rejects(supervisor!.acceptProbation(fresh, { ...foreignReview, physicalAuthority: ready!.authority }), /Skin shed acceptance requires its exact supervised observer continuation/);
+      assert.deepEqual(ledgerState(), authority); assert.deepEqual(supervisor!.status().release, state);
+      assert.deepEqual(supervisor!.status().ready, ready); assert.equal(supervisor!.status().processId, pid); assert.deepEqual(handoffs, []);
+    });
+    await supervisor.acceptProbation(fresh);
+    assert.deepEqual(handoffs, [{ target: { candidateId: successor.manifest.id, policyDigest: f.policy.policyDigest },
+      previous: { candidateId: f.incumbent.manifest.id, policyDigest: f.policy.policyDigest } }]);
+    const accepted = supervisor.status().release, serving = supervisor.status().ready;
+    await assert.rejects(supervisor.recover(), /Supervisor unavailable/);
+    await assert.rejects(supervisor.release(f.proof(f.incumbent, serving!.authority, successor)), /Supervisor unavailable/);
+    await assert.rejects(supervisor.acceptProbation(fresh), /Supervisor unavailable/);
+    assert.deepEqual(supervisor.status().release, accepted); assert.deepEqual(supervisor.status().ready, serving);
+    assert.equal(handoffs.length, 1);
+    const store = new OperationalStore({ filename: join(f.host.stateDirectory, 'operational.sqlite') });
+    try {
+      // Synthetic retained activation, deliberately lacking a real control reservation.
+      // This probes the actual old coordinator loop while our callback holds handoff;
+      // it is not a cognitive succession or fabricated acceptance fixture.
+      const request = { id: controlActivationId('fixture-held-author', 'held-change'), runId: 'fixture-held-author',
+        proposalId: 'held-change', scope: { kind: 'public' }, authority: f.initial, skinShed: { effectId: 'tool:fixture-held-shed', workspace: f.source,
+          incumbentCandidateId: f.incumbent.manifest.id, policyDigest: f.policy.policyDigest } };
+      store.put('host.control-continuations', request.id, { request, status: 'activating' }, null);
+      // This pending trusted-operator fixture has no actual staged reservation.
+      // Without the global handoff gate the old loop would reject and mutate it.
+      const pendingRequest = { id: controlActivationId('fixture-pending-author', 'pending-change'), runId: 'fixture-pending-author',
+        proposalId: 'pending-change', scope: { kind: 'public' }, authority: f.initial, stageId: 'fixture-absent-stage', submissionId: 'fixture-absent-submission' };
+      store.put('host.control-continuations', pendingRequest.id, { request: pendingRequest, status: 'pending' }, null);
+      const retained = store.get('host.control-continuations', request.id), pending = store.get('host.control-continuations', pendingRequest.id), requests = store.list('requests');
+      await new Promise<void>(resolve => setTimeout(resolve, 200)); // Four normal host loop intervals, beyond CLI's 50 ms shutdown delay.
+      assert.deepEqual(store.get('host.control-continuations', request.id), retained, 'The retiring coordinator must not advance or fail activation after handoff');
+      assert.deepEqual(store.get('host.control-continuations', pendingRequest.id), pending, 'The retiring coordinator must not consume pending host work after handoff');
+      assert.equal(supervisor.status().controls?.recent.find(record => record.id === request.id)?.status, 'activating');
+      assert.equal(supervisor.status().controls?.recent.find(record => record.id === pendingRequest.id)?.status, 'pending');
+      assert.deepEqual(store.list('requests'), requests); assert.equal(handoffs.length, 1);
+    } finally { store.close(); }
+  } finally { await supervisor?.close(); rmSync(f.root, { recursive: true, force: true }); }
 });

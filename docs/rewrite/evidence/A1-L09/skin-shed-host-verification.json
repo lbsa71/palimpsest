@@ -1,0 +1,30 @@
+{
+  "phase": "c6",
+  "qualification": "Operator-run actual ServiceSupervisor and frozen service processes; controlled engineering policy/provider-unavailable fixture. The activating row is explicitly synthetic and only tests held shutdown. Not live cognitive Skin Shed or H1.",
+  "command": {
+    "executable": "/opt/palimpsest/runtime/node-v24.13.0-linux-x64/bin/node",
+    "args": [
+      "--experimental-test-module-mocks",
+      "--test",
+      "--test-concurrency=1",
+      "--test-name-pattern=ordinary prompt-only acceptance",
+      "deployment/supervisor.test.ts"
+    ]
+  },
+  "executedSourceSha256": {
+    "deployment/control-continuation.ts": "a6e04d9fa4094acb74e75487ebe0e96f8c7d5a9516ce611c0d1cd731fe8c68a9",
+    "deployment/evolution-mailbox.ts": "84ad15d859e8519e5fc9ac382632b2021c5e008f867c579f5c23edb603c1830b",
+    "deployment/supervisor.ts": "b439894a257acf63b3be420af0061b1a254ef84a2ca4865c752ab3dc3e82755b",
+    "deployment/service-child.ts": "e8c9999f09b89648d7c2e8174658ec5917d99233b4001bb28d31616e9a397140",
+    "deployment/skin-shed-service.ts": "5de8f46b55523fba639dbfde3fa8dc2953cd3f8d0d97c33b8bfc7cd7df5d42c3",
+    "deployment/skin-shed.ts": "fbf9a41c07b09a1469062c96fcb1402b75228117b7a952c249f44c70a69c08d9",
+    "deployment/succession-dialogue.ts": "7ac2026716e4e22d519b3d00dffa26e8269e27da31e015f0f47c55e0f388e320",
+    "deployment/succession-host.ts": "b4eeb5ef6e88605669513a2fe6a0ca8a66c9839dab8e28c4972cc0ca81526196",
+    "deployment/supervisor.test.ts": "f1d759ce75fb74754262036468a72f9bfba3165456ba54c7160b7799ceb34e3d"
+  },
+  "unchangedAfterExecution": true,
+  "exitCode": 0,
+  "signal": null,
+  "stdout": "(node:288421) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n✔ ordinary prompt-only acceptance requests exact host handoff only after fresh probation and fences further coordinator work (32356.521367ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 32977.505847\n",
+  "stderr": ""
+}

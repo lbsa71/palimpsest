@@ -173,7 +173,7 @@ function frozenInputs(staging: string, workspace: string, accepted: FrozenCandid
 }
 
 /** Install through ApplicationOptions.additionalTools. Author workspaces never receive store paths, policy keys or activation authority. */
-export function evolutionTools(context: EvolutionContext, options: EvolutionOptions): ApplicationTool[] {
+function evolutionCore(context: EvolutionContext, options: EvolutionOptions) {
   const bound = { ...context, scope: structuredClone(context.scope), authority: structuredClone(context.authority) };
   const proposals = new ChangeProposals(bound.store, bound.runId, bound.scope);
   const allowed = (signal?: AbortSignal): void => {
@@ -219,7 +219,34 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
     const { evaluation, submission, ...frozenProposal } = proposal;
     return { requestId: id, proposal: { ...frozenProposal, state: 'frozen' }, candidate, policyDigest: proposal.judgingPolicyDigest! };
   };
-  return [{ name: 'model_profiles', description: 'Inspect the current model and host-permitted provider/model profiles, prices and request ceilings. Permission is not competence qualification; selection still needs candidate evaluation and release.', inputSchema: schema({}, []),
+  const freeze = (args: JsonValue, signal?: AbortSignal): ChangeRecord => {
+      const { id, proposal } = prevalidate(() => {
+        allowed(signal); const id = idArgs(args), proposal = proposals.get(id); assertAuthority(proposal.authority, bound.authority);
+        provenance(bound, options, proposal.provenance);
+        if (!proposal.candidate) {
+          invariant(proposal.state === 'proposed', 'Proposal cannot be frozen in this state');
+          invariant(Number.isSafeInteger(options.maxFiles) && options.maxFiles > 0 && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0, 'Finite snapshot bounds required');
+        }
+        return { id, proposal };
+      });
+      if (proposal.candidate) { request(proposal, 'verify'); return proposal; }
+      mkdirSync(options.artifactStore, { recursive: true, mode: 0o700 }); const store = realpathSync(options.artifactStore), workspace = realpathSync(bound.workspace);
+      const fd = directory(options.artifactStore); closeSync(fd); invariant(outside(workspace, store) && outside(store, workspace) && outside(workspace, bound.store.filename), 'Host artifacts/state must be outside candidate workspace');
+      const accepted = verifyApplication(store, options.acceptedCandidateId, options.nodeBinary); const acceptedRoot = join(store, accepted.manifest.id, 'payload');
+      const staging = mkdtempSync(join(store, '.evolution-'));
+      try {
+        // Only explicit source roots are eligible; model-added node_modules and dist are ignored.
+        const root = directory(bound.workspace); let rootNames: string[]; try { rootNames = names(root, options.maxFiles); } finally { closeSync(root); }
+        const entries = rewriteSourceEntries.filter(entry => rootNames.includes(entry.split('/')[0]!));
+        const source = snapshot(bound.workspace, staging, entries, options);
+        const toolchain = accepted.files.filter(file => file.path.startsWith('node_modules/'));
+        snapshot(acceptedRoot, staging, ['node_modules'], { maxFiles: options.maxFiles - source.entries, maxBytes: options.maxBytes - source.bytes }, toolchain);
+        const inputs = frozenInputs(staging, bound.workspace, accepted, options, bound.authority.generation);
+        const candidate = freezeApplication(staging, store, inputs); allowed(signal);
+        return proposals.transition(id, 'proposed', 'frozen', { candidate: candidate.manifest, judgingPolicyDigest: options.policyDigest });
+      } finally { rmSync(staging, { recursive: true, force: true }); }
+  };
+  const tools: ApplicationTool[] = [{ name: 'model_profiles', description: 'Inspect the current model and host-permitted provider/model profiles, prices and request ceilings. Permission is not competence qualification; selection still needs candidate evaluation and release.', inputSchema: schema({}, []),
     execute(args, signal) {
       allowed(signal); object(args, []);
       const accepted = verifyApplication(options.artifactStore, options.acceptedCandidateId, options.nodeBinary);
@@ -253,33 +280,7 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       return proposals.create({ ...validated, experience: proposals.artifact(validated.experience) });
     },
   }, { name: 'candidate_freeze', description: 'Freeze this proposal’s source workspace and accepted compiler closure into a host-private immutable whole-application candidate. Actual prompt and proposed model/configuration bytes bind the manifest; no release is activated.', inputSchema: schema({ changeId: string }, ['changeId']),
-    execute(args, signal) {
-      const { id, proposal } = prevalidate(() => {
-        allowed(signal); const id = idArgs(args), proposal = proposals.get(id); assertAuthority(proposal.authority, bound.authority);
-        provenance(bound, options, proposal.provenance);
-        if (!proposal.candidate) {
-          invariant(proposal.state === 'proposed', 'Proposal cannot be frozen in this state');
-          invariant(Number.isSafeInteger(options.maxFiles) && options.maxFiles > 0 && Number.isSafeInteger(options.maxBytes) && options.maxBytes > 0, 'Finite snapshot bounds required');
-        }
-        return { id, proposal };
-      });
-      if (proposal.candidate) { request(proposal, 'verify'); return proposal; }
-      mkdirSync(options.artifactStore, { recursive: true, mode: 0o700 }); const store = realpathSync(options.artifactStore), workspace = realpathSync(bound.workspace);
-      const fd = directory(options.artifactStore); closeSync(fd); invariant(outside(workspace, store) && outside(store, workspace) && outside(workspace, bound.store.filename), 'Host artifacts/state must be outside candidate workspace');
-      const accepted = verifyApplication(store, options.acceptedCandidateId, options.nodeBinary); const acceptedRoot = join(store, accepted.manifest.id, 'payload');
-      const staging = mkdtempSync(join(store, '.evolution-'));
-      try {
-        // Only explicit source roots are eligible; model-added node_modules and dist are ignored.
-        const root = directory(bound.workspace); let rootNames: string[]; try { rootNames = names(root, options.maxFiles); } finally { closeSync(root); }
-        const entries = rewriteSourceEntries.filter(entry => rootNames.includes(entry.split('/')[0]!));
-        const source = snapshot(bound.workspace, staging, entries, options);
-        const toolchain = accepted.files.filter(file => file.path.startsWith('node_modules/'));
-        snapshot(acceptedRoot, staging, ['node_modules'], { maxFiles: options.maxFiles - source.entries, maxBytes: options.maxBytes - source.bytes }, toolchain);
-        const inputs = frozenInputs(staging, bound.workspace, accepted, options, bound.authority.generation);
-        const candidate = freezeApplication(staging, store, inputs); allowed(signal);
-        return proposals.transition(id, 'proposed', 'frozen', { candidate: candidate.manifest, judgingPolicyDigest: options.policyDigest });
-      } finally { rmSync(staging, { recursive: true, force: true }); }
-    },
+    execute: freeze,
   }, { name: 'candidate_evaluate', description: 'Durably queue evaluation of this exact frozen candidate under the prior accepted policy and immediately return known job status. Read change_status when the host result arrives. Set continueOnResult false to decline automatic continuation; this does not cancel a physical review. Author tests and text cannot supply independent evidence.', inputSchema: schema({ changeId: string, continueOnResult: { type: 'boolean' } }, ['changeId']),
     execute(args, signal) {
       allowed(signal); const a = object(args, ['changeId', 'continueOnResult']), id = text(a.changeId), proposal = proposals.get(id);
@@ -343,4 +344,36 @@ export function evolutionTools(context: EvolutionContext, options: EvolutionOpti
       });
     },
   }];
+  return { tools, freeze, proposals, request, allowed, validateReceipt, acceptEvaluation };
+}
+export function evolutionTools(context: EvolutionContext, options: EvolutionOptions): ApplicationTool[] { return evolutionCore(context, options).tools; }
+/** Trusted host operations share validation with model tools, without nested public effects or waits. */
+export function evolutionBackend(context: EvolutionContext, options: EvolutionOptions) {
+  const core = evolutionCore(context, options);
+  return {
+    freeze: (changeId: string) => core.freeze({ changeId }),
+    evaluation(changeId: string): EvaluationRequest {
+      core.allowed(); const proposal = core.proposals.get(changeId), request = core.request(proposal, 'evaluate');
+      if (proposal.state === 'frozen') core.proposals.transition(changeId, 'frozen', 'evaluation-dispatched');
+      else invariant(['evaluation-dispatched', 'evaluated'].includes(proposal.state), 'Invalid host evaluation phase');
+      return request;
+    },
+    evaluated(changeId: string, receipt: EvaluationReceipt): ChangeRecord {
+      const proposal = core.proposals.get(changeId); return core.acceptEvaluation(proposal, core.request(proposal, 'evaluate'), receipt);
+    },
+    submission(changeId: string): SubmissionRequest {
+      core.allowed(); const proposal = core.proposals.get(changeId);
+      invariant(proposal.evaluation && ['evaluated', 'submission-dispatched'].includes(proposal.state), 'Host submission requires actual evaluation');
+      const evaluation = context.store.readJsonArtifact<EvaluationReceipt>(proposal.evaluation); core.validateReceipt(evaluation, proposal);
+      invariant(evaluation.evidence.every(evidence => evidence.verdict === 'pass'), 'All independent checks must pass');
+      const request = { ...core.request(proposal, 'submit'), evaluation };
+      if (proposal.state === 'evaluated') core.proposals.transition(changeId, 'evaluated', 'submission-dispatched'); return request;
+    },
+    submitted(changeId: string, receipt: SubmissionReceipt): ChangeRecord {
+      core.allowed(); const proposal = core.proposals.get(changeId), request = core.request(proposal, 'submit');
+      invariant(receipt.requestId === request.requestId && receipt.candidateId === request.candidate.manifest.id && ['staged', 'rejected'].includes(receipt.status), 'Host staged receipt mismatch');
+      if (proposal.submission) { invariant(identity(context.store.readJsonArtifact(proposal.submission)) === identity(receipt), 'Submission receipt changed'); return proposal; }
+      return core.proposals.transition(changeId, 'submission-dispatched', 'submitted', { submission: core.proposals.artifact(receipt) });
+    },
+  };
 }

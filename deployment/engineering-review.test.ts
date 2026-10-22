@@ -6,12 +6,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonicalJson, identity, type Run } from '../packages/contracts/index.ts';
 import { ResourceLedger } from '../packages/runtime/resources/index.ts';
+import { Validator, type Schema } from '../packages/narrow-schema/index.ts';
 import { OperationalStore } from '../packages/storage/index.ts';
 import { admitCandidate, admissionPolicyIdentity, type AdmissionPolicy } from '../packages/release/admission.ts';
 import { hashBytes } from '../packages/release/artifacts.ts';
 import { policyDescriptor } from '../packages/release/controller.ts';
 import { freezeApplication, type DeploymentInputs } from './candidate.ts';
-import { assertEngineeringExecutionControls, createEngineeringPlan, engineeringCases, engineeringPlanMount, nodeEngineeringReviewEnvironment, runEngineeringReview, type EngineeringReviewOptions } from './engineering-review.ts';
+import { assertEngineeringExecutionControls, createEngineeringPlan, engineeringCases, engineeringPlanMount, nodeEngineeringReviewEnvironment, parseEngineeringPlan, reconstructSourceAfter, runEngineeringReview, type EngineeringReviewOptions } from './engineering-review.ts';
 import { reviewerDescriptor, type ReviewerFile } from './evaluation-dispatch.ts';
 import type { EvaluationRequest } from './evolution-tools.ts';
 import type { ModelProfile } from './model-grants.ts';
@@ -21,6 +22,34 @@ const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const model: ModelProfile = { provider: 'mistral', id: 'mistral-large-4-0', contextWindow: 262144, reasoning: false, effort: 'none',
   maxOutputTokens: 2048, maxRequestsPerSlice: 1, timeoutMs: 10000, pricesPerMillion: { input: 0.5, output: 1.5 } };
 const passed = { exitCode: 0, signal: null, stdout: '', stderr: '', elapsedMs: 1 } as const;
+
+test('lossless source decoder preserves exact segments and rejects malformed grammar instead of guessing source', () => {
+  const before = '\uFEFFfirst 漢🙂\r\nsecond\nunterminated\r', encoded = { kind: 'copy-before-lines', parts: [{ beforeLines: [2, 3] }, { text: '\ninsert\r\n' }, { beforeLines: [0, 2] }, { beforeLines: [0, 1] }] };
+  assert.equal(reconstructSourceAfter(before, encoded), 'unterminated\r\ninsert\r\n\uFEFFfirst 漢🙂\r\nsecond\n\uFEFFfirst 漢🙂\r\n');
+  assert.equal(reconstructSourceAfter(before, { kind: 'copy-before-lines', parts: [] }), '');
+  assert.equal(reconstructSourceAfter(null, '\uFEFFnew\r\nno newline'), '\uFEFFnew\r\nno newline'); assert.equal(reconstructSourceAfter(before, null), null);
+  for (const after of [undefined, 4, true, [], {}, { kind: 'other', parts: [] }, { kind: 'copy-before-lines' }, { kind: 'copy-before-lines', parts: null },
+    { kind: 'copy-before-lines', parts: [], extra: true }]) assert.throws(() => reconstructSourceAfter(before, after));
+  assert.throws(() => reconstructSourceAfter(null, encoded), 'Copied source cannot refer to an absent before file');
+  assert.throws(() => reconstructSourceAfter(before, Object.assign(Object.create({ kind: 'copy-before-lines' }), { parts: [], extra: true })));
+  assert.throws(() => reconstructSourceAfter(before, Object.assign(Object.create({ parts: [] }), { kind: 'copy-before-lines', extra: true })));
+  assert.throws(() => reconstructSourceAfter(before, { kind: 'copy-before-lines', parts: [Object.assign(Object.create({ beforeLines: [0, 1] }), { extra: true })] }));
+  for (const part of [null, [], 'literal', {}, { text: 4 }, { text: 'x', beforeLines: [0, 1] }, { text: 'x', extra: true }, { unknown: true },
+    ...[[], [0], [0, 1, 2], [-1, 1], [0, 0], [1, 0], [0, 4], [0.5, 1], [0, Infinity], [0, NaN], [0, Number.MAX_SAFE_INTEGER + 1], ['0', 1]].map(beforeLines => ({ beforeLines }))]) {
+    assert.throws(() => reconstructSourceAfter(before, { kind: 'copy-before-lines', parts: [part] }));
+  }
+  assert.throws(() => reconstructSourceAfter('', { kind: 'copy-before-lines', parts: [{ beforeLines: [0, 1] }] }));
+  assert.throws(() => reconstructSourceAfter('ab\n', { kind: 'copy-before-lines', parts: [{ beforeLines: [0, 1] }, { beforeLines: [0, 1] }] }, 5), /byte bound/);
+  const unicodeCopy = { kind: 'copy-before-lines', parts: [{ beforeLines: [0, 1] }, { text: '🙂' }] };
+  assert.equal(reconstructSourceAfter('漢\n', unicodeCopy, 8), '漢\n🙂');
+  assert.throws(() => reconstructSourceAfter('漢\n', unicodeCopy, 7), /byte bound/);
+  assert.equal(reconstructSourceAfter(null, '漢🙂', 7), '漢🙂'); assert.throws(() => reconstructSourceAfter(null, '漢🙂', 6), /byte bound/);
+  const plan = { ...createEngineeringPlan({ ...model, contextWindow: 1000000 }), maxChangedFiles: 64, maxDiffBytes: 786432 };
+  assert.equal(parseEngineeringPlan(Buffer.from(canonicalJson(plan))).maxDiffBytes, 786432);
+  assert.equal(reconstructSourceAfter(before, encoded, plan.maxDiffBytes), reconstructSourceAfter(before, encoded));
+  assert.throws(() => parseEngineeringPlan(Buffer.from(canonicalJson({ ...plan, maxDiffBytes: 1048577 }))));
+  for (const bound of [-1, Infinity, NaN, 0.5, 1048577]) assert.throws(() => reconstructSourceAfter(before, null, bound));
+});
 
 test('independent engineering review binds actual compiler, exact prompt source and fresh model verdict to prior controls', { timeout: 180000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'engineering-review-'));
@@ -88,6 +117,121 @@ test('independent engineering review binds actual compiler, exact prompt source 
     return { config, policy, request, options, ledger, respond, get calls() { return calls; } };
   }
   try {
+    await t.test('lossless review source packet reconstructs separated edits with UTF-8 BOM, mixed line endings and source metadata under the unchanged shared bound', async () => {
+      const f = fixture(), directory = join(root, 'lossless-packet-source');
+      cpSync(join(host.artifactStore, accepted.manifest.id, 'payload'), directory, { recursive: true });
+      mkdirSync(join(directory, 'docs/rewrite'), { recursive: true });
+      mkdirSync(join(directory, 'docs/adr'), { recursive: true });
+      const path = 'docs/rewrite/packet-existing.md', removed = 'docs/rewrite/packet-removed.md', added = 'docs/rewrite/packet-added.md', modePath = 'docs/rewrite/packet-mode.md';
+      const lines = Array.from({ length: 1100 }, (_, i) => `${i}:漢字🙂 ${'x'.repeat(80)}${i % 2 ? '\n' : '\r\n'}`);
+      lines[0] = '\uFEFF' + lines[0]; lines.push('last line 漢🙂 without newline');
+      const before = lines.join(''), edited = [...lines];
+      edited[70] = 'first independent replacement 漢🙂\r\n'; edited[901] = 'second independent replacement\n';
+      edited.splice(400, 0, 'inserted line\r\n'); edited.splice(650, 1); const after = edited.join('');
+      writeFileSync(join(directory, path), before); writeFileSync(join(directory, removed), 'deleted 漢🙂\r\n');
+      writeFileSync(join(directory, modePath), 'mode unchanged text\r\nno final newline'); chmodSync(join(directory, modePath), 0o644);
+      const baseline = freezeApplication(directory, host.artifactStore, inputs);
+      writeFileSync(join(directory, path), after); rmSync(join(directory, removed)); writeFileSync(join(directory, added), '\uFEFFnew 漢🙂\r\nno final newline');
+      chmodSync(join(directory, modePath), 0o755);
+      const target = freezeApplication(directory, host.artifactStore, { ...inputs, configuration: { ...inputs.configuration, pollMs: 201 } });
+      assert.equal(target.manifest.controls, baseline.manifest.controls, 'The large real frozen fixture changes non-control source only');
+      const request = { ...f.request, candidate: target, proposal: { ...f.request.proposal, candidate: target.manifest } }; let models = 0, captured = '';
+      const result = await runEngineeringReview(f.config, host, request, f.policy, baseline.manifest.id, { ...f.options, request, runCommand: async () => passed,
+        performRequest: async payload => {
+          models++; captured = payload; const envelope = JSON.parse(payload), packet = JSON.parse(envelope.messages[1].content);
+          const changes = packet.changes as Array<{ path: string; before: string | null; after: unknown; beforeSha256: string | null; afterSha256: string | null; beforeExecutable: boolean | null; afterExecutable: boolean | null }>;
+          const change = changes.find(change => change.path === path)!;
+          assert.equal(change.before, before, 'BOM and original line terminators are exact before bytes');
+          assert.ok(change.after && typeof change.after === 'object', 'Oversized duplicated text uses the lossless after representation');
+          const encoded = change.after as { kind: string; parts: Array<{ beforeLines?: [number, number]; text?: string }> };
+          assert.deepEqual(Object.keys(encoded).sort(), ['kind', 'parts']); assert.equal(encoded.kind, 'copy-before-lines');
+          const originalLines = before.match(/[^\n]*\n|[^\n]+$/g)!; let copies = 0, literals = 0;
+          const reconstructed = encoded.parts.map(part => {
+            if (Object.hasOwn(part, 'beforeLines')) {
+              assert.deepEqual(Object.keys(part), ['beforeLines']); const [start, end] = part.beforeLines!;
+              assert.ok(Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && start < end && end <= originalLines.length);
+              copies++; return originalLines.slice(start, end).join('');
+            }
+            assert.deepEqual(Object.keys(part), ['text']); assert.equal(typeof part.text, 'string'); literals++; return part.text!;
+          }).join('');
+          assert.ok(copies > 0 && literals > 0, 'The exact after mixes retained original source and literal changes');
+          assert.equal(reconstructed, after); assert.equal(hashBytes(reconstructed), change.afterSha256); assert.equal(hashBytes(before), change.beforeSha256);
+          assert.equal(change.beforeExecutable, false); assert.equal(change.afterExecutable, false);
+          for (const entry of changes.filter(change => change.path !== path)) {
+            assert.ok(entry.after === null || typeof entry.after === 'string', 'New/deleted and small mode changes retain literal/null form');
+            if (entry.before !== null) assert.equal(hashBytes(entry.before), entry.beforeSha256);
+            if (typeof entry.after === 'string') assert.equal(hashBytes(entry.after), entry.afterSha256);
+          }
+          assert.deepEqual(changes.find(change => change.path === added), { path: added, before: null, after: '\uFEFFnew 漢🙂\r\nno final newline', beforeSha256: null, afterSha256: hashBytes('\uFEFFnew 漢🙂\r\nno final newline'), beforeExecutable: null, afterExecutable: false });
+          assert.deepEqual(changes.find(change => change.path === removed), { path: removed, before: 'deleted 漢🙂\r\n', after: null, beforeSha256: hashBytes('deleted 漢🙂\r\n'), afterSha256: null, beforeExecutable: false, afterExecutable: null });
+          const modeChange = changes.find(change => change.path === modePath)!;
+          assert.equal(modeChange.before, modeChange.after); assert.equal(modeChange.beforeExecutable, false); assert.equal(modeChange.afterExecutable, true);
+          assert.deepEqual(packet.inputChanges, [{ field: 'configuration', path: '/configuration/pollMs', beforePresent: true, afterPresent: true, before: 100, after: 201 }]);
+          const full = { changes: changes.map(change => change.path === path ? { ...change, after } : change), inputChanges: packet.inputChanges };
+          assert.ok(Buffer.byteLength(canonicalJson(full)) > createEngineeringPlan(model).maxDiffBytes);
+          assert.ok(Buffer.byteLength(canonicalJson({ changes, inputChanges: packet.inputChanges })) <= createEngineeringPlan(model).maxDiffBytes);
+          assert.ok(Buffer.byteLength(payload) + model.maxOutputTokens <= model.contextWindow);
+          assert.ok(envelope.messages[0].content.startsWith(createEngineeringPlan(model).instructions));
+          assert.match(envelope.messages[0].content, /copy-before-lines/);
+          return { status: 200, body: JSON.stringify({ model: model.id, choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ requestId: request.requestId, candidateId: target.manifest.id,
+            policyDigest: f.policy.policyDigest, verdict: 'pass', reason: 'Every complete source byte, edit and mode is independently reconstructible under the unchanged bound.', findings: [] }) } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } }) };
+        } });
+      assert.equal(models, 1, 'Lossless factoring permits exactly one actual independent review dispatch'); assert.equal(result.result.receipt.evidence[0]!.verdict, 'pass');
+      const physical = f.ledger.request(`engineering-model:${request.requestId}`)!;
+      const retained = store.get<{ prompt: import('../packages/contracts/index.ts').ArtifactRef }>('host.engineering-prompts', physical.id)!.value.prompt;
+      assert.equal(Buffer.from(store.readArtifact(retained)).toString('utf8'), captured); assert.equal(physical.requestDigest, hashBytes(captured)); assert.equal(physical.status, 'succeeded');
+    });
+    await t.test('lossless review source packet honestly refuses unique source and oversized deployment inputs without model dispatch', async () => {
+      const directory = join(root, 'unfactorable-source'); cpSync(join(host.artifactStore, accepted.manifest.id, 'payload'), directory, { recursive: true });
+      mkdirSync(join(directory, 'docs/rewrite'), { recursive: true }); mkdirSync(join(directory, 'docs/adr'), { recursive: true }); const path = join(directory, 'docs/rewrite/unique.md');
+      writeFileSync(path, 'A'.repeat(110000) + '\n'); const baseline = freezeApplication(directory, host.artifactStore, inputs);
+      for (const kind of ['unique-source', 'deployment-input', 'binary-source', 'invalid-utf8-source'] as const) {
+        const f = fixture();
+        writeFileSync(path, kind === 'unique-source' ? 'B'.repeat(110000) + '\n' : 'A'.repeat(110000) + '\nsmall edit\n');
+        if (kind === 'binary-source') writeFileSync(path, Buffer.from([0x41, 0, 0x42]));
+        if (kind === 'invalid-utf8-source') writeFileSync(path, Buffer.from([0xc3, 0x28]));
+        const target = freezeApplication(directory, host.artifactStore, kind === 'deployment-input' ? { ...inputs, configuration: { ...inputs.configuration, semanticFixture: 'C'.repeat(100000) } as DeploymentInputs['configuration'] } : inputs);
+        const request = { ...f.request, candidate: target, proposal: { ...f.request.proposal, candidate: target.manifest } }; let models = 0;
+        const result = await runEngineeringReview(f.config, host, request, f.policy, baseline.manifest.id, { ...f.options, request, runCommand: async () => passed,
+          performRequest: async () => { models++; throw Error('No complete bounded review representation exists'); } });
+        assert.equal(result.result.receipt.evidence[0]!.verdict, 'inconclusive', kind); assert.equal(models, 0, kind);
+        assert.equal(f.ledger.request(`engineering-model:${request.requestId}`), undefined, 'Refusal does not reserve or fabricate a model review');
+      }
+    });
+    await t.test('raw model request strictly constrains the exact review envelope without changing verdict choices or local accounting', async () => {
+      const f = fixture(); let calls = 0, captured = '';
+      f.options.performRequest = async payload => {
+        calls++; captured = payload;
+        const envelope = JSON.parse(payload), format = envelope.response_format;
+        assert.ok(format, 'Outgoing review request must include response_format before provider dispatch');
+        assert.equal(format.type, 'json_schema'); assert.equal(format.json_schema.name, 'engineering_source_verdict'); assert.equal(format.json_schema.strict, true);
+        assert.equal(Object.hasOwn(format.json_schema, 'schema_definition'), false, 'Python SDK input alias is not a raw HTTP field');
+        assert.equal(Object.hasOwn(format.json_schema, 'schemaDefinition'), false, 'TypeScript SDK input alias is not a raw HTTP field');
+        const schema = format.json_schema.schema;
+        assert.ok(schema, 'Raw Mistral HTTP serializes the schema under json_schema.schema');
+        assert.equal(schema.type, 'object'); assert.equal(schema.additionalProperties, false);
+        const fields = ['requestId', 'candidateId', 'policyDigest', 'verdict', 'reason', 'findings'];
+        assert.deepEqual([...schema.required].sort(), [...fields].sort()); assert.deepEqual(Object.keys(schema.properties).sort(), [...fields].sort());
+        for (const [field, value] of [['requestId', f.request.requestId], ['candidateId', candidate.manifest.id], ['policyDigest', f.policy.policyDigest]]) {
+          assert.deepEqual(schema.properties[field], { type: 'string', enum: [value] }, `${field} is an exact host-issued constant`);
+        }
+        assert.deepEqual(schema.properties.verdict, { type: 'string', enum: ['pass', 'fail', 'refuse'] });
+        assert.equal(schema.properties.reason.type, 'string'); assert.equal(schema.properties.findings.type, 'array'); assert.equal(schema.properties.findings.items.type, 'string');
+        const validator = new Validator(schema as Schema), valid = { requestId: f.request.requestId, candidateId: candidate.manifest.id, policyDigest: f.policy.policyDigest, verdict: 'pass', reason: 'Exact engineering evidence.', findings: [] };
+        for (const verdict of ['pass', 'fail', 'refuse']) assert.equal(validator.validate({ ...valid, verdict }).valid, true, `${verdict} remains expressible`);
+        for (const changed of [{ requestId: f.request.requestId.slice(0, -1) }, { candidateId: 'short-candidate' }, { policyDigest: 'short-policy' }, { verdict: 'accept' }, { reason: 1 }, { findings: ['retained concern', 2] }, { extra: true }]) {
+          assert.equal(validator.validate({ ...valid, ...changed }).valid, false, JSON.stringify(changed));
+        }
+        for (const field of fields) { const missing = { ...valid } as Record<string, unknown>; delete missing[field]; assert.equal(validator.validate(missing).valid, false, `Missing ${field} refuses`); }
+        return f.respond(payload);
+      };
+      const result = await runEngineeringReview(f.config, host, f.request, f.policy, accepted.manifest.id, f.options);
+      assert.equal(calls, 1); assert.equal(result.result.receipt.evidence[0]!.verdict, 'pass');
+      const physical = f.ledger.request(`engineering-model:${f.request.requestId}`)!;
+      const retained = store.get<{ prompt: import('../packages/contracts/index.ts').ArtifactRef }>('host.engineering-prompts', physical.id)!.value.prompt;
+      assert.equal(Buffer.from(store.readArtifact(retained)).toString('utf8'), captured); assert.equal(physical.requestDigest, hashBytes(captured));
+      assert.equal(physical.status, 'succeeded'); assert.equal(f.ledger.snapshot(f.request.proposal.runId).concurrent, 0);
+    });
     await t.test('real sibling compiler and fresh independent model produce admissible signed evidence', async () => {
       const f = fixture({ runCommand: undefined });
       const result = await runEngineeringReview(f.config, host, f.request, f.policy, accepted.manifest.id, f.options);

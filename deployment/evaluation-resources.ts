@@ -28,7 +28,7 @@ export function reviewOperationId(options: Pick<ReviewResourceOptions, 'request'
 }
 function operationDigest(options: ReviewResourceOptions): string { return options.operation ? identity({ request: options.request, operation: options.operation }) : identity(options.request); }
 /** Caller holds the operational transaction when accepting a result or launching a child. */
-export function assertReviewLineage(store: OperationalStore, request: EvaluationRequest, now?: () => number, physicalAuthority = request.proposal.authority, resourceLedger?: HostResourceLedgerFactory): void {
+export function assertReviewLineage(store: OperationalStore, request: Pick<EvaluationRequest, 'proposal'>, now?: () => number, physicalAuthority = request.proposal.authority, resourceLedger?: HostResourceLedgerFactory): void {
   const ledger = hostResourceLedger(store, { tokens: 0, costUsd: 0, elapsedMs: 0 }, { now, resourceLedger }), clock = now ?? ledger.now;
   const run = store.get<Run>('runs', request.proposal.runId)?.value;
   invariant(run && run.status !== 'cancelled' && identity(run.authority) === identity(physicalAuthority), 'External reviewer author run is cancelled, absent or fenced');
