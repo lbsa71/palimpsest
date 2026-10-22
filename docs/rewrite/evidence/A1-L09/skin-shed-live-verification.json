@@ -1,0 +1,259 @@
+{
+  "at": "2026-10-22T07:34:57.388103+00:00",
+  "scope": "SS01\u2013SS05 operator-assisted finite live cycle; not autonomous reporting or H1 qualification",
+  "sourceRevision": "624a13ec314b4c2ee49311def0c2978a6727559b",
+  "candidate": {
+    "configuration": "edcaec41f9927baa55e63d4521b77677189825817cce29ae7bfeb3c4feb98c8e",
+    "controls": "8265fb1107644df7b5472a7551b8b5b37f9d2fd1b6e006e2aacef8409dac52c4",
+    "createdBy": "a0072993-d7f8-4188-87d9-985fe1030f18",
+    "dependencies": "a33fe1258ac5cb849407076b8c38c727d5da917592561cee7551d2c6f1eb2255",
+    "id": "6c1179dd9029f5bb4cb25cc03b0183f0b3b1c555728d70637e921c661060c874",
+    "model": "fa98908ec97f0ee61f74316e6344dc38c3ff01810f564205cfbb584a843c8ff2",
+    "prompts": "5cc9946035d058a3c3adfc3adb9d300eadf542476507cf4aabf6c36cb3b3ab97",
+    "source": "f59773f67d6b2c2b267d73b57f87db1e6b6de0a20c4fe0e518cdd67b400621d8"
+  },
+  "operationId": "control:6ca63ab7251abbae12ad00d5e5fdcf4fb8bb0a0f6e596dd1daa0e8ccd10f2b98",
+  "policyDigest": "809e69e4ead1a422faf690409b67f554923e3bbecda1e41b8487c8893d642ff0",
+  "controlStatus": "accepted",
+  "dialoguePhase": "retired",
+  "actualMailboxTurns": [
+    {
+      "role": "incumbent",
+      "phase": "challenge",
+      "evidence": {
+        "sha256": "8c4d53c8c9d2418fbbe7be36a01541df0eeae0ab709df2f9ee106250025ea960",
+        "uri": "aeon:artifact:8c4d53c8c9d2418fbbe7be36a01541df0eeae0ab709df2f9ee106250025ea960"
+      }
+    },
+    {
+      "role": "successor",
+      "phase": "answer",
+      "evidence": {
+        "sha256": "e93a4f866ed58dc4fb279768b0003fb31b31b103898e49a96abb1e35a44784de",
+        "uri": "aeon:artifact:e93a4f866ed58dc4fb279768b0003fb31b31b103898e49a96abb1e35a44784de"
+      }
+    },
+    {
+      "role": "incumbent",
+      "phase": "verdict",
+      "decision": "accept",
+      "evidence": {
+        "sha256": "a4b314281ae331c132fedd5aefab8ebe50624acaad3e3e41d155d31835f5d491",
+        "uri": "aeon:artifact:a4b314281ae331c132fedd5aefab8ebe50624acaad3e3e41d155d31835f5d491"
+      }
+    },
+    {
+      "role": "incumbent",
+      "phase": "challenge",
+      "evidence": {
+        "sha256": "b7200eb981e5c68329c053f6ccb8e295d238f0911e03bae06b5f214edf67f7f7",
+        "uri": "aeon:artifact:b7200eb981e5c68329c053f6ccb8e295d238f0911e03bae06b5f214edf67f7f7"
+      }
+    },
+    {
+      "role": "successor",
+      "phase": "answer",
+      "evidence": {
+        "sha256": "028cb190b9babf6da41f59d2294d304c9a0d2e0a1cc01cbcb59b16acf74ab0a2",
+        "uri": "aeon:artifact:028cb190b9babf6da41f59d2294d304c9a0d2e0a1cc01cbcb59b16acf74ab0a2"
+      }
+    },
+    {
+      "role": "incumbent",
+      "phase": "verdict",
+      "decision": "accept",
+      "evidence": {
+        "sha256": "a695e93443be397c179483d92bf557b00198eb426b9c8a2862f79193f5573ed7",
+        "uri": "aeon:artifact:a695e93443be397c179483d92bf557b00198eb426b9c8a2862f79193f5573ed7"
+      }
+    },
+    {
+      "role": "successor",
+      "phase": "ready",
+      "ready": true,
+      "evidence": {
+        "sha256": "7ead9b9852252e06548cd2bfd92384965512dff96ecaa0fc1358e092397976ad",
+        "uri": "aeon:artifact:7ead9b9852252e06548cd2bfd92384965512dff96ecaa0fc1358e092397976ad"
+      }
+    },
+    {
+      "role": "observer",
+      "phase": "observe",
+      "decision": "accept",
+      "evidence": {
+        "sha256": "9d8a9ac0be4a75fae3d82471ed9703f114b7b86eab4fcdcf93634d0943d829a4",
+        "uri": "aeon:artifact:9d8a9ac0be4a75fae3d82471ed9703f114b7b86eab4fcdcf93634d0943d829a4"
+      }
+    }
+  ],
+  "approval": {
+    "sha256": "b40a22a54e8a129e096357911c61b8beaee15c76cc2353235af213fa94af8145",
+    "uri": "aeon:artifact:b40a22a54e8a129e096357911c61b8beaee15c76cc2353235af213fa94af8145"
+  },
+  "observerArtifact": {
+    "sha256": "9d8a9ac0be4a75fae3d82471ed9703f114b7b86eab4fcdcf93634d0943d829a4",
+    "uri": "aeon:artifact:9d8a9ac0be4a75fae3d82471ed9703f114b7b86eab4fcdcf93634d0943d829a4"
+  },
+  "freshReviews": [
+    {
+      "id": "870632fb2303eb71652a60228be6bdbf8bd9e4138a5d56e935d1a3f236e45750",
+      "signatureAndAllEvidenceHashesValid": true
+    },
+    {
+      "id": "probation:ccdc71a1aaa7b69a06052a566fa0908932dd86b979cce16430f3335ca8458681",
+      "signatureAndAllEvidenceHashesValid": true
+    }
+  ],
+  "normalBootEpoch": 213,
+  "activeAndRescueCandidateId": "6c1179dd9029f5bb4cb25cc03b0183f0b3b1c555728d70637e921c661060c874",
+  "sourceMatch": {
+    "count": 147,
+    "scope": "Frozen production .ts under deployment/packages excluding .test.ts, two application prompts and package/compiler manifests",
+    "mismatches": []
+  },
+  "preservation": {
+    "originalCodingTurns": 26,
+    "additionalTerminalTurns": 10,
+    "unknownPhysicalRequests": 27,
+    "unknownReviewJobs": 4,
+    "unknownEffects": 2,
+    "historicalPendingCheckpointPreserved": true,
+    "originalAllocationStartPreserved": true
+  },
+  "coding": {
+    "nativeSessionId": "01a14e9a-f676-7f22-b71b-08cdc6111a4e",
+    "profile": "gpt-6.1-sol",
+    "effort": "high",
+    "oneSession": true,
+    "turns": [
+      {
+        "sequence": 35,
+        "status": "failed",
+        "exitCode": 1,
+        "elapsedMs": 47020.680110999994,
+        "profileVerified": true,
+        "resumeVerified": true,
+        "singleAgentConfigured": true,
+        "collaborationEvents": 0
+      },
+      {
+        "sequence": 36,
+        "status": "completed",
+        "exitCode": 0,
+        "elapsedMs": 11861.497700000007,
+        "profileVerified": true,
+        "resumeVerified": true,
+        "singleAgentConfigured": true,
+        "collaborationEvents": 0
+      }
+    ]
+  },
+  "focusedChecks": {
+    "persistentSourceApplication": {
+      "passed": 71,
+      "skipped": 0
+    },
+    "finalGeneration": {
+      "passed": 13,
+      "skipped": 0
+    },
+    "finalTransportBroker": {
+      "passed": 83,
+      "skipped": 0
+    },
+    "finalHostDialogueProbe": {
+      "passed": 46,
+      "skipped": 0
+    },
+    "strictExitCode": 0,
+    "buildExitCode": 0
+  },
+  "limitations": [
+    "Operator-assisted source correction, prompting and reconciliation; not general autonomous competence.",
+    "The serving probation supplied no artifact; citation copying was demonstrated in both actual interview answers.",
+    "Evaluation uncertainty counter is not preservation evidence; exact retained-row checks provide that proof.",
+    "Automatic terminal wake and accepted read worked, but outward terminal speech required a follow-up.",
+    "Native turn35 failed at model capacity after successful commands; separate same-session turn36 completed.",
+    "CLI invocation pin is not vendor-served-model attestation; unknown per-turn/cost accounting is preserved.",
+    "Separate Slack check followed acceptance; it does not establish live intake during cutover.",
+    "No full repository suite or H1 qualification; residual idle load remains separate."
+  ],
+  "privateReceipts": [
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/independent-v6-live-review.json",
+      "sha256": "9918fe2f28eb7b03f6b44e1c12eaa2a95854e4eac471e32a84a0043e626a39f7"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-accepted-final.json",
+      "sha256": "b8da8ed6734b89294efb06ebe9f5d9860780ca87086f539efc2ea6b98acce74f"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-normal-boot-preservation.after.json",
+      "sha256": "78f56c9647396bc7cd5aede1c9aaa70378b1d5eb8e0cee41fbfef7ea4f78ca46"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-rescue-preservation.after.json",
+      "sha256": "b30b1a76bc5cb421ea71cd4ab86b00e75bcfcd930d672caa8804677db4fb51d9"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-quiescent-final-preservation.after.json",
+      "sha256": "092f19e925596d0add727db73afc563a028876a00972d3cf9bae8697de8fed40"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-post-followup-final-preservation.failure.json",
+      "sha256": "95d8e2fd2d5127824dca5a6b3d1665dd479d36ce541ae693cd0065d0bd389024"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-application-source-match.json",
+      "sha256": "678a5239f9402086bc7af882764f05c43e186a1d07297c778fb896ed99a3c192"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-reviewer-rw-mount.json",
+      "sha256": "54b0f01b2f73cf28ad74ac77be2087cc2d159df7139a824bdb2e1ec15bec49be"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/native35-36-result-summary.json",
+      "sha256": "125126238e85a0ef4906c9039b0d707ba85b2c3627cc03df0bbe5db49415f320"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/v6-post-restart-slack-delivery.json",
+      "sha256": "eb9c785e60476b7ef4ae70c736e8f69f5590ebc50ecf296087af4bf9f0defbb8"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/generation-required-tool-review.json",
+      "sha256": "45b6f088302ec9a186532813bf15740379b431576e79040a9e9a988e47596c52"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/independent-persistent-source-review.json",
+      "sha256": "953d1236e0cfbfce1b6ca6a0f5c00ca71c0480d9cb9a937e33ad6e32a56f8f6d"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/independent-dialogue-context-review.json",
+      "sha256": "1f51f7c0a5de090c0a5f8260a1fef84ee8d96915d0b3a583fa4437b01b546217"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/generation-required-tool-final.log",
+      "sha256": "52820cee9dda1173680bea414f7c746c91e12dd240ab775bfe73df87f7c2739c"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/required-mailbox-transport-broker.log",
+      "sha256": "f407d5ed3ade42822d00aacf0ff164307bc75a84df83c912db75cbb7846b793d"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/required-mailbox-host-dialogue.log",
+      "sha256": "c8daad8c75f1b33b93d60ac9fc55c19460761f9d0350b5610ca2525ce88d1ab3"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/persistent-source-caller-final-71.log",
+      "sha256": "fcb22dc18ee7d0abfae866e18cc23a675e95f074b55cfa4d10b013c042af968f"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/required-mailbox-strict-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/home/palimpsest/migration/skin-shed-simplify-20261022/required-mailbox-build-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}
