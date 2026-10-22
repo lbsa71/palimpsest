@@ -103,6 +103,48 @@ test('ordinary service exposes one skin_shed entry with or without policy metada
   }
   assert.deepEqual(app.store.list('requests'), originalRequests);
 });
+for (const permitted of [true, false]) test(`new skin_shed caller selects prepared coding source only for a permitted audience (${permitted})`, async t => {
+  const f = fixture(t), priorScope = { kind: 'restricted' as const, principals: ['original-private-owner'] };
+  f.config.developmentAudiences = permitted ? [priorScope, f.scope] : [priorScope];
+  const workspace = join(f.config.workspaceDirectory, 'retained-coding-workspace'), policyDigest = identity('original-policy');
+  let snapshots = 0, calls = 0;
+  const app = f.create({ codingSnapshot: async () => { snapshots++; throw Error('Must reuse prepared source'); },
+    performRequest: async () => { calls++; return response('skin_shed', { changeId: 'prepared-change' }); },
+    additionalTools: context => ordinaryServiceTools(context, { config: f.config, artifactStore: join(f.config.stateDirectory, 'fixture-artifacts'), evolution: { policyDigest }, assertAuthority: grant => f.authorityStore.assert(grant) }),
+  });
+  const session = { id: 'coding:retained', owner: 'original-conversation', workspace, scope: priorScope, provider: 'codex', nativeSessionId: 'original-native-session' };
+  app.store.put('host.coding-sessions', 'single', session, null);
+  const source = { state: 'ready', source: { candidateId: identity('original-seed'), path: 'source', receipt: app.store.putArtifact('Original successful source preparation') } };
+  const sourceKey = identity({ workspace, path: 'source' }); app.store.put('host.coding-sources', sourceKey, source, null);
+  const originalSource = app.store.get('host.coding-sources', sourceKey), originalSession = app.store.get('host.coding-sessions', 'single');
+  const run = direct(app, 'fresh-proposal-caller');
+  new ChangeProposals(app.store, run.id, f.scope).create({ id: 'prepared-change', runId: run.id, scope: f.scope, authority: f.authority,
+    provenance: { kind: 'human', inputId: 'fresh-proposal-caller', actorId: 'owner' }, state: 'proposed', justification: 'Inspect existing source through a new authorized caller',
+    goal: { objective: 'Retain the prepared source', successCriteria: ['Use original source without a dummy coding turn'] }, experience: app.store.putArtifact('Controlled fixture') });
+  await app.resume(run.id); await until(app, () => app.runtime.getRun(run.id)?.status === 'waiting');
+  const operation = app.store.get<ControlContinuationRecord>('host.control-continuations', controlActivationId(run.id, 'prepared-change'))!;
+  const grant = app.store.get<{ workspace: string }>('host.run-grants', run.id)!.value;
+  assert.equal(operation.value.request.skinShed!.workspace, permitted ? join(workspace, 'source') : grant.workspace);
+  assert.deepEqual(app.store.get('host.coding-sessions', 'single'), originalSession);
+  assert.deepEqual(app.store.get('host.coding-sources', sourceKey), originalSource);
+  assert.equal(app.store.list('host.coding-turns').length, 0); assert.equal(snapshots, 0); assert.equal(calls, 1);
+});
+for (const state of ['preparing', 'uncertain', 'active-preparation'] as const) test(`partial coding source leaves ordinary conversation available (${state})`, async t => {
+  const f = fixture(t), priorScope = { kind: 'restricted' as const, principals: ['original-private-owner'] };
+  f.config.developmentAudiences = [priorScope, f.scope];
+  let extensions = 0, calls = 0;
+  const app = f.create({ additionalTools: () => { extensions++; throw Error('Partial source must not expose release tools'); },
+    performRequest: async source => { calls++; assert.equal((JSON.parse(source) as Payload).tools.some(tool => tool.function.name === 'skin_shed'), false); return response(); } });
+  const workspace = join(f.config.workspaceDirectory, 'retained-coding-workspace');
+  app.store.put('host.coding-sessions', 'single', { id: 'coding:retained', owner: 'original-conversation', workspace, scope: priorScope, provider: 'codex', nativeSessionId: 'original-native-session' }, null);
+  const key = identity({ workspace, path: 'source' });
+  app.store.put('host.coding-sources', key, { state: state === 'active-preparation' ? 'preparing' : state }, null);
+  if (state === 'active-preparation') app.store.put('host.coding-turns', 'other-turn', { id: 'other-turn', sessionId: 'coding:retained', runId: 'other-run', sequence: 1, status: 'running', mode: 'edit' }, null);
+  const originalSource = app.store.get('host.coding-sources', key), originalTurns = app.store.list('host.coding-turns');
+  const run = direct(app, 'ordinary-parallel-conversation'); await app.resume(run.id);
+  assert.equal(app.runtime.getRun(run.id)?.status, 'completed'); assert.equal(calls, 1); assert.equal(extensions, 0);
+  assert.deepEqual(app.store.get('host.coding-sources', key), originalSource); assert.deepEqual(app.store.list('host.coding-turns'), originalTurns);
+});
 test('real skin_shed handoff holds its parent despite steering while unrelated Slack proceeds, then wakes once under adopted authority', async t => {
   const f = fixture(t), policyDigest = identity('original-policy'), calls = new Map<string, number>();
   let parentId = '', observedTerminal = false, capabilityCallbacks = 0;

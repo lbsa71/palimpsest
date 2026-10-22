@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort, type ShellCheckpoint, type ShellResult } from '../packages/contracts/index.ts';
+import { ContractError, identity, invariant, scopeAllows, type Authority, type DataScope, type Effect, type EffectReceiver, type InboundInput, type JsonValue, type PhysicalRequest, type PromptManifest, type ResourceEnvelope, type Run, type Observation, type ShellPort, type ShellCheckpoint, type ShellResult } from '../packages/contracts/index.ts';
 import type { Tool } from '../packages/agent-shell/vendor/pi/ai/types.ts';
 import { OperationalStore, type DocumentJournalOptions } from '../packages/storage/index.ts';
 import { EffectJournal } from '../packages/effects/index.ts';
@@ -394,8 +394,18 @@ export class AutarkApplication {
     const turns = this.store.list<CodingTurn>('host.coding-turns').map(row => row.value).sort((a, b) => b.sequence - a.sequence);
     const visible = session && this.coding.permits(grant.scope) && (grant.scope.kind === 'restricted' || session.owner === identity({ scope: grant.scope, conversation: grant.target ?? runId }));
     const turn = turns.find(item => item.runId === runId) ?? (visible && identity(session.scope) === identity(grant.scope) ? turns[0] : undefined);
-    return { workspace: session && turn ? turn.source ? join(session.workspace, turn.source.path) : session.workspace : grant.workspace,
-      locked: this.coding.workspaceLocked(grant.workspace) || !!session && this.coding.workspaceLocked(session.workspace) && this.coding.permits(grant.scope) };
+    let locked = this.coding.workspaceLocked(grant.workspace) || !!session && this.coding.workspaceLocked(session.workspace) && this.coding.permits(grant.scope);
+    let source;
+    if (visible && !locked) {
+      try { source = this.codingSources.prepared(session.workspace, this.config.artifactId); }
+      catch (error) {
+        if (!(error instanceof ContractError)) throw error;
+        // Partial preparation needs inspection. Disable source/release tools,
+        // while ordinary speech and coding status remain available.
+        locked = true;
+      }
+    }
+    return { workspace: source ? join(session!.workspace, source.path) : session && turn ? turn.source ? join(session.workspace, turn.source.path) : session.workspace : grant.workspace, locked };
   }
   private toolGrant(runId: string): ToolGrant {
     const grant = this.grant(runId);
