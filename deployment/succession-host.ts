@@ -195,7 +195,7 @@ export class SuccessionHost {
   private async turn(binding: SuccessionBinding, turn: DialogueTurn, signal?: AbortSignal) {
     signal = this.signal(signal); signal.throwIfAborted();
     const { store } = this.options, { id, session, run } = this.session(binding, turn.role === 'successor');
-    const context = store.readJsonArtifact(binding.context), record = this.dialogue.status(binding.id)!;
+    const context = store.readJsonArtifact<Record<string, JsonValue>>(binding.context), record = this.dialogue.status(binding.id)!;
     const priorContext = store.get<{ operationId: string; bindingDigest: string; context: ArtifactRef }>('host.succession-exposed-contexts', turn.id);
     let catchUp: JsonValue;
     if (priorContext) {
@@ -209,9 +209,22 @@ export class SuccessionHost {
       store.put('host.succession-exposed-contexts', turn.id, { operationId: binding.id, bindingDigest: identity(binding), context: store.putJsonArtifact(catchUp) }, null);
     }
     const checkpoint = session.checkpoint ? { ...session.checkpoint, revision: run.revision } : undefined;
+    // Privacy manifests and input cuts are host validation indexes, not mind
+    // evidence. Keep the complete captured artifacts and fences above. The
+    // incumbent already has its actual conversation in its native checkpoint;
+    // the successor receives that conversation once in the attested evidence.
+    const visible = (value: JsonValue, conversation: boolean): JsonValue => {
+      const captured = value as Record<string, JsonValue>;
+      return json({ scope: captured.scope, sourceRunId: captured.sourceRunId, memory: captured.memory,
+        provenance: captured.provenance, ...(conversation ? { conversation: captured.conversation } : {}) });
+    };
     const call: GenerationCall = { sessionId: id, turnId: turn.id, role: turn.role, candidateId: session.candidateId,
-      input: { run, ...(checkpoint ? { checkpoint } : {}), messages: [json({ role: 'user', timestamp: this.now(), content: canonicalJson(json({ continuity: context, catchUp,
-        transcript: record.turns.filter(item => item.status === 'completed'), request: turn.message, phase: turn.phase })) })] } };
+      input: { run, ...(checkpoint ? { checkpoint } : {}), messages: [
+        json({ role: 'user', timestamp: this.now(), content: canonicalJson(json({ continuity: visible(context, turn.role === 'successor'),
+          ...(identity(context) === identity(catchUp) ? {} : { catchUp: visible(catchUp, false) }) })) }),
+        json({ role: 'user', timestamp: this.now(), content: canonicalJson(json({
+          transcript: record.turns.filter(item => item.status === 'completed'), request: turn.message, phase: turn.phase })) }),
+      ] } };
     this.active.set(turn.id, { binding, turn, call });
     let result: GenerationResult;
     try { result = await this.execute(call, signal); } finally { this.active.delete(turn.id); }

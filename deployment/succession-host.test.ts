@@ -114,6 +114,14 @@ for (const unlimited of [false, true]) test(`real authority dispatch, seven actu
   assert.equal(f.inputs[0].input.checkpoint?.artifact.sha256, f.checkpoint.artifact.sha256);
   assert.notEqual(f.inputs[0].input.run.id, f.parent.id); assert.equal(f.inputs[0].input.checkpoint?.runId, f.inputs[0].input.run.id);
   assert.match(f.payloads[0], /RETAINED ORIGINAL TOOL RESULT/); assert.equal(f.store.list('effects').length, 0);
+  // The original native conversation already carries this evidence. Echoing it
+  // in system instructions and two nested continuity copies obscures the live
+  // interview request and needlessly triggers compaction on real histories.
+  assert.equal(f.payloads[0].split('AUTHENTICATED ORIGINAL HISTORY').length - 1, 1);
+  assert.equal(f.payloads[1].split('AUTHENTICATED ORIGINAL HISTORY').length - 1, 1);
+  assert.ok(f.payloads.every(payload => !payload.includes('privacyManifest') && !payload.includes('selfManifest')));
+  const captured = f.store.readJsonArtifact<Record<string, JsonValue>>(bound.context);
+  assert.ok(Array.isArray(captured.privacyManifest) && Array.isArray(captured.selfManifest));
   assert.equal(f.store.list('host.child-runs').length, 2); assert.deepEqual(f.store.readJsonArtifact(f.checkpoint.artifact), f.seed);
 });
 
